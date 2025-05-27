@@ -27,11 +27,9 @@ from localvectordb.exceptions import (
     EmbeddingError, BaseLocalVectorDBException
 )
 from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key
 from localvectordb_server._checkdeps import check_ollama_service
-
-import importlib.metadata
-system_version = importlib.metadata.version("localvectordb")
 
 logger = logging.getLogger(__name__)
 api = Blueprint('api', __name__)
@@ -758,7 +756,7 @@ def health_check():
     """System health check endpoint"""
     status = {
         "status": "healthy",
-        "version": system_version,
+        "version": get_system_version(),
         "databases": len(current_app.db_manager.list_databases()),
         "ollama_available": check_ollama_service()
     }

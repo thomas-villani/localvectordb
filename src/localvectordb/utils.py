@@ -9,6 +9,13 @@
 # 
 # src/localvectordb/utils.py
 import os
+import importlib.metadata
+import re
+
+def get_system_version():
+    system_version = importlib.metadata.version("localvectordb")
+    return system_version
+
 
 def make_filename_safe(name: str, max_length: int = 255) -> str:
     # Define invalid characters based on the operating system

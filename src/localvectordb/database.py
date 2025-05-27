@@ -35,11 +35,12 @@ import numpy as np
 
 from localvectordb.core import (
     DatabaseSchema, ConnectionPool, Document, Chunk, QueryResult,
-    MetadataField, MetadataFieldType, ChunkPosition
+    MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas
 )
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError
+from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class LocalVectorDB:
         Database name (used for file naming)
     base_path : str, optional
         Directory to store database files, by default ".lvdb"
-    metadata_schema : Dict[str, MetadataField], optional
+    metadata_schema : str | Dict[str, MetadataField], optional
         Schema definition for metadata fields
     doc_id_pattern : str, optional
         Pattern for auto-generating document IDs, by default "doc_{idx}"
@@ -136,7 +137,10 @@ class LocalVectorDB:
                 raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
 
         # Configuration
-        self.metadata_schema = metadata_schema or {}
+        if isinstance(metadata_schema, str):
+            self.metadata_schema = get_common_metadata_schemas(metadata_schema)
+        else:
+            self.metadata_schema = metadata_schema or {}
         self.doc_id_pattern = doc_id_pattern
         self.chunk_id_pattern = chunk_id_pattern
 
@@ -349,7 +353,7 @@ class LocalVectorDB:
             'doc_id_pattern': self.doc_id_pattern,
             'chunk_id_pattern': self.chunk_id_pattern,
             'fts_enabled': str(self.fts_enabled),
-            'version': '2.0.0'
+            'version': get_system_version()
         }
 
         with self.connection_pool.get_connection() as conn:
@@ -1137,6 +1141,7 @@ class LocalVectorDB:
                 doc_metadata = self._get_document_metadata(conn, row['doc_id'])
 
                 if return_type == 'chunks':
+                    # TODO: use the officially defined id pattern
                     result = QueryResult(
                         id=f"{row['document_id']}:{row['chunk_index']}",
                         score=score,
@@ -1435,8 +1440,25 @@ class LocalVectorDB:
         if where:
             conditions = []
             for key, value in where.items():
-                conditions.append(f"{key} = ?")
-                params.append(value)
+                if isinstance(value, (str, int, float, bool)):
+                    conditions.append(f"{key} = ?")
+                    params.append(value)
+                elif isinstance(value, dict):
+                    operator = next(k for k in value)
+                    condition = value[operator]
+                    if isinstance(condition, (list, tuple)):
+                        if operator.lower() == "between":
+                            clause = f"{key} BETWEEN ? AND ?"
+                            if len(condition) != 2:
+                                raise ValueError(f"'between' operator requires 2 operands. Found: {condition}")
+                        else:
+                            clause = f"{key} {operator} (" + ",".join("?" * len(condition)) + ")"
+                        params += condition
+                    else:
+                        clause = f"{key} {operator} ?"
+                        params.append(condition)
+                    conditions.append(clause)
+
             query_parts.append(f"WHERE {' AND '.join(conditions)}")
         elif sql:
             query_parts.append(f"WHERE {sql}")

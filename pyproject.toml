@@ -30,7 +30,11 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 server = [
+    "bcrypt>=4.3.0",
     "flask>=3.1.1",
     "flask-cors>=6.0.0",
+]
+dev = [
+    "pytest>=8.3.5",
 ]
 

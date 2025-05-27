@@ -100,23 +100,10 @@ from typing import Dict, List, Union, Any, Optional, get_type_hints
 
 import click
 
+from localvectordb.core import MetadataField, MetadataFieldType, get_common_metadata_schemas
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import ConfigurationError
 from localvectordb.chunking import ChunkerFactory
-
-@dataclass
-class MetadataSchemaField:
-    """Configuration for a metadata field"""
-    type: str = "text"  # text, integer, real, boolean, date, json
-    indexed: bool = False
-    required: bool = False
-    default_value: Any = None
-
-    def validate(self):
-        valid_types = {"text", "integer", "real", "boolean", "date", "json"}
-        if self.type not in valid_types:
-            raise ConfigurationError(f"Invalid metadata field type: {self.type}. Must be one of {valid_types}")
-        return True
 
 
 @dataclass
@@ -177,7 +164,7 @@ class DatabaseSettings:
     chunking_method: str = "sentences"  # Renamed from chunk_method for v2.0
 
     # Default metadata schema for new databases
-    default_metadata_schema: Dict[str, MetadataSchemaField] = field(default_factory=dict)
+    default_metadata_schema: Dict[str, MetadataField] = field(default_factory=dict)
 
     # Migration settings
     migration_auto_detect: bool = True
@@ -224,51 +211,13 @@ class DatabaseSettings:
         for field_name, field_config in self.default_metadata_schema.items():
             if not isinstance(field_name, str) or not field_name:
                 raise ConfigurationError("Metadata field names must be non-empty strings")
-            if isinstance(field_config, MetadataSchemaField):
-                field_config.validate()
 
         return True
 
-    def get_common_metadata_schemas(self) -> Dict[str, Dict[str, MetadataSchemaField]]:
+    @staticmethod
+    def get_common_metadata_schemas() -> Dict[str, Dict[str, MetadataField]]:
         """Get predefined metadata schemas for common use cases"""
-        return {
-            "documents": {
-                "title": MetadataSchemaField(type="text", indexed=True),
-                "author": MetadataSchemaField(type="text", indexed=True),
-                "date": MetadataSchemaField(type="date", indexed=True),
-                "tags": MetadataSchemaField(type="json"),
-                "category": MetadataSchemaField(type="text", indexed=True),
-            },
-            "research_papers": {
-                "title": MetadataSchemaField(type="text", indexed=True),
-                "authors": MetadataSchemaField(type="json", indexed=False),
-                "abstract": MetadataSchemaField(type="text", indexed=True),
-                "publication_date": MetadataSchemaField(type="date", indexed=True),
-                "journal": MetadataSchemaField(type="text", indexed=True),
-                "doi": MetadataSchemaField(type="text", indexed=True),
-                "keywords": MetadataSchemaField(type="json"),
-                "citation_count": MetadataSchemaField(type="integer"),
-            },
-            "code_repository": {
-                "file_path": MetadataSchemaField(type="text", indexed=True),
-                "language": MetadataSchemaField(type="text", indexed=True),
-                "author": MetadataSchemaField(type="text", indexed=True),
-                "last_modified": MetadataSchemaField(type="date", indexed=True),
-                "file_size": MetadataSchemaField(type="integer"),
-                "is_test": MetadataSchemaField(type="boolean", default_value=False),
-                "complexity_score": MetadataSchemaField(type="real"),
-            },
-            "customer_support": {
-                "ticket_id": MetadataSchemaField(type="text", indexed=True),
-                "customer_id": MetadataSchemaField(type="text", indexed=True),
-                "category": MetadataSchemaField(type="text", indexed=True),
-                "priority": MetadataSchemaField(type="text", indexed=True),
-                "status": MetadataSchemaField(type="text", indexed=True),
-                "created_date": MetadataSchemaField(type="date", indexed=True),
-                "resolved_date": MetadataSchemaField(type="date", indexed=True),
-                "satisfaction_score": MetadataSchemaField(type="integer"),
-            }
-        }
+        return get_common_metadata_schemas()
 
 
 @dataclass
@@ -439,9 +388,9 @@ class Config:
                     schema = {}
                     for field_name, field_config in value.items():
                         if isinstance(field_config, dict):
-                            schema[field_name] = MetadataSchemaField(**field_config)
+                            schema[field_name] = MetadataField(**field_config)
                         else:
-                            schema[field_name] = MetadataSchemaField(type=str(field_config))
+                            schema[field_name] = MetadataField(type=str(field_config))
                     setattr(config.database, key, schema)
                 elif hasattr(config.database, key):
                     setattr(config.database, key, value)
@@ -664,8 +613,11 @@ class Config:
                 # Convert to serializable format
                 schema_dict = {}
                 for field_name, field_obj in value.items():
-                    if isinstance(field_obj, MetadataSchemaField):
-                        schema_dict[field_name] = asdict(field_obj)
+                    if isinstance(field_obj, MetadataField):
+                        field_dict = asdict(field_obj)
+                        if hasattr(field_dict['type'], 'value'):
+                            field_dict['type'] = field_dict['type'].value
+                        schema_dict[field_name] = field_dict
                     else:
                         schema_dict[field_name] = field_obj
                 result[f"DB_{key.upper()}"] = schema_dict
@@ -696,8 +648,8 @@ class Config:
         return result
 
     def generate_toml(self) -> str:
-        """Generate enhanced TOML configuration for v2.0."""
-        lines = ["# LocalVectorDB Server Configuration v2.0\n"]
+        """Generate enhanced TOML configuration for v1.0."""
+        lines = ["# LocalVectorDB Server Configuration v1.0\n"]
 
         # Database section
         lines.append("[database]\n")
@@ -722,6 +674,9 @@ class Config:
                     # Format as inline table
                     props = []
                     for prop_key, prop_value in field_config.items():
+                        if prop_key == 'type' and hasattr(prop_value, 'value'):
+                            prop_value = prop_value.value
+
                         if isinstance(prop_value, str):
                             props.append(f'{prop_key} = "{prop_value}"')
                         elif isinstance(prop_value, bool):

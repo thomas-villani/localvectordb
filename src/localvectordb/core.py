@@ -21,10 +21,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple, Literal
+from typing import Any, Dict, List, Optional, Union, Tuple, Literal, Type
 import hashlib
 import json
-import numpy as np
 
 
 class MetadataFieldType(str, Enum):
@@ -40,7 +39,7 @@ class MetadataFieldType(str, Enum):
 @dataclass
 class MetadataField:
     """Definition of a metadata field"""
-    type: MetadataFieldType
+    type: MetadataFieldType | str | Type
     indexed: bool = False
     required: bool = False
     default_value: Any = None
@@ -48,6 +47,16 @@ class MetadataField:
     def __post_init__(self):
         if isinstance(self.type, str):
             self.type = MetadataFieldType(self.type)
+        elif self.type is str:
+            self.type = MetadataFieldType.TEXT
+        elif self.type is int:
+            self.type = MetadataFieldType.INTEGER
+        elif self.type is float:
+            self.type = MetadataFieldType.REAL
+        elif self.type is bool:
+            self.type = MetadataFieldType.BOOLEAN
+        elif self.type in (dict, list):
+            self.type = MetadataFieldType.JSON
 
 
 @dataclass
@@ -237,6 +246,19 @@ class DatabaseSchema:
 
     def _setup_metadata_schema(self, conn: sqlite3.Connection, schema: Dict[str, MetadataField]):
         """Set up metadata schema and add columns to documents table"""
+        # Define reserved column names that cannot be used for metadata fields
+        RESERVED_COLUMNS = {
+            'id', 'content', 'content_hash', 'created_at', 'updated_at'
+        }
+
+        # Validate that no metadata field names conflict with reserved columns
+        for field_name in schema.keys():
+            if field_name.lower() in RESERVED_COLUMNS:
+                raise ValueError(
+                    f"Metadata field name '{field_name}' conflicts with reserved column name. "
+                    f"Reserved columns are: {', '.join(sorted(RESERVED_COLUMNS))}"
+                )
+
         for field_name, field_def in schema.items():
             # Store schema definition
             conn.execute('''
@@ -371,3 +393,62 @@ class ConnectionPool:
             for conn in self._pool:
                 conn.close()
             self._pool.clear()
+            
+
+def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, MetadataField]] | Dict[str, MetadataField]:
+    """Get predefined metadata schemas for common use cases"""
+
+    schemas = {
+        "files": {
+            "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "created_at": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "last_modified": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "mimetype": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER),
+            "tags": MetadataField(type=MetadataFieldType.JSON),
+        },
+        "documents": {
+            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "tags": MetadataField(type=MetadataFieldType.JSON),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+        },
+        "research_papers": {
+            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "authors": MetadataField(type=MetadataFieldType.JSON, indexed=False),
+            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "publication_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "journal": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "doi": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "keywords": MetadataField(type=MetadataFieldType.JSON),
+            "citation_count": MetadataField(type=MetadataFieldType.INTEGER),
+        },
+        "code_repository": {
+            "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "language": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "last_modified": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "file_size": MetadataField(type=MetadataFieldType.INTEGER),
+            "is_test": MetadataField(type=MetadataFieldType.BOOLEAN, default_value=False),
+            "complexity_score": MetadataField(type=MetadataFieldType.REAL),
+        },
+        "customer_support": {
+            "ticket_id": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "customer_id": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "priority": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "status": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "created_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "resolved_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "satisfaction_score": MetadataField(type=MetadataFieldType.INTEGER),
+        }
+    }
+
+    if not schema:
+        return schemas
+    else:
+        if schema not in schemas:
+            raise KeyError(f"Schema `{schema}` was not found in predefined schema templates. Available options: "
+                           f"{', '.join(schemas.keys())}")
+        return schemas.get(schema)
