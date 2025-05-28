@@ -9,7 +9,7 @@
 #
 # src/localvectordb/core.py
 """
-LocalVectorDB v2.0 Core Components
+LocalVectorDB v1.0 Core Components
 
 This module contains the foundational classes and data structures for the new
 document-first architecture.

@@ -7,10 +7,10 @@
 #
 # Contact: thomas.villani@gmail.com
 # 
-# src/localvectordb_server/_keymanager.py
+# src/localvectordb_server/keymanager.py
 
 """
-API Key Management System for LocalVectorDB Server v2.0
+API Key Management System for LocalVectorDB Server v1.0
 
 This module provides secure API key management using SQLite storage with proper
 hashing, expiration, and audit trails. Keys are stored separately from the main
@@ -81,7 +81,7 @@ import sqlite3
 import secrets
 import string
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -112,14 +112,14 @@ class KeyRecord:
         """Check if the key is expired"""
         if not self.expires_at:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
     @property
     def days_until_expiry(self) -> Optional[int]:
         """Get days until expiry, None if no expiration"""
         if not self.expires_at:
             return None
-        delta = self.expires_at - datetime.utcnow()
+        delta = self.expires_at - datetime.now(UTC)
         return max(0, delta.days)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -239,7 +239,7 @@ class KeyManager:
     def _generate_key_id(self) -> str:
         """Generate a unique key ID"""
         # Use timestamp + random suffix for readability
-        timestamp = datetime.utcnow().strftime("%Y%m%d")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d")
         random_suffix = ''.join(secrets.choice(string.ascii_lowercase + string.digits)
                                 for _ in range(6))
         return f"key_{timestamp}_{random_suffix}"
@@ -291,7 +291,7 @@ class KeyManager:
         key_id = self._generate_key_id()
         plain_key = self._generate_api_key()
         key_hash = self._hash_key(plain_key)
-        created_at = datetime.utcnow()
+        created_at = datetime.now(UTC)
 
         expires_at = None
         if expires_days is not None:
@@ -356,7 +356,7 @@ class KeyManager:
                     # Check expiration
                     if row['expires_at']:
                         expires_at = datetime.fromisoformat(row['expires_at'])
-                        if datetime.utcnow() > expires_at:
+                        if datetime.now(UTC) > expires_at:
                             logger.info(f"Key {row['id']} is expired")
                             return False
 
@@ -364,7 +364,7 @@ class KeyManager:
                     if update_last_used:
                         conn.execute("""
                             UPDATE api_keys SET last_used = ? WHERE id = ?
-                        """, (datetime.utcnow().isoformat(), row['id']))
+                        """, (datetime.now(UTC).isoformat(), row['id']))
                         conn.commit()
 
                     logger.debug(f"Key {row['id']} validated successfully")
@@ -425,7 +425,7 @@ class KeyManager:
 
         if not include_expired:
             conditions.append("(expires_at IS NULL OR expires_at > ?)")
-            params.append(datetime.utcnow().isoformat())
+            params.append(datetime.now(UTC).isoformat())
 
         where_clause = ""
         if conditions:
@@ -512,7 +512,7 @@ class KeyManager:
         int
             Number of keys pruned
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         with self._get_connection() as conn:
             if soft_delete:
@@ -556,7 +556,7 @@ class KeyManager:
             stats['active_keys'] = cursor.fetchone()['count']
 
             # Expired keys
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(UTC).isoformat()
             cursor = conn.execute("""
                 SELECT COUNT(*) as count FROM api_keys 
                 WHERE expires_at IS NOT NULL AND expires_at <= ?
@@ -564,7 +564,7 @@ class KeyManager:
             stats['expired_keys'] = cursor.fetchone()['count']
 
             # Keys expiring soon (next 7 days)
-            future = (datetime.utcnow() + timedelta(days=7)).isoformat()
+            future = (datetime.now(UTC) + timedelta(days=7)).isoformat()
             cursor = conn.execute("""
                 SELECT COUNT(*) as count FROM api_keys 
                 WHERE expires_at IS NOT NULL AND expires_at <= ? AND expires_at > ? AND active = TRUE
@@ -572,7 +572,7 @@ class KeyManager:
             stats['expiring_soon'] = cursor.fetchone()['count']
 
             # Recently used keys (last 24 hours)
-            recent = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+            recent = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
             cursor = conn.execute("""
                 SELECT COUNT(*) as count FROM api_keys 
                 WHERE last_used IS NOT NULL AND last_used >= ? AND active = TRUE

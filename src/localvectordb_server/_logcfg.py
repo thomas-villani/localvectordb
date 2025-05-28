@@ -54,6 +54,11 @@ def configure_logging(app: "Flask", log_file: Optional[str] = None):
                 'handlers': ['console'],
                 'level': level,
                 'propagate': False
+            },
+            'localvectordb_server._auth': {
+                'handlers': ['console'],
+                'level': app.config.get("AUTH_LOG_LEVEL", level),
+                'propagate': False
             }
         }
     }

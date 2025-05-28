@@ -9,7 +9,7 @@
 #
 # src/localvectordb/embeddings.py
 """
-Plugin-based embedding providers for LocalVectorDB v2.0
+Plugin-based embedding providers for LocalVectorDB v1.0
 
 This module provides a flexible embedding system with support for multiple providers
 through a registry pattern.

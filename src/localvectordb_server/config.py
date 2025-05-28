@@ -9,24 +9,24 @@
 # 
 # src/localvectordb_server/config.py
 """
-LocalVectorDB Server Configuration Management v2.0
+LocalVectorDB Server Configuration Management v1.0
 
-Enhanced configuration module supporting LocalVectorDB v2.0 features including:
+Enhanced configuration module supporting LocalVectorDB v1.0 features including:
 - Document-first architecture configuration
 - Structured metadata schema defaults
 - Embedding provider configurations
-- Migration settings for v1.x to v2.0
+- Migration settings for v1.x to v1.0
 - Performance tuning options
 - Connection pooling settings
 
 Main Components:
-    - DatabaseSettings: Enhanced database configuration with v2.0 features
+    - DatabaseSettings: Enhanced database configuration with v1.0 features
     - EmbeddingSettings: Dedicated embedding provider configuration
     - ServerSettings: Server-specific configuration including security settings
-    - MigrationSettings: Settings for handling v1.x to v2.0 migrations
+    - MigrationSettings: Settings for handling v1.x to v1.0 migrations
     - Config: Main configuration container with methods for loading and saving
 
-New v2.0 Features:
+New v1.0 Features:
     - Default metadata schemas for common use cases
     - Embedding provider plugin configuration
     - Connection pooling settings
@@ -34,7 +34,7 @@ New v2.0 Features:
     - Automatic migration detection and handling
 
 Environment Variables:
-    All v1.x environment variables are supported, plus new v2.0 variables:
+    All v1.x environment variables are supported, plus new v1.0 variables:
     - LVDB_DATABASE_DEFAULT_METADATA_SCHEMA
     - LVDB_DATABASE_CONNECTION_POOL_SIZE
     - LVDB_DATABASE_ENABLE_GPU
@@ -45,8 +45,10 @@ Environment Variables:
     - LVDB_MIGRATION_AUTO_DETECT
     - LVDB_MIGRATION_BACKUP_ON_MIGRATE
 
-Example v2.0 Configuration:
-    ```toml
+Example v1.0 Configuration::
+
+.. code-block: toml
+
     [database]
     root_dir = "./.lvdb"
     timeout = 300
@@ -87,7 +89,7 @@ Example v2.0 Configuration:
     auto_detect = true
     backup_on_migrate = true
     backup_dir = "./backups"
-    ```
+
 """
 
 #  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
@@ -100,7 +102,7 @@ from typing import Dict, List, Union, Any, Optional, get_type_hints
 
 import click
 
-from localvectordb.core import MetadataField, MetadataFieldType, get_common_metadata_schemas
+from localvectordb.core import MetadataField, get_common_metadata_schemas
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import ConfigurationError
 from localvectordb.chunking import ChunkerFactory
@@ -114,8 +116,8 @@ class EmbeddingSettings:
     base_url: Optional[str] = None  # Provider-specific base URL
     api_key: Optional[str] = None  # API key for providers that need it
     batch_size: int = 64
-    timeout: int = 30  # Request timeout in seconds
-    max_retries: int = 3
+    timeout: int = 30  # Request timeout in seconds - TODO: implement this
+    max_retries: int = 3  # TODO: implement this.
 
     # Provider-specific configurations
     config: Dict[str, Any] = field(default_factory=dict)
@@ -145,7 +147,7 @@ class EmbeddingSettings:
 
 @dataclass
 class DatabaseSettings:
-    """Enhanced settings for database operations with v2.0 support."""
+    """Enhanced settings for database operations with v1.0 support."""
     root_dir: str = "./.lvdb"
     timeout: int = 300  # seconds
     connection_pool_size: int = 10
@@ -157,11 +159,11 @@ class DatabaseSettings:
     auto_save_interval: int = 300  # Auto-save interval in seconds (0 = disabled)
 
     # Default database parameters when creating new ones
-    chunk_size: int = 500  # Renamed from chunk_tokens for v2.0
+    chunk_size: int = 500  # Renamed from chunk_tokens for v1.0
     chunk_overlap: int = 1
     embedding_model: str = "nomic-embed-text"  # Deprecated: use EmbeddingSettings
     provider: str = "ollama"  # Deprecated: use EmbeddingSettings
-    chunking_method: str = "sentences"  # Renamed from chunk_method for v2.0
+    chunking_method: str = "sentences"  # Renamed from chunk_method for v1.0
 
     # Default metadata schema for new databases
     default_metadata_schema: Dict[str, MetadataField] = field(default_factory=dict)
@@ -231,17 +233,26 @@ class ServerSettings:
     # Performance settings
     max_request_size: int = 100 * 1024 * 1024  # 100MB default
     request_timeout: int = 300  # 5 minutes default
-    worker_count: Optional[int] = None  # None = auto-detect
+    # worker_count: Optional[int] = None  # None = auto-detect
 
-    # Feature flags
-    enable_async_processing: bool = True
-    enable_request_logging: bool = True
-    enable_performance_metrics: bool = False
+    # Feature flags (not yet implemented)
+    # enable_async_processing: bool = True
+    # enable_request_logging: bool = True
+    # enable_performance_metrics: bool = False
 
     # Security settings
     require_api_key: bool = False
-    authorized_api_keys: List[str] = field(default_factory=list)
+    # authorized_api_keys: List[str] = field(default_factory=list)
     api_key_header: str = "Authorization"  # Header name for API key
+
+    # NEW: Key Management Settings
+    key_management_enabled: bool = True
+    key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
+    default_key_expiry_days: Optional[int] = None  # None = no default expiration
+    auto_prune_expired_keys: bool = False  # Automatically remove expired keys
+    key_audit_logging: bool = True  # Log key usage for audit trails
+    auth_log_level: str = "INFO"
+    warn_expiring_days: int = 7  # Days before expiry to warn about
 
     # CORS settings
     cors_enabled: bool = True
@@ -280,16 +291,30 @@ class ServerSettings:
         if self.request_timeout <= 0:
             raise ConfigurationError("request_timeout must be a positive integer")
 
-        if self.worker_count is not None and self.worker_count <= 0:
-            raise ConfigurationError("worker_count must be a positive integer or None")
+        # if self.worker_count is not None and self.worker_count <= 0:
+        #     raise ConfigurationError("worker_count must be a positive integer or None")
 
         # Validate API key settings if required
         if self.require_api_key:
-            if not isinstance(self.authorized_api_keys, list) or len(self.authorized_api_keys) == 0:
-                raise ConfigurationError("When require_api_key is True, authorized_api_keys must be a non-empty list")
-            for key in self.authorized_api_keys:
-                if not isinstance(key, str) or not key:
-                    raise ConfigurationError("Each API key must be a non-empty string")
+            # The followins is the old insecure way, now removed
+            # if not isinstance(self.authorized_api_keys, list) or len(self.authorized_api_keys) == 0:
+            #     raise ConfigurationError("When require_api_key is True, authorized_api_keys must be a non-empty list")
+            # for key in self.authorized_api_keys:
+            #     if not isinstance(key, str) or not key:
+            #         raise ConfigurationError("Each API key must be a non-empty string")
+
+            if self.default_key_expiry_days is not None and self.default_key_expiry_days <= 0:
+                raise ConfigurationError("default_key_expiry_days must be a positive integer or None")
+
+            if self.warn_expiring_days <= 0:
+                raise ConfigurationError("warn_expiring_days must be a positive integer")
+
+            # Validate key database path if specified
+        if self.key_database_path:
+            try:
+                Path(self.key_database_path).parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                raise ConfigurationError(f"Invalid key_database_path: {e}")
 
         # Validate CORS allowed origins
         if isinstance(self.cors_allowed_origins, str):
@@ -314,46 +339,44 @@ class ServerSettings:
         return True
 
 
-@dataclass
-class MigrationSettings:
-    """Settings for handling v1.x to v2.0 migrations."""
-    auto_detect: bool = True
-    backup_on_migrate: bool = True
-    backup_dir: str = "./backups"
-    preserve_v1_metadata: bool = True
-    default_v2_schema: str = "documents"  # Use predefined schema
-    migration_batch_size: int = 1000
-    verify_migration: bool = True
-
-    def validate(self):
-        if not isinstance(self.backup_dir, str) or not self.backup_dir:
-            raise ConfigurationError("backup_dir must be a non-empty string")
-
-        if self.migration_batch_size <= 0:
-            raise ConfigurationError("migration_batch_size must be a positive integer")
-
-        return True
+# @dataclass
+# class MigrationSettings:
+#     """Settings for handling v1.x to v1.0 migrations."""
+#     auto_detect: bool = True
+#     backup_on_migrate: bool = True
+#     backup_dir: str = "./backups"
+#     preserve_v1_metadata: bool = True
+#     default_v2_schema: str = "documents"  # Use predefined schema
+#     migration_batch_size: int = 1000
+#     verify_migration: bool = True
+#
+#     def validate(self):
+#         if not isinstance(self.backup_dir, str) or not self.backup_dir:
+#             raise ConfigurationError("backup_dir must be a non-empty string")
+#
+#         if self.migration_batch_size <= 0:
+#             raise ConfigurationError("migration_batch_size must be a positive integer")
+#
+#         return True
 
 
 @dataclass
 class Config:
-    """Main configuration container with v2.0 enhancements."""
+    """Main configuration container with v1.0 enhancements."""
     database: DatabaseSettings = field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
-    migration: MigrationSettings = field(default_factory=MigrationSettings)
 
     def validate(self):
         return (
                 self.database.validate() and
                 self.embedding.validate() and
-                self.server.validate() and
-                self.migration.validate()
+                self.server.validate()
         )
 
     @classmethod
     def from_file(cls, path: str) -> "Config":
-        """Load configuration from file with v2.0 enhancements."""
+        """Load configuration from file with v1.0 enhancements."""
         path = Path(path)
 
         if not path.exists():
@@ -372,7 +395,7 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: dict):
-        """Create config from dictionary with v2.0 support."""
+        """Create config from dictionary with v1.0 support."""
         if not data or not isinstance(data, dict):
             raise TypeError("Configuration `data` must be a dictionary")
 
@@ -413,12 +436,6 @@ class Config:
                 elif hasattr(config.server, key):
                     setattr(config.server, key, value)
 
-        # Process migration settings
-        if 'migration' in data and isinstance(data['migration'], dict):
-            for key, value in data['migration'].items():
-                if hasattr(config.migration, key):
-                    setattr(config.migration, key, value)
-
         return config
 
     @classmethod
@@ -450,7 +467,7 @@ class Config:
 
     @classmethod
     def _from_ini(cls, path: Path) -> "Config":
-        """Load configuration from INI file with v2.0 support."""
+        """Load configuration from INI file with v1.0 support."""
         import configparser
         parser = configparser.ConfigParser()
         parser.read(path)
@@ -475,7 +492,7 @@ class Config:
             'database': config.database,
             'embedding': config.embedding,
             'server': config.server,
-            'migration': config.migration
+            # 'migration': config.migration
         }
 
         for section_name, section_obj in sections.items():
@@ -499,7 +516,7 @@ class Config:
 
     @classmethod
     def from_env(cls, prefix: str = "LVDB_") -> "Config":
-        """Load configuration from environment variables with v2.0 support."""
+        """Load configuration from environment variables with v1.0 support."""
         config = cls()
 
         # Enhanced environment variable processing
@@ -514,7 +531,7 @@ class Config:
             name = env_name[len(prefix):].lower()
             parts = name.split('_', 2)  # Allow for deeper nesting
 
-            if len(parts) >= 2 and parts[0] in ['database', 'embedding', 'server', 'migration']:
+            if len(parts) >= 2 and parts[0] in ['database', 'embedding', 'server']:
                 section_name = parts[0]
                 key = '_'.join(parts[1:])
                 section_obj = getattr(config, section_name)
@@ -544,7 +561,7 @@ class Config:
 
     @staticmethod
     def _convert_env_value(value: str, obj: Any, key: str) -> Any:
-        """Enhanced environment variable conversion with v2.0 support."""
+        """Enhanced environment variable conversion with v1.0 support."""
         if not hasattr(obj, key):
             return value
 
@@ -603,8 +620,33 @@ class Config:
 
         return value
 
+    @classmethod
+    def update_from_dict(cls, config, update_map: dict):
+        new_cfg = cls()
+
+        for key, values in update_map.items():
+            if not isinstance(values, dict):
+                raise ValueError("Expected dict of dicts for `update_from_dict`.")
+
+            if key == "database":
+                cfg_obj = new_cfg.database
+            elif key == "embedding":
+                cfg_obj = new_cfg.embedding
+            elif key == "server":
+                cfg_obj = new_cfg.server
+            else:
+                raise KeyError(f"Expected keys: 'database', 'embedding', 'server', found: {key}")
+
+            for cfg_key, cfg_value in values.items():
+                if hasattr(cfg_obj, cfg_key):
+                    setattr(cfg_obj, cfg_key, cfg_value)
+                else:
+                    raise KeyError(f"Configuration setting `{cfg_key}` does not exist.")
+
+        return config.merge(new_cfg)
+
     def to_flask_config(self) -> Dict[str, Any]:
-        """Convert to format expected by Flask app.config with v2.0 support."""
+        """Convert to format expected by Flask app.config with v1.0 support."""
         result = {}
 
         # Database settings with DB_ prefix (maintaining backward compatibility)
@@ -633,17 +675,18 @@ class Config:
             "LOG_LEVEL": self.server.log_level,
             "LOG_FORMAT": self.server.log_format,
             "REQUIRE_API_KEY": self.server.require_api_key,
-            "AUTHORIZED_API_KEYS": self.server.authorized_api_keys,
+            # "AUTHORIZED_API_KEYS": self.server.authorized_api_keys,
             "CORS_ENABLED": self.server.cors_enabled,
             "CORS_ALLOWED_ORIGINS": self.server.cors_allowed_origins,
             "MAX_REQUEST_SIZE": self.server.max_request_size,
             "REQUEST_TIMEOUT": self.server.request_timeout,
-            "WORKER_COUNT": self.server.worker_count,
+            "AUTH_LOG_LEVEL": self.server.auth_log_level
+            # "WORKER_COUNT": self.server.worker_count,
         })
 
         # Migration settings with MIGRATION_ prefix
-        for key, value in asdict(self.migration).items():
-            result[f"MIGRATION_{key.upper()}"] = value
+        # for key, value in asdict(self.migration).items():
+        #     result[f"MIGRATION_{key.upper()}"] = value
 
         return result
 
@@ -754,14 +797,14 @@ class Config:
             lines.append("\n")
 
         # Migration section
-        lines.append("[migration]\n")
-        for key, value in asdict(self.migration).items():
-            if isinstance(value, str):
-                lines.append(f'{key} = "{value}"\n')
-            elif isinstance(value, bool):
-                lines.append(f'{key} = {str(value).lower()}\n')
-            else:
-                lines.append(f'{key} = {value}\n')
+        # lines.append("[migration]\n")
+        # for key, value in asdict(self.migration).items():
+        #     if isinstance(value, str):
+        #         lines.append(f'{key} = "{value}"\n')
+        #     elif isinstance(value, bool):
+        #         lines.append(f'{key} = {str(value).lower()}\n')
+        #     else:
+        #         lines.append(f'{key} = {value}\n')
 
         return "".join(lines)
 
@@ -775,7 +818,7 @@ class Config:
             raise ConfigurationError(f"Unknown schema '{schema_name}'. Available: {available}")
 
     def merge(self, other: "Config") -> "Config":
-        """Enhanced merge with v2.0 support."""
+        """Enhanced merge."""
         result = Config()
 
         # Helper function to merge dataclass fields
@@ -809,7 +852,7 @@ class Config:
         merge_dataclass(self.database, other.database, result.database)
         merge_dataclass(self.embedding, other.embedding, result.embedding)
         merge_dataclass(self.server, other.server, result.server)
-        merge_dataclass(self.migration, other.migration, result.migration)
+        # merge_dataclass(self.migration, other.migration, result.migration)
 
         return result
 
@@ -820,7 +863,7 @@ def load_config(
         verbose: bool = False,
         apply_schema: Optional[str] = None
 ) -> Config:
-    """Enhanced config loading with v2.0 support."""
+    """Enhanced config loading with v1.0 support."""
     # Start with default config
     config = Config()
 

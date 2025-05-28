@@ -115,7 +115,7 @@ Examples
 
 .. Note::
 
-    This client requires a running LocalVectorDB v2.0 server. The interface is designed
+    This client requires a running LocalVectorDB v1.0 server. The interface is designed
     to be a drop-in replacement for the new LocalVectorDB, allowing code to work with
     either local or remote databases with minimal changes.
 """
@@ -206,9 +206,9 @@ class QueryResult:
 
 
 class RemoteVectorDB:
-    """Client for interacting with a LocalVectorDB v2.0 server.
+    """Client for interacting with a LocalVectorDB v1.0 server.
 
-    This client provides the same document-focused interface as LocalVectorDB v2.0
+    This client provides the same document-focused interface as LocalVectorDB v1.0
     but connects to a remote server via HTTP.
 
     Parameters

@@ -9,7 +9,7 @@
 #
 # src/localvectordb/chunking.py
 """
-Position-tracking chunking system for LocalVectorDB v2.0
+Position-tracking chunking system for LocalVectorDB v1.0
 
 This module provides chunkers that track exact positions in the original document,
 enabling perfect reconstruction and precise highlighting.

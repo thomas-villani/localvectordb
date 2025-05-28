@@ -9,9 +9,9 @@
 # 
 # src/localvectordb_server/routes.py
 """
-localvectordb_server/routes.py - LocalVectorDB v2.0 API Routes
+localvectordb_server/routes.py - LocalVectorDB v1.0 API Routes
 
-Updated API routes for LocalVectorDB v2.0 with document-first architecture,
+Updated API routes for LocalVectorDB v1.0 with document-first architecture,
 unified query interface, and structured metadata support.
 """
 

@@ -8,7 +8,7 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb/factory.py
-"""Factory function for LocalVectorDB v2.0
+"""Factory function for LocalVectorDB v1.0
 
 This module provides a factory function that automatically chooses between
 local and remote database implementations based on the base_path parameter.
@@ -164,7 +164,7 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs):
                 "Make sure 'httpx' is installed."
             ) from e
     else:
-        # Local database - use LocalVectorDB v2.0
+        # Local database - use LocalVectorDB v1.0
 
         # Filter out RemoteVectorDB-specific kwargs that don't apply to LocalVectorDB
         local_kwargs = {k: v for k, v in kwargs.items()

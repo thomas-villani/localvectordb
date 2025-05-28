@@ -11,7 +11,7 @@
 """
 LocalVectorDB v1.0
 
-This module contains the main LocalVectorDB v2.0 implementation with:
+This module contains the main LocalVectorDB v1.0 implementation with:
 - Document-first API that hides chunking complexity
 - Direct SQLite implementation
 - Unified query interface with normalized scoring
@@ -49,7 +49,7 @@ class LocalVectorDB:
     """
     Document-first vector database with SQLite + FAISS + embeddings
 
-    This is the main interface for LocalVectorDB v2.0, designed around documents
+    This is the main interface for LocalVectorDB v1.0, designed around documents
     rather than chunks. All chunking is handled internally.
 
     Parameters
