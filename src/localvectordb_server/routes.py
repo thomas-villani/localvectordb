@@ -64,8 +64,8 @@ def serialize_query_result(result) -> Dict[str, Any]:
     if result.position:
         data["position"] = result.position.to_dict()
 
-    if result.highlights:
-        data["highlights"] = result.highlights
+    # if result.highlights:
+    #     data["highlights"] = result.highlights
 
     return data
 
@@ -132,11 +132,11 @@ def handle_database_error(error):
     return jsonify({"error": str(error), "type": "database_error"}), 500
 
 
-@api.errorhandler(Exception)
-def handle_unexpected_error(error):
-    """Handle unexpected errors"""
-    logger.exception("Unexpected error occurred")
-    return jsonify({"error": f"An unexpected error occurred: {str(repr(error))}"}), 500
+# @api.errorhandler(Exception)
+# def handle_unexpected_error(error):
+#     """Handle unexpected errors"""
+#     logger.exception("Unexpected error occurred")
+#     return jsonify({"error": f"An unexpected error occurred: {str(repr(error))}"}), 500
 
 
 # Database Management Routes
@@ -259,7 +259,7 @@ def get_database_info(db_name):
 
     except Exception as e:
         logger.error(f"Error getting database info for {db_name}: {e}")
-        raise
+        raise e
 
 
 @api.route("/api/v1/<db_name>", methods=["DELETE"])
@@ -552,52 +552,52 @@ def list_documents(db_name):
         raise
 
 
+def search_handler(db_name, search_params):
+    """Unified query interface for all search types"""
+    if not search_params:
+        raise BadRequest("No query provided")
+
+    query_text = search_params.get("query")
+    if not query_text:
+        raise BadRequest("No query text provided")
+
+    # Search parameters
+    search_type = search_params.get("search_type", "vector")  # vector, keyword, hybrid
+    return_type = search_params.get("return_type", "documents")  # documents, chunks
+    k = search_params.get("k", 10)
+    score_threshold = search_params.get("score_threshold", 0.0)
+    filters = search_params.get("filters", search_params.get("metadata_filters"))
+    vector_weight = search_params.get("vector_weight", 0.7)  # For hybrid search
+
+    db = current_app.db_manager.get_db(db_name)
+    results = db.query(
+        query=query_text,
+        search_type=search_type,
+        return_type=return_type,
+        k=k,
+        score_threshold=score_threshold,
+        filters=filters,
+        vector_weight=vector_weight
+    )
+
+    # Serialize results
+    serialized_results = [serialize_query_result(result) for result in results]
+
+    return jsonify({
+        "results": serialized_results,
+        "search_type": search_type,
+        "return_type": return_type,
+        "total_results": len(serialized_results)
+    })
+
+
+
 # Search Routes
 @api.route("/api/v1/<db_name>/query", methods=["POST"])
 @require_api_key
 def query_documents(db_name):
     """Unified query interface for all search types"""
-    data = request.json
-    if not data:
-        raise BadRequest("No query provided")
-
-    query_text = data.get("query")
-    if not query_text:
-        raise BadRequest("No query text provided")
-
-    try:
-        # Search parameters
-        search_type = data.get("search_type", "vector")  # vector, keyword, hybrid
-        return_type = data.get("return_type", "documents")  # documents, chunks
-        k = data.get("k", 10)
-        score_threshold = data.get("score_threshold", 0.0)
-        filters = data.get("filters", data.get("metadata_filters"))
-        vector_weight = data.get("vector_weight", 0.7)  # For hybrid search
-
-        db = current_app.db_manager.get_db(db_name)
-        results = db.query(
-            query=query_text,
-            search_type=search_type,
-            return_type=return_type,
-            k=k,
-            score_threshold=score_threshold,
-            filters=filters,
-            vector_weight=vector_weight
-        )
-
-        # Serialize results
-        serialized_results = [serialize_query_result(result) for result in results]
-
-        return jsonify({
-            "results": serialized_results,
-            "search_type": search_type,
-            "return_type": return_type,
-            "total_results": len(serialized_results)
-        })
-
-    except Exception as e:
-        logger.error(f"Error querying documents: {e}")
-        raise
+    return search_handler(db_name, request.json)
 
 
 @api.route("/api/v1/<db_name>/search/vector", methods=["POST"])
@@ -611,9 +611,7 @@ def vector_search(db_name):
     # Add search_type to data
     data["search_type"] = "vector"
 
-    # Reuse the unified query endpoint
-    request.json = data
-    return query_documents(db_name)
+    return search_handler(db_name, data)
 
 
 @api.route("/api/v1/<db_name>/search/keyword", methods=["POST"])
@@ -627,9 +625,7 @@ def keyword_search(db_name):
     # Add search_type to data
     data["search_type"] = "keyword"
 
-    # Reuse the unified query endpoint
-    request.json = data
-    return query_documents(db_name)
+    return search_handler(db_name, data)
 
 
 @api.route("/api/v1/<db_name>/search/hybrid", methods=["POST"])
@@ -643,9 +639,7 @@ def hybrid_search(db_name):
     # Add search_type to data
     data["search_type"] = "hybrid"
 
-    # Reuse the unified query endpoint
-    request.json = data
-    return query_documents(db_name)
+    return search_handler(db_name, data)
 
 
 # Filter and Metadata Routes
@@ -757,7 +751,6 @@ def health_check():
     status = {
         "status": "healthy",
         "version": get_system_version(),
-        "databases": len(current_app.db_manager.list_databases()),
         "ollama_available": check_ollama_service()
     }
     return jsonify(status)

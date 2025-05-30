@@ -119,7 +119,6 @@ Server Configuration
 
    # Security settings
    require_api_key = false
-   authorized_api_keys = []
    api_key_header = "Authorization"
 
    # CORS settings

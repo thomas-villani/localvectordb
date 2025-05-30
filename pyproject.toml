@@ -24,6 +24,10 @@ ollama = "localvectordb.embeddings:OllamaEmbeddings"
 openai = "localvectordb.embeddings:OpenAIEmbeddings"
 mock = "localvectordb.embeddings:MockEmbeddings"
 
+
+[project.scripts]
+lvdb = "localvectordb_server.cli:cli"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -36,6 +40,7 @@ server = [
 ]
 dev = [
     "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
     "sphinx>=8.2.3",
     "sphinx-autodoc-typehints>=3.2.0",
 ]

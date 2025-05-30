@@ -618,7 +618,9 @@ def auth(ctx, config):
 
     from localvectordb_server.config import load_config
     cfg = load_config(config_path)
-    ctx.obj = {'config': cfg, 'config_path': config_path}
+    api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
+
+    ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path}
 
 
 @auth.command('create-key')
@@ -633,8 +635,8 @@ def create_api_key(ctx, description, expires_days, created_by, output):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        config_path = ctx.obj.get('config_path')
-        key_manager = get_key_manager(config_path)
+        api_key_db_path = ctx.obj.get('api_key_db_path')
+        key_manager = get_key_manager(api_key_db_path)
 
         # Create the key
         key_record = key_manager.create_key(
@@ -690,8 +692,8 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        config_path = ctx.obj.get('config_path')
-        key_manager = get_key_manager(config_path)
+        api_key_db_path = ctx.obj.get('api_key_db_path')
+        key_manager = get_key_manager(api_key_db_path)
 
         # Get keys
         keys = key_manager.list_keys(
@@ -781,8 +783,8 @@ def revoke_api_key(ctx, key_id, confirm):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        config_path = ctx.obj.get('config_path')
-        key_manager = get_key_manager(config_path)
+        api_key_db_path = ctx.obj.get('api_key_db_path')
+        key_manager = get_key_manager(api_key_db_path)
 
         # Get key details for confirmation
         key_record = key_manager.get_key(key_id)
@@ -831,8 +833,8 @@ def rotate_api_key(ctx, key_id, output):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        config_path = ctx.obj.get('config_path')
-        key_manager = get_key_manager(config_path)
+        api_key_db_path = ctx.obj.get('api_key_db_path')
+        key_manager = get_key_manager(api_key_db_path)
 
         # Get original key details
         original_key = key_manager.get_key(key_id)
@@ -899,8 +901,8 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
         from localvectordb_server.keymanager import get_key_manager
         from datetime import datetime
 
-        config_path = ctx.obj.get('config_path')
-        key_manager = get_key_manager(config_path)
+        api_key_db_path = ctx.obj.get('api_key_db_path')
+        key_manager = get_key_manager(api_key_db_path)
 
         # Find expired keys
         all_keys = key_manager.list_keys(active_only=False, include_expired=True)
@@ -957,8 +959,8 @@ def show_key_info(ctx, key_id, output):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        config_path = ctx.obj.get('config_path')
-        key_manager = get_key_manager(config_path)
+        api_key_db_path = ctx.obj.get('api_key_db_path')
+        key_manager = get_key_manager(api_key_db_path)
 
         key_record = key_manager.get_key(key_id)
         if not key_record:
@@ -1030,16 +1032,17 @@ def auth_status(ctx, output):
     try:
         cfg = ctx.obj['config']
         config_path = ctx.obj['config_path']
+        api_key_db_path = ctx.obj.get('api_key_db_path')
 
         # Get basic auth status
         auth_enabled = cfg.server.require_api_key
-        config_api_keys = cfg.server.authorized_api_keys
+        # config_api_keys = cfg.server.authorized_api_keys
 
         # Get database key status
         db_status = {"available": False, "stats": {}}
         try:
             from localvectordb_server.keymanager import get_key_manager
-            key_manager = get_key_manager(config_path)
+            key_manager = get_key_manager(api_key_db_path)
             db_status["available"] = True
             db_status["stats"] = key_manager.get_stats()
         except Exception as e:
@@ -1050,10 +1053,6 @@ def auth_status(ctx, output):
             status_data = {
                 "config_file": config_path,
                 "auth_enabled": auth_enabled,
-                "config_keys": {
-                    "count": len(config_api_keys),
-                    "keys_configured": len(config_api_keys) > 0
-                },
                 "database_keys": db_status
             }
             click.echo(json.dumps(status_data, indent=2))
@@ -1063,12 +1062,6 @@ def auth_status(ctx, output):
             click.echo(f"API Authentication: " +
                        click.style(f"{'Enabled' if auth_enabled else 'Disabled'}",
                                    fg="green" if auth_enabled else "red"))
-            click.echo()
-
-            click.secho("Config-based Keys (Legacy):", fg="cyan")
-            click.echo(f"  Count: {len(config_api_keys)}")
-            if len(config_api_keys) > 0:
-                click.secho("  ⚠️  Consider migrating to database-managed keys", fg="yellow")
             click.echo()
 
             click.secho("Database-managed Keys:", fg="cyan")

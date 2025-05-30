@@ -22,6 +22,7 @@ This module contains the main LocalVectorDB v1.0 implementation with:
 
 import hashlib
 import json
+import math
 import sqlite3
 import threading
 import re
@@ -39,7 +40,7 @@ from localvectordb.core import (
 )
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.embeddings import EmbeddingRegistry
-from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError
+from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
@@ -115,9 +116,6 @@ class LocalVectorDB:
             create_if_not_exists: bool = True,
     ):
         self.name = name
-        self.base_path = Path(base_path)
-        self.base_path.mkdir(parents=True, exist_ok=True)
-
         self.is_memory_only = (name == ":memory:" or base_path == ":memory:")
 
         if self.is_memory_only:
@@ -169,11 +167,11 @@ class LocalVectorDB:
         self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
 
         # Initialize schema
-        self.schema.initialize(self.metadata_schema)
+        self.schema.initialize(self.metadata_schema, db_connection=self.connection_pool.get_connection())
 
         # Load existing metadata schema if database already exists
-        if self.db_path.exists():
-            existing_schema = self.schema.load_metadata_schema()
+        if not self.is_memory_only and self.db_path.exists():
+            existing_schema = self.schema.load_metadata_schema(db_connection=self.connection_pool.get_connection())
             self.metadata_schema.update(existing_schema)
 
         # FTS setup
@@ -188,11 +186,15 @@ class LocalVectorDB:
         self._lock = threading.RLock()
 
         # State
-        self._closed = False
+        # self._closed = False
         self._next_doc_id = self._load_next_doc_id()
 
         # Save configuration
         self._save_config()
+
+    @property
+    def closed(self):
+        return self.connection_pool.closed
 
     def _check_fts5_availability(self) -> bool:
         """Check if FTS5 is available in SQLite"""
@@ -290,38 +292,202 @@ class LocalVectorDB:
             self.fts_enabled = False
 
     def _sanitize_fts_query(self, query: str) -> str:
-        """Sanitize query for FTS5 by using simple term matching"""
-        # Split the query into individual terms
-        terms = query.split()
-        if not terms:
+        """
+        Sanitize query for FTS5 while preserving useful search capabilities
+
+        This method tries to balance safety with search effectiveness by:
+        1. Supporting exact phrase matching with quotes
+        2. Using AND logic by default (all terms must match)
+        3. Safely handling FTS5 operators
+        4. Falling back to safe term-by-term search for complex queries
+        """
+        if not query or not query.strip():
             return ""
 
-        # Process each term to ensure safety
-        safe_terms = []
-        for term in terms:
-            # Remove any special FTS5 characters and wrap in quotes
-            clean_term = re.sub(r'[^\w\s]', '', term).strip()
-            if clean_term:
-                safe_terms.append(f'"{clean_term}"')
+        query = query.strip()
 
-        # Join with OR to get any matches
-        return " OR ".join(safe_terms) if safe_terms else ""
+        # If the entire query is already quoted, treat as exact phrase
+        if query.startswith('"') and query.endswith('"') and query.count('"') == 2:
+            # Validate the phrase doesn't contain FTS5 special chars that could break things
+            inner_query = query[1:-1]
+            if self._is_safe_phrase(inner_query):
+                return query
+            else:
+                # Fall back to safe handling
+                return f'"{self._clean_term(inner_query)}"'
+
+        # Check if query contains quotes for phrase matching
+        if '"' in query:
+            return self._handle_phrase_query(query)
+
+        # Check if query contains basic boolean operators
+        if any(op in query.upper() for op in [' AND ', ' OR ', ' NOT ']):
+            return self._handle_boolean_query(query)
+
+        # Simple multi-term query - default to AND behavior for better relevance
+        terms = query.split()
+        if len(terms) == 1:
+            # Single term - clean and return
+            clean_term = self._clean_term(terms[0])
+            return f'"{clean_term}"' if clean_term else ""
+        else:
+            # Multiple terms - use AND logic (all terms must be present)
+            clean_terms = []
+            for term in terms:
+                clean_term = self._clean_term(term)
+                if clean_term:
+                    clean_terms.append(f'"{clean_term}"')
+
+            return " AND ".join(clean_terms) if clean_terms else ""
+
+    @staticmethod
+    def _is_safe_phrase(phrase: str) -> bool:
+        """Check if a phrase is safe to use in FTS5 without additional escaping"""
+        # Avoid phrases with FTS5 special characters that could cause issues
+        dangerous_chars = ['*', ':', '^', '(', ')', '[', ']', '{', '}']
+        return not any(char in phrase for char in dangerous_chars)
+
+    @staticmethod
+    def _clean_term(term: str) -> str:
+        """Clean a single term for safe FTS5 usage"""
+        # Remove FTS5 special characters but preserve basic word characters
+        # Keep unicode word characters, numbers, hyphens, apostrophes
+        clean_term = re.sub(r'[^\w\s\'-]', '', term, flags=re.UNICODE).strip()
+        return clean_term
+
+    def _handle_phrase_query(self, query: str) -> str:
+        """Handle queries that contain quoted phrases"""
+        # Split on quotes to separate phrases from individual terms
+        parts = []
+        in_quote = False
+        current_part = ""
+
+        i = 0
+        while i < len(query):
+            char = query[i]
+            if char == '"':
+                if in_quote:
+                    # End of phrase
+                    if current_part.strip():
+                        clean_phrase = self._clean_term(current_part)
+                        if clean_phrase:
+                            parts.append(f'"{clean_phrase}"')
+                    current_part = ""
+                    in_quote = False
+                else:
+                    # Start of phrase - first process any pending non-quoted content
+                    if current_part.strip():
+                        # Split into terms and add as AND
+                        terms = current_part.split()
+                        for term in terms:
+                            clean_term = self._clean_term(term)
+                            if clean_term:
+                                parts.append(f'"{clean_term}"')
+                    current_part = ""
+                    in_quote = True
+            else:
+                current_part += char
+            i += 1
+
+        # Handle any remaining content
+        if current_part.strip():
+            if in_quote:
+                # Unclosed quote - treat as phrase anyway
+                clean_phrase = self._clean_term(current_part)
+                if clean_phrase:
+                    parts.append(f'"{clean_phrase}"')
+            else:
+                # Regular terms
+                terms = current_part.split()
+                for term in terms:
+                    clean_term = self._clean_term(term)
+                    if clean_term:
+                        parts.append(f'"{clean_term}"')
+
+        return " AND ".join(parts) if parts else ""
+
+    def _handle_boolean_query(self, query: str) -> str:
+        """Handle queries with AND/OR/NOT operators"""
+        # For safety, we'll parse basic boolean queries but fall back to term-by-term
+        # if the query is too complex
+
+        # Replace boolean operators with standardized versions
+        normalized = query.upper()
+        normalized = re.sub(r'\bAND\b', ' AND ', normalized)
+        normalized = re.sub(r'\bOR\b', ' OR ', normalized)
+        normalized = re.sub(r'\bNOT\b', ' NOT ', normalized)
+
+        # Split by operators while preserving them
+        tokens = re.split(r'(\s+(?:AND|OR|NOT)\s+)', normalized)
+
+        # Clean each non-operator token
+        cleaned_tokens = []
+        for token in tokens:
+            token = token.strip()
+            if token in ['AND', 'OR', 'NOT']:
+                cleaned_tokens.append(token)
+            elif token:
+                # Regular term - clean it
+                clean_term = self._clean_term(token)
+                if clean_term:
+                    cleaned_tokens.append(f'"{clean_term}"')
+
+        # Validate the structure (operators should be between terms)
+        if self._is_valid_boolean_structure(cleaned_tokens):
+            return " ".join(cleaned_tokens)
+        else:
+            # Fall back to simple AND of all terms
+            terms = re.split(r'\s+(?:AND|OR|NOT)\s+', query, flags=re.IGNORECASE)
+            clean_terms = []
+            for term in terms:
+                clean_term = self._clean_term(term.strip())
+                if clean_term:
+                    clean_terms.append(f'"{clean_term}"')
+            return " AND ".join(clean_terms) if clean_terms else ""
+
+    def _is_valid_boolean_structure(self, tokens: List[str]) -> bool:
+        """Check if boolean query structure is valid"""
+        if not tokens:
+            return False
+
+        # Should start and end with terms, not operators
+        if tokens[0] in ['AND', 'OR', 'NOT'] or tokens[-1] in ['AND', 'OR']:
+            return False
+
+        # Operators and terms should alternate (roughly)
+        operator_count = sum(1 for token in tokens if token in ['AND', 'OR', 'NOT'])
+        term_count = len(tokens) - operator_count
+
+        # Should have roughly one fewer operator than terms
+        return operator_count <= term_count
 
     def _init_faiss_index(self, enable_gpu: bool):
-        """Initialize FAISS index"""
+        """Initialize FAISS index with ID mapping support"""
         if self.index_path and self.index_path.exists():
             # Load existing index
-            self.index = faiss.read_index(str(self.index_path))
-            logger.info(f"Loaded existing FAISS index with {self.index.ntotal} vectors")
+            loaded_index = faiss.read_index(str(self.index_path))
+
+            # Check if it's already an IndexIDMap
+            if hasattr(loaded_index, 'id_map'):
+                self.index = loaded_index
+                logger.info(f"Loaded existing FAISS IndexIDMap with {self.index.ntotal} vectors")
+            else:
+                raise DatabaseError("Expected FAISS index to have `id_map` attribute. Invalid faiss index!")
+
         else:
-            # Create new index
-            self.index = faiss.IndexFlatL2(self.embedding_dimension)
-            logger.info(f"Created new FAISS index with dimension {self.embedding_dimension}")
+            # Create new index with ID mapping
+            base_index = faiss.IndexFlatL2(self.embedding_dimension)
+            self.index = faiss.IndexIDMap(base_index)
+            logger.info(f"Created new FAISS IndexIDMap with dimension {self.embedding_dimension}")
 
         # GPU setup
         if enable_gpu and faiss.get_num_gpus() > 0:
-            self.index = faiss.index_cpu_to_all_gpus(self.index)
-            logger.info("Moved FAISS index to GPU")
+            # Note: GPU indices may not support all IndexIDMap operations
+            try:
+                self.index = faiss.index_cpu_to_all_gpus(self.index)
+                logger.info("Moved FAISS index to GPU")
+            except Exception as e:
+                logger.warning(f"Could not move IndexIDMap to GPU: {e}")
         elif enable_gpu:
             logger.warning("GPU requested but no GPUs available")
 
@@ -521,8 +687,24 @@ class LocalVectorDB:
                 embedding_idx = 0
 
                 for doc_text, metadata, doc_id, content_hash in docs_to_process:
+                    # Get old FAISS IDs before deletion
+                    old_faiss_ids = []
+                    cursor = conn.execute(
+                        'SELECT faiss_id FROM chunks WHERE document_id = ? AND faiss_id IS NOT NULL',
+                        (doc_id,)
+                    )
+                    old_faiss_ids = [row['faiss_id'] for row in cursor.fetchall()]
+
                     # Delete existing document and chunks
                     conn.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
+
+                    # Remove old vectors from FAISS index
+                    if old_faiss_ids and hasattr(self.index, 'remove_ids'):
+                        try:
+                            ids_array = np.array(old_faiss_ids, dtype=np.int64)
+                            self.index.remove_ids(ids_array)
+                        except Exception as e:
+                            logger.warning(f"Failed to remove old vectors from FAISS: {e}")
 
                     # Insert/update document
                     self._insert_document(conn, doc_id, doc_text, content_hash, metadata)
@@ -533,12 +715,19 @@ class LocalVectorDB:
                     # Add chunk embeddings to FAISS index
                     doc_embeddings = embeddings[embedding_idx:embedding_idx + len(doc_chunks)]
                     if len(doc_embeddings) > 0:
+                        # Generate new FAISS IDs
+                        # Use sequential IDs starting from current index size
                         start_faiss_id = self.index.ntotal
-                        self.index.add(doc_embeddings)
+                        new_faiss_ids = np.arange(
+                            start_faiss_id,
+                            start_faiss_id + len(doc_chunks),
+                            dtype=np.int64
+                        )
+                        self.index.add_with_ids(doc_embeddings, new_faiss_ids)
 
                         # Update chunk FAISS IDs
                         for i, chunk in enumerate(doc_chunks):
-                            chunk.faiss_id = start_faiss_id + i
+                            chunk.faiss_id = int(new_faiss_ids[i])
 
                     # Insert chunks
                     for chunk in doc_chunks:
@@ -597,19 +786,53 @@ class LocalVectorDB:
         """Insert a chunk"""
         conn.execute('''
             INSERT INTO chunks 
-            (document_id, chunk_index, content, start_pos, end_pos, start_line, start_col, tokens, faiss_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line, 
+            start_col, end_line, end_col, tokens, faiss_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             doc_id,
             chunk.index,
             chunk.content,
+            chunk.content_hash,
             chunk.position.start,
             chunk.position.end,
             chunk.position.line,
             chunk.position.column,
+            chunk.position.end_line,
+            chunk.position.end_column,
             chunk.tokens,
             chunk.faiss_id
         ))
+
+    def _get_existing_chunks(self, conn: sqlite3.Connection, doc_id: str) -> Dict[str, Chunk]:
+        """Get existing chunks for a document, keyed by content hash"""
+        cursor = conn.execute('''
+            SELECT chunk_index, content, content_hash, start_pos, end_pos, start_line, start_col, tokens, faiss_id
+            FROM chunks 
+            WHERE document_id = ?
+            ORDER BY chunk_index
+        ''', (doc_id,))
+
+        chunks_by_hash = {}
+        for row in cursor.fetchall():
+            position = ChunkPosition(
+                start=row['start_pos'],
+                end=row['end_pos'],
+                line=row['start_line'],
+                column=row['start_col']
+            )
+
+            chunk = Chunk(
+                content=row['content'],
+                position=position,
+                tokens=row['tokens'],
+                index=row['chunk_index'],
+                faiss_id=row['faiss_id'],
+                content_hash=row['content_hash']
+            )
+            chunks_by_hash[chunk.content_hash] = chunk
+
+        return chunks_by_hash
 
     def insert(
             self,
@@ -721,7 +944,7 @@ class LocalVectorDB:
             ids: List[str],
             similarity_threshold: Optional[float] = None
     ) -> List[str]:
-        """Insert a batch of documents with optional similarity filtering"""
+        """Insert a batch of documents with optional similarity filtering and chunk content hashing"""
 
         # Generate chunks for all documents
         all_chunks = []
@@ -750,14 +973,25 @@ class LocalVectorDB:
         # Filter chunks by similarity if threshold provided
         chunks_to_keep = []
         embeddings_to_keep = []
-        docs_with_chunks = set()
+        # docs_with_chunks = set()
 
         if similarity_threshold is not None and self.index.ntotal > 0:
             # Convert similarity threshold to distance threshold
             # similarity = 1 / (1 + distance), so distance = (1/similarity) - 1
             distance_threshold = (1.0 / max(similarity_threshold, 0.001)) - 1.0
 
+            # Build a set of existing chunk hashes for faster lookup
+            existing_chunk_hashes = set()
+            with self.connection_pool.get_connection() as conn:
+                cursor = conn.execute('SELECT DISTINCT content_hash FROM chunks')
+                existing_chunk_hashes = {row['content_hash'] for row in cursor.fetchall()}
+
             for i, (chunk, embedding, doc_info) in enumerate(zip(all_chunks, embeddings, doc_chunk_mapping)):
+                # First check if we already have a chunk with identical content
+                if chunk.content_hash in existing_chunk_hashes:
+                    logger.debug(f"Skipping chunk with identical content (hash: {chunk.content_hash[:8]}...)")
+                    continue
+
                 # Search for similar chunks in existing index
                 distances, indices = self.index.search(embedding.reshape(1, -1), k=1)
 
@@ -769,12 +1003,12 @@ class LocalVectorDB:
 
                 chunks_to_keep.append(chunk)
                 embeddings_to_keep.append(embedding)
-                docs_with_chunks.add(doc_info[2])  # doc_id
+                # docs_with_chunks.add(doc_info[2])  # doc_id
         else:
             # Keep all chunks
             chunks_to_keep = all_chunks
             embeddings_to_keep = embeddings
-            docs_with_chunks = {doc_info[2] for doc_info in doc_chunk_mapping}
+            # docs_with_chunks = {doc_info[2] for doc_info in doc_chunk_mapping}
 
         if not chunks_to_keep:
             logger.info("No chunks to insert after similarity filtering")
@@ -808,16 +1042,23 @@ class LocalVectorDB:
                     # Insert document
                     self._insert_document(conn, doc_id, doc_text, content_hash, metadata)
 
-                    # Add chunk embeddings to FAISS index
+                    # Add chunk embeddings to FAISS index with explicit IDs
                     if len(doc_embeddings) > 0:
+                        # Generate sequential FAISS IDs starting from current index size
                         start_faiss_id = self.index.ntotal
-                        self.index.add(doc_embeddings)
+                        new_faiss_ids = np.arange(
+                            start_faiss_id,
+                            start_faiss_id + len(chunks),
+                            dtype=np.int64
+                        )
+                        self.index.add_with_ids(doc_embeddings, new_faiss_ids)
 
                         # Update chunk FAISS IDs
                         for i, chunk in enumerate(chunks):
-                            chunk.faiss_id = start_faiss_id + i
+                            chunk.faiss_id = int(new_faiss_ids[i])
 
-                    # Insert chunks
+
+                    # Insert chunks with their FAISS IDs
                     for chunk in chunks:
                         self._insert_chunk(conn, doc_id, chunk)
 
@@ -828,6 +1069,9 @@ class LocalVectorDB:
             except Exception as e:
                 conn.rollback()
                 raise e
+
+        logger.info(f"Successfully inserted {len(inserted_ids)} documents with "
+                    f"{sum(len(doc_data['chunks']) for doc_data in doc_chunks_map.values())} chunks")
 
         return inserted_ids
 
@@ -956,10 +1200,16 @@ class LocalVectorDB:
                 conn.commit()
 
             # Remove from FAISS index
-            if faiss_ids_to_remove:
-                # Note: FAISS doesn't support efficient removal, so we'd need to rebuild
-                # For now, we'll mark them as removed and rebuild periodically
-                logger.warning(f"FAISS removal not implemented, {len(faiss_ids_to_remove)} vectors orphaned")
+            if faiss_ids_to_remove and hasattr(self.index, 'remove_ids'):
+                try:
+                    # Convert to numpy array of int64
+                    ids_array = np.array(faiss_ids_to_remove, dtype=np.int64)
+                    self.index.remove_ids(ids_array)
+                    logger.info(f"Removed {len(faiss_ids_to_remove)} vectors from FAISS index")
+                except Exception as e:
+                    logger.error(f"Failed to remove vectors from FAISS index: {e}")
+            elif faiss_ids_to_remove:
+                logger.warning(f"FAISS index doesn't support removal, {len(faiss_ids_to_remove)} vectors orphaned")
 
             return deleted_count
 
@@ -1099,8 +1349,12 @@ class LocalVectorDB:
         # Generate query embedding
         query_embedding = self.embedding_provider.embed_sync([query])
 
+        # For document-level results, we need to search more chunks initially
+        # since we'll be deduplicating by document ID
+        search_k = k * 3 if return_type == 'documents' else k * 2
+
         # Search FAISS index
-        distances, indices = self.index.search(query_embedding, k * 2)  # Get extra for filtering
+        distances, indices = self.index.search(query_embedding, search_k)
 
         # Get chunk information
         chunk_results = []
@@ -1129,19 +1383,24 @@ class LocalVectorDB:
                 if score < score_threshold:
                     continue
 
+                # Get document metadata
+                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
+
+                # Apply metadata filters early
+                if filters and not self._matches_filters(doc_metadata, filters):
+                    continue
+
                 # Create chunk position
                 position = ChunkPosition(
                     start=row['start_pos'],
                     end=row['end_pos'],
                     line=row['start_line'],
-                    column=row['start_col']
+                    column=row['start_col'],
+                    end_line=row['end_line'],
+                    end_column=row['end_col']
                 )
 
-                # Get document metadata
-                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
-
                 if return_type == 'chunks':
-                    # TODO: use the officially defined id pattern
                     result = QueryResult(
                         id=f"{row['document_id']}:{row['chunk_index']}",
                         score=score,
@@ -1151,22 +1410,44 @@ class LocalVectorDB:
                         document_id=row['doc_id'],
                         position=position
                     )
-                else:  # documents
-                    result = QueryResult(
-                        id=row['doc_id'],
-                        score=score,
-                        type='document',
-                        content=row['doc_content'],
-                        metadata=doc_metadata
-                    )
-
-                # Apply metadata filters
-                if not filters or self._matches_filters(doc_metadata, filters):
                     chunk_results.append(result)
+                else:  # documents - collect for deduplication
+                    chunk_results.append({
+                        'doc_id': row['doc_id'],
+                        'score': score,
+                        'doc_content': row['doc_content'],
+                        'metadata': doc_metadata,
+                        'chunk_content': row['content'],
+                        'position': position
+                    })
 
-        # Sort by score and limit
-        chunk_results.sort(key=lambda x: x.score, reverse=True)
-        return chunk_results[:k]
+        if return_type == 'chunks':
+            # Sort by score and limit for chunks
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            return chunk_results[:k]
+        else:
+            # For documents, deduplicate and keep best score per document
+            doc_map = {}
+            for chunk_data in chunk_results:
+                doc_id = chunk_data['doc_id']
+                if doc_id not in doc_map or chunk_data['score'] > doc_map[doc_id]['score']:
+                    doc_map[doc_id] = chunk_data
+
+            # Convert to QueryResult objects
+            document_results = []
+            for doc_data in doc_map.values():
+                result = QueryResult(
+                    id=doc_data['doc_id'],
+                    score=doc_data['score'],
+                    type='document',
+                    content=doc_data['doc_content'],
+                    metadata=doc_data['metadata']
+                )
+                document_results.append(result)
+
+            # Sort by score and limit
+            document_results.sort(key=lambda x: x.score, reverse=True)
+            return document_results[:k]
 
     def _keyword_search(
             self,
@@ -1190,7 +1471,7 @@ class LocalVectorDB:
 
         with self.connection_pool.get_connection() as conn:
             if return_type == 'documents':
-                # Search documents directly
+                # Search documents directly - no deduplication needed
                 cursor = conn.execute('''
                     SELECT d.*, rank
                     FROM documents_fts, documents d
@@ -1200,11 +1481,14 @@ class LocalVectorDB:
                     LIMIT ?
                 ''', (sanitized_query, k * 2))  # Get extra for filtering
 
+
                 for row in cursor.fetchall():
                     # Convert FTS5 rank to normalized score (0-1, higher=better)
                     # FTS5 rank is negative (lower is better), convert to positive score
-                    fts_rank = abs(float(row['rank']))
-                    score = max(0.0, 1.0 / (1.0 + fts_rank))
+                    # fts_rank = abs(float(row['rank']))
+                    # score = max(0.0, 1.0 / (1.0 + fts_rank))
+
+                    score = 1.0 - min(1.0, math.exp(float(row['rank'])))
 
                     if score < score_threshold:
                         continue
@@ -1226,7 +1510,7 @@ class LocalVectorDB:
                     results.append(result)
 
             else:  # chunks
-                # Search chunks
+                # Search chunks - get extra for potential deduplication if needed
                 cursor = conn.execute('''
                     SELECT c.*, d.id as doc_id, d.content as doc_content, rank
                     FROM chunks_fts, chunks c, documents d
@@ -1239,8 +1523,9 @@ class LocalVectorDB:
 
                 for row in cursor.fetchall():
                     # Convert FTS5 rank to normalized score
-                    fts_rank = abs(float(row['rank']))
-                    score = max(0.0, 1.0 / (1.0 + fts_rank))
+                    # fts_rank = abs(float(row['rank']))
+                    # score = max(0.0, 1.0 / (1.0 + fts_rank))
+                    score = 1.0 - min(1.0, math.exp(float(row['rank'])))
 
                     if score < score_threshold:
                         continue
@@ -1250,7 +1535,9 @@ class LocalVectorDB:
                         start=row['start_pos'],
                         end=row['end_pos'],
                         line=row['start_line'],
-                        column=row['start_col']
+                        column=row['start_col'],
+                        end_line=row['end_line'],
+                        end_column=row['end_col']
                     )
 
                     # Get document metadata
@@ -1290,7 +1577,8 @@ class LocalVectorDB:
             return self._vector_search(query, return_type, k, score_threshold, filters)
 
         # Get more results than requested for better reranking
-        search_k = min(k * 3, 100)
+        # Increase the multiplier to account for potential deduplication
+        search_k = min(k * 4, 100)
 
         # Perform both searches
         vector_results = self._vector_search(query, return_type, search_k, 0.0, filters)
@@ -1347,8 +1635,8 @@ class LocalVectorDB:
         for result_data in combined_results.values():
             # Weighted average of scores
             final_score = (
-                vector_weight * result_data["vector_score"] +
-                (1.0 - vector_weight) * result_data["keyword_score"]
+                    vector_weight * result_data["vector_score"] +
+                    (1.0 - vector_weight) * result_data["keyword_score"]
             )
 
             if final_score >= score_threshold:
@@ -1508,7 +1796,7 @@ class LocalVectorDB:
         with self._lock:
             if not self.is_memory_only and hasattr(self.index, 'ntotal') and self.index.ntotal > 0:
                 # If using GPU, move to CPU for saving
-                if hasattr(self.index, 'index'):  # GPU index wrapper
+                if hasattr(self.index, 'index') and hasattr(self.index.index, 'device'):  # GPU index wrapper
                     cpu_index = faiss.index_gpu_to_cpu(self.index)
                     faiss.write_index(cpu_index, str(self.index_path))
                 else:
@@ -1516,16 +1804,11 @@ class LocalVectorDB:
 
     def close(self):
         """Close the database"""
-        if not self._closed:
-            self.save()
-            self.connection_pool.close_all()
-            self._closed = True
+        # if not self._closed:
+        self.save()
+        self.connection_pool.close_all()
+        # self._closed = True
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     @property
     def stats(self) -> Dict[str, Any]:

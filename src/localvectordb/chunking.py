@@ -44,21 +44,30 @@ class PositionTrackingChunker(ABC):
         if position > len(text):
             position = len(text)
 
-        lines = text[:position].split('\n')
+        before = text[:position]
+        lines = before.split('\n')
         line = len(lines)
-        column = len(lines[-1]) + 1 if lines else 1
+
+        last_line = lines[-1]
+        if last_line:
+            column = len(last_line) + 1
+        else:
+            column = 1
         return line, column
 
     def _create_chunk(self, text: str, start: int, end: int, index: int) -> Chunk:
         """Create a chunk with position tracking"""
         content = text[start:end]
         line, column = self._calculate_line_column(text, start)
+        end_line, end_column = self._calculate_line_column(text, end)
 
         position = ChunkPosition(
             start=start,
             end=end,
             line=line,
-            column=column
+            column=column,
+            end_line=end_line,
+            end_column=end_column
         )
 
         return Chunk(
@@ -72,8 +81,8 @@ class PositionTrackingChunker(ABC):
 class SentenceChunker(PositionTrackingChunker):
     """Chunk by sentences while preserving boundaries"""
 
-    def __init__(self, max_tokens: int = 500, overlap_sentences: int = 1):
-        super().__init__(max_tokens, overlap_sentences)
+    def __init__(self, max_tokens: int = 500, overlap: int = 0):
+        super().__init__(max_tokens, overlap)
         self.sentence_pattern = re.compile(
             r'(?<=[.!?])\s+|(?<=[.!?]")(?=\s+[A-Z])|(?<=[.!?])\n+',
             re.MULTILINE
@@ -97,6 +106,7 @@ class SentenceChunker(PositionTrackingChunker):
             # Start building a chunk
             chunk_sentences = []
             chunk_tokens = 0
+            start_idx = i
 
             # Add sentences until we hit the token limit
             while i < len(sentences):
@@ -130,10 +140,11 @@ class SentenceChunker(PositionTrackingChunker):
                 chunks.append(chunk)
                 chunk_index += 1
 
-                # Apply overlap by backing up
+                # Apply overlap by setting next chunk start position
                 if self.overlap > 0 and i < len(sentences):
-                    overlap_count = min(self.overlap, len(chunk_sentences))
-                    i -= overlap_count
+                    sentences_processed = i - start_idx
+                    overlap_count = min(self.overlap, sentences_processed - 1)
+                    i = start_idx + max(1, sentences_processed - overlap_count)
 
         return chunks
 
@@ -168,9 +179,24 @@ class SentenceChunker(PositionTrackingChunker):
             end: int,
             base_index: int
     ) -> List[Chunk]:
-        """Split a long sentence by words"""
-        sentence = text[start:end]
-        words = sentence.split()
+        """Split a long sentence by words while preserving whitespace"""
+        # Extract the sentence text
+        sentence_text = text[start:end]
+
+        # Find word boundaries within this sentence
+        word_pattern = re.compile(r'\S+')
+        words = []
+
+        # Find words and their absolute positions in the original text
+        for match in word_pattern.finditer(sentence_text):
+            word_start = start + match.start()  # Absolute position in original text
+            word_end = start + match.end()  # Absolute position in original text
+            word_text = match.group()
+            words.append((word_start, word_end, word_text))
+
+        if not words:
+            # No words found, return the sentence as-is
+            return [self._create_chunk(text, start, end, base_index)]
 
         chunks = []
         chunk_index = base_index
@@ -178,31 +204,44 @@ class SentenceChunker(PositionTrackingChunker):
 
         while i < len(words):
             chunk_words = []
-            chunk_tokens = 0
-            word_positions = []
 
-            # Find positions of words in the sentence
-            current_pos = start
-            for word_idx, word in enumerate(words[i:], i):
-                word_start = text.find(word, current_pos)
-                if word_start == -1:
-                    word_start = current_pos
-                word_end = word_start + len(word)
-                word_positions.append((word_start, word_end))
-                current_pos = word_end
+            # Add words until we hit the token limit
+            while i < len(words):
+                word_start, word_end, word_text = words[i]
 
-                word_tokens = self.count_tokens(word)
+                # For token counting, consider the text that would actually be in the chunk
+                if chunk_words:
+                    test_start = chunk_words[0][0]  # Start of first word in chunk
+                else:
+                    test_start = word_start
 
-                if chunk_tokens + word_tokens > self.max_tokens and chunk_words:
+                # Determine where this chunk would end if we include this word
+                if i + 1 < len(words):
+                    # Next word exists, chunk would end just before next word
+                    test_end = words[i + 1][0]
+                else:
+                    # This is the last word in sentence, chunk would end at end of sentence
+                    test_end = end
+
+                test_text = text[test_start:test_end]
+                test_tokens = self.count_tokens(test_text)
+
+                if test_tokens > self.max_tokens and chunk_words:
                     break
 
-                chunk_words.append(word)
-                chunk_tokens += word_tokens
+                chunk_words.append((word_start, word_end, word_text))
                 i += 1
 
+            # Create chunk if we have words
             if chunk_words:
-                chunk_start = word_positions[0][0]
-                chunk_end = word_positions[-1][1]
+                chunk_start = chunk_words[0][0]  # Start of first word
+
+                # Determine end position: either start of next word or end of sentence
+                if i < len(words):
+                    chunk_end = words[i][0]  # Start of next word
+                else:
+                    chunk_end = end  # End of sentence
+
                 chunk = self._create_chunk(text, chunk_start, chunk_end, chunk_index)
                 chunks.append(chunk)
                 chunk_index += 1
@@ -269,17 +308,17 @@ class TokenChunker(PositionTrackingChunker):
 
 
 class WordChunker(PositionTrackingChunker):
-    """Chunk by word boundaries"""
+    """Chunk by word boundaries while preserving all whitespace"""
 
-    def __init__(self, max_tokens: int = 500, overlap_words: int = 10):
-        super().__init__(max_tokens, overlap_words)
+    def __init__(self, max_tokens: int = 500, overlap: int = 0):
+        super().__init__(max_tokens, overlap)
 
     def chunk(self, text: str) -> List[Chunk]:
-        """Split text by word boundaries"""
+        """Split text by word boundaries while preserving whitespace"""
         if not text.strip():
             return []
 
-        # Split into words while preserving positions
+        # Split into words while preserving positions - using \S+ to find word boundaries
         word_pattern = re.compile(r'\S+')
         words = [(m.start(), m.end(), m.group()) for m in word_pattern.finditer(text)]
 
@@ -292,50 +331,64 @@ class WordChunker(PositionTrackingChunker):
 
         while i < len(words):
             chunk_words = []
-            chunk_tokens = 0
+            start_idx = i
 
             # Add words until we hit the token limit
             while i < len(words):
                 word_start, word_end, word_text = words[i]
 
-                # Estimate tokens (include surrounding context)
+                # For token counting, we need to consider the text that would actually
+                # be in the chunk, including trailing whitespace
                 if chunk_words:
-                    # Get text from first word start to current word end
-                    test_start = chunk_words[0][0]
-                    test_text = text[test_start:word_end]
+                    test_start = chunk_words[0][0]  # Start of first word in chunk
                 else:
-                    test_text = word_text
+                    test_start = word_start
 
+                # Determine where this chunk would end if we include this word
+                if i + 1 < len(words):
+                    # Next word exists, chunk would end just before next word
+                    test_end = words[i + 1][0]
+                else:
+                    # This is the last word, chunk would end at end of text
+                    test_end = len(text)
+
+                test_text = text[test_start:test_end]
                 test_tokens = self.count_tokens(test_text)
 
                 if test_tokens > self.max_tokens and chunk_words:
                     break
 
                 chunk_words.append((word_start, word_end, word_text))
-                chunk_tokens = test_tokens
                 i += 1
 
             # Create chunk if we have words
             if chunk_words:
-                start_pos = chunk_words[0][0]
-                end_pos = chunk_words[-1][1]
+                start_pos = chunk_words[0][0]  # Start of first word
+
+                # Determine end position: either start of next word or end of text
+                if i < len(words):
+                    end_pos = words[i][0]  # Start of next word
+                else:
+                    end_pos = len(text)  # End of text
+
                 chunk = self._create_chunk(text, start_pos, end_pos, chunk_index)
                 chunks.append(chunk)
                 chunk_index += 1
 
-                # Apply overlap by backing up
+                # Apply overlap by backing up some words
                 if self.overlap > 0 and i < len(words):
-                    overlap_count = min(self.overlap, len(chunk_words))
-                    i -= overlap_count
+                    words_processed = i - start_idx
+                    overlap_count = min(self.overlap, words_processed - 1)
+                    # Ensure we always make progress (at least 1 word forward)
+                    i = start_idx + max(1, words_processed - overlap_count)
 
         return chunks
-
 
 class LineChunker(PositionTrackingChunker):
     """Chunk by line boundaries"""
 
-    def __init__(self, max_tokens: int = 500, overlap_lines: int = 2):
-        super().__init__(max_tokens, overlap_lines)
+    def __init__(self, max_tokens: int = 500, overlap: int = 0):
+        super().__init__(max_tokens, overlap)
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by line boundaries"""
@@ -363,6 +416,7 @@ class LineChunker(PositionTrackingChunker):
         while i < len(line_positions):
             chunk_lines = []
             chunk_tokens = 0
+            start_idx = i
 
             # Add lines until we hit the token limit
             while i < len(line_positions):
@@ -394,10 +448,12 @@ class LineChunker(PositionTrackingChunker):
                 chunks.append(chunk)
                 chunk_index += 1
 
-                # Apply overlap by backing up
+                # Apply overlap by setting next chunk start position
+                # Ensure we always make progress (at least 1 line forward)
                 if self.overlap > 0 and i < len(line_positions):
-                    overlap_count = min(self.overlap, len(chunk_lines))
-                    i -= overlap_count
+                    lines_processed = i - start_idx
+                    overlap_count = min(self.overlap, lines_processed - 1)
+                    i = start_idx + max(1, lines_processed - overlap_count)
 
         return chunks
 
@@ -423,13 +479,11 @@ class LineChunker(PositionTrackingChunker):
         return word_chunks
 
 
-# Additional chunkers for the chunking.py module
-
 class CharChunker(PositionTrackingChunker):
     """Chunk by character boundaries with exact position tracking"""
 
-    def __init__(self, max_tokens: int = 500, overlap_chars: int = 50):
-        super().__init__(max_tokens, overlap_chars)
+    def __init__(self, max_tokens: int = 500, overlap: int = 0):
+        super().__init__(max_tokens, overlap)
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by character boundaries"""
@@ -480,8 +534,8 @@ class CharChunker(PositionTrackingChunker):
 class ParagraphChunker(PositionTrackingChunker):
     """Chunk by paragraph boundaries"""
 
-    def __init__(self, max_tokens: int = 500, overlap_paragraphs: int = 1):
-        super().__init__(max_tokens, overlap_paragraphs)
+    def __init__(self, max_tokens: int = 500, overlap: int = 0):
+        super().__init__(max_tokens, overlap)
         # Match paragraph separators (double newlines or more)
         self.paragraph_pattern = re.compile(r'\n\s*\n', re.MULTILINE)
 
@@ -503,6 +557,7 @@ class ParagraphChunker(PositionTrackingChunker):
         while i < len(paragraphs):
             chunk_paragraphs = []
             chunk_tokens = 0
+            start_idx = i
 
             # Add paragraphs until we hit the token limit
             while i < len(paragraphs):
@@ -534,10 +589,12 @@ class ParagraphChunker(PositionTrackingChunker):
                 chunks.append(chunk)
                 chunk_index += 1
 
-                # Apply overlap by backing up
+                # Apply overlap by setting next chunk start position
+                # Ensure we always make progress (at least 1 paragraph forward)
                 if self.overlap > 0 and i < len(paragraphs):
-                    overlap_count = min(self.overlap, len(chunk_paragraphs))
-                    i -= overlap_count
+                    paragraphs_processed = i - start_idx
+                    overlap_count = min(self.overlap, paragraphs_processed - 1)
+                    i = start_idx + max(1, paragraphs_processed - overlap_count)
 
         return chunks
 
@@ -592,7 +649,8 @@ class SectionChunker(PositionTrackingChunker):
 
     def __init__(self, max_tokens: int = 500, overlap: int = 0):
         # Sections typically don't overlap as they're logical units
-        super().__init__(max_tokens, overlap)
+        # Force overlap to 0
+        super().__init__(max_tokens, 0)
         # Match markdown headers (# ## ### etc.) at start of line
         self.header_pattern = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 
@@ -601,31 +659,143 @@ class SectionChunker(PositionTrackingChunker):
         if not text.strip():
             return []
 
-        # Find section boundaries
-        sections = self._split_into_sections(text)
+        # Use a simple approach: treat headers as preferred break points
+        # but don't let headers get orphaned
 
-        if not sections:
-            return [self._create_chunk(text, 0, len(text), 0)]
+        # First, identify all header positions
+        headers = list(self.header_pattern.finditer(text))
+        header_positions = {h.start() for h in headers}
+
+        # If no headers, just use paragraph chunking
+        if not headers:
+            if self.count_tokens(text) <= self.max_tokens:
+                return [self._create_chunk(text, 0, len(text), 0)]
+            else:
+                para_chunker = ParagraphChunker(self.max_tokens, 0)
+                return para_chunker.chunk(text)
 
         chunks = []
         chunk_index = 0
+        current_pos = 0
 
-        for section_start, section_end, section_text, header_level in sections:
-            section_tokens = self.count_tokens(section_text)
+        while current_pos < len(text):
+            chunk_start = current_pos
+            chunk_end = current_pos
+            chunk_tokens = 0
+            last_good_break = current_pos
 
-            # If section exceeds max_tokens, split it further
-            if section_tokens > self.max_tokens:
-                # Try splitting by subsections first, then by paragraphs
-                sub_chunks = self._split_large_section(
-                    text, section_start, section_end, chunk_index, header_level
-                )
-                chunks.extend(sub_chunks)
-                chunk_index += len(sub_chunks)
-            else:
-                # Section fits within token limit
-                chunk = self._create_chunk(text, section_start, section_end, chunk_index)
+            # Try to build a chunk up to max_tokens
+            while chunk_end < len(text):
+                # Find next potential break point (paragraph, line break, or end)
+                next_break = chunk_end
+
+                # Look for next line break
+                next_newline = text.find('\n', chunk_end + 1)
+                if next_newline == -1:
+                    next_break = len(text)
+                else:
+                    next_break = next_newline + 1
+
+                # Check tokens up to this break
+                test_text = text[chunk_start:next_break]
+                test_tokens = self.count_tokens(test_text)
+
+                if test_tokens > self.max_tokens:
+                    # We've exceeded the limit
+                    if chunk_tokens == 0:
+                        # Even the first segment is too large
+                        # We need to break within it
+                        if chunk_end in header_positions:
+                            # We're at a header - find the end of the header line
+                            header_end = text.find('\n', chunk_end)
+                            if header_end == -1:
+                                header_end = len(text)
+                            else:
+                                header_end += 1
+
+                            # Include at least the header and some content
+                            # Find a good break point after the header
+                            search_start = header_end
+                            while search_start < len(text):
+                                search_end = text.find('\n', search_start)
+                                if search_end == -1:
+                                    search_end = len(text)
+                                else:
+                                    search_end += 1
+
+                                if self.count_tokens(text[chunk_start:search_end]) <= self.max_tokens:
+                                    chunk_end = search_end
+                                    search_start = search_end
+                                else:
+                                    break
+
+                            if chunk_end == chunk_start:
+                                # Couldn't find any good break, just take what we can
+                                chunk_end = header_end
+                        else:
+                            # Not at a header, break at word boundary
+                            # This is a fallback for very large paragraphs
+                            words = text[chunk_start:next_break].split()
+                            accumulated = []
+                            for word in words:
+                                accumulated.append(word)
+                                if self.count_tokens(' '.join(accumulated)) > self.max_tokens:
+                                    accumulated.pop()
+                                    break
+
+                            if accumulated:
+                                partial_text = ' '.join(accumulated)
+                                chunk_end = chunk_start + len(partial_text)
+                            else:
+                                # Single word too large? Just take what we can
+                                chunk_end = next_break
+                    else:
+                        # We have some content already
+                        # Check if the next position is a header
+                        if chunk_end in header_positions and last_good_break > chunk_start:
+                            # Don't orphan the header - break before it
+                            chunk_end = last_good_break
+                        else:
+                            # Use the last good break point
+                            chunk_end = last_good_break
+                    break
+
+                # This break point fits
+                chunk_tokens = test_tokens
+                last_good_break = next_break
+                chunk_end = next_break
+
+                # If we're at a header position, mark it as a preferred break
+                # unless it would orphan the header
+                if chunk_end in header_positions:
+                    # Look ahead to see if the section is small enough to include whole
+                    next_header_pos = None
+                    for h in headers:
+                        if h.start() > chunk_end:
+                            next_header_pos = h.start()
+                            break
+
+                    if next_header_pos is None:
+                        next_header_pos = len(text)
+
+                    # If the whole section fits, include it
+                    section_text = text[chunk_end:next_header_pos]
+                    if chunk_tokens + self.count_tokens(section_text) <= self.max_tokens:
+                        chunk_end = next_header_pos
+                        chunk_tokens = self.count_tokens(text[chunk_start:chunk_end])
+                    # Otherwise, we'll break here before the header
+                    else:
+                        break
+
+            # Create the chunk
+            if chunk_end > chunk_start:
+                chunk = self._create_chunk(text, chunk_start, chunk_end, chunk_index)
                 chunks.append(chunk)
                 chunk_index += 1
+                current_pos = chunk_end
+            else:
+                # Shouldn't happen, but safeguard against infinite loop
+                current_pos = min(current_pos + 1, len(text))
 
         return chunks
 
@@ -636,40 +806,30 @@ class SectionChunker(PositionTrackingChunker):
 
         if not headers:
             # No headers found, treat entire text as one section
-            return [(0, len(text), text, 1)]
+            return [(0, len(text), text, 0)]
 
-        # Process each header
+        # Handle text before first header if it exists
+        if headers[0].start() > 0:
+            pre_text = text[:headers[0].start()].strip()
+            if pre_text:
+                sections.append((0, headers[0].start(), text[0:headers[0].start()], 0))
+
+        # Process each header and its content
         for i, header_match in enumerate(headers):
             header_start = header_match.start()
             header_level = len(header_match.group(1))  # Number of # characters
 
-            # Find the end of this section
+            # Find where this section's content ends
+            # Default to the start of the next header or end of text
             if i + 1 < len(headers):
-                next_header = headers[i + 1]
-                next_level = len(next_header.group(1))
-
-                # Section ends at next header of same or higher level
-                section_end = next_header.start()
-                for j in range(i + 1, len(headers)):
-                    check_header = headers[j]
-                    check_level = len(check_header.group(1))
-                    if check_level <= header_level:
-                        section_end = check_header.start()
-                        break
-                    if j == len(headers) - 1:
-                        section_end = len(text)
+                section_end = headers[i + 1].start()
             else:
                 section_end = len(text)
 
-            section_text = text[header_start:section_end].strip()
-            if section_text:
-                sections.append((header_start, section_end, section_text, header_level))
+            # Get the section text (including the header)
+            section_text = text[header_start:section_end]
 
-        # Handle text before first header
-        if headers and headers[0].start() > 0:
-            pre_text = text[:headers[0].start()].strip()
-            if pre_text:
-                sections.insert(0, (0, headers[0].start(), pre_text, 0))
+            sections.append((header_start, section_end, section_text, header_level))
 
         return sections
 
@@ -682,10 +842,11 @@ class SectionChunker(PositionTrackingChunker):
             header_level: int
     ) -> List[Chunk]:
         """Split a large section into smaller chunks"""
+        # Not used in the new implementation, but kept for compatibility
         section_text = text[start:end]
 
-        # Try splitting by paragraphs first
-        para_chunker = ParagraphChunker(self.max_tokens, 0)  # No overlap for sections
+        # Use paragraph chunker
+        para_chunker = ParagraphChunker(self.max_tokens, 0)
         para_chunks = para_chunker.chunk(section_text)
 
         # Adjust positions to be relative to the full text
@@ -701,276 +862,441 @@ class SectionChunker(PositionTrackingChunker):
 class CodeBlockChunker(PositionTrackingChunker):
     """Chunk code while preserving logical code blocks"""
 
-    def __init__(self, max_tokens: int = 500, overlap_lines: int = 2, language: Optional[str] = None):
+    def __init__(self, max_tokens: int = 500, overlap_lines: int = 0, language: Optional[str] = None):
         super().__init__(max_tokens, overlap_lines)
-        self.language = language or self._detect_language_hint()
-
-        # Language-specific patterns for code blocks
-        self.block_patterns = {
-            'python': [
-                r'^\s*(def\s+\w+.*?:)',
-                r'^\s*(class\s+\w+.*?:)',
-                r'^\s*(if\s+.*?:)',
-                r'^\s*(for\s+.*?:)',
-                r'^\s*(while\s+.*?:)',
-                r'^\s*(with\s+.*?:)',
-                r'^\s*(try\s*:)',
-                r'^\s*(except.*?:)',
-                r'^\s*(finally\s*:)',
-            ],
-            'javascript': [
-                r'function\s+\w+\s*\([^)]*\)\s*{',
-                r'class\s+\w+\s*{',
-                r'const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*{',
-                r'if\s*\([^)]*\)\s*{',
-                r'for\s*\([^)]*\)\s*{',
-                r'while\s*\([^)]*\)\s*{',
-            ],
-            'java': [
-                r'(public|private|protected)?\s*(static\s+)?[^{]*\{',
-                r'class\s+\w+[^{]*\{',
-                r'interface\s+\w+[^{]*\{',
-                r'if\s*\([^)]*\)\s*\{',
-                r'for\s*\([^)]*\)\s*\{',
-                r'while\s*\([^)]*\)\s*\{',
-            ],
-            'generic': [
-                r'^\s*\w+.*?\{',
-                r'^\s*(if|for|while).*?\{',
-                r'^\s*(function|class|def)\s+\w+',
-            ]
-        }
+        self.language = language
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split code while preserving logical blocks"""
         if not text.strip():
             return []
 
+        # Check if the entire text fits within the token limit
+        if self.count_tokens(text) <= self.max_tokens:
+            return [self._create_chunk(text, 0, len(text), 0)]
+
         # Detect language if not specified
         if not self.language:
             self.language = self._detect_language(text)
 
-        # Find code blocks
-        blocks = self._identify_code_blocks(text)
+        # Split the text into lines for processing
+        lines = text.splitlines()
 
-        if not blocks:
-            # Fall back to line-based chunking
-            line_chunker = LineChunker(self.max_tokens, self.overlap)
-            return line_chunker.chunk(text)
+        # Get language-specific block patterns
+        block_start_patterns, block_end_patterns = self._get_language_patterns(self.language)
 
-        chunks = []
-        chunk_index = 0
+        # Find code blocks based on language patterns
+        blocks = self._identify_code_blocks(lines, self.language, block_start_patterns, block_end_patterns)
 
-        for block_start, block_end, block_text, block_type in blocks:
-            block_tokens = self.count_tokens(block_text)
-
-            # If block exceeds max_tokens, split it further
-            if block_tokens > self.max_tokens:
-                sub_chunks = self._split_large_block(
-                    text, block_start, block_end, chunk_index
-                )
-                chunks.extend(sub_chunks)
-                chunk_index += len(sub_chunks)
-            else:
-                # Block fits within token limit
-                chunk = self._create_chunk(text, block_start, block_end, chunk_index)
-                chunks.append(chunk)
-                chunk_index += 1
+        # Create chunks from code blocks
+        chunks = self._create_chunks_from_blocks(text, lines, blocks)
 
         return chunks
 
-    def _detect_language_hint(self) -> str:
-        """Get a language hint from context if available"""
-        # This could be enhanced to detect from file extensions, etc.
-        return 'generic'
-
     def _detect_language(self, text: str) -> str:
         """Detect programming language from code patterns"""
-        sample = text[:1000]  # Sample first 1000 chars for detection
+        # Take the first 1000 characters for detection (to avoid performance issues)
+        sample = text[:1000]
 
-        scores = {
-            'python': 0,
-            'javascript': 0,
-            'java': 0,
+        # Define pattern signatures for common languages
+        signatures = {
+            'python': {
+                'patterns': [
+                    r'^\s*def\s+\w+\s*\(.*\):',
+                    r'^\s*class\s+\w+(\s*\(.*\))?:',
+                    r'^\s*import\s+\w+',
+                    r'^\s*from\s+[\w\.]+\s+import',
+                    r'^\s*@\w+'
+                ],
+                'keywords': ['def', 'class', 'import', 'from', 'with', 'as', 'if', 'elif', 'else', 'for', 'while']
+            },
+            'javascript': {
+                'patterns': [
+                    r'function\s+\w+\s*\(.*\)\s*{',
+                    r'const\s+\w+\s*=',
+                    r'let\s+\w+\s*=',
+                    r'var\s+\w+\s*=',
+                    r'import\s+.*\s+from',
+                    r'=>'
+                ],
+                'keywords': ['function', 'const', 'let', 'var', 'import', 'export', 'class', 'return']
+            },
+            'java': {
+                'patterns': [
+                    r'public\s+class',
+                    r'private\s+\w+[\s\w]*\(.*\)\s*{',
+                    r'protected\s+\w+[\s\w]*\(.*\)\s*{',
+                    r'import\s+[\w\.]+;'
+                ],
+                'keywords': ['public', 'private', 'protected', 'class', 'interface', 'extends', 'implements']
+            },
+            'c': {
+                'patterns': [
+                    r'#include',
+                    r'int\s+main\s*\(.*\)\s*{',
+                    r'void\s+\w+\s*\(.*\)\s*{'
+                ],
+                'keywords': ['int', 'char', 'void', 'struct', 'typedef', 'return']
+            },
+            'cpp': {
+                'patterns': [
+                    r'#include',
+                    r'namespace\s+\w+\s*{',
+                    r'class\s+\w+\s*{',
+                    r'std::'
+                ],
+                'keywords': ['class', 'namespace', 'template', 'typename', 'auto', 'public', 'private']
+            },
+            'go': {
+                'patterns': [
+                    r'package\s+\w+',
+                    r'func\s+\w+\s*\(.*\)\s*{',
+                    r'import\s+\('
+                ],
+                'keywords': ['func', 'package', 'import', 'type', 'struct', 'interface']
+            },
+            'ruby': {
+                'patterns': [
+                    r'def\s+\w+',
+                    r'class\s+\w+',
+                    r'module\s+\w+',
+                    r'require\s+',
+                    r'end$'
+                ],
+                'keywords': ['def', 'class', 'module', 'require', 'end', 'attr_']
+            },
+            'php': {
+                'patterns': [
+                    r'<\?php',
+                    r'function\s+\w+\s*\(.*\)\s*{',
+                    r'\$\w+\s*='
+                ],
+                'keywords': ['function', 'class', 'echo', 'public', 'private', 'namespace']
+            }
         }
 
-        # Check for language-specific keywords and patterns
-        if 'def ' in sample or 'import ' in sample or 'from ' in sample:
-            scores['python'] += 3
-        if 'function ' in sample or 'const ' in sample or 'let ' in sample:
-            scores['javascript'] += 3
-        if 'public class' in sample or 'private ' in sample or 'import java' in sample:
-            scores['java'] += 3
+        # Count matches for each language
+        scores = {lang: 0 for lang in signatures}
 
-        # Check indentation style
-        if '    ' in sample and '{' not in sample[:200]:
-            scores['python'] += 2
-        if sample.count('{') > 2:
-            scores['javascript'] += 1
-            scores['java'] += 1
+        # Check for language patterns
+        for lang, sig in signatures.items():
+            for pattern in sig['patterns']:
+                matches = re.findall(pattern, sample, re.MULTILINE)
+                scores[lang] += len(matches) * 2  # Weight patterns more heavily
 
-        # Return language with highest score, or generic
+            # Check for keywords
+            for keyword in sig.get('keywords', []):
+                matches = re.findall(r'\b' + keyword + r'\b', sample)
+                scores[lang] += len(matches)
+
+        # Check for language-specific structural features
+        if '    ' in sample and not '{' in sample[:100]:
+            scores['python'] += 5  # Python-style indentation is distinctive
+
+        if '{' in sample and '}' in sample:
+            for lang in ['javascript', 'java', 'c', 'cpp', 'go', 'php']:
+                scores[lang] += 2
+
+        # Find language with highest score
         best_lang = max(scores.items(), key=lambda x: x[1])
-        return best_lang[0] if best_lang[1] > 2 else 'generic'
 
-    def _identify_code_blocks(self, text: str) -> List[Tuple[int, int, str, str]]:
-        """Identify code blocks in the text"""
+        # If the best score is very low, default to generic
+        if best_lang[1] < 3:
+            return "generic"
+
+        return best_lang[0]
+
+    def _get_language_patterns(self, language: str) -> Tuple[List[str], List[str]]:
+        """Get language-specific block start and end patterns"""
+        patterns = {
+            'python': {
+                'starts': [
+                    r'^\s*def\s+\w+\s*\(.*\):',
+                    r'^\s*class\s+\w+(\s*\(.*\))?:',
+                    r'^\s*if\s+.*:',
+                    r'^\s*while\s+.*:',
+                    r'^\s*for\s+.*:',
+                    r'^\s*try:',
+                    r'^\s*except.*:',
+                    r'^\s*with.*:'
+                ],
+                'ends': []  # Python uses indentation
+            },
+            'javascript': {
+                'starts': [
+                    r'function\s+\w+\s*\(.*\)\s*{',
+                    r'class\s+\w+(\s+extends\s+\w+)?\s*{',
+                    r'[\w\.]+\s*=\s*function\s*\(.*\)\s*{',
+                    r'[\w\.]+\s*=\s*\(.*\)\s*=>\s*{',
+                    r'if\s*\(.*\)\s*{',
+                    r'for\s*\(.*\)\s*{',
+                    r'while\s*\(.*\)\s*{'
+                ],
+                'ends': [r'^(\s*)\}']
+            },
+            'java': {
+                'starts': [
+                    r'(public|private|protected)?\s*\w+(\s+\w+)?\s*\(.*\)\s*{',
+                    r'class\s+\w+(\s+extends\s+\w+)?(\s+implements\s+[\w,\s]+)?\s*{',
+                    r'interface\s+\w+\s*{',
+                    r'if\s*\(.*\)\s*{',
+                    r'for\s*\(.*\)\s*{',
+                    r'while\s*\(.*\)\s*{'
+                ],
+                'ends': [r'^(\s*)\}']
+            },
+            'generic': {
+                'starts': [
+                    r'^\s*\w+\s*\(.*\)\s*{',
+                    r'^\s*class\s+\w+\s*{',
+                    r'^\s*if\s*\(.*\)\s*{',
+                    r'^\s*for\s*\(.*\)\s*{',
+                    r'^\s*while\s*\(.*\)\s*{'
+                ],
+                'ends': [r'^(\s*)\}', r'^(\s*)end']
+            }
+        }
+
+        # Get patterns for the specified language or fall back to generic
+        lang_patterns = patterns.get(language, patterns['generic'])
+        return lang_patterns['starts'], lang_patterns['ends']
+
+    @staticmethod
+    def _identify_code_blocks(
+            lines: List[str], language: str,
+            start_patterns: List[str], end_patterns: List[str]
+            ) -> List[dict]:
+        """Identify code blocks based on language-specific patterns"""
         blocks = []
-        lines = text.splitlines(keepends=True)
+        i = 0
 
-        patterns = self.block_patterns.get(self.language, self.block_patterns['generic'])
+        # Special handling for Python (indentation-based)
+        if language == 'python':
+            while i < len(lines):
+                # Look for block start
+                block_start = None
+                for pattern in start_patterns:
+                    if re.match(pattern, lines[i]):
+                        block_start = i
+                        break
 
-        if self.language == 'python':
-            # Python uses indentation for blocks
-            blocks = self._identify_python_blocks(text, lines)
+                if block_start is not None:
+                    # Find the indentation level of the block start
+                    indent_match = re.match(r'^(\s*)', lines[i])
+                    start_indent = indent_match.group(1) if indent_match else ''
+
+                    # Find where the block ends (when indentation returns to the same level)
+                    j = i + 1
+                    while j < len(lines):
+                        # Skip blank lines or lines with only comments
+                        if not lines[j].strip() or lines[j].strip().startswith('#'):
+                            j += 1
+                            continue
+
+                        # Check if we're back to the original indentation level
+                        indent_match = re.match(r'^(\s*)', lines[j])
+                        current_indent = indent_match.group(1) if indent_match else ''
+
+                        if len(current_indent) <= len(start_indent) and j > i + 1:
+                            # This line has the same or less indentation, marking the end of the block
+                            blocks.append({'start': block_start, 'end': j - 1, 'type': 'block'})
+                            i = j - 1  # Will be incremented in the outer loop
+                            break
+
+                        j += 1
+
+                    # If we reached the end of the file, add the final block
+                    if j == len(lines):
+                        blocks.append({'start': block_start, 'end': j - 1, 'type': 'block'})
+                        i = j - 1
+
+                i += 1
+
+        # For bracket-based languages
         else:
-            # Brace-based languages
-            blocks = self._identify_brace_blocks(text, lines, patterns)
+            bracket_stack = []
 
-        # Fill gaps with non-block content
-        blocks = self._fill_gaps(text, blocks)
+            while i < len(lines):
+                line = lines[i]
 
-        return sorted(blocks, key=lambda x: x[0])
+                # Count opening and closing brackets
+                opening_brackets = line.count('{')
+                closing_brackets = line.count('}')
 
-    def _identify_python_blocks(self, text: str, lines: List[str]) -> List[Tuple[int, int, str, str]]:
-        """Identify Python code blocks based on indentation"""
-        blocks = []
-        current_pos = 0
+                # Check for block starts
+                is_block_start = False
+                for pattern in start_patterns:
+                    if re.search(pattern, line):
+                        is_block_start = True
 
-        for i, line in enumerate(lines):
-            line_start = current_pos
-            line_end = current_pos + len(line)
+                        # Create a new block
+                        if not bracket_stack:
+                            blocks.append({
+                                'start': i,
+                                'end': None,
+                                'bracket_depth': 1,
+                                'type': 'block'
+                            })
+                            bracket_stack.append(len(blocks) - 1)  # Store the index of this block
 
-            # Check if this line starts a block
-            is_block_start = False
-            for pattern in self.block_patterns['python']:
-                if re.match(pattern, line, re.MULTILINE):
-                    is_block_start = True
-                    break
-
-            if is_block_start:
-                # Find the indentation level
-                indent_match = re.match(r'^(\s*)', line)
-                start_indent = len(indent_match.group(1)) if indent_match else 0
-
-                # Find where this block ends
-                block_end = line_end
-                for j in range(i + 1, len(lines)):
-                    next_line = lines[j]
-                    next_pos = sum(len(lines[k]) for k in range(j))
-
-                    # Skip empty lines and comments
-                    if not next_line.strip() or next_line.strip().startswith('#'):
-                        block_end = next_pos + len(next_line)
-                        continue
-
-                    # Check indentation
-                    next_indent_match = re.match(r'^(\s*)', next_line)
-                    next_indent = len(next_indent_match.group(1)) if next_indent_match else 0
-
-                    if next_indent <= start_indent:
                         break
 
-                    block_end = next_pos + len(next_line)
+                # Update bracket depth
+                if opening_brackets > 0 and not is_block_start:
+                    if not bracket_stack:
+                        # This is a new block starting with just a {
+                        blocks.append({
+                            'start': i,
+                            'end': None,
+                            'bracket_depth': opening_brackets,
+                            'type': 'block'
+                        })
+                        bracket_stack.append(len(blocks) - 1)
+                    else:
+                        # Update the bracket depth of the current block
+                        block_idx = bracket_stack[-1]
+                        if block_idx < len(blocks):
+                            blocks[block_idx]['bracket_depth'] += opening_brackets
 
-                block_text = text[line_start:block_end]
-                blocks.append((line_start, block_end, block_text, 'function'))
+                # Check for block ends
+                if closing_brackets > 0:
+                    if bracket_stack:
+                        block_idx = bracket_stack[-1]
+                        if block_idx < len(blocks):
+                            blocks[block_idx]['bracket_depth'] -= closing_brackets
 
-            current_pos = line_end
+                            # If this block is complete, mark its end
+                            if blocks[block_idx]['bracket_depth'] <= 0:
+                                blocks[block_idx]['end'] = i
+                                bracket_stack.pop()
+
+                i += 1
+
+            # Close any unclosed blocks at EOF
+            for block_idx in bracket_stack:
+                if block_idx < len(blocks) and blocks[block_idx]['end'] is None:
+                    blocks[block_idx]['end'] = len(lines) - 1
+
+        # Collect all lines that are not part of a specific block
+        covered_lines = set()
+        for block in blocks:
+            for j in range(block['start'], block['end'] + 1):
+                covered_lines.add(j)
+
+        # Add remaining lines as smaller chunks
+        i = 0
+        while i < len(lines):
+            if i not in covered_lines:
+                # Find the next uncovered range
+                start = i
+                while i < len(lines) and i not in covered_lines:
+                    i += 1
+
+                # Add as a non-block chunk if it contains code
+                if any(line.strip() for line in lines[start:i]):
+                    blocks.append({
+                        'start': start,
+                        'end': i - 1,
+                        'type': 'non-block'
+                    })
+                continue
+            i += 1
+
+        # Sort blocks by start position
+        blocks.sort(key=lambda x: x['start'])
 
         return blocks
 
-    def _identify_brace_blocks(
-            self,
-            text: str,
-            lines: List[str],
-            patterns: List[str]
-    ) -> List[Tuple[int, int, str, str]]:
-        """Identify code blocks based on braces"""
-        blocks = []
-        current_pos = 0
-
-        for i, line in enumerate(lines):
-            line_start = current_pos
-            line_end = current_pos + len(line)
-
-            # Check if this line starts a block
-            is_block_start = False
-            for pattern in patterns:
-                if re.search(pattern, line, re.MULTILINE):
-                    is_block_start = True
-                    break
-
-            if is_block_start and '{' in line:
-                # Find matching closing brace
-                brace_count = line.count('{') - line.count('}')
-                block_end = line_end
-
-                for j in range(i + 1, len(lines)):
-                    next_line = lines[j]
-                    next_pos = sum(len(lines[k]) for k in range(j))
-
-                    brace_count += next_line.count('{') - next_line.count('}')
-                    block_end = next_pos + len(next_line)
-
-                    if brace_count <= 0:
-                        break
-
-                block_text = text[line_start:block_end]
-                blocks.append((line_start, block_end, block_text, 'function'))
-
-            current_pos = line_end
-
-        return blocks
-
-    def _fill_gaps(self, text: str, blocks: List[Tuple[int, int, str, str]]) -> List[Tuple[int, int, str, str]]:
-        """Fill gaps between blocks with non-block content"""
+    def _create_chunks_from_blocks(self, text: str, lines: List[str], blocks: List[dict]) -> List[Chunk]:
+        """Create text chunks from code blocks respecting max_tokens"""
         if not blocks:
-            return [(0, len(text), text, 'code')]
+            return []
 
-        filled_blocks = []
-        last_end = 0
+        chunks = []
+        chunk_index = 0
+        current_chunk_lines = []
+        current_tokens = 0
 
-        for start, end, content, block_type in blocks:
-            # Add gap before this block
-            if start > last_end:
-                gap_text = text[last_end:start].strip()
-                if gap_text:
-                    filled_blocks.append((last_end, start, gap_text, 'code'))
+        # Calculate line positions in the original text
+        line_positions = []
+        current_pos = 0
+        for line in lines:
+            line_positions.append(current_pos)
+            current_pos += len(line) + 1  # +1 for newline character
 
-            filled_blocks.append((start, end, content, block_type))
-            last_end = end
+        for block in blocks:
+            # Get the block lines
+            block_lines = lines[block['start']:block['end'] + 1]
+            block_text = '\n'.join(block_lines)
+            block_tokens = self.count_tokens(block_text)
 
-        # Add final gap
-        if last_end < len(text):
-            gap_text = text[last_end:].strip()
-            if gap_text:
-                filled_blocks.append((last_end, len(text), gap_text, 'code'))
+            # If this block alone exceeds max_tokens, split it further
+            if block_tokens > self.max_tokens:
+                # First, finalize the current chunk
+                if current_chunk_lines:
+                    chunk_start_pos = line_positions[current_chunk_lines[0]['line_idx']]
+                    chunk_end_pos = line_positions[current_chunk_lines[-1]['line_idx']] + len(
+                        current_chunk_lines[-1]['line'])
+                    chunk = self._create_chunk(text, chunk_start_pos, chunk_end_pos, chunk_index)
+                    chunks.append(chunk)
+                    chunk_index += 1
+                    current_chunk_lines = []
+                    current_tokens = 0
 
-        return filled_blocks
+                # Now split the large block using line-based chunking
+                block_start_pos = line_positions[block['start']]
+                block_end_pos = line_positions[block['end']] + len(lines[block['end']])
 
-    def _split_large_block(
-            self,
-            text: str,
-            start: int,
-            end: int,
-            base_index: int
-    ) -> List[Chunk]:
-        """Split a large code block into smaller chunks"""
-        block_text = text[start:end]
+                # Use LineChunker for large blocks
+                large_block_text = text[block_start_pos:block_end_pos]
+                line_chunker = LineChunker(self.max_tokens, self.overlap)
+                line_chunks = line_chunker.chunk(large_block_text)
 
-        # Fall back to line-based chunking for large blocks
-        line_chunker = LineChunker(self.max_tokens, self.overlap)
-        line_chunks = line_chunker.chunk(block_text)
+                # Convert line chunks to proper chunks with adjusted positions
+                for line_chunk in line_chunks:
+                    chunk_start = block_start_pos + large_block_text.index(line_chunk.content)
+                    chunk_end = chunk_start + len(line_chunk.content)
+                    chunk = self._create_chunk(text, chunk_start, chunk_end, chunk_index)
+                    chunks.append(chunk)
+                    chunk_index += 1
+                continue
 
-        # Adjust positions to be relative to the full text
-        for chunk in line_chunks:
-            chunk.position.start += start
-            chunk.position.end += start
-            chunk.index = base_index
-            base_index += 1
+            # Check if adding this block would exceed max_tokens
+            if current_tokens + block_tokens > self.max_tokens and current_chunk_lines:
+                # Finalize current chunk
+                chunk_start_pos = line_positions[current_chunk_lines[0]['line_idx']]
+                chunk_end_pos = line_positions[current_chunk_lines[-1]['line_idx']] + len(
+                    current_chunk_lines[-1]['line'])
+                chunk = self._create_chunk(text, chunk_start_pos, chunk_end_pos, chunk_index)
+                chunks.append(chunk)
+                chunk_index += 1
 
-        return line_chunks
+                # Start a new chunk, with overlap if applicable
+                if self.overlap > 0 and current_chunk_lines:
+                    # Calculate how many lines to include for overlap
+                    overlap_lines = min(self.overlap, len(current_chunk_lines))
+                    current_chunk_lines = current_chunk_lines[-overlap_lines:]
+                    current_tokens = self.count_tokens('\n'.join([line['line'] for line in current_chunk_lines]))
+                else:
+                    current_chunk_lines = []
+                    current_tokens = 0
+
+            # Add block to current chunk
+            for i, line in enumerate(block_lines):
+                current_chunk_lines.append({
+                    'line': line,
+                    'line_idx': block['start'] + i
+                })
+            current_tokens = self.count_tokens('\n'.join([line['line'] for line in current_chunk_lines]))
+
+        # Add the final chunk if not empty
+        if current_chunk_lines:
+            chunk_start_pos = line_positions[current_chunk_lines[0]['line_idx']]
+            chunk_end_pos = line_positions[current_chunk_lines[-1]['line_idx']] + len(current_chunk_lines[-1]['line'])
+            chunk = self._create_chunk(text, chunk_start_pos, chunk_end_pos, chunk_index)
+            chunks.append(chunk)
+
+        return [chunk for chunk in chunks if chunk.content.strip()]
 
 
 class ChunkerFactory:
@@ -1000,19 +1326,23 @@ class ChunkerFactory:
             available = ', '.join(cls.CHUNKERS.keys())
             raise ValueError(f"Unknown chunking method: {method}. Available: {available}")
 
+        if not isinstance(max_tokens, int):
+            raise TypeError(f"`max_tokens` must be a positive integer, found: {type(max_tokens)}")
+        if max_tokens <= 0:
+            raise ValueError(f"`max_tokens` must be a positive integer, found: {max_tokens}")
         chunker_class = cls.CHUNKERS[method]
 
         # Map overlap parameter names based on chunker type
         if method == 'sentences':
-            return chunker_class(max_tokens, overlap_sentences=overlap, **kwargs)
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'words':
-            return chunker_class(max_tokens, overlap_words=overlap, **kwargs)
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'lines':
-            return chunker_class(max_tokens, overlap_lines=overlap, **kwargs)
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'characters':
-            return chunker_class(max_tokens, overlap_chars=overlap, **kwargs)
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'paragraphs':
-            return chunker_class(max_tokens, overlap_paragraphs=overlap, **kwargs)
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'code-blocks':
             return chunker_class(max_tokens, overlap_lines=overlap, **kwargs)
         elif method == 'sections':

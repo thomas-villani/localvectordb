@@ -119,10 +119,7 @@ Examples
     to be a drop-in replacement for the new LocalVectorDB, allowing code to work with
     either local or remote databases with minimal changes.
 """
-
-import json
-from dataclasses import dataclass, field
-from datetime import datetime
+import time
 from typing import Union, Any, Optional, Literal, Dict, List
 
 import httpx
@@ -130,79 +127,8 @@ import httpx
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException
 )
-from localvectordb.core import MetadataField, MetadataFieldType, ChunkPosition
+from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document
 
-
-@dataclass
-class Document:
-    """A document in the remote vector database"""
-    id: str
-    content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    content_hash: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'Document':
-        """Create a Document from a dictionary response"""
-        if not data:
-            return None
-
-        # Parse datetime fields
-        created_at = None
-        if data.get('created_at'):
-            created_at = datetime.fromisoformat(data['created_at'])
-
-        updated_at = None
-        if data.get('updated_at'):
-            updated_at = datetime.fromisoformat(data['updated_at'])
-
-        return cls(
-            id=data['id'],
-            content=data['content'],
-            metadata=data.get('metadata', {}),
-            created_at=created_at,
-            updated_at=updated_at,
-            content_hash=data.get('content_hash')
-        )
-
-
-@dataclass
-class QueryResult:
-    """Result from a search query"""
-    id: str
-    score: float  # Normalized 0-1, higher=better
-    type: Literal['document', 'chunk']
-    content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    # Additional fields for chunks
-    document_id: Optional[str] = None
-    position: Optional[ChunkPosition] = None
-    highlights: List[dict] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'QueryResult':
-        """Create a QueryResult from a dictionary response"""
-        if not data:
-            return None
-
-        # Parse position if present
-        position = None
-        if data.get('position'):
-            position = ChunkPosition.from_dict(data['position'])
-
-        return cls(
-            id=data['id'],
-            score=data.get('score', 0.0),
-            type=data.get('type', 'document'),
-            content=data['content'],
-            metadata=data.get('metadata', {}),
-            document_id=data.get('document_id'),
-            position=position,
-            highlights=data.get('highlights', [])
-        )
 
 
 class RemoteVectorDB:
@@ -277,9 +203,12 @@ class RemoteVectorDB:
         self._enable_gpu = enable_gpu
         self._enable_fts = enable_fts
 
+        self._last_ping_timestamp = 0
+        self._last_ping_status = False
+
         # State variables to be loaded from server
         self._embedding_dimension = 0
-        self._closed = False
+        # self._closed = False
 
         # Check if database exists and create if needed
         if create_if_not_exists:
@@ -287,6 +216,7 @@ class RemoteVectorDB:
         else:
             # Load existing database info
             self._load_database_info()
+
 
     def _get_headers(self) -> dict:
         """Get headers for API requests including authentication if provided"""
@@ -362,6 +292,9 @@ class RemoteVectorDB:
         self._chunk_size = config.get("chunk_size", self._chunk_size)
         self._chunk_overlap = config.get("chunk_overlap", self._chunk_overlap)
         self._enable_fts = config.get("fts_enabled", self._enable_fts)
+
+        self._last_ping_timestamp = time.time()
+        self._last_ping_status = True
 
         # Load metadata schema
         schema_data = config.get("metadata_schema", {})
@@ -817,9 +750,28 @@ class RemoteVectorDB:
         # No-op for remote client - server handles saving automatically
         pass
 
+    @property
+    def closed(self):
+        return self.ping()
+
+    def ping(self, force=False):
+        now = time.time()
+        if now - self._last_ping_timestamp < 60 and self._last_ping_status and not force:
+            return self._last_ping_status
+
+        url = self._build_url(f"/api/v1/databases")
+        with httpx.Client() as client:
+            response = client.post(url, headers=self._get_headers(), timeout=self.request_timeout)
+        databases = response.json().get("databases", [])
+
+        self._last_ping_status = self.name in databases
+        self._last_ping_timestamp = now
+        return self._last_ping_status
+
     def close(self):
         """Close the database connection"""
-        self._closed = True
+        # Doesn't do anything since it's remote!
+        pass
 
     def __enter__(self):
         return self
@@ -877,13 +829,11 @@ class RemoteVectorDB:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        try:
-            with httpx.Client() as client:
-                response = client.get(url, headers=headers)
+        # TODO: handle connection errors and other tpyes of errors a bit better
+        with httpx.Client() as client:
+            response = client.get(url, headers=headers)
 
-            if response.status_code == 200:
-                result = response.json()
-                return db_name in result.get("databases", [])
-            return False
-        except Exception:
-            return False
+        if response.status_code == 200:
+            result = response.json()
+            return db_name in result.get("databases", [])
+        return False

@@ -295,6 +295,7 @@ class MockEmbeddings(EmbeddingProvider):
     def __init__(self, model: str, dimension: int = 384, **kwargs):
         super().__init__(model, **kwargs)
         self._dimension = dimension
+        self.number_of_calls = 0
 
     @property
     def provider_name(self) -> str:
@@ -329,6 +330,7 @@ class MockEmbeddings(EmbeddingProvider):
             embedding = embedding / np.linalg.norm(embedding)
             embeddings.append(embedding)
 
+        self.number_of_calls += 1
         return np.array(embeddings, dtype=np.float32)
 
 

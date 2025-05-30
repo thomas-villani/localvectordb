@@ -17,6 +17,9 @@ local and remote database implementations based on the base_path parameter.
 from typing import Union
 from pathlib import Path
 
+from localvectordb.client import RemoteVectorDB
+from localvectordb.database import LocalVectorDB
+
 
 def VectorDB(name: str, base_path: Union[str, Path], **kwargs):
     """
@@ -144,7 +147,7 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs):
     base_path_str = str(base_path)
 
     # Check if base_path is a URL
-    if base_path_str.startswith(('http://', 'https://')):
+    if base_path_str.lower().startswith(('http://', 'https://')):
         # Remote database - use RemoteVectorDB
         base_url = base_path_str
 
@@ -154,15 +157,8 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs):
                              'connection_pool_size',  # Local-only parameter
                          ]}
 
-        # Import here to avoid circular imports and handle missing dependencies
-        try:
-            from localvectordb.client import RemoteVectorDB
-            return RemoteVectorDB(name=name, base_url=base_url, **remote_kwargs)
-        except ImportError as e:
-            raise ImportError(
-                f"Required dependencies for RemoteVectorDB are not available: {e}. "
-                "Make sure 'httpx' is installed."
-            ) from e
+
+        return RemoteVectorDB(name=name, base_url=base_url, **remote_kwargs)
     else:
         # Local database - use LocalVectorDB v1.0
 
@@ -173,13 +169,4 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs):
                             'request_timeout',  # Remote-only parameter
                         ]}
 
-        # Import here to avoid circular imports and handle missing dependencies
-        try:
-            from localvectordb.database import LocalVectorDB
-            return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)
-        except ImportError as e:
-            raise ImportError(
-                f"Required dependencies for LocalVectorDB are not available: {e}. "
-                "Make sure 'faiss-cpu' (or 'faiss-gpu'), 'sqlite3', and other "
-                "dependencies are installed."
-            ) from e
+        return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)

@@ -324,7 +324,7 @@ class KeyManager:
             plain_key=plain_key  # Only included during creation
         )
 
-    def validate_key(self, key: str, update_last_used: bool = True) -> bool:
+    def validate_key(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> bool:
         """
         Validate an API key
 
@@ -358,6 +358,10 @@ class KeyManager:
                         expires_at = datetime.fromisoformat(row['expires_at'])
                         if datetime.now(UTC) > expires_at:
                             logger.info(f"Key {row['id']} is expired")
+                            if prune_expired:
+                                logger.info(f"Pruning expired key: {row['id']}")
+                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'], ))
+                                conn.commit()
                             return False
 
                     # Update last used timestamp
@@ -582,14 +586,14 @@ class KeyManager:
             return stats
 
 
-def get_key_manager(config_path: Optional[str] = None) -> KeyManager:
+def get_key_manager(key_db_path: Optional[str] = None) -> KeyManager:
     """
     Get a KeyManager instance using configuration
 
     Parameters
     ----------
-    config_path : str, optional
-        Path to configuration file to determine key database location
+    key_db_path : str, optional
+        Path to the key database, defaults to "./.lvdb/api_keys.db"
 
     Returns
     -------
@@ -597,16 +601,5 @@ def get_key_manager(config_path: Optional[str] = None) -> KeyManager:
         Configured KeyManager instance
     """
     # Default key database location
-    key_db_path = "./.lvdb/api_keys.db"
-
-    if config_path:
-        try:
-            from localvectordb_server.config import load_config
-            config = load_config(config_path)
-            # Store keys database in same directory as vector databases
-            db_root = Path(config.database.root_dir)
-            key_db_path = db_root / "api_keys.db"
-        except Exception as e:
-            logger.warning(f"Could not load config for key database path: {e}")
-
+    key_db_path = key_db_path or "./.lvdb/api_keys.db"
     return KeyManager(str(key_db_path))

@@ -31,6 +31,9 @@ Quick Installation
     # Development installation
     pip install localvectordb[dev]
 
+    # The whole kit and kaboodle:
+    pip install localvectordb[all]
+
 
 5-Minute Example
 ----------------
@@ -53,6 +56,13 @@ Quick Installation
         embedding_model="nomic-embed-text",
         chunk_size=500
     )
+
+    # You can also define schema with shorthand:
+    #   metadata_schema = {
+    #       "title": ("text", True),   # type, indexed
+    #       "author": ("text", True, True),  # type, indexed, required
+    #       # ... etc.
+    #   }
 
     # Add documents with metadata
     documents = [

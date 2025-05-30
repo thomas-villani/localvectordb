@@ -45,6 +45,7 @@ def create_app(configuration: Union[str, Config, None]=None,
 
     # Apply config to Flask app
     app.config.update(config.to_flask_config())
+    app.config_obj = config
 
     # Configure logging
     configure_logging(app)

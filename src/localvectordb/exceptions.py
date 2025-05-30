@@ -12,10 +12,15 @@
 class BaseLocalVectorDBException(Exception):
     pass
 
-class DatabaseNotFoundError(BaseLocalVectorDBException, KeyError, FileNotFoundError):
+class DatabaseError(BaseLocalVectorDBException):
+    pass
+
+class DatabaseNotFoundError(DatabaseError, KeyError):
+    """Raised if the Database cannot be found"""
     pass
 
 class DuplicateDocumentIDError(BaseLocalVectorDBException, ValueError):
+    """Raised when inserting document(s) and the id(s) already exist"""
     pass
 
 class OllamaNotFoundError(BaseLocalVectorDBException, RuntimeError):
@@ -26,4 +31,7 @@ class EmbeddingError(BaseLocalVectorDBException, RuntimeError):
     pass
 
 class ConfigurationError(BaseLocalVectorDBException, RuntimeError):
+    pass
+
+class ConnectionPoolError(BaseLocalVectorDBException):
     pass

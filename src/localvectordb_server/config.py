@@ -91,7 +91,7 @@ Example v1.0 Configuration::
     backup_dir = "./backups"
 
 """
-
+import copy
 #  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
 
 import os
@@ -233,7 +233,6 @@ class ServerSettings:
     # Performance settings
     max_request_size: int = 100 * 1024 * 1024  # 100MB default
     request_timeout: int = 300  # 5 minutes default
-    # worker_count: Optional[int] = None  # None = auto-detect
 
     # Feature flags (not yet implemented)
     # enable_async_processing: bool = True
@@ -242,11 +241,9 @@ class ServerSettings:
 
     # Security settings
     require_api_key: bool = False
-    # authorized_api_keys: List[str] = field(default_factory=list)
     api_key_header: str = "Authorization"  # Header name for API key
 
     # NEW: Key Management Settings
-    key_management_enabled: bool = True
     key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
     default_key_expiry_days: Optional[int] = None  # None = no default expiration
     auto_prune_expired_keys: bool = False  # Automatically remove expired keys
@@ -261,10 +258,6 @@ class ServerSettings:
     cors_allowed_headers: List[str] = field(default_factory=lambda: ["Content-Type", "Authorization"])
     cors_max_age: int = 86400  # 24 hours
 
-    # Rate limiting
-    rate_limit_enabled: bool = False
-    rate_limit_requests_per_minute: int = 100
-    rate_limit_burst: int = 20
 
     def validate(self):
         # Validate host
@@ -296,13 +289,6 @@ class ServerSettings:
 
         # Validate API key settings if required
         if self.require_api_key:
-            # The followins is the old insecure way, now removed
-            # if not isinstance(self.authorized_api_keys, list) or len(self.authorized_api_keys) == 0:
-            #     raise ConfigurationError("When require_api_key is True, authorized_api_keys must be a non-empty list")
-            # for key in self.authorized_api_keys:
-            #     if not isinstance(key, str) or not key:
-            #         raise ConfigurationError("Each API key must be a non-empty string")
-
             if self.default_key_expiry_days is not None and self.default_key_expiry_days <= 0:
                 raise ConfigurationError("default_key_expiry_days must be a positive integer or None")
 
@@ -329,35 +315,7 @@ class ServerSettings:
         else:
             raise ConfigurationError("cors_allowed_origins must be either a string or a list of strings")
 
-        # Validate rate limiting
-        if self.rate_limit_requests_per_minute <= 0:
-            raise ConfigurationError("rate_limit_requests_per_minute must be a positive integer")
-
-        if self.rate_limit_burst <= 0:
-            raise ConfigurationError("rate_limit_burst must be a positive integer")
-
         return True
-
-
-# @dataclass
-# class MigrationSettings:
-#     """Settings for handling v1.x to v1.0 migrations."""
-#     auto_detect: bool = True
-#     backup_on_migrate: bool = True
-#     backup_dir: str = "./backups"
-#     preserve_v1_metadata: bool = True
-#     default_v2_schema: str = "documents"  # Use predefined schema
-#     migration_batch_size: int = 1000
-#     verify_migration: bool = True
-#
-#     def validate(self):
-#         if not isinstance(self.backup_dir, str) or not self.backup_dir:
-#             raise ConfigurationError("backup_dir must be a non-empty string")
-#
-#         if self.migration_batch_size <= 0:
-#             raise ConfigurationError("migration_batch_size must be a positive integer")
-#
-#         return True
 
 
 @dataclass
@@ -515,9 +473,9 @@ class Config:
 
 
     @classmethod
-    def from_env(cls, prefix: str = "LVDB_") -> "Config":
+    def from_env(cls, base=None, prefix: str = "LVDB_") -> "Config":
         """Load configuration from environment variables with v1.0 support."""
-        config = cls()
+        config = copy.deepcopy(base) or cls()
 
         # Enhanced environment variable processing
         for env_name, env_value in os.environ.items():
@@ -675,18 +633,16 @@ class Config:
             "LOG_LEVEL": self.server.log_level,
             "LOG_FORMAT": self.server.log_format,
             "REQUIRE_API_KEY": self.server.require_api_key,
-            # "AUTHORIZED_API_KEYS": self.server.authorized_api_keys,
             "CORS_ENABLED": self.server.cors_enabled,
             "CORS_ALLOWED_ORIGINS": self.server.cors_allowed_origins,
             "MAX_REQUEST_SIZE": self.server.max_request_size,
             "REQUEST_TIMEOUT": self.server.request_timeout,
-            "AUTH_LOG_LEVEL": self.server.auth_log_level
-            # "WORKER_COUNT": self.server.worker_count,
+            "AUTH_LOG_LEVEL": self.server.auth_log_level,
+            "API_KEY_DB_PATH": self.server.key_database_path or os.path.join(self.database.root_dir, "api_keys.db"),
+            "API_KEY_AUDIT_LOGGING": self.server.key_audit_logging,
+            "API_KEY_HEADER": self.server.api_key_header,
+            "API_KEY_PRUNE_EXPIRED": self.server.auto_prune_expired_keys
         })
-
-        # Migration settings with MIGRATION_ prefix
-        # for key, value in asdict(self.migration).items():
-        #     result[f"MIGRATION_{key.upper()}"] = value
 
         return result
 
@@ -755,7 +711,9 @@ class Config:
         security_fields = {
             'require_api_key', 'authorized_api_keys', 'api_key_header',
             'cors_enabled', 'cors_allowed_origins', 'cors_allowed_methods',
-            'cors_allowed_headers', 'cors_max_age'
+            'cors_allowed_headers', 'cors_max_age', 'key_database_path',
+            'default_key_expiry_days', 'auto_prune_expired_keys',
+            'key_audit_logging', 'auth_log_level', 'warn_expiring_days'
         }
 
         security_config = {}
@@ -825,7 +783,6 @@ class Config:
         def merge_dataclass(base: Any, override: Any, result: Any):
             for key, value in asdict(override).items():
                 override_value = getattr(override, key)
-
                 # Special handling for metadata schema
                 if key == 'default_metadata_schema' and isinstance(override_value, dict):
                     if not override_value:
@@ -852,7 +809,6 @@ class Config:
         merge_dataclass(self.database, other.database, result.database)
         merge_dataclass(self.embedding, other.embedding, result.embedding)
         merge_dataclass(self.server, other.server, result.server)
-        # merge_dataclass(self.migration, other.migration, result.migration)
 
         return result
 
@@ -904,8 +860,7 @@ def load_config(
         Config.update_from_dict(config, obj_config)
 
     # Apply environment variables
-    env_config = Config.from_env()
-    config = config.merge(env_config)
+    config = Config.from_env(config)
 
     if validate:
         config.validate()

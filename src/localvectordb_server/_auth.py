@@ -53,7 +53,7 @@ def _get_key_manager() -> Optional['KeyManager']:
         from localvectordb_server.keymanager import get_key_manager
 
         # Try to get config path from app
-        config_path = getattr(current_app, 'config_path', None)
+        config_path = current_app.config.get("API_KEY_DB_PATH")
         key_manager = get_key_manager(config_path)
 
         # Cache in g for this request
@@ -86,7 +86,9 @@ def _validate_database_key(token: str) -> bool:
         return False
 
     try:
-        is_valid = key_manager.validate_key(token, update_last_used=True)
+        is_valid = key_manager.validate_key(token,
+                                            update_last_used=True,
+                                            prune_expired=current_app.config.get("API_KEY_PRUNE_EXPIRED", False))
 
         if is_valid:
             logger.debug("Token validated against database keys")
@@ -176,7 +178,7 @@ def require_api_key(f):
             # logger.debug("API key authentication disabled")
             return f(*args, **kwargs)
 
-        log_usage = current_app.config.get("KEY_AUDIT_LOGGING")
+        log_usage = current_app.config.get("API_KEY_AUDIT_LOGGING", True)
 
         auth_header_key = current_app.config.get("API_KEY_HEADER", "Authorization")
         # Extract Authorization header
