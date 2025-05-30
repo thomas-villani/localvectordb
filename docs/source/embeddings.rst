@@ -1,7 +1,7 @@
 Embeddings
 ==========
 
-LocalVectorDB v2.0 features a plugin-based embedding system that supports multiple providers with a unified interface. The system is designed for flexibility, allowing easy switching between providers and custom implementations.
+LocalVectorDB features a plugin-based embedding system that supports multiple providers with a unified interface. The system is designed for flexibility, allowing easy switching between providers and custom implementations.
 
 Overview
 --------

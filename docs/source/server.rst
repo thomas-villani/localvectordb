@@ -66,3 +66,9 @@ Basic API Usage
        "k": 5
      }'
 
+
+Learn More
+----------
+- :doc:`Server Routes API <routes>`
+- :doc:`Server Configuration <config>`
+- :doc:`Command Line Interface (CLI) Overview <cli>`

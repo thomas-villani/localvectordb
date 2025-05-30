@@ -70,11 +70,6 @@ Database Configuration
    embedding_model = "nomic-embed-text"  # Default embedding model
    provider = "ollama"              # Default embedding provider
 
-   # Migration settings
-   migration_auto_detect = true
-   migration_backup_on_migrate = true
-   migration_backup_dir = "./backups"
-
    # Default metadata schema for new databases
    [database.metadata_schema]
    title = {type = "text", indexed = true}
@@ -117,6 +112,7 @@ Server Configuration
    max_request_size = 104857600   # 100MB max request size
    request_timeout = 300          # Request timeout in seconds
 
+   [server.security]
    # Security settings
    require_api_key = false
    api_key_header = "Authorization"
@@ -128,10 +124,6 @@ Server Configuration
    cors_allowed_headers = ["Content-Type", "Authorization"]
    cors_max_age = 86400
 
-   # Rate limiting
-   rate_limit_enabled = false
-   rate_limit_requests_per_minute = 100
-   rate_limit_burst = 20
 
 .. TODO: update with new config options for key management
 
@@ -143,11 +135,12 @@ Security Configuration
    [server.security]
    # API key authentication
    require_api_key = true
-   authorized_api_keys = [
-       "sk-1234567890abcdef1234567890abcdef",
-       "sk-abcdef1234567890abcdef1234567890"
-   ]
    api_key_header = "Authorization"
+   auto_prune_expired_keys = false
+   key_audit_logging = true
+   auth_log_level = "INFO"
+   warn_expiring_days = 7
+
 
    # CORS configuration for web applications
    cors_enabled = true
@@ -159,25 +152,7 @@ Security Configuration
    cors_allowed_headers = ["Content-Type", "Authorization", "X-Requested-With"]
    cors_max_age = 3600
 
-   # Rate limiting (requires Redis for distributed setups)
-   rate_limit_enabled = true
-   rate_limit_requests_per_minute = 1000
-   rate_limit_burst = 100
 
-Migration Configuration
-^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: toml
-
-   [migration]
-   # Automatic detection and migration of v1.x databases
-   auto_detect = true
-   backup_on_migrate = true
-   backup_dir = "./backups"
-   preserve_v1_metadata = true
-   default_v2_schema = "documents"
-   migration_batch_size = 1000
-   verify_migration = true
 
 Environment Variables
 ---------------------
@@ -203,7 +178,6 @@ All configuration options can be overridden with environment variables using the
 
    # Security settings
    export LVDB_SERVER_REQUIRE_API_KEY=true
-   export LVDB_SERVER_AUTHORIZED_API_KEYS='["key1", "key2"]'
 
    # Start server with environment overrides
    lvdb serve
@@ -247,12 +221,14 @@ High-Performance Setup
    enable_async_processing = true
    enable_performance_metrics = true
 
+   [server.security]
    # Security for production
    require_api_key = true
-   authorized_api_keys = [
-       "sk-prod-key-1234567890abcdef",
-       "sk-admin-key-abcdef1234567890"
-   ]
+   api_key_header = "Authorization"
+   auto_prune_expired_keys = false
+   key_audit_logging = true
+   auth_log_level = "INFO"
+   warn_expiring_days = 7
 
    # CORS for web applications
    cors_enabled = true
@@ -261,54 +237,7 @@ High-Performance Setup
        "https://admin.yourdomain.com"
    ]
 
-   # Rate limiting
-   rate_limit_enabled = true
-   rate_limit_requests_per_minute = 10000
-   rate_limit_burst = 1000
 
-Multi-Tenant Setup
-^^^^^^^^^^^^^^^^^^
-
-.. code-block:: toml
-
-   # multi-tenant.toml
-   [database]
-   root_dir = "/data/tenant_databases"
-   connection_pool_size = 100
-   timeout = 300
-
-   # Separate databases per tenant with consistent settings
-   chunk_size = 500
-   chunking_method = "sentences"
-   chunk_overlap = 1
-
-   [embedding]
-   provider = "openai"  # Consistent provider across tenants
-   model = "text-embedding-3-small"
-   api_key = "${OPENAI_API_KEY}"
-   batch_size = 100
-
-   [server]
-   host = "0.0.0.0"
-   port = 8080
-   log_level = "INFO"
-
-   # Strict security for multi-tenant
-   require_api_key = true
-   authorized_api_keys = [
-       "tenant-a-key-1234567890",
-       "tenant-b-key-abcdef1234",
-       "admin-key-9876543210"
-   ]
-
-   # Rate limiting to prevent tenant abuse
-   rate_limit_enabled = true
-   rate_limit_requests_per_minute = 1000
-   rate_limit_burst = 200
-
-   # Logging for audit trails
-   enable_request_logging = true
-   enable_performance_metrics = true
 
 Development Setup
 ^^^^^^^^^^^^^^^^^
@@ -334,16 +263,17 @@ Development Setup
    log_level = "DEBUG"
    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
+   [server.security]
    # Relaxed security for development
    require_api_key = false
    cors_enabled = true
    cors_allowed_origins = "*"
 
-   # No rate limiting in development
-   rate_limit_enabled = false
 
 Security Considerations
 -----------------------
+
+.. todo: update with KeyManager stuff
 
 API Key Management
 ^^^^^^^^^^^^^^^^^^
@@ -451,13 +381,9 @@ Performance Configuration
    timeout = 120                    # Longer timeout for large batches
 
    [server]
-   # Increase worker processes
-   worker_count = 16                # Match CPU cores
-
    # Optimize request handling
    max_request_size = 209715200     # 200MB for large document uploads
    request_timeout = 600            # Longer timeout for large operations
-   enable_async_processing = true   # Async processing where possible
 
 Monitoring and Metrics
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -757,15 +683,11 @@ Slow Performance:
    connection_pool_size = 20       # More connections
 
    [server]
-   worker_count = 16               # More workers
    enable_async_processing = true  # Async processing
 
 Connection Errors:
 
 .. code-block:: bash
-
-   # Check server status
-   lvdb health
 
    # Verify configuration
    lvdb config show

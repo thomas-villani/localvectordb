@@ -1,7 +1,7 @@
 Chunking
 ========
 
-LocalVectorDB v2.0 features a sophisticated position-tracking chunking system that maintains exact character positions for perfect document reconstruction and precise highlighting.
+LocalVectorDB features a sophisticated position-tracking chunking system that maintains exact character positions for perfect document reconstruction and precise highlighting.
 
 Overview
 --------
@@ -29,7 +29,7 @@ Splits text at sentence boundaries while respecting token limits.
        "docs",
        chunking_method="sentences",
        chunk_size=500,          # Max tokens per chunk
-       chunk_overlap=1          # Number of sentences to overlap
+       overlap=1          # Number of sentences to overlap
    )
 
    # Example document
@@ -56,7 +56,7 @@ Splits text at paragraph boundaries (double newlines).
        "docs",
        chunking_method="paragraphs",
        chunk_size=800,
-       chunk_overlap=1  # Number of paragraphs to overlap
+       overlap=1  # Number of paragraphs to overlap
    )
 
 **Best for**: Blog posts, essays, structured documents
@@ -72,7 +72,7 @@ Splits text at token boundaries using tiktoken encoding.
        "docs",
        chunking_method="tokens",
        chunk_size=400,
-       chunk_overlap=50  # Number of tokens to overlap
+       overlap=50  # Number of tokens to overlap
    )
 
 **Best for**: Maximum control over chunk size, technical content
@@ -88,7 +88,7 @@ Splits text at word boundaries.
        "docs",
        chunking_method="words",
        chunk_size=300,
-       chunk_overlap=20  # Number of words to overlap
+       overlap=20  # Number of words to overlap
    )
 
 **Best for**: Social media content, short-form text
@@ -104,7 +104,7 @@ Splits text at line boundaries.
        "docs",
        chunking_method="lines",
        chunk_size=600,
-       chunk_overlap=3  # Number of lines to overlap
+       overlap=3  # Number of lines to overlap
    )
 
 **Best for**: Log files, CSV data, structured line-based content
@@ -136,7 +136,7 @@ Intelligent code-aware chunking that preserves logical code structure.
        "code_db",
        chunking_method="code-blocks",
        chunk_size=800,
-       chunk_overlap=2  # Number of lines to overlap
+       overlap_lines=2  # Number of lines to overlap
    )
 
 **Features**:
@@ -159,7 +159,7 @@ Fine-grained chunking at character level.
        "docs",
        chunking_method="characters",
        chunk_size=500,
-       chunk_overlap=50  # Number of characters to overlap
+       overlap=50  # Number of characters to overlap
    )
 
 **Best for**: Non-Western languages, specialized text processing
@@ -198,7 +198,7 @@ Language-Specific Code Chunking
        "python_code",
        chunking_method="code-blocks",
        chunk_size=600,
-       chunk_overlap=2
+       overlap=2
    )
 
    # JavaScript-specific chunking
@@ -206,7 +206,7 @@ Language-Specific Code Chunking
        "javascript_code",
        chunking_method="code-blocks",
        chunk_size=500,
-       chunk_overlap=1
+       overlap=1
    )
 
 Position Tracking
@@ -267,7 +267,7 @@ Academic Papers
        "academic_papers",
        chunking_method="paragraphs",  # Preserve paragraph structure
        chunk_size=600,                # Larger chunks for context
-       chunk_overlap=1,               # Overlap paragraphs
+       overlap=1,               # Overlap paragraphs
        metadata_schema={
            'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'authors': MetadataField(type=MetadataFieldType.JSON),
@@ -286,7 +286,7 @@ Source Code Repositories
        "source_code",
        chunking_method="code-blocks",
        chunk_size=500,
-       chunk_overlap=2,
+       overlap_lines=2,
        metadata_schema={
            'file_path': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'language': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -305,7 +305,7 @@ Legal Documents
        "legal_docs",
        chunking_method="sections",    # Preserve legal structure
        chunk_size=1000,               # Large chunks for legal context
-       chunk_overlap=0,               # No overlap to avoid confusion
+       overlap=0,                     # No overlap to avoid confusion
        metadata_schema={
            'case_number': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'court': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -324,7 +324,7 @@ Customer Support
        "support_tickets",
        chunking_method="sentences",   # Natural conversation flow
        chunk_size=300,                # Shorter for specific queries
-       chunk_overlap=2,               # Maintain conversation context
+       overlap=2,                     # Maintain conversation context
        metadata_schema={
            'ticket_id': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'customer_id': MetadataField(type=MetadataFieldType.TEXT, indexed=True),

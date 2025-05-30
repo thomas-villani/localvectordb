@@ -86,7 +86,7 @@ View Configuration
 
 .. code-block:: toml
 
-   # LocalVectorDB Server Configuration v2.0
+   # LocalVectorDB Server Configuration
 
    [database]
    root_dir = "./.lvdb"

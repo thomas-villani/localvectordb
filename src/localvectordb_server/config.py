@@ -482,8 +482,8 @@ class Config:
             if not env_name.startswith(prefix):
                 continue
 
-            if env_name == f"{prefix}SERVER_CONFIG":
-                continue
+            # if env_name == f"{prefix}SERVER_CONFIG":
+            #     continue
 
             # Remove prefix and convert to lowercase
             name = env_name[len(prefix):].lower()

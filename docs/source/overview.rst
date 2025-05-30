@@ -1,7 +1,7 @@
 Overview
 ========
 
-LocalVectorDB v2.0 provides a document-first API that abstracts away the complexity of chunking while providing powerful
+LocalVectorDB provides a document-first API that abstracts away the complexity of chunking while providing powerful
 search and metadata capabilities. The library supports both local databases and remote connections to LocalVectorDB servers.
 
 Core Concepts
