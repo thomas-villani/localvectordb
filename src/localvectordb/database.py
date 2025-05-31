@@ -745,12 +745,12 @@ class LocalVectorDB:
         return ids
 
     def _insert_document(
-            self,
-            conn: sqlite3.Connection,
-            doc_id: str,
-            content: str,
-            content_hash: str,
-            metadata: Dict[str, Any]
+        self,
+        conn: sqlite3.Connection,
+        doc_id: str,
+        content: str,
+        content_hash: str,
+        metadata: Dict[str, Any]
     ):
         """Insert a document with metadata"""
 

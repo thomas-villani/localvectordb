@@ -226,16 +226,18 @@ Add Documents
    lvdb db my_database add document.txt
 
    # Add multiple files
+   lvdb db my_database add file1.txt file2.txt
+   # Or with globs
    lvdb db my_database add *.txt
 
    # Add with metadata
-   lvdb db my_database add paper.pdf --metadata '{"title": "Research Paper", "author": "Dr. Smith"}'
+   lvdb db my_database add paper.txt --metadata '{"title": "Research Paper", "author": "Dr. Smith"}'
 
    # Add from stdin
    cat document.txt | lvdb db my_database add -
 
    # Add with auto metadata
-   lvdb db my_database add *.pdf --metadata auto
+   lvdb db my_database add *.txt --metadata auto
 
    # Add with custom IDs
    lvdb db my_database add file1.txt file2.txt --id "doc_1,doc_2"
@@ -398,7 +400,7 @@ Start an interactive shell for database operations:
       Neural networks are computational models inspired by biological neural networks...
       -----
 
-   my_database> add *.pdf
+   my_database> add *.txt
    Found 5 files. Adding to database...
    Successfully added 5 documents
    Created IDs: doc_890, doc_891, doc_892, doc_893, doc_894
@@ -450,8 +452,8 @@ Bulk Operations
 
 .. code-block:: bash
 
-   # Add all PDFs in a directory tree
-   lvdb db papers add "documents/**/*.pdf" --metadata auto
+   # Add all markdown files in a directory tree
+   lvdb db papers add "documents/**/*.md" --metadata auto
 
    # Add with structured metadata from JSON
    lvdb db papers add papers.txt --metadata metadata.json --id ids.txt

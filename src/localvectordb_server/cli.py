@@ -1311,7 +1311,7 @@ def search(
     else:
         click.echo(output_str)
 
-
+# TODO: I don't think auto metadata will work anymore with the schema
 @db_group.command('add')
 @click.argument('files_or_text', nargs=-1)
 @click.option('--metadata', '-m', default=None,
