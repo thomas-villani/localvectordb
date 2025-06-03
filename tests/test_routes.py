@@ -36,7 +36,10 @@ def app():
     """Create Flask app for testing."""
     app = Flask(__name__)
     app.config['TESTING'] = True
+    app.config["CACHE_TYPE"] = "NullCache"
     app.config['DB_ROOT_DIR'] = '/tmp/test_dbs'
+    from localvectordb_server._cache import cache
+    cache.init_app(app)
 
     # Mock database manager
     app.db_manager = Mock()
@@ -239,23 +242,89 @@ class TestDatabaseManagementRoutes:
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
     def test_create_database_success(self, client, app):
         """Test successful database creation."""
-        with patch('localvectordb.database.LocalVectorDB') as mock_db_class:
+        # Mock the database manager's create_db method
+        with patch.object(app.db_manager, 'create_db') as mock_create_db:
+            # Create a mock database object to return
             mock_db = Mock()
-            mock_db.name = "test_db"
-            mock_db.embedding_provider.provider_name = "ollama"
-            mock_db.embedding_provider.model = "nomic-embed-text"
-            mock_db.embedding_dimension = 384
-            mock_db.chunking_method = "sentences"
-            mock_db.chunk_size = 500
-            mock_db.chunk_overlap = 1
-            mock_db.metadata_schema = {}
-            mock_db.fts_enabled = True
-            mock_db_class.return_value = mock_db
+            mock_db.configure_mock(**{
+                'name': "test_db",
+                'embedding_provider.provider_name': "ollama",
+                'embedding_provider.model': "nomic-embed-text",
+                'embedding_dimension': 384,
+                'chunking_method': "sentences",
+                'chunk_size': 500,
+                'chunk_overlap': 1,
+                'metadata_schema': {},  # Empty dict that can be iterated
+                'fts_enabled': True
+            })
+
+            # Configure the mock to return our mock database
+            mock_create_db.return_value = mock_db
 
             data = {
                 "name": "test_db",
-                "embedding_model": "nomic-embed-text",
-                "chunk_size": 500
+                "embedding": {"model": "nomic-embed-text"},
+                "database": {"chunk_size": 500}
+            }
+
+            response = client.post('/api/v1/databases',
+                                   data=json.dumps(data),
+                                   content_type='application/json')
+
+            print(response.text)
+            # Verify the response
+            assert response.status_code == 200
+            result = json.loads(response.data)
+            assert result["status"] == "success"
+            assert "test_db" in result["message"]
+
+            # Verify create_db was called with correct parameters
+            mock_create_db.assert_called_once()
+            call_args = mock_create_db.call_args
+
+            # Check that the first argument is the database name
+            assert call_args[0][0] == "test_db"
+
+            # Check that metadata_schema is provided (second argument)
+            metadata_schema = call_args[0][1]
+            assert metadata_schema is not None or metadata_schema == {}
+
+            # Check that db_config (third argument) has the right chunk_size
+            db_config = call_args[0][2]
+            assert db_config.chunk_size == 500
+
+            # Check that embedding_config (fourth argument) has the right model
+            embedding_config = call_args[0][3]
+            assert embedding_config.model == "nomic-embed-text"
+
+    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    def test_create_database_with_metadata_schema(self, client, app):
+        """Test database creation with custom metadata schema."""
+        with patch.object(app.db_manager, 'create_db') as mock_create_db:
+            mock_db = Mock()
+            mock_db.configure_mock(**{
+                'name': "test_db_with_schema",
+                'embedding_provider.provider_name': "ollama",
+                'embedding_provider.model': "nomic-embed-text",
+                'embedding_dimension': 384,
+                'chunking_method': "sentences",
+                'chunk_size': 500,
+                'chunk_overlap': 1,
+                'metadata_schema': {
+                    'title': Mock(type=Mock(value='text'), indexed=True, required=False, default_value=None),
+                    'author': Mock(type=Mock(value='text'), indexed=False, required=True, default_value=None)
+                },
+                'fts_enabled': True
+            })
+            mock_create_db.return_value = mock_db
+
+            data = {
+                "name": "test_db_with_schema",
+                "metadata_schema": {
+                    "title": {"type": "text", "indexed": True},
+                    "author": {"type": "text", "required": True}
+                },
+                "embedding": {"model": "nomic-embed-text"}
             }
 
             response = client.post('/api/v1/databases',
@@ -265,7 +334,36 @@ class TestDatabaseManagementRoutes:
             assert response.status_code == 200
             result = json.loads(response.data)
             assert result["status"] == "success"
-            assert "test_db" in result["message"]
+
+            # Verify create_db was called
+            mock_create_db.assert_called_once()
+            call_args = mock_create_db.call_args
+
+            # Verify metadata schema was parsed and passed correctly
+            metadata_schema = call_args[0][1]
+            assert metadata_schema is not None
+            assert len(metadata_schema) == 2  # title and author fields
+
+    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    def test_create_database_already_exists(self, client, app):
+        """Test database creation when database already exists."""
+        with patch.object(app.db_manager, 'create_db') as mock_create_db:
+            # Mock the database manager to raise BadRequest for existing database
+            from werkzeug.exceptions import BadRequest
+            mock_create_db.side_effect = BadRequest("Database 'existing_db' already exists")
+
+            data = {
+                "name": "existing_db",
+                "embedding": {"model": "nomic-embed-text"}
+            }
+
+            response = client.post('/api/v1/databases',
+                                   data=json.dumps(data),
+                                   content_type='application/json')
+
+            assert response.status_code == 400
+            result = json.loads(response.data)
+            assert "already exists" in result["error"]
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
     def test_create_database_no_name(self, client):
@@ -836,6 +934,7 @@ class TestRequestValidation:
     def test_query_no_data(self, client):
         """Test query endpoint without data."""
         response = client.post('/api/v1/test_db/query', data=json.dumps({}))
+        print(response.text)
         assert response.status_code == 415
 
         response = client.post('/api/v1/test_db/query', data=json.dumps({}), content_type='application/json')

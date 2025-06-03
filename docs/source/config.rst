@@ -13,20 +13,18 @@ Supported Formats
 LocalVectorDB supports multiple configuration formats:
 
 * **TOML** (recommended): Human-readable, supports comments
-* **YAML**: Popular for DevOps, hierarchical structure
 * **JSON**: Machine-readable, no comments
-* **INI**: Legacy format, limited nesting
 
 Configuration File Locations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Configuration files are loaded in order of precedence:
 
-1. **Explicit path**: ``--config /path/to/config.toml``
+1. **Explicit path**: ``--config /path/to/.lvdb-config.toml``
 2. **Environment variable**: ``LVDB_SERVER_CONFIG``
-3. **Current directory**: ``./server-cfg.toml``
-4. **Instance directory**: ``./instance/server-cfg.toml``
-5. **Home directory**: ``~/localvectordb_server/server-cfg.toml``
+3. **Current directory**: ``./.lvdb-config.toml``
+4. **Instance directory**: ``./instance/.lvdb-config.toml``
+5. **Home directory**: ``~/localvectordb_server/.lvdb-config.toml``
 
 Creating Configuration
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -39,11 +37,11 @@ Creating Configuration
    # Create with predefined schema
    lvdb config init --schema research_papers --output research.toml
 
-   # Create YAML configuration
-   lvdb config init --format yaml --output server.yaml
 
 Configuration Sections
 ----------------------
+
+For a complete overview of the configuration settings, see the :doc:`Configuration Parameters Documentation <config.params>`.
 
 Database Configuration
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -51,31 +49,15 @@ Database Configuration
 .. code-block:: toml
 
    [database]
-   # Storage location
    root_dir = "./.lvdb"
+   timeout = 300
+   connection_pool_size = 10
+   enable_gpu = false
+   enable_fts = true
+   chunk_size = 500
+   chunk_overlap = 1
+   chunking_method = "lines"
 
-   # Connection settings
-   timeout = 300                    # Connection timeout in seconds
-   connection_pool_size = 10        # Number of database connections
-
-   # Performance settings
-   enable_gpu = false               # Use GPU for FAISS if available
-   enable_fts = true                # Enable full-text search (FTS5)
-   auto_save_interval = 300         # Auto-save interval (0 = disabled)
-
-   # Default settings for new databases
-   chunk_size = 500                 # Maximum tokens per chunk
-   chunk_overlap = 1                # Overlap between chunks
-   chunking_method = "sentences"    # Default chunking method
-   embedding_model = "nomic-embed-text"  # Default embedding model
-   provider = "ollama"              # Default embedding provider
-
-   # Default metadata schema for new databases
-   [database.metadata_schema]
-   title = {type = "text", indexed = true}
-   author = {type = "text", indexed = true}
-   date = {type = "date", indexed = true}
-   tags = {type = "json"}
 
 Embedding Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -84,13 +66,13 @@ Embedding Configuration
 
    [embedding]
    # Primary embedding provider
-   provider = "ollama"              # ollama, openai
-   model = "nomic-embed-text"       # Model name
+   provider = "ollama"                  # ollama, openai
+   model = "nomic-embed-text"           # Model name
    base_url = "http://localhost:11434"  # Provider-specific URL
-   api_key = ""                     # API key for cloud providers
-   batch_size = 64                  # Batch size for embedding generation
-   timeout = 30                     # Request timeout in seconds
-   max_retries = 3                  # Number of retry attempts
+   api_key = "api-key-here"             # API key for cloud providers
+   batch_size = 64                      # Batch size for embedding generation
+   timeout = 30                         # Request timeout in seconds
+   max_retries = 3                      # Number of retry attempts
 
    # Provider-specific configuration
    [embedding.config]
@@ -112,20 +94,6 @@ Server Configuration
    max_request_size = 104857600   # 100MB max request size
    request_timeout = 300          # Request timeout in seconds
 
-   [server.security]
-   # Security settings
-   require_api_key = false
-   api_key_header = "Authorization"
-
-   # CORS settings
-   cors_enabled = true
-   cors_allowed_origins = "*"
-   cors_allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-   cors_allowed_headers = ["Content-Type", "Authorization"]
-   cors_max_age = 86400
-
-
-.. TODO: update with new config options for key management
 
 Security Configuration
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -133,25 +101,24 @@ Security Configuration
 .. code-block:: toml
 
    [server.security]
-   # API key authentication
-   require_api_key = true
-   api_key_header = "Authorization"
+   # API-key authentication
+   require_api_key = false
+   key_database_path = "path/to/key/store.db"   # Provide a path for the key store database, otherwise it will be in the database `root_dir`
+   api_key_header = "Authorization"             # Optionally use a different header for the api key
    auto_prune_expired_keys = false
    key_audit_logging = true
    auth_log_level = "INFO"
    warn_expiring_days = 7
 
-
-   # CORS configuration for web applications
+   # CORS settings for web applications
    cors_enabled = true
    cors_allowed_origins = [
        "https://myapp.example.com",
        "https://admin.example.com"
    ]
-   cors_allowed_methods = ["GET", "POST", "PUT", "DELETE"]
-   cors_allowed_headers = ["Content-Type", "Authorization", "X-Requested-With"]
-   cors_max_age = 3600
-
+   cors_allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+   cors_allowed_headers = ["Content-Type", "Authorization"]
+   cors_max_age = 86400
 
 
 Environment Variables
@@ -273,21 +240,158 @@ Development Setup
 Security Considerations
 -----------------------
 
-.. todo: update with KeyManager stuff
-
 API Key Management
 ^^^^^^^^^^^^^^^^^^
 
+LocalVectorDB Server includes a comprehensive key management system with SQLite-based storage, bcrypt hashing, and full audit trails.
+
+Creating API Keys
+~~~~~~~~~~~~~~~~~
+
 .. code-block:: bash
 
-   # Generate secure API keys
-   python -c "import secrets; print('sk-' + secrets.token_hex(32))"
+   # Create a basic API key
+   lvdb auth create-key --description "Production API access"
 
-   # Store in environment variables
-   export LVDB_API_KEYS='["sk-prod-key", "sk-admin-key"]'
+   # Create a key with expiration
+   lvdb auth create-key --description "Temporary access" --expires-days 30
 
-   # Or use external key management
-   export LVDB_API_KEYS_FILE="/etc/localvectordb/api_keys.json"
+   # Create a key for a specific user/system
+   lvdb auth create-key --description "CI/CD Pipeline" --created-by "admin" --expires-days 90
+
+   # Output just the key for scripting
+   lvdb auth create-key --description "Script access" --output key-only
+
+   # Output as JSON for automation
+   lvdb auth create-key --description "API integration" --output json
+
+Managing API Keys
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # List all API keys
+   lvdb auth list-keys
+
+   # List only active keys
+   lvdb auth list-keys --active-only
+
+   # Show detailed statistics
+   lvdb auth list-keys --show-stats
+
+   # Get detailed information about a specific key
+   lvdb auth key-info key_20241201_abc123
+
+   # Check overall authentication status
+   lvdb auth status
+
+Key Rotation and Security
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Rotate a key (creates new key, deactivates old one)
+   lvdb auth rotate-key key_20241201_abc123
+
+   # Revoke a key immediately
+   lvdb auth revoke-key key_20241201_abc123
+
+   # Remove expired keys (soft delete - deactivates)
+   lvdb auth prune-expired
+
+   # Permanently delete expired keys
+   lvdb auth prune-expired --hard-delete
+
+   # Preview what would be pruned
+   lvdb auth prune-expired --dry-run
+
+Configuration
+~~~~~~~~~~~~~
+
+Configure key management in your server configuration:
+
+.. code-block:: toml
+
+   [server.security]
+   # Enable API key authentication
+   require_api_key = true
+
+   # Key database location (optional, defaults to <root_dir>/api_keys.db)
+   key_database_path = "/secure/path/api_keys.db"
+
+   # API key header name
+   api_key_header = "Authorization"
+
+   # Automatically remove expired keys
+   auto_prune_expired_keys = false
+
+   # Enable audit logging
+   key_audit_logging = true
+   auth_log_level = "INFO"
+
+   # Warn about keys expiring soon
+   warn_expiring_days = 7
+
+Using API Keys
+~~~~~~~~~~~~~~
+
+API keys must be sent in the Authorization header as Bearer tokens:
+
+.. code-block:: bash
+
+   # Using curl
+   curl -H "Authorization: Bearer lvdb_your_api_key_here" \
+        http://localhost:8080/api/v1/databases
+
+.. code-block:: python
+
+   # Using Python requests
+   import requests
+
+   headers = {"Authorization": "Bearer lvdb_your_api_key_here"}
+   response = requests.get("http://localhost:8080/api/v1/health", headers=headers)
+
+Security Features
+~~~~~~~~~~~~~~~~~
+
+The key management system provides enterprise-grade security:
+
+* **Secure Storage**: Keys are hashed with bcrypt before storage
+* **Expiration Support**: Keys can have automatic expiration dates
+* **Audit Logging**: All key usage is logged for security monitoring
+* **Key Rotation**: Seamlessly rotate keys without service interruption
+* **Usage Tracking**: Monitor when keys were last used
+* **Soft Deletion**: Revoked keys are deactivated, not deleted (for audit trails)
+
+Automation and CI/CD
+~~~~~~~~~~~~~~~~~~~~
+
+For automated deployments and CI/CD pipelines:
+
+.. code-block:: bash
+
+   # Create a key for automation (outputs only the key)
+   API_KEY=$(lvdb auth create-key --description "CI/CD Pipeline" --expires-days 365 --output key-only)
+
+   # Use in scripts
+   export LVDB_API_KEY="$API_KEY"
+
+   # Rotate keys programmatically
+   NEW_KEY=$(lvdb auth rotate-key $OLD_KEY_ID --output key-only)
+
+Monitoring and Maintenance
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Monitor key usage and expiration
+   lvdb auth list-keys --show-stats
+
+   # Check for keys expiring soon
+   lvdb auth list-keys | grep -E "(EXPIRING|EXPIRED)"
+
+   # Set up automated cleanup (add to cron)
+   0 2 * * * /usr/local/bin/lvdb auth prune-expired --confirm
 
 HTTPS Configuration
 ^^^^^^^^^^^^^^^^^^^
@@ -385,28 +489,6 @@ Performance Configuration
    max_request_size = 209715200     # 200MB for large document uploads
    request_timeout = 600            # Longer timeout for large operations
 
-Monitoring and Metrics
-^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: toml
-
-   [server]
-   enable_performance_metrics = true
-   enable_request_logging = true
-
-   # Custom log format for structured logging
-   log_format = '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "module": "%(name)s", "message": "%(message)s"}'
-
-.. code-block:: bash
-
-   # Enable structured logging
-   export LVDB_SERVER_LOG_FORMAT='{"timestamp": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s"}'
-
-   # Log to file
-   lvdb serve --config production.toml 2>&1 | tee server.log
-
-   # Monitor with external tools
-   tail -f server.log | jq '.message'
 
 Deployment Strategies
 ---------------------
@@ -434,7 +516,7 @@ Docker Deployment
    WORKDIR /app
 
    # Copy configuration
-   COPY production.toml /app/server-cfg.toml
+   COPY production.toml /app/.lvdb-config.toml
 
    # Create data directory
    RUN mkdir -p /data/vector_databases
@@ -448,7 +530,7 @@ Docker Deployment
        CMD curl -f http://localhost:8080/api/v1/health || exit 1
 
    # Start server
-   CMD ["lvdb", "serve", "--config", "/app/server-cfg.toml", "--host", "0.0.0.0", "--port", "8080"]
+   CMD ["lvdb", "serve", "--config", "/app/.lvdb-config.toml", "--host", "0.0.0.0", "--port", "8080"]
 
 .. code-block:: yaml
 
@@ -461,7 +543,7 @@ Docker Deployment
          - "8080:8080"
        volumes:
          - vector_data:/data/vector_databases
-         - ./production.toml:/app/server-cfg.toml:ro
+         - ./production.toml:/app/.lvdb-config.toml:ro
        environment:
          - LVDB_EMBEDDING_PROVIDER=ollama
          - LVDB_EMBEDDING_BASE_URL=http://ollama:11434
@@ -528,8 +610,8 @@ Kubernetes Deployment
            - name: vector-data
              mountPath: /data/vector_databases
            - name: config
-             mountPath: /app/server-cfg.toml
-             subPath: server-cfg.toml
+             mountPath: /app/.lvdb-config.toml
+             subPath: .lvdb-config.toml
            livenessProbe:
              httpGet:
                path: /api/v1/health

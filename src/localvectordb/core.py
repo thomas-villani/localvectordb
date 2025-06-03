@@ -15,39 +15,21 @@ This module contains the foundational classes and data structures for the new
 document-first architecture.
 """
 
+import hashlib
+import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple, Literal, Type, Generator
-import hashlib
-import json
-from contextlib import contextmanager
+from typing import Any, Dict, List, Optional, Union, Literal, Type, Generator
 
 from localvectordb.exceptions import ConnectionPoolError
 
 
 class MetadataFieldType(str, Enum):
-    """
-    Enum of supported metadata field types.
-
-    Attributes
-    ----------
-    TEXT : str
-        Text field type.
-    INTEGER : str
-        Integer field type.
-    REAL : str
-        Real number field type.
-    BOOLEAN : str
-        Boolean field type.
-    DATE : str
-        Date field type.
-    JSON : str
-        JSON field type.
-    """
     TEXT = "text"
     INTEGER = "integer"
     REAL = "real"
@@ -72,16 +54,6 @@ class MetadataField:
     default_value : Any, optional
         Default value for the field if not provided, by default None.
 
-    Attributes
-    ----------
-    type : MetadataFieldType
-        The resolved metadata field type.
-    indexed : bool
-        Indicates if field is indexed.
-    required : bool
-        Indicates if field is required.
-    default_value : Any
-        Default value for the field.
     """
     type: MetadataFieldType | str | Type
     indexed: bool = False
@@ -203,14 +175,6 @@ class Chunk:
     faiss_id : int, optional
         Identifier in the FAISS index, if applicable.
 
-    Attributes
-    ----------
-    content : str
-    position : ChunkPosition
-    tokens : int
-    index : int
-    faiss_id : int or None
-
     """
     content: str
     position: ChunkPosition
@@ -326,27 +290,27 @@ class QueryResult:
         return None
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'QueryResult':
+    def from_dict(cls, data: dict) -> "QueryResult":
         """Create a QueryResult from a dictionary response"""
         if not data:
             return None
 
         # Parse position if present
         position = None
-        if data.get('position'):
-            position = ChunkPosition.from_dict(data['position'])
+        if data.get("position"):
+            position = ChunkPosition.from_dict(data["position"])
 
-        q_type = data.get('type', 'document')
-        if q_type not in ('document', 'chunk'):
+        q_type = data.get("type", "document")
+        if q_type not in ("document", "chunk"):
             raise ValueError("`type` must be 'document' or 'chunk'")
 
         return cls(
-            id=data['id'],
-            score=data.get('score', 0.0),
+            id=data["id"],
+            score=data.get("score", 0.0),
             type=q_type,
-            content=data['content'],
-            metadata=data.get('metadata', {}),
-            document_id=data.get('document_id'),
+            content=data["content"],
+            metadata=data.get("metadata", {}),
+            document_id=data.get("document_id"),
             position=position,
         )
 
@@ -431,62 +395,57 @@ class DatabaseSchema:
     get_common_metadata_schemas : Helper for common metadata schema templates.
     """
 
+    BASE_DOCUMENTS_SCHEMA = """CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )"""
+
+    BASE_CHUNKS_SCHEMA = """CREATE TABLE IF NOT EXISTS chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        start_pos INTEGER NOT NULL,
+        end_pos INTEGER NOT NULL,
+        start_line INTEGER,
+        start_col INTEGER,
+        end_line INTEGER,
+        end_col INTEGER,
+        tokens INTEGER NOT NULL,
+        faiss_id INTEGER,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+        UNIQUE(document_id, chunk_index)
+    )"""
+
+    BASE_METADATA_SCHEMA = """CREATE TABLE IF NOT EXISTS metadata_schema (
+        field_name TEXT PRIMARY KEY,
+        field_type TEXT NOT NULL CHECK(field_type IN ('text', 'integer', 'real', 'boolean', 'date', 'json')),
+        indexed BOOLEAN DEFAULT FALSE,
+        required BOOLEAN DEFAULT FALSE,
+        default_value TEXT
+    )"""
+
     BASE_SCHEMA = {
-        'documents': '''
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''',
-
-        'chunks': '''
-                CREATE TABLE IF NOT EXISTS chunks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    document_id TEXT NOT NULL,
-                    chunk_index INTEGER NOT NULL,
-                    content TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
-                    start_pos INTEGER NOT NULL,
-                    end_pos INTEGER NOT NULL,
-                    start_line INTEGER,
-                    start_col INTEGER,
-                    end_line INTEGER,
-                    end_col INTEGER,
-                    tokens INTEGER NOT NULL,
-                    faiss_id INTEGER,
-                    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
-                    UNIQUE(document_id, chunk_index)
-                )
-            ''',
-
-        'metadata_schema': '''
-                CREATE TABLE IF NOT EXISTS metadata_schema (
-                    field_name TEXT PRIMARY KEY,
-                    field_type TEXT NOT NULL CHECK(field_type IN ('text', 'integer', 'real', 'boolean', 'date', 'json')),
-                    indexed BOOLEAN DEFAULT FALSE,
-                    required BOOLEAN DEFAULT FALSE,
-                    default_value TEXT
-                )
-            ''',
-
-        'config': '''
-                CREATE TABLE IF NOT EXISTS config (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-            '''
+        "documents": BASE_DOCUMENTS_SCHEMA,
+        "chunks": BASE_CHUNKS_SCHEMA,
+        "metadata_schema": BASE_METADATA_SCHEMA,
+        "config": """CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )"""
     }
 
     # Updated base indexes to include content_hash
     BASE_INDEXES = [
-        'CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)',
-        'CREATE INDEX IF NOT EXISTS idx_chunks_faiss_id ON chunks(faiss_id)',
-        'CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash)',  # New index
-        'CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)',
-        'CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)'
+        "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chunks_faiss_id ON chunks(faiss_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash)",  # New index
+        "CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)"
     ]
 
     def __init__(self, db_path: Union[str, Path]):
@@ -501,7 +460,7 @@ class DatabaseSchema:
                 db_connection = sqlite3.connect(self.db_path)
             with db_connection as conn:
                 # Enable foreign keys
-                conn.execute('PRAGMA foreign_keys = ON')
+                conn.execute("PRAGMA foreign_keys = ON")
 
                 # Create base tables
                 for table_name, ddl in self.BASE_SCHEMA.items():
@@ -521,7 +480,7 @@ class DatabaseSchema:
         """Set up metadata schema and add columns to documents table"""
         # Define reserved column names that cannot be used for metadata fields
         RESERVED_COLUMNS = {
-            'id', 'content', 'content_hash', 'created_at', 'updated_at'
+            "id", "content", "content_hash", "created_at", "updated_at"
         }
 
         # Validate that no metadata field names conflict with reserved columns
@@ -529,7 +488,7 @@ class DatabaseSchema:
             if field_name.lower() in RESERVED_COLUMNS:
                 raise ValueError(
                     f"Metadata field name '{field_name}' conflicts with reserved column name. "
-                    f"Reserved columns are: {', '.join(sorted(RESERVED_COLUMNS))}"
+                    f"Reserved columns are: {", ".join(sorted(RESERVED_COLUMNS))}"
                 )
 
         for field_name, field_def in schema.items():
@@ -546,11 +505,10 @@ class DatabaseSchema:
                 field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index, required=required)
 
             # Store schema definition
-            conn.execute('''
-                INSERT OR REPLACE INTO metadata_schema 
+            conn.execute("""INSERT OR REPLACE INTO metadata_schema 
                 (field_name, field_type, indexed, required, default_value)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (
+            """, (
                 field_name,
                 field_def.type.value,
                 field_def.indexed,
@@ -567,12 +525,12 @@ class DatabaseSchema:
         """Add a metadata column to the documents table"""
         # Map field types to SQLite types
         sqlite_type_map = {
-            MetadataFieldType.TEXT: 'TEXT',
-            MetadataFieldType.INTEGER: 'INTEGER',
-            MetadataFieldType.REAL: 'REAL',
-            MetadataFieldType.BOOLEAN: 'BOOLEAN',
-            MetadataFieldType.DATE: 'TEXT',  # Store as ISO string
-            MetadataFieldType.JSON: 'TEXT'  # Store as JSON string
+            MetadataFieldType.TEXT: "TEXT",
+            MetadataFieldType.INTEGER: "INTEGER",
+            MetadataFieldType.REAL: "REAL",
+            MetadataFieldType.BOOLEAN: "BOOLEAN",
+            MetadataFieldType.DATE: "TEXT",  # Store as ISO string
+            MetadataFieldType.JSON: "TEXT"  # Store as JSON string
         }
 
         sqlite_type = sqlite_type_map[field_def.type]
@@ -606,7 +564,7 @@ class DatabaseSchema:
             db_connection = sqlite3.connect(self.db_path)
 
         with db_connection as conn:
-            cursor = conn.execute('SELECT * FROM metadata_schema')
+            cursor = conn.execute("SELECT * FROM metadata_schema")
             schema = {}
 
             for row in cursor.fetchall():
@@ -647,7 +605,7 @@ class DatabaseSchema:
 class PooledConnection:
     """Wrapper for a pooled connection that handles automatic return to pool"""
 
-    def __init__(self, connection: sqlite3.Connection, pool: 'ConnectionPool'):
+    def __init__(self, connection: sqlite3.Connection, pool: "ConnectionPool"):
         self.connection = connection
         self.pool = pool
         self._closed = False
@@ -688,7 +646,7 @@ class ConnectionPool:
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with proper settings"""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute('PRAGMA foreign_keys = ON')
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         self._created_connections += 1
         return conn
@@ -705,7 +663,7 @@ class ConnectionPool:
                 conn = self._pool.pop()
                 # Verify connection is still valid
                 try:
-                    conn.execute('SELECT 1')
+                    conn.execute("SELECT 1")
                     return PooledConnection(conn, self)
                 except sqlite3.Error:
                     # Connection is invalid, create a new one
@@ -725,7 +683,7 @@ class ConnectionPool:
             if len(self._pool) < self.max_connections:
                 # Check if connection is still valid before returning to pool
                 try:
-                    conn.execute('SELECT 1')
+                    conn.execute("SELECT 1")
                     self._pool.append(conn)
                 except sqlite3.Error:
                     # Connection is invalid, close it
@@ -758,10 +716,10 @@ class ConnectionPool:
         """Get pool statistics for debugging"""
         with self._lock:
             return {
-                'pool_size': len(self._pool),
-                'max_connections': self.max_connections,
-                'created_connections': self._created_connections,
-                'available_connections': len(self._pool)
+                "pool_size": len(self._pool),
+                "max_connections": self.max_connections,
+                "created_connections": self._created_connections,
+                "available_connections": len(self._pool)
             }
 
     def __del__(self):
@@ -827,5 +785,5 @@ def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, Metad
     else:
         if schema not in schemas:
             raise KeyError(f"Schema `{schema}` was not found in predefined schema templates. Available options: "
-                           f"{', '.join(schemas.keys())}")
+                           f"{", ".join(schemas.keys())}")
         return schemas.get(schema)

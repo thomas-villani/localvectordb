@@ -292,7 +292,7 @@ class KeyManager:
         plain_key = self._generate_api_key()
         key_hash = self._hash_key(plain_key)
         created_at = datetime.now(UTC)
-
+        print("create_key datetime", created_at)
         expires_at = None
         if expires_days is not None:
             expires_at = created_at + timedelta(days=expires_days)

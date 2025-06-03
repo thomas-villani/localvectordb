@@ -71,15 +71,17 @@ Examples:
 
 Notes:
 
-    - Database configuration is stored in a configuration file (default: server-cfg.toml)
+    - Database configuration is stored in a configuration file (default: .lvdb-config.toml)
     - The location of the configuration file can be specified with --config or the
       LVDB_SERVER_CONFIG environment variable
     - Database files are stored in the directory specified by DB_ROOT_DIR in the configuration
     - Authentication can be enabled with the auth commands
 """
+
 import glob
 import json
 import os
+from typing import Any, Union, get_type_hints
 from dataclasses import asdict
 from datetime import datetime, UTC
 from pathlib import Path
@@ -92,6 +94,7 @@ EXIT_CODE_CONFIGURATION_ERROR = 2
 EXIT_CODE_OLLAMA_ERROR = 3
 EXIT_CODE_PERMISSION_ERROR = 4
 
+DEFAULT_CONFIG_FILE = ".lvdb-config"
 
 def find_config_file(config_path: str = None) -> str:
     """Find configuration file in order of precedence"""
@@ -106,13 +109,14 @@ def find_config_file(config_path: str = None) -> str:
 
     # Check common locations
     default_locations = [
-        "./server-cfg.toml",
-        "./server-cfg.py",
-        "./production.toml",
-        "./instance/server-cfg.toml",
-        "./instance/server-cfg.py",
-        "./instance/production.toml",
-        os.path.expanduser("~/localvectordb_server/server-cfg.toml")
+        "./.lvdb-config.toml",
+        "./.lvdb-config.json",
+        "./.lvdb/.lvdb-config.toml",
+        "./.lvdb/.lvdb-config.json",
+        "./instance/.lvdb-config.toml",
+        "./instance/.lvdb-config.json",
+        os.path.expanduser("~/.lvdb/.lvdb-config.toml"),
+        os.path.expanduser("~/.lvdb/.lvdb-config.json")
     ]
 
     for path in default_locations:
@@ -181,6 +185,202 @@ def _print_db_stats(db: "LocalVectorDB"):
         click.echo(f"  Vector dimension: {db.embedding_dimension}")
 
 
+def _get_nested_value(config: "Config", key_path: str) -> Any:
+    """Get value from config using dot notation."""
+    parts = key_path.split('.')
+
+    if len(parts) < 2:
+        raise ValueError("Key must be in format 'section.key' or 'section.subsection.key'")
+
+    section_name = parts[0]
+    if section_name not in ['database', 'embedding', 'server']:
+        raise ValueError(f"Invalid section '{section_name}'. Must be one of: database, embedding, server")
+
+    section_obj = getattr(config, section_name)
+
+    # Handle server.security.* as server.*
+    if len(parts) == 3 and section_name == 'server' and parts[1] == 'security':
+        attr_name = parts[2]
+        if hasattr(section_obj, attr_name):
+            return getattr(section_obj, attr_name)
+        else:
+            raise ValueError(f"Server setting '{attr_name}' not found")
+
+    # Handle database.metadata_schema.*
+    if len(parts) == 3 and section_name == 'database' and parts[1] == 'metadata_schema':
+        schema_field = parts[2]
+        metadata_schema = getattr(section_obj, 'default_metadata_schema', {})
+        if schema_field in metadata_schema:
+            return metadata_schema[schema_field]
+        else:
+            raise ValueError(f"Metadata schema field '{schema_field}' not found")
+
+    # Normal nested access
+    current = section_obj
+    for part in parts[1:]:
+        if hasattr(current, part):
+            current = getattr(current, part)
+        else:
+            raise ValueError(f"Invalid key path '{key_path}': '{part}' not found")
+
+    return current
+
+
+def _set_nested_value(config: "Config", key_path: str, value_str: str) -> None:
+    """Set value in config using dot notation with intelligent type conversion."""
+    parts = key_path.split('.')
+
+    if len(parts) < 2:
+        raise ValueError("Key must be in format 'section.key' or 'section.subsection.key'")
+
+    section_name = parts[0]
+    if section_name not in ['database', 'embedding', 'server']:
+        raise ValueError(f"Invalid section '{section_name}'. Must be one of: database, embedding, server")
+
+    section_obj = getattr(config, section_name)
+
+    # Handle server.security.* as server.*
+    if len(parts) == 3 and section_name == 'server' and parts[1] == 'security':
+        attr_name = parts[2]
+        if not hasattr(section_obj, attr_name):
+            raise ValueError(f"Server setting '{attr_name}' not found")
+
+        current_value = getattr(section_obj, attr_name)
+        converted_value = _convert_string_to_type(value_str, type(current_value), section_obj, attr_name)
+        setattr(section_obj, attr_name, converted_value)
+        return
+
+    # Handle database.metadata_schema.*
+    if len(parts) == 3 and section_name == 'database' and parts[1] == 'metadata_schema':
+        schema_field = parts[2]
+        metadata_schema = getattr(section_obj, 'default_metadata_schema', {})
+        from localvectordb.core import MetadataField, MetadataFieldType
+        try:
+            field_config = json.loads(value_str)
+            if isinstance(field_config, dict):
+                metadata_schema[schema_field] = MetadataField(**field_config)
+            else:
+                metadata_schema[schema_field] = MetadataField(type=MetadataFieldType(field_config))
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            raise ValueError(f"Invalid metadata field configuration: {e}")
+
+        setattr(section_obj, 'default_metadata_schema', metadata_schema)
+        return
+
+    # Normal nested access
+    if len(parts) == 2:
+        attr_name = parts[1]
+        if not hasattr(section_obj, attr_name):
+            raise ValueError(f"Invalid key path '{key_path}': '{attr_name}' not found")
+
+        current_value = getattr(section_obj, attr_name)
+        converted_value = _convert_string_to_type(value_str, type(current_value), section_obj, attr_name)
+        setattr(section_obj, attr_name, converted_value)
+    else:
+        # Deeper nesting - walk the path
+        current = section_obj
+        for part in parts[1:-1]:
+            if hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                raise ValueError(f"Invalid key path '{key_path}': '{part}' not found")
+
+        final_attr = parts[-1]
+        if not hasattr(current, final_attr):
+            raise ValueError(f"Invalid key path '{key_path}': '{final_attr}' not found")
+
+        current_value = getattr(current, final_attr)
+        converted_value = _convert_string_to_type(value_str, type(current_value), current, final_attr)
+        setattr(current, final_attr, converted_value)
+
+
+def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_name: str) -> Any:
+    """Convert string value to the appropriate type with validation."""
+    # Handle None/Optional types by checking type hints
+    hints = get_type_hints(obj.__class__)
+    if attr_name in hints:
+        hint = hints[attr_name]
+        # Handle Optional[T] (Union[T, None])
+        if hasattr(hint, '__origin__') and hint.__origin__ is Union:
+            non_none_types = [arg for arg in hint.__args__ if arg != type(None)]
+            if non_none_types:
+                target_type = non_none_types[0]
+
+    # Handle special "null" or "none" values
+    if value_str.lower() in ['null', 'none', '']:
+        return None
+
+    # Boolean conversion
+    if target_type == bool:
+        return value_str.lower() in ['true', 'yes', '1', 'on', 'y']
+
+    # Integer conversion
+    if target_type == int:
+        try:
+            return int(value_str)
+        except ValueError:
+            raise ValueError(f"Cannot convert '{value_str}' to integer")
+
+    # Float conversion
+    if target_type == float:
+        try:
+            return float(value_str)
+        except ValueError:
+            raise ValueError(f"Cannot convert '{value_str}' to float")
+
+    # String conversion (default)
+    if target_type == str:
+        return value_str
+
+    # List conversion
+    if target_type == list or (hasattr(target_type, '__origin__') and target_type.__origin__ == list):
+        # Try JSON first
+        if value_str.startswith('[') and value_str.endswith(']'):
+            try:
+                return json.loads(value_str)
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback to comma-separated
+        if ',' in value_str:
+            return [item.strip().strip('"\'') for item in value_str.split(',') if item.strip()]
+        else:
+            return [value_str.strip().strip('"\'')]
+
+    # Dict conversion
+    if target_type == dict or (hasattr(target_type, '__origin__') and target_type.__origin__ == dict):
+        try:
+            return json.loads(value_str)
+        except json.JSONDecodeError:
+            raise ValueError(f"Cannot convert '{value_str}' to dict. Expected JSON format.")
+
+    # For other types, try JSON parsing first, then string
+    try:
+        return json.loads(value_str)
+    except json.JSONDecodeError:
+        return value_str
+
+
+def _format_value_for_display(value: Any) -> str:
+    """Format a value for human-readable display."""
+    from localvectordb import MetadataField
+    if value is None:
+        return "null"
+    elif isinstance(value, bool):
+        return "true" if value else "false"
+    elif isinstance(value, (list, dict)):
+        return json.dumps(value, indent=2)
+    elif isinstance(value, MetadataField):
+        return json.dumps({
+            'type': value.type.value if hasattr(value.type, 'value') else str(value.type),
+            'indexed': value.indexed,
+            'required': value.required,
+            'default_value': value.default_value
+        }, indent=2)
+    else:
+        return str(value)
+
+
 @click.group()
 def cli():
     """LocalVectorDB Server command-line interface v1.0.
@@ -205,7 +405,20 @@ def cli():
 )
 @click.option('--disable-ollama-check', '-x', is_flag=True, help='Disable checking for ollama on startup')
 def serve(host, port, debug, config, db_folder, log_level, disable_ollama_check):
-    """Start the LocalVectorDB server."""
+    """
+    Start the LocalVectorDB server.
+
+    Launches the LocalVectorDB server using the specified configuration file and options.
+    You can control the network interface, port, logging level, and database folder. By default,
+    the server checks for Ollama installation and service unless explicitly disabled.
+
+    \b
+    Examples:
+        \b
+        lvdb serve --host 0.0.0.0 --port 5000
+        lvdb serve --config ./.lvdb-config.toml --db-folder ./dbs
+
+    """
     config_path = find_config_file(config)
 
     if config_path:
@@ -263,7 +476,21 @@ def serve(host, port, debug, config, db_folder, log_level, disable_ollama_check)
               envvar='LVDB_SERVER_CONFIG')
 @click.pass_context
 def config_group(ctx, config):
-    """View or modify the server configuration."""
+    """
+    View or modify the server configuration.
+
+    Provides subcommands to show, get, set, or initialize the server configuration file.
+    Supports TOML and JSON formats and allows dot notation for accessing nested config values.
+
+    \b
+    Examples:
+        \b
+        lvdb config show
+        lvdb config get server.host
+        lvdb config set database.chunk_size 1000
+        lvdb config init --output ./.lvdb-config.toml
+
+    """
     config_path = find_config_file(config)
     if not config_path and ctx.invoked_subcommand != "init":
         click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
@@ -280,17 +507,27 @@ def config_group(ctx, config):
 
 
 @config_group.command('show')
-@click.option('--format', '-f', type=click.Choice(['toml', 'yaml', 'json', 'ini']), default=None,
+@click.option('--format', '-f', type=click.Choice(['toml', 'json', ]), default=None,
               help='Output format (defaults to format of config file)')
 @click.option('--toml', 'format', flag_value='toml', help="Output in `toml` format")
-@click.option('--yaml', 'format', flag_value='yaml', help="Output in `yaml` format")
-@click.option('--ini', 'format', flag_value='ini', help="Output in `ini` format")
 @click.option('--json', 'format', flag_value='json', help="Output in `json` format")
 @click.option('--section', '-s', type=click.Choice(['database', 'embedding', 'server']), default=None,
               help='Only show specific section')
 @click.pass_context
 def show_config(ctx, format, section):
-    """Display current configuration."""
+    """
+    Display current configuration.
+
+    Shows the current server configuration in TOML or JSON format. You can filter by section
+    (database, embedding, server) and choose the output format.
+
+    \b
+    Examples:
+        \b
+        lvdb config show
+        lvdb config show --format json
+        lvdb config show --section database
+    """
     cfg = ctx.obj['config']
     config_path = ctx.obj['config_path']
 
@@ -299,12 +536,8 @@ def show_config(ctx, format, section):
         suffix = Path(config_path).suffix.lower()
         if suffix == '.toml':
             format = 'toml'
-        elif suffix in ['.yaml', '.yml']:
-            format = 'yaml'
         elif suffix == '.json':
             format = 'json'
-        elif suffix in ['.ini', '.cfg']:
-            format = 'ini'
         else:
             format = 'toml'  # Default to TOML for unknown formats
 
@@ -317,7 +550,6 @@ def show_config(ctx, format, section):
             'database': asdict(cfg.database),
             'embedding': asdict(cfg.embedding),
             'server': asdict(cfg.server),
-            # 'migration': asdict(cfg.migration)
         }
 
         if format == 'json':
@@ -327,7 +559,7 @@ def show_config(ctx, format, section):
 
     # Filter by section if requested
     if section:
-        if format == 'toml' or format == 'ini':
+        if format == 'toml':
             section_header = f"[{section}]"
             lines = config_str.split('\n')
             section_start = -1
@@ -361,17 +593,168 @@ def show_config(ctx, format, section):
     click.echo(config_str)
 
 
+
+@config_group.command('get')
+@click.argument('key')
+@click.option('--format', '-f', type=click.Choice(['raw', 'json', 'pretty']),
+              default='pretty', help='Output format')
+@click.pass_context
+def get_config_value(ctx, key, format):
+    """
+    Get a configuration value for KEY.
+
+    KEY is a variable in dot notation including the section: section.key
+
+    \b
+    Examples:
+        \b
+        lvdb config get server.host
+        lvdb config get server.security.require_api_key
+        lvdb config get database.chunk_size
+        lvdb config get embedding.model
+    """
+    try:
+        cfg = ctx.obj['config']
+        value = _get_nested_value(cfg, key)
+
+        if format == 'raw':
+            # Raw value as string
+            if isinstance(value, bool):
+                click.echo("true" if value else "false")
+            elif value is None:
+                click.echo("null")
+            else:
+                click.echo(str(value))
+        elif format == 'json':
+            # JSON format
+            from localvectordb import MetadataField
+            if isinstance(value, MetadataField):
+                json_value = {
+                    'type': value.type.value if hasattr(value.type, 'value') else str(value.type),
+                    'indexed': value.indexed,
+                    'required': value.required,
+                    'default_value': value.default_value
+                }
+            else:
+                json_value = value
+            click.echo(json.dumps(json_value))
+        else:
+            # Pretty format (default)
+            click.secho(f"Configuration: {key}", fg="cyan")
+            click.secho("=" * (len(key) + 15), fg="cyan")
+            click.echo(_format_value_for_display(value))
+
+    except ValueError as e:
+        click.secho(f"Error: {e}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(1)
+    except Exception as e:
+        click.secho(f"Unexpected error: {e}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(1)
+
+
+@config_group.command('set')
+@click.argument('key')
+@click.argument('value')
+@click.option('--dry-run', '-n', is_flag=True,
+              help='Show what would be changed without saving')
+@click.option('--force', '-f', is_flag=True,
+              help='Skip confirmation prompt')
+@click.pass_context
+def set_config_value(ctx, key, value, dry_run, force):
+    """
+    Set a configuration value using dot notation.
+
+    Allows updating a configuration value in the config file. Supports dry-run and confirmation prompts.
+
+    \b
+    Examples:
+        \b
+        lvdb config set server.port 8080
+        lvdb config set server.security.require_api_key true
+        lvdb config set database.chunk_size 1000
+        lvdb config set embedding.model "all-minilm-l6-v2"
+        lvdb config set server.security.cors_allowed_origins '["http://localhost:3000"]'
+
+    """
+    try:
+        cfg = ctx.obj['config']
+        config_path = ctx.obj['config_path']
+
+        # Get current value for comparison
+        try:
+            old_value = _get_nested_value(cfg, key)
+        except ValueError:
+            old_value = "<not set>"
+
+        # Show what will change
+        click.secho(f"Configuration Change:", fg="cyan")
+        click.secho("=" * 21, fg="cyan")
+        click.echo(f"Key: {key}")
+        click.echo(f"Old value: {_format_value_for_display(old_value)}")
+        click.echo(f"New value: {value}")
+
+        if dry_run:
+            click.secho("\n[DRY RUN] No changes made.", fg="yellow")
+            return
+
+        # Confirmation unless forced
+        if not force:
+            click.echo()
+            if not click.confirm("Apply this change?"):
+                click.secho("Cancelled.", fg="yellow")
+                return
+
+        # Apply the change
+        _set_nested_value(cfg, key, value)
+
+        # Validate and save
+        cfg.validate()
+        config_text = cfg.generate_toml()
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(config_text)
+
+        click.secho(f"\n✓ Configuration updated and saved to {config_path}", fg="green")
+
+        # Show the actual applied value (in case of type conversion)
+        try:
+            actual_value = _get_nested_value(cfg, key)
+            if str(actual_value) != value:
+                click.secho(f"Applied value: {_format_value_for_display(actual_value)}", fg="blue")
+        except Exception:
+            pass
+
+    except ValueError as e:
+        click.secho(f"Error: {e}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(1)
+    except Exception as e:
+        click.secho(f"Unexpected error: {e}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(1)
+
+
 @config_group.command('init')
-@click.option('--format', '-f', type=click.Choice(['toml', 'yaml', 'ini', 'json']), default='toml',
+@click.option('--format', '-f', type=click.Choice(['toml', 'json']), default='toml',
               help='Configuration file format (default: toml)')
 @click.option('--output', type=click.Path(resolve_path=True), help='Path to create config file')
-@click.option('--schema', type=click.Choice(['documents', 'research_papers', 'code_repository', 'customer_support']),
+@click.option('--schema',
+              type=click.Choice(['files', 'documents', 'research_papers', 'code_repository', 'customer_support']),
               help='Apply a predefined metadata schema')
 @click.pass_context
 def init_config(ctx, format, output, schema):
-    """Initialize a new configuration file with default settings."""
+    """
+    Initialize a new configuration file with default settings.
+
+    Creates a new server configuration file, optionally applying a predefined metadata schema.
+
+    \b
+    Examples:
+        \b
+        lvdb config init --output ./my-config.toml
+        lvdb config init --schema research_papers
+        lvdb config init
+
+    """
     if not output:
-        output = f"./server-cfg.{format}"
+        output = f"./{DEFAULT_CONFIG_FILE}.{format}"
 
     if os.path.exists(output):
         click.echo(f"Configuration file `{output}` exists! Overwrite (Y/n)?")
@@ -388,8 +771,19 @@ def init_config(ctx, format, output, schema):
     if schema:
         config.apply_common_schema(schema)
 
-    # Generate and save configuration
-    config_text = config.generate_toml()
+    if format == "toml":
+        # Generate and save configuration
+        config_text = config.generate_toml()
+    elif format == "json":
+        config_text = json.dumps({
+            "database": asdict(config.database),
+            "server": asdict(config.server),
+            "embedding": asdict(config.embedding)
+        }, indent=2)
+    else:
+        click.secho(f"Invalid format: {format}", err=True, fg="bright_red")
+        raise click.Abort()
+
     with open(output, "w", encoding="utf-8") as f:
         f.write(config_text)
 
@@ -403,13 +797,25 @@ def init_config(ctx, format, output, schema):
               type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
               help='Path to config file.',
               envvar='LVDB_SERVER_CONFIG')
-@click.option('--db-folder', '-d', default=None,
+@click.option('--db-folder', '-f', default=None,
               type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
               help='The directory containing vector databases.',
               envvar='LVDB_DATABASE_ROOT_DIR')
 @click.option("--details", "-v", is_flag=True, default=False, help="Show details")
 def list_databases(config, db_folder, details):
-    """List databases"""
+    """
+    List databases
+
+    Lists all available vector databases in the specified folder. Optionally shows details such as
+    document count, chunk count, embedding model, and chunking method.
+
+    \b
+    Examples:
+        \b
+        lvdb list
+        lvdb list --details
+
+    """
     if not db_folder:
         config_path = find_config_file(config)
         if not config_path:
@@ -452,7 +858,7 @@ def list_databases(config, db_folder, details):
         click.secho(f"Database folder {os.path.abspath(db_folder)} not found!", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
-
+# TODO: expand to allow a json file/str input for schema
 @cli.command('create')
 @click.argument('name')
 @click.option('--embedding-model', default=None, type=str, help='Embedding model to use')
@@ -477,7 +883,19 @@ def create_vector_database(
         name, embedding_model, embedding_provider, chunk_size, chunking_method,
         chunk_overlap, metadata_schema, config, db_folder
         ):
-    """Create a new vector database."""
+    """
+    Create a new vector database.
+
+    Creates a new vector database with the specified name and options. You can specify embedding
+    model/provider, chunking settings, and a predefined metadata schema.
+
+    \b
+    Examples:
+        \b
+        lvdb create mydb --embedding-model nomic-embed-text --chunk-size 500
+        lvdb create mydb --metadata-schema research_papers
+
+    """
     config_path = None
     cfg = None
 
@@ -560,7 +978,19 @@ def create_vector_database(
               envvar='LVDB_DATABASE_ROOT_DIR')
 @click.option('--confirm', '-y', flag_value=True, default=False, help='Pre-confirm deletion (danger!)')
 def delete_database(name, config, db_folder, confirm):
-    """Delete a database"""
+    """
+    Delete a database
+
+    Permanently deletes the specified database and its associated files. Prompts for confirmation unless
+    the --confirm flag is used.
+
+    \b
+    Examples:
+        \b
+        lvdb delete mydb
+        lvdb delete mydb --confirm
+
+    """
     if not db_folder:
         config_path = find_config_file(config)
         from localvectordb_server.config import load_config
@@ -610,7 +1040,19 @@ def delete_database(name, config, db_folder, confirm):
               envvar='LVDB_SERVER_CONFIG')
 @click.pass_context
 def auth(ctx, config):
-    """Manage API authentication settings."""
+    """
+    Manage API authentication settings.
+
+    Provides subcommands to create, list, revoke, rotate, and manage API keys for authentication.
+
+    \b
+    Examples:
+        \b
+        lvdb auth create-key --description "For testing"
+        lvdb auth list-keys --active-only
+        lvdb auth revoke-key <key_id>
+        lvdb auth status
+    """
     config_path = find_config_file(config)
     if not config_path:
         click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
@@ -631,7 +1073,18 @@ def auth(ctx, config):
               default='table', help='Output format')
 @click.pass_context
 def create_api_key(ctx, description, expires_days, created_by, output):
-    """Create a new API key."""
+    """
+    Create a new API key.
+
+    Generates a new API key for authenticating to the server. You can specify a description,
+    expiration, and creator. Output can be shown as a table, JSON, or key only.
+
+    \b
+    Examples:
+        \b
+        lvdb auth create-key --description "For admin"
+        lvdb auth create-key --expires-days 30 --output json
+    """
     try:
         from localvectordb_server.keymanager import get_key_manager
 
@@ -688,7 +1141,18 @@ def create_api_key(ctx, description, expires_days, created_by, output):
 @click.option('--show-stats', '-s', is_flag=True, help='Show key management statistics')
 @click.pass_context
 def list_api_keys(ctx, active_only, include_expired, output, show_stats):
-    """List API keys."""
+    """
+    List API keys.
+
+    Lists all API keys in the key database. You can filter for active/expired keys and show
+    management statistics. Output can be table or JSON.
+
+    \b
+    Examples:
+        \b
+        lvdb auth list-keys
+        lvdb auth list-keys --active-only --output json
+    """
     try:
         from localvectordb_server.keymanager import get_key_manager
 
@@ -779,7 +1243,18 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
 @click.option('--confirm', '-y', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 def revoke_api_key(ctx, key_id, confirm):
-    """Revoke (deactivate) an API key."""
+    """
+    Revoke (deactivate) an API key.
+
+    Deactivates the specified API key, preventing further use. Prompts for confirmation unless
+    the --confirm flag is used.
+
+    \b
+    Examples:
+        \b
+        lvdb auth revoke-key <key_id>
+        lvdb auth revoke-key <key_id> --confirm
+    """
     try:
         from localvectordb_server.keymanager import get_key_manager
 
@@ -829,7 +1304,18 @@ def revoke_api_key(ctx, key_id, confirm):
               default='table', help='Output format')
 @click.pass_context
 def rotate_api_key(ctx, key_id, output):
-    """Rotate an API key (create new, deactivate old)."""
+    """
+    Rotate an API key (create new, deactivate old).
+
+    Creates a new API key to replace an existing one, deactivating the old key. Outputs the new key
+    in table, JSON, or key-only format.
+
+    \b
+    Examples:
+        \b
+        lvdb auth rotate-key <key_id>
+        lvdb auth rotate-key <key_id> --output key-only
+    """
     try:
         from localvectordb_server.keymanager import get_key_manager
 
@@ -896,7 +1382,19 @@ def rotate_api_key(ctx, key_id, output):
 @click.option('--confirm', '-y', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
-    """Remove or deactivate expired API keys."""
+    """
+    Remove or deactivate expired API keys.
+
+    Finds expired API keys and either deactivates (soft delete) or permanently deletes (hard delete)
+    them. Supports dry-run and confirmation.
+
+    \b
+    Examples:
+        \b
+        lvdb auth prune-expired
+        lvdb auth prune-expired --hard-delete --dry-run
+
+    """
     try:
         from localvectordb_server.keymanager import get_key_manager
         from datetime import datetime
@@ -955,7 +1453,17 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
               default='table', help='Output format')
 @click.pass_context
 def show_key_info(ctx, key_id, output):
-    """Show detailed information about an API key."""
+    """
+    Show detailed information about an API key.
+
+    Displays information about a specific API key, including status, creation, expiration, and usage.
+
+    \b
+    Examples:
+        \b
+        lvdb auth key-info <key_id>
+        lvdb auth key-info <key_id> --output json
+    """
     try:
         from localvectordb_server.keymanager import get_key_manager
 
@@ -1028,7 +1536,18 @@ def show_key_info(ctx, key_id, output):
               default='table', help='Output format')
 @click.pass_context
 def auth_status(ctx, output):
-    """Show the current authentication status (enhanced version)."""
+    """
+    Show the current authentication status.
+
+    Displays the authentication status of the server, including whether API authentication is enabled,
+    and statistics about the key database.
+
+    \b
+    Examples:
+        \b
+        lvdb auth status
+        lvdb auth status --output json
+    """
     try:
         cfg = ctx.obj['config']
         config_path = ctx.obj['config_path']
@@ -1098,7 +1617,21 @@ def auth_status(ctx, output):
               envvar='LVDB_DATABASE_ROOT_DIR')
 @click.pass_context
 def db_group(ctx, name, config, db_folder):
-    """Commands related to a specific database NAME."""
+    """
+    Commands related to a specific database NAME.
+
+    Provides subcommands for interacting with a specific database, such as adding, searching,
+    updating, and deleting documents.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb info
+        lvdb db mydb add document.txt
+        lvdb db mydb search "query text"
+        lvdb db mydb shell
+
+    """
     if not db_folder:
         config_path = find_config_file(config)
         from localvectordb_server.config import load_config
@@ -1112,10 +1645,11 @@ def db_group(ctx, name, config, db_folder):
             )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    from localvectordb.exceptions import DatabaseNotFoundError
     try:
         from localvectordb.database import LocalVectorDB
         db = LocalVectorDB(name=name, base_path=db_folder, create_if_not_exists=False)
-    except Exception as e:
+    except DatabaseNotFoundError as e:
         click.secho(f"Database '{name}' was not found in {os.path.abspath(db_folder)}!",
                     fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
@@ -1126,7 +1660,17 @@ def db_group(ctx, name, config, db_folder):
 @db_group.command('info')
 @click.pass_context
 def show_db_info(ctx):
-    """Show the configuration info for a database"""
+    """
+    Show the configuration info for a database
+
+    Displays configuration and statistics for the specified database, including embedding model,
+    provider, chunking, and metadata schema.
+
+    \b
+    Example:
+        \b
+        lvdb db mydb info
+    """
     db = ctx.obj["db"]
 
     try:
@@ -1158,7 +1702,17 @@ def show_db_info(ctx):
 @db_group.command('stats')
 @click.pass_context
 def show_db_stats(ctx):
-    """Show database statistics"""
+    """
+    Show database statistics
+
+    Displays detailed statistics for the database, such as document and chunk counts, embedding
+    model, and configuration.
+
+    \b
+    Example:
+        \b
+        lvdb db mydb stats
+    """
     db = ctx.obj["db"]
     _print_db_stats(db)
 
@@ -1170,7 +1724,18 @@ def show_db_stats(ctx):
 @click.option('--json', '-j', 'output_as_json', is_flag=True, default=False, help="Output in json format")
 @click.pass_context
 def list_document_ids(ctx, limit, offset, output, output_as_json):
-    """List document IDs in database"""
+    """
+    List document IDs in database
+
+    Lists the IDs of documents stored in the database. Supports pagination, output to file, and
+    JSON formatting.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb list
+        lvdb db mydb list --limit 10 --offset 20 --json
+    """
     db = ctx.obj["db"]
 
     # Get all documents and apply pagination
@@ -1212,7 +1777,19 @@ def search(
         ctx, query, limit, search_type, return_type, score_threshold, vector_weight,
         metadata_filter, output_as_json, output, metadata, pretty
         ):
-    """Search a vector database using the unified query interface."""
+    """
+    Search a vector database using the unified query interface.
+
+    Performs a search on the database using vector, keyword, or hybrid methods. Supports metadata
+    filtering, result formatting, and output to file.
+
+    \b
+    Examples:
+    \b
+        lvdb db mydb search "search text" --limit 5 --search-type hybrid
+        lvdb db mydb search "search text" --metadata-filter '{"author":"Smith"}' --json
+
+    """
     # Parse metadata filter if provided
     filter_dict = None
     if metadata_filter:
@@ -1311,16 +1888,27 @@ def search(
     else:
         click.echo(output_str)
 
-# TODO: I don't think auto metadata will work anymore with the schema
 @db_group.command('add')
 @click.argument('files_or_text', nargs=-1)
 @click.option('--metadata', '-m', default=None,
-              help='Metadata for the document in JSON format or path to .json file. '
-                   'Use `-m auto` to populate with basic file information')
+              help='Metadata for the document in JSON format or path to .json file.')
 @click.option('--id', '-i', default=None, help='Set the id(s) for the document, separated by ",".')
 @click.pass_context
 def add_to_database(ctx, files_or_text, metadata, id):
-    """Add document(s) to the database."""
+    """
+    Add document(s) to the database.
+
+    Adds one or more documents to the database from files, globs, stdin, or direct text. Supports
+    attaching metadata and specifying document IDs.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb add file.txt
+        lvdb db mydb add "docs/*.md"
+        cat file.txt | lvdb db mydb add -
+        lvdb db mydb add file1.txt file2.txt --metadata '[{"author":"A"},{"author":"B"}]' --id "id1,id2"
+    """
     db = ctx.obj['db']
 
     all_inputs = []
@@ -1385,9 +1973,9 @@ def add_to_database(ctx, files_or_text, metadata, id):
 
     # Handle metadata
     if metadata:
-        if metadata == "auto":
-            metadata = auto_metadata
-        elif os.path.isfile(metadata):
+        # if metadata == "auto":
+        #     metadata = auto_metadata
+        if os.path.isfile(metadata):
             with open(metadata, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
         else:
@@ -1450,7 +2038,18 @@ def add_to_database(ctx, files_or_text, metadata, id):
 @click.option('--pretty', '-p', is_flag=True, default=False, help='Output results with title and formatting')
 @click.pass_context
 def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
-    """Retrieve document DOC_ID from database"""
+    """
+    Retrieve document DOC_ID from database
+
+    Fetches the content and (optionally) metadata of a document by its ID. Supports output as
+    JSON, pretty formatting, and writing to a file.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb get doc_1
+        lvdb db mydb get doc_1 --json --metadata
+    """
     db = ctx.obj['db']
 
     try:
@@ -1513,7 +2112,18 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
 @click.option('--metadata', '-m', default=None, help='Metadata for the document in JSON format')
 @click.pass_context
 def update_document(ctx, doc_id, file_or_text, metadata):
-    """Update document DOC_ID with new content and/or metadata"""
+    """
+    Update document DOC_ID with new content and/or metadata
+
+    Updates the content and/or metadata of a document in the database. Content can be provided
+    as a file, text, or via stdin.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb update doc_1 new_content.txt
+        echo "new content" | lvdb db mydb update doc_1 -
+    """
     db = ctx.obj['db']
 
     if file_or_text == "-":
@@ -1551,7 +2161,17 @@ def update_document(ctx, doc_id, file_or_text, metadata):
 @click.argument('doc_id')
 @click.pass_context
 def delete_document(ctx, doc_id):
-    """Delete document DOC_ID from database"""
+    """
+    Delete document DOC_ID from database
+
+    Deletes a document from the database by its ID.
+
+    \b
+    Example:
+        \b
+        lvdb db mydb delete doc_1
+
+    """
     db = ctx.obj['db']
 
     try:
@@ -1573,7 +2193,13 @@ def delete_document(ctx, doc_id):
 @db_group.command('shell')
 @click.pass_context
 def shell(ctx):
-    """Start an interactive shell for database operations."""
+    """
+    Start an interactive shell for database operations.
+
+    Launches an interactive shell for performing database operations such as search, add, get,
+    delete, list, stats, and more. Type 'help' for available commands.
+
+    """
     import glob
 
     db = ctx.obj['db']

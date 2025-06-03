@@ -22,23 +22,23 @@ This module contains the main LocalVectorDB v1.0 implementation with:
 
 import hashlib
 import json
+import logging
 import math
+import re
 import sqlite3
 import threading
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Literal, Any
-import logging
 
 import faiss
 import numpy as np
 
+from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import (
     DatabaseSchema, ConnectionPool, Document, Chunk, QueryResult,
     MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas
 )
-from localvectordb.chunking import ChunkerFactory
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError
 from localvectordb.utils import get_system_version

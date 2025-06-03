@@ -8,8 +8,7 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb_server/_dbmanager.py
-#  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
-#
+
 """
 Updated database manager for LocalVectorDB with document-first architecture,
 structured metadata support, and unified query interface.
@@ -17,114 +16,15 @@ structured metadata support, and unified query interface.
 
 import logging
 import threading
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Union, Literal, Optional, Any
 
-from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.core import MetadataFieldType
 from localvectordb.exceptions import DatabaseNotFoundError
-from localvectordb.utils import make_filename_safe
-from werkzeug.exceptions import BadRequest
+from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DatabaseConfig:
-    """Configuration for a vector database instance"""
-    name: str
-    metadata_schema: Optional[Dict[str, MetadataField]] = None
-    embedding_provider: str = "ollama"
-    embedding_model: str = "nomic-embed-text"
-    embedding_config: Optional[Dict[str, Any]] = None
-    chunking_method: str = "sentences"
-    chunk_size: int = 500
-    chunk_overlap: int = 1
-    enable_gpu: bool = False
-    enable_fts: bool = True
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'DatabaseConfig':
-        """Create config from dictionary, with validation"""
-
-
-        try:
-            name = make_filename_safe(data['name'])
-            if not name:
-                raise ValueError('Must provide valid database name')
-
-            # Parse metadata schema if provided
-            metadata_schema = None
-            if 'metadata_schema' in data:
-                metadata_schema = cls._parse_metadata_schema(data['metadata_schema'])
-
-            return cls(
-                name=name,
-                metadata_schema=metadata_schema,
-                embedding_provider=data.get('embedding_provider', 'ollama'),
-                embedding_model=data.get('embedding_model', 'nomic-embed-text'),
-                embedding_config=data.get('embedding_config', {}),
-                chunking_method=data.get('chunking_method', 'sentences'),
-                chunk_size=data.get('chunk_size', 500),
-                chunk_overlap=data.get('chunk_overlap', 1),
-                enable_gpu=data.get('enable_gpu', False),
-                enable_fts=data.get('enable_fts', True)
-            )
-        except (KeyError, ValueError) as e:
-            raise BadRequest(f"Invalid database configuration: {str(repr(e))}")
-
-    @staticmethod
-    def _parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataField]:
-        """Parse metadata schema from request data"""
-        if not schema_data:
-            return {}
-
-        parsed_schema = {}
-        for field_name, field_config in schema_data.items():
-            if isinstance(field_config, str):
-                # Simple string type
-                field_type = MetadataFieldType(field_config)
-                parsed_schema[field_name] = MetadataField(type=field_type)
-            elif isinstance(field_config, dict):
-                # Full field configuration
-                field_type = MetadataFieldType(field_config.get('type', 'text'))
-                parsed_schema[field_name] = MetadataField(
-                    type=field_type,
-                    indexed=field_config.get('indexed', False),
-                    required=field_config.get('required', False),
-                    default_value=field_config.get('default_value')
-                )
-            else:
-                from werkzeug.exceptions import BadRequest
-                raise BadRequest(f"Invalid metadata field configuration for '{field_name}'")
-
-        return parsed_schema
-
-    def validate(self) -> None:
-        """Validate configuration parameters"""
-        from werkzeug.exceptions import BadRequest
-
-        if not self.name or not isinstance(self.name, str):
-            raise BadRequest("Database name must be a non-empty string")
-
-        if self.embedding_provider not in ("ollama", "openai"):
-            raise BadRequest("embedding_provider must be 'ollama' or 'openai'")
-
-        if self.chunk_size <= 0:
-            raise BadRequest("chunk_size must be a positive integer")
-
-        if self.chunk_overlap < 0:
-            raise BadRequest("chunk_overlap must be a non-negative integer")
-
-        # Validate chunking method
-        valid_methods = [
-            "sentences", "words", "characters", "tokens",
-            "lines", "sections", "paragraphs", "code-blocks"
-        ]
-        if self.chunking_method not in valid_methods:
-            raise BadRequest(f"chunking_method must be one of {valid_methods}")
-
 
 class DatabaseManager:
     """Manages multiple vector databases with timeout-based cleanup"""
@@ -143,24 +43,26 @@ class DatabaseManager:
         db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
         db_path.mkdir(parents=True, exist_ok=True)
 
-    def create_db(self, db_config: DatabaseConfig) -> "LocalVectorDB":
+    def create_db(self, new_db_name,
+                  metadata_schema: dict[str, MetadataFieldType] | None,
+                  db_config: DatabaseSettings,
+                  embedding_config: EmbeddingSettings) -> "LocalVectorDB":
         """Create a new database with specified configuration"""
-        db_config.validate()
 
-        if db_config.name in self.databases:
+        if new_db_name in self.databases:
             from werkzeug.exceptions import BadRequest
-            raise BadRequest(f"Database '{db_config.name}' already exists")
+            raise BadRequest(f"Database '{new_db_name}' already exists")
 
         from localvectordb.database import LocalVectorDB
 
         # Create new database instance
         db = LocalVectorDB(
-            name=db_config.name,
+            name=new_db_name,
             base_path=Path(self.config.get("DB_ROOT_DIR", ".lvdb")),
-            metadata_schema=db_config.metadata_schema,
-            embedding_provider=db_config.embedding_provider,
-            embedding_model=db_config.embedding_model,
-            embedding_config=db_config.embedding_config,
+            metadata_schema=metadata_schema,
+            embedding_provider=embedding_config.provider,
+            embedding_model=embedding_config.model,
+            embedding_config=embedding_config.config,
             chunking_method=db_config.chunking_method,
             chunk_size=db_config.chunk_size,
             chunk_overlap=db_config.chunk_overlap,
@@ -169,8 +71,8 @@ class DatabaseManager:
             create_if_not_exists=True
         )
 
-        self.databases[db_config.name] = (db, datetime.now())
-        logger.info(f"Created new database: {db_config.name}")
+        self.databases[new_db_name] = (db, datetime.now())
+        logger.info(f"Created new database: {new_db_name}")
         return db
 
     def get_db(self, name: str) -> "LocalVectorDB":
@@ -356,85 +258,3 @@ class DatabaseManager:
                 except Exception as e:
                     logger.error(f"Error closing database {name}: {e}")
             self.databases.clear()
-
-    def get_database_stats(self, name: str) -> Dict[str, Any]:
-        """Get statistics for a specific database"""
-        try:
-            db = self.get_db(name)
-            return db.stats
-        except Exception as e:
-            logger.error(f"Error getting stats for database {name}: {e}")
-            return {"error": str(e)}
-
-    def get_all_database_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Get statistics for all databases"""
-        stats = {}
-        for db_name in self.list_databases():
-            try:
-                stats[db_name] = self.get_database_stats(db_name)
-            except Exception as e:
-                logger.error(f"Error getting stats for database {db_name}: {e}")
-                stats[db_name] = {"error": str(e)}
-
-        return stats
-
-    def backup_database(self, name: str, backup_path: str):
-        """Create a backup of a database"""
-        try:
-            db = self.get_db(name)
-
-            # For now, we'll just copy the files
-            # In a more sophisticated implementation, we might use the export functionality
-            import shutil
-
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
-            source_sqlite = db_path / f"{name}.sqlite"
-            source_faiss = db_path / f"{name}.faiss"
-
-            backup_path = Path(backup_path)
-            backup_path.mkdir(parents=True, exist_ok=True)
-
-            if source_sqlite.exists():
-                shutil.copy2(source_sqlite, backup_path / f"{name}.sqlite")
-
-            if source_faiss.exists():
-                shutil.copy2(source_faiss, backup_path / f"{name}.faiss")
-
-            logger.info(f"Database {name} backed up to {backup_path}")
-
-        except Exception as e:
-            logger.error(f"Error backing up database {name}: {e}")
-            raise
-
-    def restore_database(self, name: str, backup_path: str):
-        """Restore a database from backup"""
-        try:
-            import shutil
-
-            backup_path = Path(backup_path)
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
-
-            source_sqlite = backup_path / f"{name}.sqlite"
-            source_faiss = backup_path / f"{name}.faiss"
-
-            if not source_sqlite.exists():
-                raise FileNotFoundError(f"Backup file {source_sqlite} not found")
-
-            # Close database if it's currently open
-            if name in self.databases:
-                db, _ = self.databases[name]
-                db.close()
-                del self.databases[name]
-
-            # Copy files
-            if source_sqlite.exists():
-                shutil.copy2(source_sqlite, db_path / f"{name}.sqlite")
-
-            if source_faiss.exists():
-                shutil.copy2(source_faiss, db_path / f"{name}.faiss")
-
-            logger.info(f"Database {name} restored from {backup_path}")
-
-        except Exception as e:
-            logger.error(f"Error restoring database {name}: {e}")
-            raise

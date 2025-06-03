@@ -14,8 +14,8 @@ This module provides a factory function that automatically chooses between
 local and remote database implementations based on the base_path parameter.
 """
 
-from typing import Union
 from pathlib import Path
+from typing import Union
 
 from localvectordb.client import RemoteVectorDB
 from localvectordb.database import LocalVectorDB

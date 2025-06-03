@@ -71,10 +71,10 @@ def integration_app(temp_dir, test_key_manager):
     # Use temporary directory for test databases
     app.config['DB_ROOT_DIR'] = temp_dir
     app.config['REQUIRE_API_KEY'] = True
-    app.config['API_KEY_DB_PATH'] = test_key_manager.db_path
-    app.config['API_KEY_HEADER'] = 'Authorization'
-    app.config['API_KEY_AUDIT_LOGGING'] = False  # Disable for tests
-    app.config['API_KEY_PRUNE_EXPIRED'] = False  # Disable for tests
+    # app.config['API_KEY_DB_PATH'] = test_key_manager.db_path
+    # app.config['API_KEY_HEADER'] = 'Authorization'
+    # app.config['API_KEY_AUDIT_LOGGING'] = False  # Disable for tests
+    # app.config['API_KEY_PRUNE_EXPIRED'] = False  # Disable for tests
 
     # Store key manager instance for access in tests
     app.key_manager = test_key_manager
@@ -134,7 +134,7 @@ class DatabaseManagerMock:
                 raise DatabaseNotFoundError(f"Database '{name}' not found")
         return self.databases[name]
 
-    def create_database(self, name, **kwargs):
+    def create_db(self, name, *args, **kwargs):
         """Simulate database creation."""
         self._created_dbs.add(name)
         # Create the actual file to simulate real behavior
@@ -390,7 +390,7 @@ class TestDatabaseLifecycle:
     def test_database_operations_with_metadata_schema(self, integration_client, integration_app, valid_auth_headers):
         """Test database operations with complex metadata schema."""
         # Ensure we have a test database
-        integration_app.db_manager.create_database(
+        integration_app.db_manager.create_db(
             "schema_test_db",
             metadata_schema={
                 'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -467,7 +467,7 @@ class TestErrorHandlingIntegration:
     def test_document_not_found_flow(self, integration_client, integration_app, valid_auth_headers):
         """Test document not found in realistic scenario."""
         # Create a test database
-        integration_app.db_manager.create_database("error_test_db")
+        integration_app.db_manager.create_db("error_test_db")
 
         # Try to get non-existent document
         response = integration_client.get('/api/v1/error_test_db/documents/nonexistent',
@@ -478,7 +478,7 @@ class TestErrorHandlingIntegration:
     def test_invalid_request_data_flow(self, integration_client, integration_app, valid_auth_headers):
         """Test invalid request data handling."""
         # Create a test database
-        integration_app.db_manager.create_database("validation_test_db")
+        integration_app.db_manager.create_db("validation_test_db")
 
         # Try to query without required data
         response = integration_client.post('/api/v1/validation_test_db/query',
@@ -523,8 +523,8 @@ class TestMultiDatabaseOperations:
     def test_global_search_across_databases(self, integration_client, integration_app, valid_auth_headers):
         """Test global search functionality."""
         # Create multiple test databases
-        db1 = integration_app.db_manager.create_database("global_search_db1")
-        db2 = integration_app.db_manager.create_database("global_search_db2")
+        db1 = integration_app.db_manager.create_db("global_search_db1")
+        db2 = integration_app.db_manager.create_db("global_search_db2")
 
         # Add some documents to each
         db1.upsert(["Document in database 1"], [{"source": "db1"}])
@@ -552,8 +552,8 @@ class TestMultiDatabaseOperations:
     def test_database_isolation(self, integration_client, integration_app, valid_auth_headers):
         """Test that databases are properly isolated."""
         # Create two databases
-        db1 = integration_app.db_manager.create_database("isolation_db1")
-        db2 = integration_app.db_manager.create_database("isolation_db2")
+        db1 = integration_app.db_manager.create_db("isolation_db1")
+        db2 = integration_app.db_manager.create_db("isolation_db2")
 
         # Add document to first database
         doc_data = {"documents": ["Document only in db1"]}
@@ -582,7 +582,7 @@ class TestEmbeddingIntegration:
     def test_embedding_endpoint_with_database_provider(self, integration_client, integration_app, valid_auth_headers):
         """Test getting embeddings using database's provider."""
         # Create test database
-        integration_app.db_manager.create_database("embedding_test_db")
+        integration_app.db_manager.create_db("embedding_test_db")
 
         # Get embeddings
         embed_data = {"texts": ["test text for embedding"]}
@@ -699,7 +699,7 @@ class TestCompleteWorkflow:
     def test_complete_document_management_workflow(self, integration_client, integration_app, valid_auth_headers):
         """Test a complete document management workflow."""
         # 1. Create database
-        db = integration_app.db_manager.create_database(
+        db = integration_app.db_manager.create_db(
             "workflow_test_db",
             metadata_schema={
                 'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
@@ -763,7 +763,7 @@ class TestCompleteWorkflow:
     def test_workflow_with_key_rotation(self, integration_client, integration_app, valid_auth_headers):
         """Test workflow that includes key rotation."""
         # Create initial database
-        db = integration_app.db_manager.create_database("rotation_test_db")
+        db = integration_app.db_manager.create_db("rotation_test_db")
 
         # Add some documents with original key
         doc_data = {"documents": ["Document with original key"]}

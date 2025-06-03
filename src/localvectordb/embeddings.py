@@ -20,8 +20,9 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Type
-import numpy as np
+
 import httpx
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,8 @@ class OllamaEmbeddings(EmbeddingProvider):
         if self._validated:
             return True
 
+        # TODO: cache the models somewhere.
+        # TODO: better error handling here, need to raise an error if service is not available
         try:
             with httpx.Client() as client:
                 response = client.get(f"{self.base_url}/api/tags", timeout=10.0)

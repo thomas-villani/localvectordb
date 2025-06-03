@@ -20,7 +20,7 @@ from math import ceil
 from typing import Dict, Any
 
 from flask import Blueprint, request, jsonify, current_app
-from werkzeug.exceptions import NotFound, BadRequest, Unauthorized
+from werkzeug.exceptions import NotFound, BadRequest, Unauthorized, UnsupportedMediaType
 
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError,
@@ -30,6 +30,9 @@ from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key
 from localvectordb_server._checkdeps import check_ollama_service
+from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
+from localvectordb_server._cache import cache
+
 
 logger = logging.getLogger(__name__)
 api = Blueprint('api', __name__)
@@ -131,19 +134,41 @@ def handle_embedding_error(error):
 def handle_database_error(error):
     return jsonify({"error": str(error), "type": "database_error"}), 500
 
+@api.errorhandler(UnsupportedMediaType)
+def handle_unsupported_media_type_error(error):
+    return jsonify({"error": str(error), "type": "server_error"}), 415
 
-# @api.errorhandler(Exception)
-# def handle_unexpected_error(error):
-#     """Handle unexpected errors"""
-#     logger.exception("Unexpected error occurred")
-#     return jsonify({"error": f"An unexpected error occurred: {str(repr(error))}"}), 500
+@api.errorhandler(Exception)
+def handle_unexpected_error(error):
+    """Handle unexpected errors"""
+    logger.exception("Unexpected error occurred")
+    return jsonify({"error": f"An unexpected error occurred: {str(repr(error))}"}), 500
 
 
 # Database Management Routes
 @api.route("/api/v1/databases", methods=["POST"])
 @require_api_key
+@cache.cached()
 def create_database():
-    """Create a new vector database with optional metadata schema"""
+    """Create a new vector database with optional metadata schema.
+
+    Expected payload::
+
+        {
+            "name": "name-of-db",
+            "metadata_schema": { ... },  // optional
+            "database": {                // optional if different from default
+                "chunking_method": "<chunk-method>",
+                "chunk_size": 500, // integer,
+                "enable_fts": true, // must be true for hybrid/keyword search to work
+            },
+            "embedding": {
+                "provider": "ollama",
+                "model": "nomic-embed-text",
+                "
+            }
+        }
+    """
     data = request.json if request.data else None
     if not data:
         raise BadRequest("No configuration provided")
@@ -154,29 +179,29 @@ def create_database():
         if not name:
             raise BadRequest("Database name is required")
 
+        if hasattr(current_app, "config_obj"):
+            db_config = current_app.config_obj.database.copy()
+            embedding_config = current_app.config_obj.embedding.copy()
+        else:
+            db_config = DatabaseSettings()
+            embedding_config = EmbeddingSettings()
+
         # Parse metadata schema if provided
         metadata_schema = None
         if "metadata_schema" in data:
-            metadata_schema = parse_metadata_schema(data["metadata_schema"])
+            metadata_schema = parse_metadata_schema(data.get("metadata_schema"))
+        else:
+            metadata_schema = db_config.default_metadata_schema
 
-        # Optional parameters with defaults
-        config = {
-            "name": name,
-            "base_path": current_app.config.get("DB_ROOT_DIR", ".lvdb"),
-            "metadata_schema": metadata_schema,
-            "embedding_provider": data.get("embedding_provider", "ollama"),
-            "embedding_model": data.get("embedding_model", "nomic-embed-text"),
-            "embedding_config": data.get("embedding_config", {}),
-            "chunking_method": data.get("chunking_method", "sentences"),
-            "chunk_size": data.get("chunk_size", 500),
-            "chunk_overlap": data.get("chunk_overlap", 1),
-            "enable_gpu": data.get("enable_gpu", False),
-            "enable_fts": data.get("enable_fts", True)
-        }
+        if "database" in data:
+                database_settings = data.get("database")
+                db_config.update_from_dict(database_settings)
 
-        # Import and create database
-        from localvectordb.database import LocalVectorDB
-        db = LocalVectorDB(**config)
+        if "embedding" in data:
+            embedding_settings = data.get("embedding")
+            embedding_config.update_from_dict(embedding_settings)
+
+        db = current_app.db_manager.create_db(name, metadata_schema, db_config, embedding_config)
 
         # Store in database manager
         current_app.db_manager.databases[name] = db
@@ -212,6 +237,7 @@ def create_database():
 
 @api.route("/api/v1/databases", methods=["GET"])
 @require_api_key
+@cache.cached()
 def list_databases():
     """List all available databases"""
     try:
@@ -227,6 +253,7 @@ def list_databases():
 
 @api.route("/api/v1/<db_name>/info", methods=["GET"])
 @require_api_key
+@cache.cached()
 def get_database_info(db_name):
     """Get information about a specific database"""
     try:
@@ -264,6 +291,7 @@ def get_database_info(db_name):
 
 @api.route("/api/v1/<db_name>", methods=["DELETE"])
 @require_api_key
+@cache.cached()
 def delete_database(db_name):
     """Delete a database"""
     try:
@@ -306,6 +334,7 @@ def delete_database(db_name):
 # Document Management Routes
 @api.route("/api/v1/<db_name>/documents", methods=["POST"])
 @require_api_key
+@cache.cached()
 def upsert_documents(db_name):
     """Upsert (insert or update) documents"""
     data = request.json if request.data else None
@@ -352,6 +381,7 @@ def upsert_documents(db_name):
 
 @api.route("/api/v1/<db_name>/documents/insert", methods=["POST"])
 @require_api_key
+@cache.cached()
 def insert_documents(db_name):
     """Insert new documents (fails if ID already exists)"""
     data = request.json if request.data else None
@@ -402,6 +432,7 @@ def insert_documents(db_name):
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["GET"])
 @require_api_key
+@cache.cached()
 def get_document(db_name, doc_id):
     """Get a document by ID"""
     try:
@@ -420,6 +451,7 @@ def get_document(db_name, doc_id):
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["PUT"])
 @require_api_key
+@cache.cached()
 def update_document(db_name, doc_id):
     """Update a document's content and/or metadata"""
     try:
@@ -452,6 +484,7 @@ def update_document(db_name, doc_id):
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["DELETE"])
 @require_api_key
+@cache.cached()
 def delete_document(db_name, doc_id):
     """Delete a document by ID"""
     try:
@@ -475,6 +508,7 @@ def delete_document(db_name, doc_id):
 
 @api.route("/api/v1/<db_name>/documents/exists", methods=["POST"])
 @require_api_key
+@cache.cached()
 def check_documents_exist(db_name):
     """Check if documents exist by ID"""
     data = request.json
@@ -501,6 +535,7 @@ def check_documents_exist(db_name):
 
 @api.route("/api/v1/<db_name>/documents", methods=["GET"])
 @require_api_key
+@cache.cached()
 def list_documents(db_name):
     """List documents with pagination and filtering"""
     try:
@@ -595,6 +630,7 @@ def search_handler(db_name, search_params):
 # Search Routes
 @api.route("/api/v1/<db_name>/query", methods=["POST"])
 @require_api_key
+@cache.cached()
 def query_documents(db_name):
     """Unified query interface for all search types"""
     return search_handler(db_name, request.json)
@@ -602,6 +638,7 @@ def query_documents(db_name):
 
 @api.route("/api/v1/<db_name>/search/vector", methods=["POST"])
 @require_api_key
+@cache.cached()
 def vector_search(db_name):
     """Vector similarity search (convenience endpoint)"""
     data = request.json
@@ -616,6 +653,7 @@ def vector_search(db_name):
 
 @api.route("/api/v1/<db_name>/search/keyword", methods=["POST"])
 @require_api_key
+@cache.cached()
 def keyword_search(db_name):
     """Keyword search (convenience endpoint)"""
     data = request.json
@@ -630,6 +668,7 @@ def keyword_search(db_name):
 
 @api.route("/api/v1/<db_name>/search/hybrid", methods=["POST"])
 @require_api_key
+@cache.cached()
 def hybrid_search(db_name):
     """Hybrid search (convenience endpoint)"""
     data = request.json
@@ -645,6 +684,7 @@ def hybrid_search(db_name):
 # Filter and Metadata Routes
 @api.route("/api/v1/<db_name>/filter", methods=["POST"])
 @require_api_key
+@cache.cached()
 def filter_documents(db_name):
     """Filter documents by metadata and other criteria"""
     data = request.json
@@ -687,6 +727,7 @@ def filter_documents(db_name):
 # Global Search Route
 @api.route("/api/v1/search", methods=["POST"])
 @require_api_key
+@cache.cached()
 def global_search():
     """Search across multiple databases"""
     try:
@@ -759,6 +800,7 @@ def health_check():
 # Embedding Routes
 @api.route("/api/v1/<db_name>/embeddings", methods=["POST"])
 @require_api_key
+@cache.cached()
 def get_embeddings_for_db(db_name):
     """Get embeddings using the database's embedding provider"""
     data = request.json
@@ -786,6 +828,7 @@ def get_embeddings_for_db(db_name):
 
 @api.route("/api/v1/embeddings", methods=["POST"])
 @require_api_key
+@cache.cached()
 def get_embeddings():
     """Get embeddings from specified provider and model"""
     data = request.json

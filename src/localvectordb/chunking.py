@@ -16,9 +16,11 @@ enabling perfect reconstruction and precise highlighting.
 """
 
 import re
-import tiktoken
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional
+
+import tiktoken
+
 from localvectordb.core import Chunk, ChunkPosition
 
 
@@ -1366,7 +1368,7 @@ def reconstruct_document(chunks: List[Chunk], original_length: int) -> str:
     sorted_chunks = sorted(chunks, key=lambda c: c.position.start)
 
     # Create a character array to fill
-    result = [''] * original_length
+    result = [""] * original_length
 
     # Fill in the chunks
     for chunk in sorted_chunks:
@@ -1377,26 +1379,7 @@ def reconstruct_document(chunks: List[Chunk], original_length: int) -> str:
         end = min(end, original_length)
 
         if start < original_length:
-            chunk_chars = list(chunk.content[:end - start])
-            result[start:end] = chunk_chars
+            result[start:end] = list(chunk.content[:end - start])
 
     # Join and return
-    return ''.join(result)
-
-
-def find_chunk_containing_position(chunks: List[Chunk], position: int) -> Optional[Chunk]:
-    """Find the chunk that contains a given character position"""
-    for chunk in chunks:
-        if chunk.position.start <= position < chunk.position.end:
-            return chunk
-    return None
-
-
-def get_chunks_in_range(chunks: List[Chunk], start: int, end: int) -> List[Chunk]:
-    """Get all chunks that overlap with a given range"""
-    result = []
-    for chunk in chunks:
-        # Check if chunk overlaps with the range
-        if (chunk.position.start < end and chunk.position.end > start):
-            result.append(chunk)
-    return result
+    return "".join(result)

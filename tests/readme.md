@@ -49,42 +49,6 @@ pip install pytest pytest-cov pytest-mock pytest-xdist psutil
 
 ### Running Tests
 
-#### Using the Test Runner (Recommended)
-
-```bash
-# Run fast tests (excludes slow and network tests)
-python test_runner.py fast
-
-# Run all unit tests
-python test_runner.py unit
-
-# Run integration tests
-python test_runner.py integration
-
-# Run performance tests
-python test_runner.py performance
-
-# Run all tests
-python test_runner.py all
-
-# Run tests in parallel
-python test_runner.py --parallel
-
-# Run specific test pattern
-python test_runner.py --pattern "test_database"
-
-# Run specific test file
-python test_runner.py --file test_core.py
-
-# Check test coverage
-python test_runner.py --coverage
-
-# Create HTML test report
-python test_runner.py --report test_report.html
-```
-
-#### Using Pytest Directly
-
 ```bash
 # Run all tests
 pytest

@@ -23,18 +23,9 @@ Main Components:
     - DatabaseSettings: Enhanced database configuration with v1.0 features
     - EmbeddingSettings: Dedicated embedding provider configuration
     - ServerSettings: Server-specific configuration including security settings
-    - MigrationSettings: Settings for handling v1.x to v1.0 migrations
     - Config: Main configuration container with methods for loading and saving
 
-New v1.0 Features:
-    - Default metadata schemas for common use cases
-    - Embedding provider plugin configuration
-    - Connection pooling settings
-    - Performance optimization flags
-    - Automatic migration detection and handling
-
 Environment Variables:
-    All v1.x environment variables are supported, plus new v1.0 variables:
     - LVDB_DATABASE_DEFAULT_METADATA_SCHEMA
     - LVDB_DATABASE_CONNECTION_POOL_SIZE
     - LVDB_DATABASE_ENABLE_GPU
@@ -45,71 +36,42 @@ Environment Variables:
     - LVDB_MIGRATION_AUTO_DETECT
     - LVDB_MIGRATION_BACKUP_ON_MIGRATE
 
-Example v1.0 Configuration::
-
-.. code-block: toml
-
-    [database]
-    root_dir = "./.lvdb"
-    timeout = 300
-    connection_pool_size = 10
-    enable_gpu = false
-    enable_fts = true
-
-    # Default settings for new databases
-    chunk_size = 500
-    chunk_overlap = 1
-    chunking_method = "sentences"
-
-    [database.metadata_schema]
-    title = {type = "text", indexed = true}
-    author = {type = "text", indexed = true}
-    date = {type = "date", indexed = true}
-    tags = {type = "json"}
-
-    [embedding]
-    provider = "ollama"
-    model = "nomic-embed-text"
-    base_url = "http://localhost:11434"
-    batch_size = 64
-    timeout = 30
-
-    [server]
-    host = "127.0.0.1"
-    port = 5000
-    log_level = "INFO"
-
-    [server.security]
-    require_api_key = false
-    authorized_api_keys = []
-    cors_enabled = true
-    cors_allowed_origins = "*"
-
-    [migration]
-    auto_detect = true
-    backup_on_migrate = true
-    backup_dir = "./backups"
-
 """
 import copy
-#  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
-
 import os
+import json
 import tomllib
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, List, Union, Any, Optional, get_type_hints
+from typing import Dict, List, Union, Any, Optional, get_type_hints, Literal
 
 import click
 
 from localvectordb.core import MetadataField, get_common_metadata_schemas
-from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import ConfigurationError
-from localvectordb.chunking import ChunkerFactory
+
+
+class BaseSettings(ABC):
+
+    @abstractmethod
+    def validate(self) -> bool:
+        pass
+
+    def copy(self):
+        return copy.deepcopy(self)
+
+    def update_from_dict(self, update_dict, raise_errors: bool = False):
+        """Updates the attributes from a given dict."""
+        for k, v in update_dict.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
+            elif raise_errors:
+                raise AttributeError(f"Type {type(self)} does not have '{k}' attribute.")
 
 
 @dataclass
-class EmbeddingSettings:
+class EmbeddingSettings(BaseSettings):
     """Settings for embedding providers."""
     provider: str = "ollama"  # ollama, openai
     model: str = "nomic-embed-text"
@@ -146,7 +108,7 @@ class EmbeddingSettings:
 
 
 @dataclass
-class DatabaseSettings:
+class DatabaseSettings(BaseSettings):
     """Enhanced settings for database operations with v1.0 support."""
     root_dir: str = "./.lvdb"
     timeout: int = 300  # seconds
@@ -154,24 +116,13 @@ class DatabaseSettings:
     enable_gpu: bool = False
     enable_fts: bool = True
 
-    # Performance settings
-    embeddings_batch_size: int = 64  # Deprecated: use EmbeddingSettings.batch_size
-    auto_save_interval: int = 300  # Auto-save interval in seconds (0 = disabled)
-
     # Default database parameters when creating new ones
     chunk_size: int = 500  # Renamed from chunk_tokens for v1.0
     chunk_overlap: int = 1
-    embedding_model: str = "nomic-embed-text"  # Deprecated: use EmbeddingSettings
-    provider: str = "ollama"  # Deprecated: use EmbeddingSettings
-    chunking_method: str = "sentences"  # Renamed from chunk_method for v1.0
+    chunking_method: str = "lines"
 
     # Default metadata schema for new databases
     default_metadata_schema: Dict[str, MetadataField] = field(default_factory=dict)
-
-    # Migration settings
-    migration_auto_detect: bool = True
-    migration_backup_on_migrate: bool = True
-    migration_backup_dir: str = "./backups"
 
     def validate(self):
         # Validate root_dir
@@ -185,12 +136,6 @@ class DatabaseSettings:
         if not isinstance(self.connection_pool_size, int) or self.connection_pool_size <= 0:
             raise ConfigurationError("connection_pool_size must be a positive integer")
 
-        if not isinstance(self.embeddings_batch_size, int) or self.embeddings_batch_size <= 0:
-            raise ConfigurationError("embeddings_batch_size must be a positive integer")
-
-        if not isinstance(self.auto_save_interval, int) or self.auto_save_interval < 0:
-            raise ConfigurationError("auto_save_interval must be a non-negative integer")
-
         if not isinstance(self.chunk_size, int) or self.chunk_size <= 0:
             raise ConfigurationError("chunk_size must be a positive integer")
 
@@ -200,15 +145,6 @@ class DatabaseSettings:
         if self.chunk_overlap >= self.chunk_size:
             raise ConfigurationError("chunk_overlap must be less than chunk_size")
 
-        if not isinstance(self.chunking_method, str) or self.chunking_method not in ChunkerFactory.list_methods():
-            raise ConfigurationError(f"chunking_method must be one of {ChunkerFactory.list_methods()}")
-
-        if not isinstance(self.provider, str) or self.provider.lower() not in EmbeddingRegistry.list():
-            raise ConfigurationError(f"provider must be one of: {EmbeddingRegistry.list()}")
-
-        if not isinstance(self.embedding_model, str) or not self.embedding_model:
-            raise ConfigurationError("embedding_model must be a non-empty string")
-
         # Validate metadata schema
         for field_name, field_config in self.default_metadata_schema.items():
             if not isinstance(field_name, str) or not field_name:
@@ -216,15 +152,13 @@ class DatabaseSettings:
 
         return True
 
-    @staticmethod
-    def get_common_metadata_schemas() -> Dict[str, Dict[str, MetadataField]]:
-        """Get predefined metadata schemas for common use cases"""
-        return get_common_metadata_schemas()
-
 
 @dataclass
-class ServerSettings:
+class ServerSettings(BaseSettings):
     """Enhanced server-specific settings."""
+    debug: bool = False
+    environment: str = "development"
+
     host: str = "127.0.0.1"
     port: int = 5000
     log_level: str = "INFO"
@@ -232,18 +166,38 @@ class ServerSettings:
 
     # Performance settings
     max_request_size: int = 100 * 1024 * 1024  # 100MB default
-    request_timeout: int = 300  # 5 minutes default
 
     # Feature flags (not yet implemented)
     # enable_async_processing: bool = True
     # enable_request_logging: bool = True
     # enable_performance_metrics: bool = False
+    enable_rate_limiting: bool = False
+    rate_limit: str = "100 per minute"
+    rate_limit_storage_uri: str = "memory://"
+
+    cache_enabled: bool = False
+    cache_ignore_errors: bool = True
+    cache_timeout: int = 300   # 5 min
+    cache_key_prefix: str = "lvdb_cache_"
+    # Which cachelib cache to use: https://cachelib.readthedocs.io/en/stable/
+    cache_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
+                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
+                        "MongoDbCache"] = "SimpleCache"
+    # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
+    cache_settings: dict = None
+
+    proxy_enabled: bool = False
+
+    # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
+    # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
+    proxy_settings: dict = None
 
     # Security settings
     require_api_key: bool = False
     api_key_header: str = "Authorization"  # Header name for API key
 
-    # NEW: Key Management Settings
+    trusted_hosts: List[str] = None
+
     key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
     default_key_expiry_days: Optional[int] = None  # None = no default expiration
     auto_prune_expired_keys: bool = False  # Automatically remove expired keys
@@ -281,12 +235,6 @@ class ServerSettings:
         if self.max_request_size <= 0:
             raise ConfigurationError("max_request_size must be a positive integer")
 
-        if self.request_timeout <= 0:
-            raise ConfigurationError("request_timeout must be a positive integer")
-
-        # if self.worker_count is not None and self.worker_count <= 0:
-        #     raise ConfigurationError("worker_count must be a positive integer or None")
-
         # Validate API key settings if required
         if self.require_api_key:
             if self.default_key_expiry_days is not None and self.default_key_expiry_days <= 0:
@@ -315,6 +263,17 @@ class ServerSettings:
         else:
             raise ConfigurationError("cors_allowed_origins must be either a string or a list of strings")
 
+        if self.proxy_enabled:
+            if not isinstance(self.proxy_settings, dict):
+                raise ConfigurationError("If `proxy_enabled` is True, `proxy_settings` must be a dict containing "
+                                         "one or more of the following keys: x_for, x_proto, x_host, x_prefix")
+
+        if self.cache_enabled:
+            if self.cache_type not in ("SimpleCache", "RedisCache", "FileSystemCache","MemcachedCache",
+                                       "UWSGICache", "DynamoDbCache", "MongoDbCache"):
+                raise ConfigurationError("cache_type must be ")
+
+
         return True
 
 
@@ -339,23 +298,20 @@ class Config:
 
         if not path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
-
         if path.suffix.lower() == '.toml':
             return cls._from_toml(path)
-        elif path.suffix.lower() in ['.yaml', '.yml']:
-            return cls._from_yaml(path)
         elif path.suffix.lower() == '.json':
             return cls._from_json(path)
-        elif path.suffix.lower() in ['.ini', '.cfg']:
-            return cls._from_ini(path)
         else:
             raise ValueError(f"Unsupported configuration file format: {path.suffix}")
 
     @classmethod
     def from_dict(cls, data: dict):
         """Create config from dictionary with v1.0 support."""
-        if not data or not isinstance(data, dict):
-            raise TypeError("Configuration `data` must be a dictionary")
+        if not isinstance(data, dict):
+            raise TypeError("Configuration `data` must be a dictionary containing configuration data.")
+        if not data:
+            raise ConfigurationError("Configuration `data` is empty!")
 
         # Create config with default values
         config = cls()
@@ -403,22 +359,10 @@ class Config:
             data = tomllib.load(f)
         return cls.from_dict(data)
 
-    @classmethod
-    def _from_yaml(cls, path: Path) -> "Config":
-        """Load configuration from YAML file."""
-        try:
-            import yaml
-        except ImportError:
-            raise ImportError("PyYAML is required for YAML configuration. Install with: pip install pyyaml")
-
-        with open(path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-        return cls.from_dict(data)
 
     @classmethod
     def _from_json(cls, path: Path) -> "Config":
         """Load configuration from JSON file."""
-        import json
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return cls.from_dict(data)
@@ -450,7 +394,6 @@ class Config:
             'database': config.database,
             'embedding': config.embedding,
             'server': config.server,
-            # 'migration': config.migration
         }
 
         for section_name, section_obj in sections.items():
@@ -481,9 +424,6 @@ class Config:
         for env_name, env_value in os.environ.items():
             if not env_name.startswith(prefix):
                 continue
-
-            # if env_name == f"{prefix}SERVER_CONFIG":
-            #     continue
 
             # Remove prefix and convert to lowercase
             name = env_name[len(prefix):].lower()
@@ -546,19 +486,32 @@ class Config:
             if non_none_types:
                 # Use the first non-None type for conversion
                 first_type = non_none_types[0]
+                second_type = non_none_types[1] if len(non_none_types) > 1 else None
+
                 if first_type == bool:
                     return value.lower() in ['true', 'yes', '1', 'on']
                 elif first_type == int:
                     return int(value)
                 elif first_type == float:
                     return float(value)
+                elif first_type == str and second_type == List[str]:
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        if "," in value:
+                            value = list(map(lambda s: s.strip(' "\''), value.split(",")))
+                        return value
+                elif hasattr(first_type, '__origin__') and first_type.__origin__ == List[str]:
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return value
                 else:
                     return value
         # Handle List[str]
         elif hasattr(target_type, '__origin__') and target_type.__origin__ == list:
             if value.startswith('[') and value.endswith(']'):
                 # Handle JSON-like format
-                import json
                 try:
                     return json.loads(value)
                 except json.JSONDecodeError:
@@ -570,7 +523,6 @@ class Config:
                 return [item.strip() for item in value.split(',') if item.strip()]
         # Handle Dict types
         elif hasattr(target_type, '__origin__') and target_type.__origin__ == dict:
-            import json
             try:
                 return json.loads(value)
             except json.JSONDecodeError:
@@ -610,17 +562,7 @@ class Config:
         # Database settings with DB_ prefix (maintaining backward compatibility)
         for key, value in asdict(self.database).items():
             if key == 'default_metadata_schema':
-                # Convert to serializable format
-                schema_dict = {}
-                for field_name, field_obj in value.items():
-                    if isinstance(field_obj, MetadataField):
-                        field_dict = asdict(field_obj)
-                        if hasattr(field_dict['type'], 'value'):
-                            field_dict['type'] = field_dict['type'].value
-                        schema_dict[field_name] = field_dict
-                    else:
-                        schema_dict[field_name] = field_obj
-                result[f"DB_{key.upper()}"] = schema_dict
+                continue
             else:
                 result[f"DB_{key.upper()}"] = value
 
@@ -628,20 +570,35 @@ class Config:
         for key, value in asdict(self.embedding).items():
             result[f"EMBEDDING_{key.upper()}"] = value
 
+
+        cache_options = None
+        if self.server.cache_settings:
+            cache_options = {}
+            for k, v in self.server.cache_settings:
+                # Handle signal to load from environment variable (e.g. for redis password)
+                if v[0] == "$":
+                    cache_options[k] = os.getenv(v[1:])
+                else:
+                    cache_options[k] = v
+
         # Server settings (maintain existing names for backward compatibility)
         result.update({
+            "DEBUG": self.server.debug,
+            "ENVIRONMENT": self.server.environment,
             "LOG_LEVEL": self.server.log_level,
             "LOG_FORMAT": self.server.log_format,
             "REQUIRE_API_KEY": self.server.require_api_key,
             "CORS_ENABLED": self.server.cors_enabled,
             "CORS_ALLOWED_ORIGINS": self.server.cors_allowed_origins,
-            "MAX_REQUEST_SIZE": self.server.max_request_size,
-            "REQUEST_TIMEOUT": self.server.request_timeout,
+            "MAX_CONTENT_LENGTH": self.server.max_request_size,
             "AUTH_LOG_LEVEL": self.server.auth_log_level,
-            "API_KEY_DB_PATH": self.server.key_database_path or os.path.join(self.database.root_dir, "api_keys.db"),
-            "API_KEY_AUDIT_LOGGING": self.server.key_audit_logging,
-            "API_KEY_HEADER": self.server.api_key_header,
-            "API_KEY_PRUNE_EXPIRED": self.server.auto_prune_expired_keys
+            "TRUSTED_HOSTS": self.server.trusted_hosts,
+            "CACHE_TYPE": "NullCache" if not self.server.cache_enabled else self.server.cache_type,
+            "CACHE_DEFAULT_TIMEOUT": self.server.cache_timeout,
+            "CACHE_OPTIONS": cache_options,
+            "CACHE_IGNORE_ERRORS": self.server.cache_ignore_errors,
+            "CACHE_NO_NULL_WARNING": not self.server.cache_enabled,
+            "CACHE_KEY_PREFIX": self.server.cache_key_prefix
         })
 
         return result
@@ -713,8 +670,10 @@ class Config:
             'cors_enabled', 'cors_allowed_origins', 'cors_allowed_methods',
             'cors_allowed_headers', 'cors_max_age', 'key_database_path',
             'default_key_expiry_days', 'auto_prune_expired_keys',
-            'key_audit_logging', 'auth_log_level', 'warn_expiring_days'
+            'key_audit_logging', 'auth_log_level', 'warn_expiring_days', 'trusted_hosts'
         }
+
+        # TODO: handle the new cache_settings and proxy_settings
 
         security_config = {}
         for key, value in list(server_dict.items()):
@@ -754,21 +713,18 @@ class Config:
                     lines.append(f'{key} = {value}\n')
             lines.append("\n")
 
-        # Migration section
-        # lines.append("[migration]\n")
-        # for key, value in asdict(self.migration).items():
-        #     if isinstance(value, str):
-        #         lines.append(f'{key} = "{value}"\n')
-        #     elif isinstance(value, bool):
-        #         lines.append(f'{key} = {str(value).lower()}\n')
-        #     else:
-        #         lines.append(f'{key} = {value}\n')
-
         return "".join(lines)
+
+    def to_dict(self):
+        return {
+            "database": asdict(self.database),
+            "embedding": asdict(self.embedding),
+            "server": asdict(self.server)
+        }
 
     def apply_common_schema(self, schema_name: str):
         """Apply a predefined metadata schema."""
-        common_schemas = self.database.get_common_metadata_schemas()
+        common_schemas = get_common_metadata_schemas()
         if schema_name in common_schemas:
             self.database.default_metadata_schema = common_schemas[schema_name]
         else:
@@ -776,34 +732,58 @@ class Config:
             raise ConfigurationError(f"Unknown schema '{schema_name}'. Available: {available}")
 
     def merge(self, other: "Config") -> "Config":
-        """Enhanced merge."""
+        """Enhanced merge that respects non-default values in base config.
+
+        Only applies override values if they are explicitly different from defaults,
+        preserving custom base config values when override contains defaults.
+        """
         result = Config()
 
-        # Helper function to merge dataclass fields
+        # Helper function to merge dataclass fields intelligently
         def merge_dataclass(base: Any, override: Any, result: Any):
-            for key, value in asdict(override).items():
+            # Get default instance for comparison
+            default_instance = type(base)()
+
+            for key in asdict(override).keys():
+                base_value = getattr(base, key)
                 override_value = getattr(override, key)
+
+                try:
+                    default_value = getattr(default_instance, key)
+                except AttributeError:
+                    # Fallback if field doesn't exist in default
+                    setattr(result, key, override_value)
+                    continue
+
                 # Special handling for metadata schema
                 if key == 'default_metadata_schema' and isinstance(override_value, dict):
                     if not override_value:
                         # Use base value if override is empty
-                        setattr(result, key, getattr(base, key))
+                        setattr(result, key, base_value)
                     else:
-                        # Merge schemas
-                        base_schema = getattr(base, key)
-                        merged_schema = base_schema.copy()
+                        # Merge schemas - base takes precedence for conflicting keys
+                        merged_schema = base_value.copy()
                         merged_schema.update(override_value)
                         setattr(result, key, merged_schema)
                 elif isinstance(override_value, (list, dict)):
                     # For container types, check if they're empty (default)
                     if not override_value:
                         # Use the base value if override is empty
-                        setattr(result, key, getattr(base, key))
+                        setattr(result, key, base_value)
                     else:
                         setattr(result, key, override_value)
                 else:
-                    # Use the override value
-                    setattr(result, key, override_value)
+                    # Smart merge logic:
+                    # - If override is default but base is not default: keep base value
+                    # - Otherwise: use override value (either it's non-default, or both are default)
+                    try:
+                        if override_value == default_value and base_value != default_value:
+                            setattr(result, key, base_value)
+                        else:
+                            setattr(result, key, override_value)
+                    except (TypeError, ValueError):
+                        # If comparison fails (e.g., unhashable types), use override
+                        setattr(result, key, override_value)
 
         # Merge all sections
         merge_dataclass(self.database, other.database, result.database)
@@ -819,7 +799,19 @@ def load_config(
         verbose: bool = False,
         apply_schema: Optional[str] = None
 ) -> Config:
-    """Enhanced config loading with v1.0 support."""
+    """Smart
+
+    Parameters
+    ----------
+    configuration
+    validate
+    verbose
+    apply_schema
+
+    Returns
+    -------
+
+    """
     # Start with default config
     config = Config()
 

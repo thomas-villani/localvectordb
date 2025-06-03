@@ -28,6 +28,7 @@ Security Improvements:
 """
 
 import logging
+import os
 from functools import wraps
 from typing import Optional
 
@@ -53,8 +54,10 @@ def _get_key_manager() -> Optional['KeyManager']:
         from localvectordb_server.keymanager import get_key_manager
 
         # Try to get config path from app
-        config_path = current_app.config.get("API_KEY_DB_PATH")
-        key_manager = get_key_manager(config_path)
+        # config_path = current_app.config.get("API_KEY_DB_PATH")
+        key_db_path = (current_app.config_obj.key_database_path
+                       or os.path.join(current_app.config_obj.database.root_dir, "api_keys.db"))
+        key_manager = get_key_manager(key_db_path)
 
         # Cache in g for this request
         g.key_manager = key_manager
@@ -88,7 +91,7 @@ def _validate_database_key(token: str) -> bool:
     try:
         is_valid = key_manager.validate_key(token,
                                             update_last_used=True,
-                                            prune_expired=current_app.config.get("API_KEY_PRUNE_EXPIRED", False))
+                                            prune_expired=current_app.config_obj.api_key_prune_expired)
 
         if is_valid:
             logger.debug("Token validated against database keys")
@@ -178,9 +181,12 @@ def require_api_key(f):
             # logger.debug("API key authentication disabled")
             return f(*args, **kwargs)
 
-        log_usage = current_app.config.get("API_KEY_AUDIT_LOGGING", True)
+        # log_usage = current_app.config.get("API_KEY_AUDIT_LOGGING", True)
+        log_usage = current_app.config_obj.key_audit_logging
 
-        auth_header_key = current_app.config.get("API_KEY_HEADER", "Authorization")
+        # auth_header_key = current_app.config.get("API_KEY_HEADER", "Authorization")
+        auth_header_key = current_app.config_obj.api_key_header or "authorization"
+
         # Extract Authorization header
         auth_header = request.headers.get(auth_header_key)
         if not auth_header:
@@ -208,11 +214,10 @@ def require_api_key(f):
         logger.debug("API key authentication successful")
         if log_usage:
             audit_key_usage(token, request.endpoint, True)
+        g.api_key_hash = hash(token)
         return f(*args, **kwargs)
 
     return decorated
-
-
 
 def audit_key_usage(token: str, endpoint: str, success: bool):
     """

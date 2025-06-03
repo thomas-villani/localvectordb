@@ -8,9 +8,10 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb/utils.py
-import os
 import importlib.metadata
+import os
 import re
+
 
 def get_system_version():
     system_version = importlib.metadata.version("localvectordb")

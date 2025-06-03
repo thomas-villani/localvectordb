@@ -19,6 +19,7 @@ class DatabaseNotFoundError(DatabaseError, KeyError):
     """Raised if the Database cannot be found"""
     pass
 
+
 class DuplicateDocumentIDError(BaseLocalVectorDBException, ValueError):
     """Raised when inserting document(s) and the id(s) already exist"""
     pass

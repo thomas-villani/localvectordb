@@ -124,11 +124,10 @@ from typing import Union, Any, Optional, Literal, Dict, List
 
 import httpx
 
-from localvectordb.exceptions import (
-    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException
-)
 from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document
-
+from localvectordb.exceptions import (
+    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError
+)
 
 
 class RemoteVectorDB:
@@ -167,6 +166,8 @@ class RemoteVectorDB:
         Whether to enable full-text search, by default True
     request_timeout : int, optional
         Timeout for HTTP requests
+    authorization_header : str, default = "Authorization"
+        The server can be configured to accept alternate headers, and the client can too.
     """
 
     def __init__(
@@ -185,7 +186,8 @@ class RemoteVectorDB:
             chunk_overlap: int = 1,
             enable_gpu: bool = False,
             enable_fts: bool = True,
-            request_timeout: int = None
+            request_timeout: int = None,
+            authorization_header: str = "Authorization"
     ):
         self.name = name
         self.base_url = base_url.rstrip('/')
@@ -202,6 +204,7 @@ class RemoteVectorDB:
         self._chunk_overlap = chunk_overlap
         self._enable_gpu = enable_gpu
         self._enable_fts = enable_fts
+        self._authorization_header = authorization_header
 
         self._last_ping_timestamp = 0
         self._last_ping_status = False
@@ -222,7 +225,7 @@ class RemoteVectorDB:
         """Get headers for API requests including authentication if provided"""
         headers = {"Content-Type": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers[self._authorization_header] = f"Bearer {self.api_key}"
         return headers
 
     def _build_url(self, endpoint: str) -> str:
@@ -779,17 +782,6 @@ class RemoteVectorDB:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    # Legacy methods for backward compatibility
-    def add(
-            self,
-            documents: Union[str, List[str]],
-            metadatas: Union[dict, List[dict], None] = None,
-            ids: Union[List[str], Literal["auto", "uuid", "hex"]] = "auto",
-            embeddings: Union[List[List[float]], List[float], Any] = None
-    ) -> List[str]:
-        """Legacy method for backward compatibility - use upsert() instead"""
-        return self.upsert(documents, metadata=metadatas, ids=ids)
-
     def hybrid_query(
             self,
             query_text: str,
@@ -822,16 +814,19 @@ class RemoteVectorDB:
         )
 
     @classmethod
-    def database_exists(cls, db_name: str, base_url: str = "http://127.0.0.1:5000", api_key: str = None) -> bool:
+    def database_exists(cls, db_name: str, base_url: str = "http://127.0.0.1:5000", api_key: str = None,
+                        authorization_header="Authorization") -> bool:
         """Check if a database exists on the server"""
         url = f"{base_url}/api/v1/databases"
         headers = {"Content-Type": "application/json"}
         if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+            headers[authorization_header] = f"Bearer {api_key}"
 
-        # TODO: handle connection errors and other tpyes of errors a bit better
-        with httpx.Client() as client:
-            response = client.get(url, headers=headers)
+        try:
+            with httpx.Client() as client:
+                response = client.get(url, headers=headers)
+        except httpx.ConnectError as e:
+            raise DatabaseError(f"Could not connect to remote database: {str(e)}") from e
 
         if response.status_code == 200:
             result = response.json()

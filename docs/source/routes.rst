@@ -38,12 +38,16 @@ Create a new vector database with optional configuration.
        "date": {"type": "date", "indexed": true},
        "tags": {"type": "json"}
      },
-     "embedding_provider": "ollama",
-     "embedding_model": "nomic-embed-text",
-     "chunk_size": 500,
-     "chunking_method": "sentences",
-     "chunk_overlap": 1,
-     "enable_fts": true
+     "embedding": {
+        "provider": "ollama",
+        "model": "nomic-embed-text"
+     },
+     "database": {
+        "chunk_size": 500,
+        "chunking_method": "sentences",
+        "chunk_overlap": 1,
+        "enable_fts": true
+     }
    }
 
 **curl Example**:
@@ -83,8 +87,12 @@ Create a new vector database with optional configuration.
                "authors": {"type": "json"},
                "journal": {"type": "text", "indexed": True}
            },
-           "embedding_model": "nomic-embed-text",
-           "chunk_size": 600
+           "embedding": {
+               "model": "nomic-embed-text"
+           }
+           "database": {
+               "chunk_size": 600
+           }
        }
    )
 

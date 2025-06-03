@@ -35,4 +35,5 @@ scale to distributed deployments without changing your code.
    cli
    routes
    config
+   config.params
    modules

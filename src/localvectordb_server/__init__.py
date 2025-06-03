@@ -105,6 +105,33 @@ def create_app(configuration: Union[str, Config, None]=None,
         else:
             raise ConfigurationError("CORS enabled but `cors_allowed_origins` is invalid or empty.")
 
+    if config.server.proxy_enabled:
+
+        app.logger.info("Enabling ProxyFix")
+
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        if config.server.proxy_settings:
+            app.logger.debug(f"Proxy settings: {config.server.proxy_settings}")
+            app.wsgi_app = ProxyFix(app.wsgi_app, **config.server.proxy_settings)
+        else:  # Default config, single proxy, forward
+            app.wsgi_app = ProxyFix(
+                app.wsgi_app,
+                x_for=1,  # Number of proxies setting X-Forwarded-For, one for single proxy
+            )
+
+    if config.server.enable_rate_limiting:
+        from flask_limiter import Limiter
+        from flask_limiter.util import get_remote_address
+        limiter = Limiter(get_remote_address,
+                          app=app,
+                          default_limits=[config.server.rate_limit],
+                          storage_uri=config.server.rate_limit_storage_uri)
+        app.limiter = limiter
+
+    from localvectordb_server._cache import cache
+    cache.init_app(app)   # configured from flask's config, including whether disabled (NullCache)
+
     # Initialize database manager
     app.db_manager = DatabaseManager(app)
 
