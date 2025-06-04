@@ -13,12 +13,13 @@
 Enhanced database manager for LocalVectorDB with multi-worker coordination.
 Uses cachelib for shared database registry across workers.
 """
-
+import atexit
 import json
 import logging
 import os
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,6 +35,31 @@ from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
+
+# Global registry to track all DatabaseManager instances for cleanup
+_active_managers = weakref.WeakSet()
+_atexit_registered = False
+
+
+def _cleanup_all_managers():
+    """Emergency cleanup function called on process exit"""
+    logger.info("Process exit detected, cleaning up all database managers")
+
+    # Create a list copy since the WeakSet may change during iteration
+    managers_to_close = list(_active_managers)
+
+    for manager in managers_to_close:
+        try:
+            if hasattr(manager, '_shutdown_event') and not manager._shutdown_event.is_set():
+                logger.info(
+                    f"Emergency shutdown of database manager (worker: {getattr(manager, 'worker_id', 'unknown')})")
+                manager.close_all()
+        except Exception as e:
+            # Use print since logging might not work during shutdown
+            print(f"Error during emergency database manager cleanup: {e}")
+
+    logger.info("Emergency cleanup completed")
+
 
 class DatabaseRegistryError(Exception):
     """Raised when database registry operations fail"""
@@ -372,8 +398,19 @@ class DatabaseManager:
     """
 
     def __init__(self, app):
+        global _atexit_registered
+
         self.app = app
         self.config = app.config
+
+        # Register this instance for emergency cleanup
+        _active_managers.add(self)
+
+        # Register global atexit handler (only once)
+        if not _atexit_registered:
+            atexit.register(_cleanup_all_managers)
+            _atexit_registered = True
+            # logger.info("Registered atexit handler for database cleanup")
 
         # Initialize shared registry using cachelib
         self.registry = self._create_registry()
@@ -386,6 +423,7 @@ class DatabaseManager:
         self.databases: Dict[str, Tuple["LocalVectorDB", datetime]] = {}
         self.lock = threading.RLock()
         self._shutdown_event = threading.Event()
+        self._shutdown_complete = False
 
         # Worker identification for coordination
         self.worker_id = f"worker-{os.getpid()}-{threading.get_ident()}"
@@ -406,9 +444,9 @@ class DatabaseManager:
         # Ensure database directory exists
         try:
             db_path.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Database directory ready: {db_path}")
+            # logger.info(f"Database directory ready: {db_path}")
         except Exception as e:
-            logger.error(f"Failed to create database directory {db_path}: {e}")
+            # logger.error(f"Failed to create database directory {db_path}: {e}")
             raise DatabaseError(f"Cannot create database directory: {e}")
 
         # Start background services
@@ -419,7 +457,7 @@ class DatabaseManager:
 
     def _create_registry(self) -> DatabaseRegistry:
         """Create database registry using cachelib"""
-        if self.app.config_obj.use_single_cache:
+        if self.app.config_obj.server.use_single_cache:
             from localvectordb_server._cache import cache
             return DatabaseRegistry(cache.cache)
 
@@ -427,9 +465,10 @@ class DatabaseManager:
         registry_type = self.app.config_obj.server.db_registry_type
         registry_settings = self.app.config_obj.server.db_registry_settings
 
-        if registry_type == self.app.config_obj.cache_type and not registry_settings:
-            registry_settings = self.app.cache_settings
+        if registry_type == self.app.config_obj.server.cache_type and not registry_settings:
+            registry_settings = self.app.config_obj.server.cache_settings
 
+        registry_settings = registry_settings or {}
         logger.info(f"Initializing database registry with type: {registry_type}")
 
         registry_config_kwargs = {}
@@ -1157,7 +1196,10 @@ class DatabaseManager:
 
     def close_all(self):
         """Close all database connections and stop background tasks"""
-        logger.info("Shutting down database manager")
+        if self._shutdown_complete:
+            return
+
+        logger.info(f"Shutting down database manager (worker: {self.worker_id})")
 
         # Signal background threads to stop
         self._shutdown_event.set()
@@ -1188,4 +1230,16 @@ class DatabaseManager:
                 except Exception as e:
                     logger.error(f"Error joining {thread_name} thread: {e}")
 
-        logger.info("Database manager shutdown complete")
+        self._shutdown_complete = True
+        logger.info(f"Database manager shutdown complete (worker: {self.worker_id})")
+
+    def __del__(self):
+        """Destructor to ensure cleanup on garbage collection"""
+        try:
+            if not self._shutdown_complete:
+                logger.debug(
+                    f"DatabaseManager garbage collected, ensuring cleanup (worker: {getattr(self, 'worker_id', 'unknown')})")
+                self.close_all()
+        except Exception as e:
+            # Use print since logging might not work during GC
+            print(f"Error in DatabaseManager destructor: {e}")

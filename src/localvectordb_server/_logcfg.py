@@ -8,6 +8,7 @@ import logging.config
 import os
 import json
 import logging
+import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -15,8 +16,7 @@ from datetime import datetime, UTC
 from typing import Optional
 from functools import wraps
 
-from flask import request, g
-
+from flask import request, g, current_app
 
 
 def configure_logging(app: "Flask", log_file: Optional[str] = None):
@@ -108,6 +108,21 @@ def configure_logging(app: "Flask", log_file: Optional[str] = None):
                 'handlers': ['console'],
                 'level': logging.INFO,
                 'propagate': False
+            },
+            'httpx': {
+                'handlers': ['console'],
+                'level': logging.WARNING,
+                'propagate': False
+            },
+            'httpcore': {
+                'handlers': ['console'],
+                'level': logging.WARNING,
+                'propagate': False
+            },
+            'asyncio': {
+                'handlers': ['console'],
+                'level': logging.WARNING,
+                'propagate': False
             }
         }
     }
@@ -195,19 +210,24 @@ class StructuredFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
+
+        message = record.getMessage()
+        ansi_escape = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+        message = ansi_escape.sub('', message)
+
         # Base log entry
         log_entry = {
             'timestamp': datetime.now(UTC).isoformat() + 'Z',
             'level': record.levelname,
             'logger': record.name,
-            'message': record.getMessage(),
+            'message': message,
         }
 
         # Add request context if available
-        if hasattr(g, 'request_id'):
+        if current_app and hasattr(g, 'request_id'):
             log_entry['request_id'] = g.request_id
 
-        if hasattr(g, 'api_key_hash'):
+        if current_app and hasattr(g, 'api_key_hash'):
             log_entry['api_key_hash'] = g.api_key_hash
 
         # Add Flask request context

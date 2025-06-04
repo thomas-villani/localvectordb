@@ -988,13 +988,28 @@ def get_embeddings_for_db(db_name):
         if isinstance(texts, str):
             texts = [texts]
         elif not isinstance(texts, list):
-            raise ValidationError("Texts must be a string or array of strings", field="texts")
+            raise ValidationError("`texts` must be a string or array of strings", field="texts")
+
+        provider = data.get("provider")
+        if not provider:
+            raise ValidationError("`provider` must be provided", field="provider")
+        elif not isinstance(provider, str):
+            raise ValidationError("`provider` must be a string", field="provider")
+
+        model = data.get("model")
+        if not model:
+            raise ValidationError("`model` must be provided", field="model")
+        elif not isinstance(provider, str):
+            raise ValidationError("`model` must be a string", field="model")
+
+        from localvectordb.embeddings import EmbeddingRegistry
+        if provider not in EmbeddingRegistry.list():
+            raise ValidationError(f"`provider` must be one of: {EmbeddingRegistry.list()}", field="provider")
 
         try:
-            db = current_app.db_manager.get_db(db_name)
-            embeddings = db.embedding_provider.embed_sync(texts)
+            embeddings = current_app.db_manager.get_embeddings_for_model(texts, provider, model)
 
-            return jsonify({"embeddings": embeddings.tolist()})
+            return jsonify({"embeddings": embeddings})
 
         except Exception as e:
             db_logger.log_error("get_embeddings_for_db", e, database_name=db_name)
