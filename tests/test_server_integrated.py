@@ -16,6 +16,7 @@ database operations, and multi-component interactions.
 """
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -71,6 +72,11 @@ def integration_app(temp_dir, test_key_manager):
     # Use temporary directory for test databases
     app.config['DB_ROOT_DIR'] = temp_dir
     app.config['REQUIRE_API_KEY'] = True
+    app.config['CACHE_TYPE'] = 'NullCache'
+
+    from localvectordb_server._cache import cache
+    cache.init_app(app)
+
     # app.config['API_KEY_DB_PATH'] = test_key_manager.db_path
     # app.config['API_KEY_HEADER'] = 'Authorization'
     # app.config['API_KEY_AUDIT_LOGGING'] = False  # Disable for tests
@@ -133,6 +139,16 @@ class DatabaseManagerMock:
                 from localvectordb.exceptions import DatabaseNotFoundError
                 raise DatabaseNotFoundError(f"Database '{name}' not found")
         return self.databases[name]
+
+    def delete_db(self, name, *args, **kwargs):
+        if name in self._created_dbs:
+            self._created_dbs.remove(name)
+        db_file = self.base_path / f"{name}.sqlite"
+        if os.path.exists(db_file):
+            os.remove(db_file)
+        self.databases.pop(name)
+
+        return True, None
 
     def create_db(self, name, *args, **kwargs):
         """Simulate database creation."""
@@ -298,6 +314,8 @@ class TestAuthenticationFlow:
     def test_request_with_valid_api_key(self, integration_client, valid_auth_headers):
         """Test request with valid API key should succeed."""
         response = integration_client.get('/api/v1/databases', headers=valid_auth_headers)
+        print(response.text)
+        print(valid_auth_headers)
         assert response.status_code == 200
 
     def test_api_key_header_formats(self, integration_client, integration_app):
@@ -380,6 +398,7 @@ class TestDatabaseLifecycle:
             mock_exists.return_value = True
 
             response = integration_client.delete('/api/v1/test_lifecycle_db', headers=valid_auth_headers)
+            print(response.text)
             assert response.status_code == 200
             result = json.loads(response.data)
             assert result["status"] == "success"
@@ -462,7 +481,7 @@ class TestErrorHandlingIntegration:
 
         assert response.status_code == 404
         result = json.loads(response.data)
-        assert result["type"] == "database_not_found"
+        assert result["error"]["code"] == "DATABASE_NOT_FOUND"
 
     def test_document_not_found_flow(self, integration_client, integration_app, valid_auth_headers):
         """Test document not found in realistic scenario."""
@@ -614,8 +633,10 @@ class TestEmbeddingIntegration:
                                                content_type='application/json',
                                                headers=valid_auth_headers)
 
+            print(response.text)
             assert response.status_code == 200
             result = json.loads(response.data)
+
             assert "embeddings" in result
 
 

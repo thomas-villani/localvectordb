@@ -109,7 +109,7 @@ class EmbeddingSettings(BaseSettings):
 
 @dataclass
 class DatabaseSettings(BaseSettings):
-    """Enhanced settings for database operations with v1.0 support."""
+    """Settings related to database operations and connections"""
     root_dir: str = "./.lvdb"
     timeout: int = 300  # seconds
     connection_pool_size: int = 10
@@ -155,7 +155,7 @@ class DatabaseSettings(BaseSettings):
 
 @dataclass
 class ServerSettings(BaseSettings):
-    """Enhanced server-specific settings."""
+    """Settings related to the flask API server"""
     debug: bool = False
     environment: str = "development"
 
@@ -164,13 +164,14 @@ class ServerSettings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
+
     # Performance settings
     max_request_size: int = 100 * 1024 * 1024  # 100MB default
 
-    # Feature flags (not yet implemented)
-    # enable_async_processing: bool = True
-    # enable_request_logging: bool = True
-    # enable_performance_metrics: bool = False
+    # Feature flags
+    # enable_async_processing: bool = True   - not yet implemented
+    enable_structured_logging: bool = not debug
+    enable_performance_logging: bool = False
     enable_rate_limiting: bool = False
     rate_limit: str = "100 per minute"
     rate_limit_storage_uri: str = "memory://"

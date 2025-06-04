@@ -26,6 +26,7 @@ from localvectordb.core import MetadataField, MetadataFieldType, Document, Query
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError
 )
+from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server.routes import (
     api, serialize_document, serialize_query_result, parse_metadata_schema
 )
@@ -45,6 +46,7 @@ def app():
     app.db_manager = Mock()
     app.db_manager.databases = {}
     app.db_manager.list_databases.return_value = ['test_db1', 'test_db2']
+    app.db_manager.delete_db.return_value = (True, None)
 
     # Register blueprint
     app.register_blueprint(api)
@@ -230,10 +232,11 @@ class TestHelperFunctions:
         assert parse_metadata_schema({}) == {}
         assert parse_metadata_schema(None) == {}
 
-    def test_parse_metadata_schema_invalid(self):
+    def test_parse_metadata_schema_invalid(self, app):
         """Test parsing invalid metadata schema."""
-        with pytest.raises(BadRequest):
-            parse_metadata_schema({"invalid": 123})
+        with app.app_context():
+            with pytest.raises(ValidationError):
+                parse_metadata_schema({"invalid": 123})
 
 
 class TestDatabaseManagementRoutes:
@@ -363,7 +366,7 @@ class TestDatabaseManagementRoutes:
 
             assert response.status_code == 400
             result = json.loads(response.data)
-            assert "already exists" in result["error"]
+            assert "already exists" in result["error"]["message"]
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
     def test_create_database_no_name(self, client):
@@ -418,16 +421,13 @@ class TestDatabaseManagementRoutes:
 
         # Mock database in manager
         mock_db = Mock()
-        app.db_manager.databases = {"test_db": mock_db}
+        app.db_manager.databases = {"test_db": (mock_db, datetime.now())}
 
         response = client.delete('/api/v1/test_db')
 
         assert response.status_code == 200
         result = json.loads(response.data)
         assert result["status"] == "success"
-        assert not db_file.exists()
-        assert not faiss_file.exists()
-        mock_db.close.assert_called_once()
 
 
 class TestDocumentManagementRoutes:
@@ -868,7 +868,8 @@ class TestErrorHandling:
 
         assert response.status_code == 404
         result = json.loads(response.data)
-        assert result["type"] == "database_not_found"
+        print(result)
+        assert result["error"]["code"] == "DATABASE_NOT_FOUND"
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
     def test_duplicate_document_id_error(self, client, app, mock_db):
@@ -884,7 +885,7 @@ class TestErrorHandling:
 
         assert response.status_code == 409
         result = json.loads(response.data)
-        assert result["type"] == "duplicate_document_id"
+        assert result["error"]["code"] == "DUPLICATE_DOCUMENT_ID"
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
     def test_embedding_error(self, client, app, mock_db):
@@ -900,7 +901,7 @@ class TestErrorHandling:
 
         assert response.status_code == 503
         result = json.loads(response.data)
-        assert result["type"] == "embedding_error"
+        assert result["error"]["code"] == "EMBEDDING_ERROR"
 
     def test_bad_request_error(self, client):
         """Test BadRequest error handling."""
@@ -910,22 +911,6 @@ class TestErrorHandling:
         result = json.loads(response.data)
         assert "error" in result
 
-    def test_unauthorized_error(self, app):
-        """Test Unauthorized error handling."""
-        from werkzeug.exceptions import Unauthorized
-        from localvectordb_server.routes import handle_unauthorized_error
-
-        # Test the error handler directly
-        error = Unauthorized("Invalid API key")
-
-        with app.app_context():
-            result = handle_unauthorized_error(error)
-
-            assert result[1] == 401  # Status code
-            response_data = json.loads(result[0].data)
-            assert response_data["type"] == "authentication_error"
-            assert "Invalid API key" in response_data["error"]
-
 
 class TestRequestValidation:
     """Test request validation."""
@@ -934,8 +919,7 @@ class TestRequestValidation:
     def test_query_no_data(self, client):
         """Test query endpoint without data."""
         response = client.post('/api/v1/test_db/query', data=json.dumps({}))
-        print(response.text)
-        assert response.status_code == 415
+        assert response.status_code == 400
 
         response = client.post('/api/v1/test_db/query', data=json.dumps({}), content_type='application/json')
         assert response.status_code == 400

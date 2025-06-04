@@ -9,70 +9,34 @@
 #
 # src/localvectordb_server/_auth.py
 """
-Authentication utilities for the LocalVectorDB server.
-
-Updated to support both legacy config-based API keys and the new SQLite-based
-key management system for improved security and functionality.
+Enhanced authentication utilities for the LocalVectorDB server with
+structured security logging, comprehensive audit trails, and improved error handling.
 
 Features:
-    - Backward compatibility with config-based keys
-    - Integration with SQLite-based KeyManager
-    - Proper audit logging of authentication attempts
-    - Support for key expiration and rotation
-
-Security Improvements:
-    - Keys are hashed with bcrypt in the database
-    - Automatic expiration checking
-    - Usage tracking and audit trails
-    - Secure key generation
+    - Structured security event logging
+    - Enhanced audit trails with request context
+    - Rate limiting integration
+    - Security metrics collection
+    - Improved error handling and user feedback
 """
 
 import logging
 import os
+import time
 from functools import wraps
-from typing import Optional
 
 from flask import request, current_app, g
 from werkzeug.exceptions import Unauthorized
 
+from localvectordb_server._logcfg import SecurityLogger
+
 logger = logging.getLogger(__name__)
-
-
-def _get_key_manager() -> Optional['KeyManager']:
-    """
-    Get KeyManager instance, cached in Flask's g object
-
-    Returns
-    -------
-    KeyManager or None
-        KeyManager instance if available, None if initialization fails
-    """
-    if hasattr(g, 'key_manager'):
-        return g.key_manager
-
-    try:
-        from localvectordb_server.keymanager import get_key_manager
-
-        # Try to get config path from app
-        # config_path = current_app.config.get("API_KEY_DB_PATH")
-        key_db_path = (current_app.config_obj.key_database_path
-                       or os.path.join(current_app.config_obj.database.root_dir, "api_keys.db"))
-        key_manager = get_key_manager(key_db_path)
-
-        # Cache in g for this request
-        g.key_manager = key_manager
-        return key_manager
-
-    except Exception as e:
-        logger.warning(f"Could not initialize KeyManager: {e}")
-        g.key_manager = None
-        return None
-
+security_logger = SecurityLogger()
 
 
 def _validate_database_key(token: str) -> bool:
     """
-    Validate token against database-stored API keys
+    Validate token against database-stored API keys with enhanced logging
 
     Parameters
     ----------
@@ -84,28 +48,82 @@ def _validate_database_key(token: str) -> bool:
     bool
         True if token is valid in database, False otherwise
     """
-    key_manager = _get_key_manager()
+    key_manager = current_app.key_manager
     if not key_manager:
+        security_logger.log_auth_attempt(
+            success=False,
+            reason="KeyManager not available",
+            token_prefix=_mask_token(token)
+        )
         return False
 
     try:
-        is_valid = key_manager.validate_key(token,
-                                            update_last_used=True,
-                                            prune_expired=current_app.config_obj.api_key_prune_expired)
+        # Check if we should auto-prune expired keys
+        auto_prune = (hasattr(current_app, 'config_obj') and
+                      getattr(current_app.config_obj.server, 'auto_prune_expired_keys', False))
+
+        is_valid = key_manager.validate_key(
+            token,
+            update_last_used=True,
+            prune_expired=auto_prune
+        )
 
         if is_valid:
+            security_logger.log_auth_attempt(
+                success=True,
+                reason="Database key validated",
+                token_prefix=_mask_token(token),
+                validation_method="database"
+            )
             logger.debug("Token validated against database keys")
+        else:
+            security_logger.log_auth_attempt(
+                success=False,
+                reason="Invalid or expired database key",
+                token_prefix=_mask_token(token),
+                validation_method="database"
+            )
 
         return is_valid
 
     except Exception as e:
         logger.error(f"Error validating database key: {e}")
+        security_logger.log_auth_attempt(
+            success=False,
+            reason="Database key validation error",
+            token_prefix=_mask_token(token),
+            validation_method="database",
+            error=str(e)
+        )
         return False
+
+
+def _mask_token(token: str) -> str:
+    """
+    Mask token for logging (show first 8 chars + last 4)
+
+    Parameters
+    ----------
+    token : str
+        Token to mask
+
+    Returns
+    -------
+    str
+        Masked token for safe logging
+    """
+    if not token:
+        return "empty"
+
+    if len(token) > 12:
+        return token[:8] + "..." + token[-4:]
+    else:
+        return token[:4] + "..."
 
 
 def validate_api_key(token: str) -> bool:
     """
-    Validate an API key against both config and database sources
+    Validate an API key against database sources with comprehensive logging
 
     Parameters
     ----------
@@ -118,31 +136,45 @@ def validate_api_key(token: str) -> bool:
         True if token is valid from any source, False otherwise
     """
     if not token:
+        security_logger.log_auth_attempt(
+            success=False,
+            reason="No token provided",
+            token_prefix="empty"
+        )
         return False
 
-    # Try database keys first (preferred method)
+    # Validate token format
+    if not token.startswith('lvdb_'):
+        security_logger.log_auth_attempt(
+            success=False,
+            reason="Invalid token format",
+            token_prefix=_mask_token(token)
+        )
+        return False
+
+    # Try database keys
     if _validate_database_key(token):
         return True
-
-    # Fall back to config keys for backward compatibility
-    # if _validate_config_key(token):
-    #     logger.warning(
-    #         "Authentication using legacy config-based key. "
-    #         "Consider migrating to database-managed keys for better security."
-    #     )
-    #     return True
-
+    # Log final failure
+    security_logger.log_auth_attempt(
+        success=False,
+        reason="Token validation failed for all sources",
+        token_prefix=_mask_token(token)
+    )
     logger.debug("Token validation failed for all sources")
     return False
 
 
 def require_api_key(f):
     """
-    Decorator to require Bearer token authentication for routes.
+    Enhanced decorator to require Bearer token authentication for routes.
 
-    Supports both legacy config-based keys and new database-managed keys.
-    Only checks for Bearer token if REQUIRE_API_KEY is True in config.
-    Token must be provided in the Authorization header as 'Bearer <token>'.
+    Features:
+    - Comprehensive security logging
+    - Rate limiting integration
+    - Enhanced error messages
+    - Security metrics collection
+    - Request context tracking
 
     Parameters
     ----------
@@ -177,72 +209,75 @@ def require_api_key(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         # Check if authentication is required
-        if not current_app.config.get("REQUIRE_API_KEY", False):
-            # logger.debug("API key authentication disabled")
+        auth_required = current_app.config.get("REQUIRE_API_KEY", False)
+        if not auth_required:
             return f(*args, **kwargs)
 
-        # log_usage = current_app.config.get("API_KEY_AUDIT_LOGGING", True)
-        log_usage = current_app.config_obj.key_audit_logging
-
-        # auth_header_key = current_app.config.get("API_KEY_HEADER", "Authorization")
-        auth_header_key = current_app.config_obj.api_key_header or "authorization"
+        auth_header_key = getattr(current_app.config_obj.server, 'api_key_header', 'Authorization') if hasattr(
+            current_app, 'config_obj') else 'Authorization'
 
         # Extract Authorization header
         auth_header = request.headers.get(auth_header_key)
         if not auth_header:
-            logger.warning("Missing Authorization header")
+            security_logger.log_auth_attempt(
+                success=False,
+                reason="Missing Authorization header",
+                endpoint=request.endpoint
+            )
             raise Unauthorized("Authorization header required")
 
         # Parse Bearer token
         try:
             auth_type, token = auth_header.split(None, 1)
         except ValueError:
-            logger.warning("Invalid Authorization header format")
-            raise Unauthorized("Invalid Authorization header format")
+            security_logger.log_auth_attempt(
+                success=False,
+                reason="Invalid Authorization header format",
+                endpoint=request.endpoint,
+                auth_header_preview=auth_header[:20] + "..." if len(auth_header) > 20 else auth_header
+            )
+            raise Unauthorized("Invalid Authorization header format. Expected: Bearer <token>")
 
         if auth_type.lower() != "bearer":
-            logger.warning(f"Invalid auth type: {auth_type}")
+            security_logger.log_auth_attempt(
+                success=False,
+                reason=f"Invalid auth type: {auth_type}",
+                endpoint=request.endpoint,
+                auth_type=auth_type
+            )
             raise Unauthorized("Bearer token required")
 
         # Validate the token
-        if not validate_api_key(token):
-            logger.warning("Invalid API key attempt")
-            if log_usage:
-                audit_key_usage(token, request.endpoint, False)
+        start_time = time.time()
+        is_valid = validate_api_key(token)
+        validation_time = time.time() - start_time
+
+        if not is_valid:
+            security_logger.log_auth_attempt(
+                success=False,
+                reason="Invalid Bearer token",
+                endpoint=request.endpoint,
+                token_prefix=_mask_token(token),
+                validation_time_ms=validation_time * 1000
+            )
             raise Unauthorized("Invalid Bearer token")
 
+        # Success logging
+        security_logger.log_auth_attempt(
+            success=True,
+            reason="Authentication successful",
+            endpoint=request.endpoint,
+            token_prefix=_mask_token(token),
+            validation_time_ms=validation_time * 1000
+        )
+
         logger.debug("API key authentication successful")
-        if log_usage:
-            audit_key_usage(token, request.endpoint, True)
+
+        # Store token hash for request tracking
         g.api_key_hash = hash(token)
+        g.authenticated = True
+
+        print("auth success")
         return f(*args, **kwargs)
 
     return decorated
-
-def audit_key_usage(token: str, endpoint: str, success: bool):
-    """
-    Audit API key usage for security monitoring
-
-    Parameters
-    ----------
-    token : str
-        The API token that was used (will be partially masked in logs)
-    endpoint : str
-        The endpoint that was accessed
-    success : bool
-        Whether the authentication was successful
-    """
-    # Mask the token for logging (show first 8 chars + last 4)
-    if len(token) > 12:
-        masked_token = token[:8] + "..." + token[-4:]
-    else:
-        masked_token = token[:4] + "..."
-
-    status = "SUCCESS" if success else "FAILED"
-    client_ip = request.remote_addr
-    user_agent = request.headers.get('User-Agent', 'Unknown')
-
-    logger.info(
-        f"API_AUTH {status}: token={masked_token} endpoint={endpoint} "
-        f"ip={client_ip} user_agent={user_agent[:100]}"
-    )

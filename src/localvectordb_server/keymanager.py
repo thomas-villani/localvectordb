@@ -340,9 +340,10 @@ class KeyManager:
         bool
             True if key is valid and active, False otherwise
         """
+        print("checking", key)
         if not key or not key.startswith(self.KEY_PREFIX):
             return False
-
+        print("checking")
         with self._get_connection() as conn:
             # Get all active keys
             cursor = conn.execute("""
