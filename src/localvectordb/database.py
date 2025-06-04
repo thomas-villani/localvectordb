@@ -19,7 +19,6 @@ This module contains the main LocalVectorDB v1.0 implementation with:
 - Structured metadata with indexed columns
 - Plugin-based embedding providers
 """
-
 import hashlib
 import json
 import logging
@@ -29,7 +28,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Literal, Any
+from typing import Dict, List, Optional, Union, Literal, Any, Tuple
 
 import faiss
 import numpy as np
@@ -63,8 +62,6 @@ class LocalVectorDB:
         Schema definition for metadata fields
     doc_id_pattern : str, optional
         Pattern for auto-generating document IDs, by default "doc_{idx}"
-    chunk_id_pattern : str, optional
-        Pattern for chunk IDs, by default "{doc_id}:{chunk_idx}"
     embedding_provider : str, optional
         Embedding provider name, by default "ollama"
     embedding_model : str, optional
@@ -95,7 +92,6 @@ class LocalVectorDB:
 
             # ID generation patterns
             doc_id_pattern: str = "doc_{idx}",
-            chunk_id_pattern: str = "{doc_id}:{chunk_idx}",
 
             # Embedding configuration
             embedding_provider: str = "ollama",
@@ -140,7 +136,6 @@ class LocalVectorDB:
         else:
             self.metadata_schema = metadata_schema or {}
         self.doc_id_pattern = doc_id_pattern
-        self.chunk_id_pattern = chunk_id_pattern
 
         # Chunking setup
         self.chunking_method = chunking_method
@@ -458,7 +453,8 @@ class LocalVectorDB:
                     clean_terms.append(f'"{clean_term}"')
             return " AND ".join(clean_terms) if clean_terms else ""
 
-    def _is_valid_boolean_structure(self, tokens: List[str]) -> bool:
+    @staticmethod
+    def _is_valid_boolean_structure(tokens: List[str]) -> bool:
         """Check if boolean query structure is valid"""
         if not tokens:
             return False
@@ -530,7 +526,6 @@ class LocalVectorDB:
             'chunk_size': self.chunk_size,
             'chunk_overlap': self.chunk_overlap,
             'doc_id_pattern': self.doc_id_pattern,
-            'chunk_id_pattern': self.chunk_id_pattern,
             'fts_enabled': str(self.fts_enabled),
             'version': get_system_version()
         }
@@ -549,16 +544,13 @@ class LocalVectorDB:
         self._next_doc_id += 1
         return doc_id
 
-    def _generate_chunk_id(self, doc_id: str, chunk_idx: int) -> str:
-        """Generate a chunk ID"""
-        return self.chunk_id_pattern.format(doc_id=doc_id, chunk_idx=chunk_idx)
-
     def upsert(
             self,
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None
     ) -> List[str]:
         """
         Insert or update documents in the database
@@ -573,6 +565,12 @@ class LocalVectorDB:
             Document IDs (auto-generated if not provided)
         batch_size : int
             Batch size for processing, by default 100
+        similarity_threshold : float, optional
+            If provided, skip chunks that are too similar to existing chunks.
+            Value should be between 0-1 where 1.0 means identical.
+            Setting to 0.95 makes sure you wouldn't overpopulate the database with semantically similar information
+            repeatedly (e.g. headings or boilerplate language) which could be discarded.
+
 
         Returns
         -------
@@ -610,7 +608,9 @@ class LocalVectorDB:
                 batch_meta = metadata[i:i + batch_size]
                 batch_ids = ids[i:i + batch_size]
 
-                batch_result = self._upsert_batch(batch_docs, batch_meta, batch_ids)
+                batch_result = self._upsert_batch(batch_docs, batch_meta, batch_ids,
+                                                  similarity_threshold=similarity_threshold,
+                                                  embedding_batch_size=batch_size)
                 result_ids.extend(batch_result)
 
             # Save state
@@ -641,21 +641,307 @@ class LocalVectorDB:
                 else:
                     raise ValueError(f"Required metadata field '{field_name}' is missing")
 
+    def _generate_embeddings_chunked(
+            self,
+            texts: List[str],
+            chunk_size: int = 100,
+            show_progress: bool = False
+    ) -> np.ndarray:
+        """
+        Generate embeddings in manageable batches to prevent memory issues
+
+        Parameters
+        ----------
+        texts : List[str]
+            List of text strings to embed
+        chunk_size : int
+            Number of texts to process at once
+        show_progress : bool
+            Whether to log progress for large batches
+
+        Returns
+        -------
+        np.ndarray
+            Array of embeddings with shape (len(texts), embedding_dimension)
+        """
+        if not texts:
+            return np.array([]).reshape(0, self.embedding_dimension)
+
+        embeddings = []
+        total_batches = (len(texts) + chunk_size - 1) // chunk_size
+
+        for i in range(0, len(texts), chunk_size):
+            batch = texts[i:i + chunk_size]
+            batch_embeddings = self.embedding_provider.embed_sync(batch)
+            embeddings.append(batch_embeddings)
+
+            if show_progress and total_batches > 5:
+                batch_num = (i // chunk_size) + 1
+                logger.info(f"Generated embeddings for batch {batch_num}/{total_batches}")
+
+        return np.vstack(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
+
+    def _filter_similar_chunks_vectorized(
+            self,
+            embeddings: np.ndarray,
+            chunks: List[Chunk],
+            doc_chunk_mapping: List[Tuple],
+            similarity_threshold: float
+    ) -> Tuple[List[Chunk], np.ndarray, List[Tuple]]:
+        """
+        Vectorized similarity filtering using single FAISS search and numpy operations
+
+        Parameters
+        ----------
+        embeddings : np.ndarray
+            Array of embeddings to check
+        chunks : List[Chunk]
+            List of chunks corresponding to embeddings
+        doc_chunk_mapping : List[Tuple]
+            Document info for each chunk
+        similarity_threshold : float
+            Similarity threshold (0-1, higher=more similar)
+
+        Returns
+        -------
+        Tuple[List[Chunk], np.ndarray, List[Tuple]]
+            Filtered chunks, embeddings, and doc mappings
+        """
+        if len(embeddings) == 0 or self.index.ntotal == 0:
+            return chunks, embeddings, doc_chunk_mapping
+
+        # Build set of existing chunk hashes for fast lookup
+        existing_chunk_hashes = set()
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute('SELECT DISTINCT content_hash FROM chunks')
+            existing_chunk_hashes = {row['content_hash'] for row in cursor.fetchall()}
+
+        # Filter by content hash first (exact duplicates)
+        hash_mask = np.array([
+            chunk.content_hash not in existing_chunk_hashes
+            for chunk in chunks
+        ])
+
+        if not hash_mask.any():
+            logger.debug("All chunks filtered out by content hash")
+            return [], np.array([]).reshape(0, self.embedding_dimension), []
+
+        # Apply hash filter
+        filtered_chunks = [chunks[i] for i in range(len(chunks)) if hash_mask[i]]
+        filtered_embeddings = embeddings[hash_mask]
+        filtered_mappings = [doc_chunk_mapping[i] for i in range(len(doc_chunk_mapping)) if hash_mask[i]]
+
+        # Skip similarity check if no existing vectors or threshold is None/0
+        if self.index.ntotal == 0 or similarity_threshold is None or similarity_threshold <= 0:
+            return filtered_chunks, filtered_embeddings, filtered_mappings
+
+        # Convert similarity threshold to distance threshold
+        # similarity = 1 / (1 + distance), so distance = (1/similarity) - 1
+        distance_threshold = (1.0 / max(similarity_threshold, 0.001)) - 1.0
+
+        # Single batch FAISS search - much faster than individual searches
+        distances, indices = self.index.search(filtered_embeddings, k=1)
+
+        # Vectorized numpy operations for filtering
+        valid_matches = indices[:, 0] != -1
+        too_similar = (distances[:, 0] < distance_threshold) & valid_matches
+
+        # Boolean indexing to keep non-similar chunks
+        keep_mask = ~too_similar
+
+        final_chunks = [filtered_chunks[i] for i in range(len(filtered_chunks)) if keep_mask[i]]
+        final_embeddings = filtered_embeddings[keep_mask]
+        final_mappings = [filtered_mappings[i] for i in range(len(filtered_mappings)) if keep_mask[i]]
+
+        logger.debug(f"Similarity filtering: {len(chunks)} → {len(final_chunks)} chunks "
+                     f"(removed {len(chunks) - len(final_chunks)} similar/duplicate)")
+
+        return final_chunks, final_embeddings, final_mappings
+
+    def _insert_documents_bulk(
+            self,
+            conn: sqlite3.Connection,
+            documents_data: List[Tuple[str, str, str, Dict[str, Any]]]
+    ) -> None:
+        """
+        Insert multiple documents using bulk operations
+
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            Database connection
+        documents_data : List[Tuple[str, str, str, Dict[str, Any]]]
+            List of (doc_id, content, content_hash, metadata) tuples
+        """
+        if not documents_data:
+            return
+
+        # Build dynamic INSERT statement based on metadata schema
+        base_columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+        metadata_columns = list(self.metadata_schema.keys())
+        all_columns = base_columns + metadata_columns
+
+        placeholders = ['?'] * len(all_columns)
+        sql = f"INSERT OR REPLACE INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
+
+        # Prepare bulk data
+        bulk_data = []
+        current_time = datetime.now()
+
+        for doc_id, content, content_hash, metadata in documents_data:
+            row_data = [doc_id, content, content_hash, current_time, current_time]
+
+            # Add metadata values in schema order
+            for field_name in metadata_columns:
+                value = metadata.get(field_name)
+
+                if value is not None and field_name in self.metadata_schema:
+                    field_def = self.metadata_schema[field_name]
+                    if field_def.type == MetadataFieldType.JSON:
+                        value = json.dumps(value)
+                    elif field_def.type == MetadataFieldType.DATE:
+                        if isinstance(value, datetime):
+                            value = value.isoformat()
+                        else:
+                            value = str(value)
+
+                row_data.append(value)
+
+            bulk_data.append(tuple(row_data))
+
+        # Execute bulk insert
+        conn.executemany(sql, bulk_data)
+
+    def _insert_chunks_bulk(
+            self,
+            conn: sqlite3.Connection,
+            chunks_data: List[Tuple[str, Chunk]]
+    ) -> None:
+        """
+        Insert multiple chunks using bulk operations
+
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            Database connection
+        chunks_data : List[Tuple[str, Chunk]]
+            List of (doc_id, chunk) tuples
+        """
+        if not chunks_data:
+            return
+
+        # Prepare bulk data
+        bulk_data = []
+        for doc_id, chunk in chunks_data:
+            bulk_data.append((
+                doc_id,
+                chunk.index,
+                chunk.content,
+                chunk.content_hash,
+                chunk.position.start,
+                chunk.position.end,
+                chunk.position.line,
+                chunk.position.column,
+                chunk.position.end_line,
+                chunk.position.end_column,
+                chunk.tokens,
+                chunk.faiss_id
+            ))
+
+        # Execute bulk insert
+        conn.executemany('''
+            INSERT INTO chunks 
+            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line, 
+            start_col, end_line, end_col, tokens, faiss_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', bulk_data)
+
+    def _add_vectors_to_faiss_bulk(
+            self,
+            embeddings: np.ndarray,
+            chunks: List[Chunk]
+    ) -> None:
+        """
+        Add multiple vectors to FAISS index efficiently
+
+        Parameters
+        ----------
+        embeddings : np.ndarray
+            Array of embeddings to add
+        chunks : List[Chunk]
+            Corresponding chunks (will be updated with FAISS IDs)
+        """
+        if len(embeddings) == 0:
+            return
+
+        # Generate sequential FAISS IDs starting from current index size
+        start_faiss_id = self.index.ntotal
+        new_faiss_ids = np.arange(
+            start_faiss_id,
+            start_faiss_id + len(embeddings),
+            dtype=np.int64
+        )
+
+        # Add all vectors at once
+        self.index.add_with_ids(embeddings, new_faiss_ids)
+
+        # Update chunk FAISS IDs
+        for i, chunk in enumerate(chunks):
+            chunk.faiss_id = int(new_faiss_ids[i])
+
+    def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
+        """
+        Remove multiple vectors from FAISS index efficiently
+
+        Parameters
+        ----------
+        faiss_ids : List[int]
+            List of FAISS IDs to remove
+        """
+        if not faiss_ids or not hasattr(self.index, 'remove_ids'):
+            return
+
+        try:
+            ids_array = np.array(faiss_ids, dtype=np.int64)
+            self.index.remove_ids(ids_array)
+            logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
+        except Exception as e:
+            logger.warning(f"Failed to remove vectors from FAISS: {e}")
+
     def _upsert_batch(
             self,
             documents: List[str],
             metadata_batch: List[Dict[str, Any]],
-            ids: List[str]
+            ids: List[str],
+            similarity_threshold: Optional[float] = None,
+            embedding_batch_size: int = 100
     ) -> List[str]:
-        """Upsert a batch of documents"""
+        """
+        Optimized batch upsert with vectorized operations
 
+        Parameters
+        ----------
+        documents : List[str]
+            List of document texts
+        metadata_batch : List[Dict[str, Any]]
+            List of metadata dicts
+        ids : List[str]
+            List of document IDs
+        similarity_threshold : Optional[float]
+            Similarity threshold for chunk filtering
+        embedding_batch_size : int
+            Batch size for embedding generation
+
+        Returns
+        -------
+        List[str]
+            List of processed document IDs
+        """
         # Check which documents need updates
         docs_to_process = []
-        embeddings_needed = []
 
         with self.connection_pool.get_connection() as conn:
             for doc_text, metadata, doc_id in zip(documents, metadata_batch, ids):
-                # Check if document exists and needs update
                 cursor = conn.execute(
                     'SELECT content_hash FROM documents WHERE id = ?', (doc_id,)
                 )
@@ -664,91 +950,112 @@ class LocalVectorDB:
                 new_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
 
                 if row is None or row['content_hash'] != new_hash:
-                    # Document is new or content has changed
                     docs_to_process.append((doc_text, metadata, doc_id, new_hash))
-                    embeddings_needed.append(doc_text)
 
         if not docs_to_process:
             return ids  # No changes needed
 
-        # Generate chunks for documents that need processing
+        # Generate chunks for all documents
         all_chunks = []
         chunk_texts = []
+        doc_chunk_mapping = []
 
         for doc_text, metadata, doc_id, content_hash in docs_to_process:
             chunks = self.chunker.chunk(doc_text)
+            doc_info = (doc_text, metadata, doc_id, content_hash)
 
-            # Assign FAISS IDs (will be updated after adding to index)
             for chunk in chunks:
                 chunk.faiss_id = None
+                all_chunks.append(chunk)
+                chunk_texts.append(chunk.content)
+                doc_chunk_mapping.append(doc_info)
 
-            all_chunks.append((doc_id, chunks))
-            chunk_texts.extend([chunk.content for chunk in chunks])
+        # Generate embeddings in batches
+        # show_progress = len(chunk_texts) > 500
+        embeddings = self._generate_embeddings_chunked(
+            chunk_texts,
+            chunk_size=embedding_batch_size,
+            show_progress=False
+        )
 
-        # Generate embeddings for all chunks
-        if chunk_texts:
-            embeddings = self.embedding_provider.embed_sync(chunk_texts)
-        else:
-            embeddings = np.array([]).reshape(0, self.embedding_dimension)
+        # Apply similarity filtering if requested
+        if similarity_threshold is not None and similarity_threshold > 0:
+            all_chunks, embeddings, doc_chunk_mapping = self._filter_similar_chunks_vectorized(
+                embeddings, all_chunks, doc_chunk_mapping, similarity_threshold
+            )
 
-        # Store everything in database
+        # Group chunks and embeddings by document
+        doc_chunks_map = {}
+        embedding_idx = 0
+
+        for chunk, doc_info in zip(all_chunks, doc_chunk_mapping):
+            doc_id = doc_info[2]
+            if doc_id not in doc_chunks_map:
+                doc_chunks_map[doc_id] = {
+                    'doc_info': doc_info,
+                    'chunks': [],
+                    'embeddings': []
+                }
+            doc_chunks_map[doc_id]['chunks'].append(chunk)
+            if embedding_idx < len(embeddings):
+                doc_chunks_map[doc_id]['embeddings'].append(embeddings[embedding_idx])
+                embedding_idx += 1
+
+        # Database transaction with bulk operations
         with self.connection_pool.get_connection() as conn:
             try:
-                # Start transaction
                 conn.execute('BEGIN')
 
-                embedding_idx = 0
-
-                for doc_text, metadata, doc_id, content_hash in docs_to_process:
-                    # Get old FAISS IDs before deletion
-                    old_faiss_ids = []
+                # Collect old FAISS IDs for removal
+                all_old_faiss_ids = []
+                for doc_id in doc_chunks_map.keys():
                     cursor = conn.execute(
                         'SELECT faiss_id FROM chunks WHERE document_id = ? AND faiss_id IS NOT NULL',
                         (doc_id,)
                     )
-                    old_faiss_ids = [row['faiss_id'] for row in cursor.fetchall()]
+                    old_ids = [row['faiss_id'] for row in cursor.fetchall()]
+                    all_old_faiss_ids.extend(old_ids)
 
                     # Delete existing document and chunks
                     conn.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
 
-                    # Remove old vectors from FAISS index
-                    if old_faiss_ids and hasattr(self.index, 'remove_ids'):
-                        try:
-                            ids_array = np.array(old_faiss_ids, dtype=np.int64)
-                            self.index.remove_ids(ids_array)
-                        except Exception as e:
-                            logger.warning(f"Failed to remove old vectors from FAISS: {e}")
+                # Remove old vectors from FAISS (bulk operation)
+                if all_old_faiss_ids:
+                    self._remove_old_vectors_bulk(all_old_faiss_ids)
 
-                    # Insert/update document
-                    self._insert_document(conn, doc_id, doc_text, content_hash, metadata)
+                # Prepare bulk document data
+                documents_data = []
+                all_chunks_for_faiss = []
+                all_embeddings_for_faiss = []
+                all_chunks_for_db = []
 
-                    # Get chunks for this document
-                    doc_chunks = next(chunks for did, chunks in all_chunks if did == doc_id)
+                for doc_id, doc_data in doc_chunks_map.items():
+                    doc_text, metadata, doc_id, content_hash = doc_data['doc_info']
+                    chunks = doc_data['chunks']
+                    doc_embeddings = doc_data['embeddings']
 
-                    # Add chunk embeddings to FAISS index
-                    doc_embeddings = embeddings[embedding_idx:embedding_idx + len(doc_chunks)]
-                    if len(doc_embeddings) > 0:
-                        # Generate new FAISS IDs
-                        # Use sequential IDs starting from current index size
-                        start_faiss_id = self.index.ntotal
-                        new_faiss_ids = np.arange(
-                            start_faiss_id,
-                            start_faiss_id + len(doc_chunks),
-                            dtype=np.int64
-                        )
-                        self.index.add_with_ids(doc_embeddings, new_faiss_ids)
+                    # Prepare document data
+                    documents_data.append((doc_id, doc_text, content_hash, metadata))
 
-                        # Update chunk FAISS IDs
-                        for i, chunk in enumerate(doc_chunks):
-                            chunk.faiss_id = int(new_faiss_ids[i])
+                    # Collect chunks and embeddings for bulk FAISS operation
+                    all_chunks_for_faiss.extend(chunks)
+                    all_embeddings_for_faiss.extend(doc_embeddings)
 
-                    # Insert chunks
-                    for chunk in doc_chunks:
-                        self._insert_chunk(conn, doc_id, chunk)
+                    # Prepare chunk data for database
+                    for chunk in chunks:
+                        all_chunks_for_db.append((doc_id, chunk))
 
-                    embedding_idx += len(doc_chunks)
+                # Bulk insert documents
+                self._insert_documents_bulk(conn, documents_data)
 
-                # Commit transaction
+                # Bulk add vectors to FAISS
+                if all_embeddings_for_faiss:
+                    embeddings_array = np.array(all_embeddings_for_faiss)
+                    self._add_vectors_to_faiss_bulk(embeddings_array, all_chunks_for_faiss)
+
+                # Bulk insert chunks
+                self._insert_chunks_bulk(conn, all_chunks_for_db)
+
                 conn.commit()
 
             except Exception as e:
@@ -757,95 +1064,141 @@ class LocalVectorDB:
 
         return ids
 
-    def _insert_document(
-        self,
-        conn: sqlite3.Connection,
-        doc_id: str,
-        content: str,
-        content_hash: str,
-        metadata: Dict[str, Any]
-    ):
-        """Insert a document with metadata"""
+    def _insert_batch(
+            self,
+            documents: List[str],
+            metadata_batch: List[Dict[str, Any]],
+            ids: List[str],
+            similarity_threshold: Optional[float] = None,
+            embedding_batch_size: int = 100
+    ) -> List[str]:
+        """
+        Optimized batch insert with vectorized operations
 
-        # Build dynamic INSERT statement based on metadata schema
-        columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
-        values = [doc_id, content, content_hash, datetime.now(), datetime.now()]
-        placeholders = ['?'] * len(columns)
+        Parameters
+        ----------
+        documents : List[str]
+            List of document texts
+        metadata_batch : List[Dict[str, Any]]
+            List of metadata dicts
+        ids : List[str]
+            List of document IDs
+        similarity_threshold : Optional[float]
+            Similarity threshold for chunk filtering
+        embedding_batch_size : int
+            Batch size for embedding generation
 
-        # Add metadata columns
-        for field_name, value in metadata.items():
-            if field_name in self.metadata_schema:
-                columns.append(field_name)
+        Returns
+        -------
+        List[str]
+            List of successfully inserted document IDs
+        """
+        # Generate chunks for all documents
+        all_chunks = []
+        chunk_texts = []
+        doc_chunk_mapping = []
 
-                # Convert value based on field type
-                field_def = self.metadata_schema[field_name]
-                if field_def.type == MetadataFieldType.JSON:
-                    values.append(json.dumps(value))
-                elif field_def.type == MetadataFieldType.DATE:
-                    # Assume value is a datetime or ISO string
-                    if isinstance(value, datetime):
-                        values.append(value.isoformat())
-                    else:
-                        values.append(str(value))
-                else:
-                    values.append(value)
+        for doc_text, metadata, doc_id in zip(documents, metadata_batch, ids):
+            content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
+            chunks = self.chunker.chunk(doc_text)
+            doc_info = (doc_text, metadata, doc_id, content_hash)
 
-                placeholders.append('?')
+            for chunk in chunks:
+                chunk.faiss_id = None
+                all_chunks.append(chunk)
+                chunk_texts.append(chunk.content)
+                doc_chunk_mapping.append(doc_info)
 
-        sql = f"INSERT OR REPLACE INTO documents ({', '.join(columns)}) VALUES ({', '.join(placeholders)})"
-        conn.execute(sql, values)
+        if not chunk_texts:
+            return []
 
-    def _insert_chunk(self, conn: sqlite3.Connection, doc_id: str, chunk: Chunk):
-        """Insert a chunk"""
-        conn.execute('''
-            INSERT INTO chunks 
-            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line, 
-            start_col, end_line, end_col, tokens, faiss_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            doc_id,
-            chunk.index,
-            chunk.content,
-            chunk.content_hash,
-            chunk.position.start,
-            chunk.position.end,
-            chunk.position.line,
-            chunk.position.column,
-            chunk.position.end_line,
-            chunk.position.end_column,
-            chunk.tokens,
-            chunk.faiss_id
-        ))
+        # Generate embeddings in batches
+        # show_progress = len(chunk_texts) > 500
+        embeddings = self._generate_embeddings_chunked(
+            chunk_texts,
+            chunk_size=embedding_batch_size,
+            show_progress=False
+        )
 
-    def _get_existing_chunks(self, conn: sqlite3.Connection, doc_id: str) -> Dict[str, Chunk]:
-        """Get existing chunks for a document, keyed by content hash"""
-        cursor = conn.execute('''
-            SELECT chunk_index, content, content_hash, start_pos, end_pos, start_line, start_col, tokens, faiss_id
-            FROM chunks 
-            WHERE document_id = ?
-            ORDER BY chunk_index
-        ''', (doc_id,))
-
-        chunks_by_hash = {}
-        for row in cursor.fetchall():
-            position = ChunkPosition(
-                start=row['start_pos'],
-                end=row['end_pos'],
-                line=row['start_line'],
-                column=row['start_col']
+        # Apply similarity filtering if requested
+        if similarity_threshold is not None and similarity_threshold > 0:
+            all_chunks, embeddings, doc_chunk_mapping = self._filter_similar_chunks_vectorized(
+                embeddings, all_chunks, doc_chunk_mapping, similarity_threshold
             )
 
-            chunk = Chunk(
-                content=row['content'],
-                position=position,
-                tokens=row['tokens'],
-                index=row['chunk_index'],
-                faiss_id=row['faiss_id'],
-                content_hash=row['content_hash']
-            )
-            chunks_by_hash[chunk.content_hash] = chunk
+        if len(all_chunks) == 0:
+            logger.info("No chunks to insert after similarity filtering")
+            return []
 
-        return chunks_by_hash
+        # Group chunks and embeddings by document
+        doc_chunks_map = {}
+        embedding_idx = 0
+
+        for chunk, doc_info in zip(all_chunks, doc_chunk_mapping):
+            doc_id = doc_info[2]
+            if doc_id not in doc_chunks_map:
+                doc_chunks_map[doc_id] = {
+                    'doc_info': doc_info,
+                    'chunks': [],
+                    'embeddings': []
+                }
+            doc_chunks_map[doc_id]['chunks'].append(chunk)
+            if embedding_idx < len(embeddings):
+                doc_chunks_map[doc_id]['embeddings'].append(embeddings[embedding_idx])
+                embedding_idx += 1
+
+        # Database transaction with bulk operations
+        inserted_ids = []
+
+        with self.connection_pool.get_connection() as conn:
+            try:
+                conn.execute('BEGIN')
+
+                # Prepare bulk data
+                documents_data = []
+                all_chunks_for_faiss = []
+                all_embeddings_for_faiss = []
+                all_chunks_for_db = []
+
+                for doc_id, doc_data in doc_chunks_map.items():
+                    doc_text, metadata, doc_id, content_hash = doc_data['doc_info']
+                    chunks = doc_data['chunks']
+                    doc_embeddings = doc_data['embeddings']
+
+                    # Prepare document data
+                    documents_data.append((doc_id, doc_text, content_hash, metadata))
+
+                    # Collect chunks and embeddings for bulk FAISS operation
+                    all_chunks_for_faiss.extend(chunks)
+                    all_embeddings_for_faiss.extend(doc_embeddings)
+
+                    # Prepare chunk data for database
+                    for chunk in chunks:
+                        all_chunks_for_db.append((doc_id, chunk))
+
+                    inserted_ids.append(doc_id)
+
+                # Bulk insert documents
+                self._insert_documents_bulk(conn, documents_data)
+
+                # Bulk add vectors to FAISS
+                if all_embeddings_for_faiss:
+                    embeddings_array = np.array(all_embeddings_for_faiss)
+                    self._add_vectors_to_faiss_bulk(embeddings_array, all_chunks_for_faiss)
+
+                # Bulk insert chunks
+                self._insert_chunks_bulk(conn, all_chunks_for_db)
+
+                conn.commit()
+
+            except Exception as e:
+                conn.rollback()
+                raise e
+
+        logger.info(f"Successfully inserted {len(inserted_ids)} documents with "
+                    f"{sum(len(doc_data['chunks']) for doc_data in doc_chunks_map.values())} chunks")
+
+        return inserted_ids
 
     def insert(
             self,
@@ -853,8 +1206,8 @@ class LocalVectorDB:
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
-            similarity_threshold: Optional[float] = None
     ) -> List[str]:
         """
         Insert new documents into the database
@@ -869,13 +1222,14 @@ class LocalVectorDB:
             Document IDs (auto-generated if not provided)
         batch_size : int
             Batch size for processing, by default 100
-        errors : Literal["ignore", "raise"]
-            How to handle document ID conflicts, by default "raise"
         similarity_threshold : Optional[float]
             If provided, skip chunks that are too similar to existing chunks.
             Value should be between 0-1 where 1.0 means identical.
             Setting to 0.95 makes sure you wouldn't overpopulate the database with similar information
             repeatedly (e.g. headings or boilerplate language) which could be discarded.
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts, by default "raise"
+
 
         Returns
         -------
@@ -950,143 +1304,6 @@ class LocalVectorDB:
 
             return result_ids
 
-    def _insert_batch(
-            self,
-            documents: List[str],
-            metadata_batch: List[Dict[str, Any]],
-            ids: List[str],
-            similarity_threshold: Optional[float] = None
-    ) -> List[str]:
-        """Insert a batch of documents with optional similarity filtering and chunk content hashing"""
-
-        # Generate chunks for all documents
-        all_chunks = []
-        chunk_texts = []
-        doc_chunk_mapping = []  # Track which chunks belong to which document
-
-        for doc_text, metadata, doc_id in zip(documents, metadata_batch, ids):
-            content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
-            chunks = self.chunker.chunk(doc_text)
-
-            # Track document info
-            doc_info = (doc_text, metadata, doc_id, content_hash)
-
-            for chunk in chunks:
-                chunk.faiss_id = None
-                all_chunks.append(chunk)
-                chunk_texts.append(chunk.content)
-                doc_chunk_mapping.append(doc_info)
-
-        if not chunk_texts:
-            return []
-
-        # Generate embeddings for all chunks
-        embeddings = self.embedding_provider.embed_sync(chunk_texts)
-
-        # Filter chunks by similarity if threshold provided
-        chunks_to_keep = []
-        embeddings_to_keep = []
-        # docs_with_chunks = set()
-
-        if similarity_threshold is not None and self.index.ntotal > 0:
-            # Convert similarity threshold to distance threshold
-            # similarity = 1 / (1 + distance), so distance = (1/similarity) - 1
-            distance_threshold = (1.0 / max(similarity_threshold, 0.001)) - 1.0
-
-            # Build a set of existing chunk hashes for faster lookup
-            existing_chunk_hashes = set()
-            with self.connection_pool.get_connection() as conn:
-                cursor = conn.execute('SELECT DISTINCT content_hash FROM chunks')
-                existing_chunk_hashes = {row['content_hash'] for row in cursor.fetchall()}
-
-            for i, (chunk, embedding, doc_info) in enumerate(zip(all_chunks, embeddings, doc_chunk_mapping)):
-                # First check if we already have a chunk with identical content
-                if chunk.content_hash in existing_chunk_hashes:
-                    logger.debug(f"Skipping chunk with identical content (hash: {chunk.content_hash[:8]}...)")
-                    continue
-
-                # Search for similar chunks in existing index
-                distances, indices = self.index.search(embedding.reshape(1, -1), k=1)
-
-                # Check if closest match is too similar
-                if indices[0][0] != -1 and distances[0][0] < distance_threshold:
-                    # Skip this chunk - too similar to existing content
-                    logger.debug(f"Skipping similar chunk (distance: {distances[0][0]:.4f})")
-                    continue
-
-                chunks_to_keep.append(chunk)
-                embeddings_to_keep.append(embedding)
-                # docs_with_chunks.add(doc_info[2])  # doc_id
-        else:
-            # Keep all chunks
-            chunks_to_keep = all_chunks
-            embeddings_to_keep = embeddings
-            # docs_with_chunks = {doc_info[2] for doc_info in doc_chunk_mapping}
-
-        if not chunks_to_keep:
-            logger.info("No chunks to insert after similarity filtering")
-            return []
-
-        # Group chunks by document
-        doc_chunks_map = {}
-        for chunk, embedding, doc_info in zip(chunks_to_keep, embeddings_to_keep, doc_chunk_mapping):
-            doc_id = doc_info[2]
-            if doc_id not in doc_chunks_map:
-                doc_chunks_map[doc_id] = {
-                    'doc_info': doc_info,
-                    'chunks': [],
-                    'embeddings': []
-                }
-            doc_chunks_map[doc_id]['chunks'].append(chunk)
-            doc_chunks_map[doc_id]['embeddings'].append(embedding)
-
-        # Insert documents and chunks
-        inserted_ids = []
-
-        with self.connection_pool.get_connection() as conn:
-            try:
-                conn.execute('BEGIN')
-
-                for doc_id, doc_data in doc_chunks_map.items():
-                    doc_text, metadata, doc_id, content_hash = doc_data['doc_info']
-                    chunks = doc_data['chunks']
-                    doc_embeddings = np.array(doc_data['embeddings'])
-
-                    # Insert document
-                    self._insert_document(conn, doc_id, doc_text, content_hash, metadata)
-
-                    # Add chunk embeddings to FAISS index with explicit IDs
-                    if len(doc_embeddings) > 0:
-                        # Generate sequential FAISS IDs starting from current index size
-                        start_faiss_id = self.index.ntotal
-                        new_faiss_ids = np.arange(
-                            start_faiss_id,
-                            start_faiss_id + len(chunks),
-                            dtype=np.int64
-                        )
-                        self.index.add_with_ids(doc_embeddings, new_faiss_ids)
-
-                        # Update chunk FAISS IDs
-                        for i, chunk in enumerate(chunks):
-                            chunk.faiss_id = int(new_faiss_ids[i])
-
-
-                    # Insert chunks with their FAISS IDs
-                    for chunk in chunks:
-                        self._insert_chunk(conn, doc_id, chunk)
-
-                    inserted_ids.append(doc_id)
-
-                conn.commit()
-
-            except Exception as e:
-                conn.rollback()
-                raise e
-
-        logger.info(f"Successfully inserted {len(inserted_ids)} documents with "
-                    f"{sum(len(doc_data['chunks']) for doc_data in doc_chunks_map.values())} chunks")
-
-        return inserted_ids
 
     # TODO: how are we gonna get chunks? Allow the id to have a chunk indicator.
     def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
@@ -1689,8 +1906,9 @@ class LocalVectorDB:
 
         return metadata
 
-
-    def _matches_filters(self, metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+    # TODO: expand metadata filtering
+    @staticmethod
+    def _matches_filters(metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
         """Check if metadata matches filters"""
         # Simple implementation - would be expanded for complex filters
         for key, expected_value in filters.items():
@@ -1819,11 +2037,8 @@ class LocalVectorDB:
 
     def close(self):
         """Close the database"""
-        # if not self._closed:
         self.save()
         self.connection_pool.close_all()
-        # self._closed = True
-
 
     @property
     def stats(self) -> Dict[str, Any]:

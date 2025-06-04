@@ -349,7 +349,6 @@ class TestVectorDBFactory:
                 base_path=temp_dir,
                 metadata_schema=metadata_schema,
                 doc_id_pattern="custom_{idx}",
-                chunk_id_pattern="{doc_id}:chunk_{chunk_idx}",
                 embedding_provider="openai",
                 embedding_model="text-embedding-3-large",
                 embedding_config={"api_key": "test-key"},
@@ -366,7 +365,6 @@ class TestVectorDBFactory:
             call_kwargs = mock_local.call_args[1]
             assert call_kwargs["metadata_schema"] == metadata_schema
             assert call_kwargs["doc_id_pattern"] == "custom_{idx}"
-            assert call_kwargs["chunk_id_pattern"] == "{doc_id}:chunk_{chunk_idx}"
             assert call_kwargs["embedding_provider"] == "openai"
             assert call_kwargs["embedding_model"] == "text-embedding-3-large"
             assert call_kwargs["embedding_config"] == {"api_key": "test-key"}
