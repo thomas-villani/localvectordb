@@ -41,6 +41,7 @@ server = [
     "flask-limiter>=3.12",
 ]
 dev = [
+    "freezegun>=1.5.2",
     "pytest>=8.3.5",
     "pytest-asyncio>=1.0.0",
     "sphinx>=8.2.3",

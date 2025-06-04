@@ -111,6 +111,7 @@ class KeyRecord:
         """Check if the key is expired"""
         if not self.expires_at:
             return False
+        print("now=", datetime.now(UTC))
         return datetime.now(UTC) > self.expires_at
 
     @property

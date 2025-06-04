@@ -192,6 +192,19 @@ class LocalVectorDB:
         # Save configuration
         self._save_config()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        try:
+            if hasattr(self, 'connection_pool') and not self.connection_pool.closed:
+                self.close()
+        except Exception:
+            pass  # Ignore errors during cleanup
+
     @property
     def closed(self):
         return self.connection_pool.closed
@@ -1353,8 +1366,9 @@ class LocalVectorDB:
         # since we'll be deduplicating by document ID
         search_k = k * 3 if return_type == 'documents' else k * 2
 
-        # Search FAISS index
-        distances, indices = self.index.search(query_embedding, search_k)
+        with self._lock:
+            # Search FAISS index
+            distances, indices = self.index.search(query_embedding, search_k)
 
         # Get chunk information
         chunk_results = []
@@ -1599,8 +1613,8 @@ class LocalVectorDB:
             score_threshold=score_threshold
         )
 
+    @staticmethod
     def _combine_search_results(
-            self,
             vector_results: List[QueryResult],
             keyword_results: List[QueryResult],
             vector_weight: float,
@@ -1674,6 +1688,7 @@ class LocalVectorDB:
                 metadata[col_name] = value
 
         return metadata
+
 
     def _matches_filters(self, metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
         """Check if metadata matches filters"""

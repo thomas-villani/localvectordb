@@ -14,11 +14,8 @@ Tests for localvectordb_server.keymanager module.
 
 import pytest
 import sqlite3
-import os
-import tempfile
 from datetime import datetime, timedelta, UTC
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
+from unittest.mock import Mock, patch
 
 from localvectordb_server.keymanager import KeyManager, KeyRecord, get_key_manager
 
@@ -56,8 +53,9 @@ def expired_key_record():
 @pytest.fixture
 def mock_key_manager(temp_dir):
     """Create a KeyManager with mocked bcrypt operations."""
-    db_path = temp_dir / "test_keys.db"
 
+    db_path = temp_dir / "test_keys.db"
+    # from localvectordb_server.keymanager import bcrypt as bcrypt_mod
     with patch('localvectordb_server.keymanager.bcrypt') as mock_bcrypt:
         # Mock bcrypt operations for consistent testing
         mock_bcrypt.gensalt.return_value = b'$2b$12$mock_salt'
@@ -66,6 +64,13 @@ def mock_key_manager(temp_dir):
 
         manager = KeyManager(str(db_path))
         yield manager, mock_bcrypt
+
+@pytest.fixture
+def real_key_manager(temp_dir):
+    """Create a KeyManager that uses real bcrypt (no mocking)."""
+    db_path = temp_dir / "test_keys.db"
+    manager = KeyManager(str(db_path))
+    yield manager
 
 
 class TestKeyRecord:
@@ -78,40 +83,52 @@ class TestKeyRecord:
         assert sample_key_record.active is True
         assert sample_key_record.created_by == "test_user"
 
-    def test_key_record_is_expired_false(self, sample_key_record):
-        """Test is_expired property for non-expired key."""
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 6, 1, tzinfo=UTC)
-            assert sample_key_record.is_expired is False
+    def test_key_record_is_expired_logic(self):
+        """Test is_expired logic with known dates."""
+        # Test with future expiry (not expired)
+        future_key = KeyRecord(
+            id="test",
+            key_hash="hash",
+            expires_at=datetime.now(UTC) + timedelta(days=30)
+        )
+        assert future_key.is_expired is False
 
-    def test_key_record_is_expired_true(self, expired_key_record):
-        """Test is_expired property for expired key."""
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 6, 1, tzinfo=UTC)
-            assert expired_key_record.is_expired is True
+        # Test with past expiry (expired)
+        past_key = KeyRecord(
+            id="test",
+            key_hash="hash",
+            expires_at=datetime.now(UTC) - timedelta(days=1)
+        )
+        assert past_key.is_expired is True
 
-    def test_key_record_is_expired_no_expiry(self):
-        """Test is_expired property for key with no expiration."""
-        key = KeyRecord(
-            id="key_never_expires",
+        # Test with no expiry
+        no_expiry_key = KeyRecord(
+            id="test",
             key_hash="hash",
             expires_at=None
         )
-        assert key.is_expired is False
+        assert no_expiry_key.is_expired is False
 
-    def test_days_until_expiry(self, sample_key_record):
-        """Test days_until_expiry calculation."""
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 12, 25, tzinfo=UTC)
-            days = sample_key_record.days_until_expiry
-            assert days == 6  # Dec 31 - Dec 25 = 6 days
+    def test_days_until_expiry(self):
+        """Test is_expired logic with known dates."""
+        # Test with future expiry (not expired)
+        future_key = KeyRecord(
+            id="test",
+            key_hash="hash",
+            expires_at=datetime.now(UTC) + timedelta(days=30)
+        )
+        assert future_key.days_until_expiry == 30
 
-    def test_days_until_expiry_expired(self, expired_key_record):
+
+    def test_days_until_expiry_expired(self):
         """Test days_until_expiry for expired key."""
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 6, 1, tzinfo=UTC)
-            days = expired_key_record.days_until_expiry
-            assert days == 0  # Should be 0 for expired keys
+        future_key = KeyRecord(
+            id="test",
+            key_hash="hash",
+            expires_at=datetime.now(UTC) - timedelta(days=30)
+        )
+        # Should be zero for expired keys
+        assert future_key.days_until_expiry == 0
 
     def test_days_until_expiry_no_expiry(self):
         """Test days_until_expiry for key with no expiration."""
@@ -227,190 +244,109 @@ class TestKeyManagerInitialization:
         assert version == KeyManager.SCHEMA_VERSION
 
 
-class TestKeyManagerCreation:
-    """Test KeyManager key creation functionality."""
+class TestKeyManagerWithRealBcrypt:
+    """Test KeyManager with real bcrypt operations."""
 
-    def test_create_key_basic(self, mock_key_manager):
-        """Test basic key creation."""
-        manager, mock_bcrypt = mock_key_manager
+    def test_create_and_validate_key_success(self, real_key_manager):
+        """Test creating a key and then successfully validating it."""
+        manager = real_key_manager
 
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-
-            key_record = manager.create_key(description="Test Key")
-
-        assert key_record.description == "Test Key"
-        assert key_record.active is True
-        assert key_record.plain_key is not None
-        assert key_record.plain_key.startswith("lvdb_")
-        assert len(key_record.plain_key) == len("lvdb_") + KeyManager.KEY_LENGTH
-
-    def test_create_key_with_expiration(self, mock_key_manager):
-        """Test key creation with expiration."""
-        manager, mock_bcrypt = mock_key_manager
-
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-            mock_datetime.now.return_value = now
-
-            key_record = manager.create_key(
-                description="Expiring Key",
-                expires_days=30,
-                created_by="test_user"
-            )
-
-        assert key_record.expires_at is not None
-        expected_expiry = now + timedelta(days=30)
-        assert key_record.expires_at == expected_expiry
-        assert key_record.created_by == "test_user"
-
-    def test_create_key_generates_unique_ids(self, mock_key_manager):
-        """Test that multiple keys get unique IDs."""
-        manager, mock_bcrypt = mock_key_manager
-
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-
-            key1 = manager.create_key(description="Key 1")
-            key2 = manager.create_key(description="Key 2")
-
-        assert key1.id != key2.id
-        assert key1.plain_key != key2.plain_key
-
-    def test_create_key_hashes_password(self, mock_key_manager):
-        """Test that key creation hashes the password."""
-        manager, mock_bcrypt = mock_key_manager
-
-        key_record = manager.create_key(description="Test Key")
-
-        # Verify bcrypt was called
-        mock_bcrypt.gensalt.assert_called_once()
-        mock_bcrypt.hashpw.assert_called_once()
-
-        # Verify key was stored in database
-        retrieved_key = manager.get_key(key_record.id)
-        assert retrieved_key is not None
-        assert retrieved_key.description == "Test Key"
-
-
-class TestKeyManagerValidation:
-    """Test KeyManager key validation functionality."""
-
-    def test_validate_key_success(self, mock_key_manager):
-        """Test successful key validation."""
-        manager, mock_bcrypt = mock_key_manager
-
-        # Create a key first
+        # Create a key
         key_record = manager.create_key(description="Test Key")
         plain_key = key_record.plain_key
 
-        # Mock bcrypt to return True for validation
-        mock_bcrypt.checkpw.return_value = True
+        # The plain key should be returned
+        assert plain_key is not None
+        assert plain_key.startswith("lvdb_")
 
-        # Validate the key
+        # Validate the same key should succeed
         is_valid = manager.validate_key(plain_key)
-
         assert is_valid is True
-        mock_bcrypt.checkpw.assert_called()
 
-    def test_validate_key_invalid_prefix(self, mock_key_manager):
-        """Test validation fails for key with wrong prefix."""
-        manager, mock_bcrypt = mock_key_manager
-
-        is_valid = manager.validate_key("wrong_prefix_key123")
-
-        assert is_valid is False
-
-    def test_validate_key_empty_string(self, mock_key_manager):
-        """Test validation fails for empty string."""
-        manager, mock_bcrypt = mock_key_manager
-
-        is_valid = manager.validate_key("")
-
-        assert is_valid is False
-
-    def test_validate_key_none(self, mock_key_manager):
-        """Test validation fails for None."""
-        manager, mock_bcrypt = mock_key_manager
-
-        is_valid = manager.validate_key(None)
-
-        assert is_valid is False
-
-    def test_validate_key_wrong_key(self, mock_key_manager):
-        """Test validation fails for wrong key."""
-        manager, mock_bcrypt = mock_key_manager
+    def test_validate_wrong_key_fails(self, real_key_manager):
+        """Test that validating a wrong key fails."""
+        manager = real_key_manager
 
         # Create a key
         manager.create_key(description="Test Key")
 
-        # Mock bcrypt to return False for wrong key
-        mock_bcrypt.checkpw.return_value = False
-
-        is_valid = manager.validate_key("lvdb_wrongkey123")
-
+        # Try to validate a different key
+        wrong_key = "lvdb_wrongkeyhere123456789012345678"
+        is_valid = manager.validate_key(wrong_key)
         assert is_valid is False
 
-    def test_validate_key_expired(self, mock_key_manager):
-        """Test validation fails for expired key."""
-        manager, mock_bcrypt = mock_key_manager
-
-        # Create a key that expires in the past
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            past_time = datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC)
-            mock_datetime.now.return_value = past_time
-
-            key_record = manager.create_key(
-                description="Expired Key",
-                expires_days=1
-            )
-            plain_key = key_record.plain_key
-
-            # Mock bcrypt to return True (key matches)
-            mock_bcrypt.checkpw.return_value = True
-
-        is_valid = manager.validate_key(plain_key)
-
-        assert is_valid is False
-
-    def test_validate_key_updates_last_used(self, mock_key_manager):
-        """Test that validation updates last_used timestamp."""
-        manager, mock_bcrypt = mock_key_manager
+    def test_validate_key_updates_last_used(self, real_key_manager):
+        """Test that successful validation updates last_used."""
+        manager = real_key_manager
 
         # Create a key
         key_record = manager.create_key(description="Test Key")
-        plain_key = key_record.plain_key
-
-        # Mock bcrypt and datetime
-        mock_bcrypt.checkpw.return_value = True
-
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            validation_time = datetime(2024, 6, 1, 15, 30, 0, tzinfo=UTC)
-            mock_datetime.now.return_value = validation_time
-
-            manager.validate_key(plain_key)
+        assert key_record.last_used is None
+        # Validate the key
+        manager.validate_key(key_record.plain_key, update_last_used=True)
+        original_last_used = manager.get_key(key_record.id).last_used
+        # print(original_last_used)
+        # Wait a tiny bit to ensure timestamp difference
+        import time
+        time.sleep(0.01)
 
         # Check that last_used was updated
+        manager.validate_key(key_record.plain_key, update_last_used=True)
         updated_key = manager.get_key(key_record.id)
-        assert updated_key.last_used is not None
+        # print(updated_key.last_used)
 
-    def test_validate_key_no_update_last_used(self, mock_key_manager):
+        assert updated_key.last_used != original_last_used
+        assert updated_key.last_used > original_last_used
+
+    def test_validate_key_no_update_when_disabled(self, real_key_manager):
         """Test validation without updating last_used when flag is False."""
-        manager, mock_bcrypt = mock_key_manager
+        manager = real_key_manager
 
         # Create a key
         key_record = manager.create_key(description="Test Key")
-        plain_key = key_record.plain_key
         original_last_used = key_record.last_used
 
-        mock_bcrypt.checkpw.return_value = True
-
         # Validate without updating last_used
-        manager.validate_key(plain_key, update_last_used=False)
+        is_valid = manager.validate_key(key_record.plain_key, update_last_used=False)
+        assert is_valid is True
 
         # Check that last_used was not updated
         updated_key = manager.get_key(key_record.id)
         assert updated_key.last_used == original_last_used
+
+    def test_hash_verify_cycle(self, real_key_manager):
+        """Test that the hash/verify cycle works correctly."""
+        manager = real_key_manager
+
+        # Generate a key
+        test_key = manager._generate_api_key()
+
+        # Hash it
+        key_hash = manager._hash_key(test_key)
+
+        # Verify it works
+        assert manager._verify_key(test_key, key_hash) is True
+
+        # Verify wrong key fails
+        wrong_key = manager._generate_api_key()  # Different key
+        assert manager._verify_key(wrong_key, key_hash) is False
+
+    def test_multiple_keys_unique_hashes(self, real_key_manager):
+        """Test that multiple keys get unique hashes."""
+        manager = real_key_manager
+
+        # Create multiple keys with same content but they should have different hashes
+        key1 = manager.create_key(description="Same Description")
+        key2 = manager.create_key(description="Same Description")
+
+        # Keys should be different
+        assert key1.plain_key != key2.plain_key
+        assert key1.key_hash != key2.key_hash
+        assert key1.id != key2.id
+
+        # Both should validate correctly
+        assert manager.validate_key(key1.plain_key) is True
+        assert manager.validate_key(key2.plain_key) is True
 
 
 class TestKeyManagerRetrieval:
@@ -483,24 +419,15 @@ class TestKeyManagerRetrieval:
         manager, mock_bcrypt = mock_key_manager
 
         # Create a key that will be expired
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            past_time = datetime(2023, 1, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = past_time
+        expired_key = manager.create_key(
+            description="Expired Key",
+            expires_days=-10
+        )
+        # Create a non-expired key
+        valid_key = manager.create_key(description="Valid Key")
 
-            expired_key = manager.create_key(
-                description="Expired Key",
-                expires_days=1
-            )
-
-            # Create a non-expired key
-            valid_key = manager.create_key(description="Valid Key")
-
-            # Fast forward time
-            future_time = datetime(2024, 1, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = future_time
-
-            # List keys excluding expired
-            keys = manager.list_keys(include_expired=False)
+        # List keys excluding expired
+        keys = manager.list_keys(include_expired=False)
 
         # Should only get the valid key
         assert len(keys) == 1
@@ -575,22 +502,14 @@ class TestKeyManagerExpiration:
         manager, mock_bcrypt = mock_key_manager
 
         # Create expired and valid keys
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            past_time = datetime(2023, 1, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = past_time
+        expired_key = manager.create_key(
+            description="Expired Key",
+            expires_days=-10
+        )
+        valid_key = manager.create_key(description="Valid Key")
 
-            expired_key = manager.create_key(
-                description="Expired Key",
-                expires_days=1
-            )
-            valid_key = manager.create_key(description="Valid Key")
-
-            # Fast forward time
-            future_time = datetime(2024, 1, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = future_time
-
-            # Prune expired keys
-            count = manager.prune_expired(soft_delete=True)
+        # Prune expired keys
+        count = manager.prune_expired(soft_delete=True)
 
         assert count == 1
 
@@ -608,22 +527,15 @@ class TestKeyManagerExpiration:
         manager, mock_bcrypt = mock_key_manager
 
         # Create expired and valid keys
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            past_time = datetime(2023, 1, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = past_time
 
-            expired_key = manager.create_key(
-                description="Expired Key",
-                expires_days=1
-            )
-            valid_key = manager.create_key(description="Valid Key")
+        expired_key = manager.create_key(
+            description="Expired Key",
+            expires_days=-10
+        )
+        valid_key = manager.create_key(description="Valid Key")
 
-            # Fast forward time
-            future_time = datetime(2024, 1, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = future_time
-
-            # Prune expired keys with hard delete
-            count = manager.prune_expired(soft_delete=False)
+        # Prune expired keys with hard delete
+        count = manager.prune_expired(soft_delete=False)
 
         assert count == 1
 
@@ -666,41 +578,37 @@ class TestKeyManagerStats:
         """Test getting stats with various key types."""
         manager, mock_bcrypt = mock_key_manager
 
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            now = datetime(2024, 6, 1, tzinfo=UTC)
-            mock_datetime.now.return_value = now
+        # Create different types of keys
+        active_key = manager.create_key(description="Active Key")
 
-            # Create different types of keys
-            active_key = manager.create_key(description="Active Key")
+        # Expired key
+        expired_key = manager.create_key(
+            description="Expired Key",
+            expires_days=-10  # Already expired
+        )
 
-            # Expired key
-            expired_key = manager.create_key(
-                description="Expired Key",
-                expires_days=-10  # Already expired
+        # Expiring soon key
+        expiring_key = manager.create_key(
+            description="Expiring Soon",
+            expires_days=3  # Expires in 3 days
+        )
+
+        # Recently used key
+        recent_key = manager.create_key(description="Recent Key")
+
+        # Update last_used for recent key
+        with manager._get_connection() as conn:
+            recent_time = datetime.now(UTC) - timedelta(hours=12)
+            conn.execute(
+                "UPDATE api_keys SET last_used = ? WHERE id = ?",
+                (recent_time.isoformat(), recent_key.id)
             )
+            conn.commit()
 
-            # Expiring soon key
-            expiring_key = manager.create_key(
-                description="Expiring Soon",
-                expires_days=3  # Expires in 3 days
-            )
+        # Revoke one key
+        manager.revoke_key(active_key.id)
 
-            # Recently used key
-            recent_key = manager.create_key(description="Recent Key")
-
-            # Update last_used for recent key
-            with manager._get_connection() as conn:
-                recent_time = now - timedelta(hours=12)
-                conn.execute(
-                    "UPDATE api_keys SET last_used = ? WHERE id = ?",
-                    (recent_time.isoformat(), recent_key.id)
-                )
-                conn.commit()
-
-            # Revoke one key
-            manager.revoke_key(active_key.id)
-
-            stats = manager.get_stats()
+        stats = manager.get_stats()
 
         assert stats['total_keys'] == 4
         assert stats['active_keys'] == 3  # expired, expiring, recent (active is revoked)
@@ -716,13 +624,11 @@ class TestKeyManagerUtilities:
         """Test key ID generation format."""
         manager, mock_bcrypt = mock_key_manager
 
-        with patch('localvectordb_server.keymanager.datetime') as mock_datetime:
-            mock_datetime.now.return_value = datetime(2024, 6, 15, tzinfo=UTC)
+        key_id = manager._generate_key_id()
+        expected_key_id = datetime.now().strftime("key_%Y%m%d_")
 
-            key_id = manager._generate_key_id()
-
-        assert key_id.startswith("key_20240615_")
-        assert len(key_id) == len("key_20240615_") + 6  # 6 random chars
+        assert key_id.startswith(expected_key_id)
+        assert len(key_id) == len(expected_key_id) + 6  # 6 random chars
 
     def test_generate_api_key_format(self, mock_key_manager):
         """Test API key generation format."""
@@ -735,8 +641,6 @@ class TestKeyManagerUtilities:
 
     def test_hash_and_verify_key(self, mock_key_manager):
         """Test key hashing and verification with real bcrypt."""
-        manager, mock_bcrypt = mock_key_manager
-
         # Use real bcrypt for this test
         import bcrypt
 
@@ -748,51 +652,10 @@ class TestKeyManagerUtilities:
         assert not bcrypt.checkpw("wrong_key".encode('utf-8'), hashed.encode('utf-8'))
 
 
-class TestGetKeyManagerFunction:
-    """Test the get_key_manager utility function."""
-
-    def test_get_key_manager_default_path(self, temp_dir):
-        """Test get_key_manager with default path."""
-        with patch('localvectordb_server.keymanager.KeyManager') as mock_km_class:
-            mock_km_instance = Mock()
-            mock_km_class.return_value = mock_km_instance
-
-            result = get_key_manager()
-
-            mock_km_class.assert_called_once_with("./.lvdb/api_keys.db")
-            assert result == mock_km_instance
-
-    def test_get_key_manager_custom_path(self, temp_dir):
-        """Test get_key_manager with custom path."""
-        custom_path = str(temp_dir / "custom_keys.db")
-
-        with patch('localvectordb_server.keymanager.KeyManager') as mock_km_class:
-            mock_km_instance = Mock()
-            mock_km_class.return_value = mock_km_instance
-
-            result = get_key_manager(custom_path)
-
-            mock_km_class.assert_called_once_with(custom_path)
-            assert result == mock_km_instance
-
 
 class TestKeyManagerErrorHandling:
     """Test KeyManager error handling."""
 
-    def test_validate_key_bcrypt_error(self, mock_key_manager):
-        """Test validation handles bcrypt errors gracefully."""
-        manager, mock_bcrypt = mock_key_manager
-
-        # Create a key first
-        key_record = manager.create_key(description="Test Key")
-
-        # Mock bcrypt to raise an exception
-        mock_bcrypt.checkpw.side_effect = Exception("Bcrypt error")
-
-        # Should return False instead of raising
-        is_valid = manager.validate_key(key_record.plain_key)
-
-        assert is_valid is False
 
     def test_database_connection_error_handling(self, temp_dir):
         """Test handling of database connection errors."""

@@ -410,7 +410,7 @@ class DatabaseManager:
         if not _atexit_registered:
             atexit.register(_cleanup_all_managers)
             _atexit_registered = True
-            # logger.info("Registered atexit handler for database cleanup")
+            logger.info("Registered atexit handler for database cleanup")
 
         # Initialize shared registry using cachelib
         self.registry = self._create_registry()

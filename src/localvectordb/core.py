@@ -662,6 +662,8 @@ class ConnectionPool:
                 conn = self._pool.pop()
                 # Verify connection is still valid
                 try:
+                    if conn.in_transaction:
+                        conn.rollback()
                     conn.execute("SELECT 1")
                     return PooledConnection(conn, self)
                 except sqlite3.Error:
@@ -682,6 +684,8 @@ class ConnectionPool:
             if len(self._pool) < self.max_connections:
                 # Check if connection is still valid before returning to pool
                 try:
+                    if conn.in_transaction:
+                        conn.rollback()
                     conn.execute("SELECT 1")
                     self._pool.append(conn)
                 except sqlite3.Error:
