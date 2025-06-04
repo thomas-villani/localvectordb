@@ -10,32 +10,360 @@
 # src/localvectordb_server/_dbmanager.py
 
 """
-Enhanced database manager for LocalVectorDB with improved error handling,
-structured logging, performance monitoring, and recovery strategies.
+Enhanced database manager for LocalVectorDB with multi-worker coordination.
+Uses cachelib for shared database registry across workers.
 """
 
+import json
 import logging
 import os
 import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Union, Literal, Optional, Any, Tuple
+from typing import Dict, Union, Literal, Optional, Any, List, Tuple
+
+from cachelib import SimpleCache, RedisCache, FileSystemCache, MemcachedCache, DynamoDbCache, MongoDbCache
 
 from localvectordb.core import MetadataFieldType
 from localvectordb.exceptions import DatabaseNotFoundError, DatabaseError
-from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
-from localvectordb_server._logcfg import DatabaseLogger, log_performance
 from localvectordb_server._error_handlers import APIError
+from localvectordb_server._logcfg import log_performance, DatabaseLogger
+from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 
+class DatabaseRegistryError(Exception):
+    """Raised when database registry operations fail"""
+    pass
+
+
+class CrossPlatformFileLock:
+    """Cross-platform file locking implementation"""
+
+    def __init__(self, lock_file: Path, timeout: float = 30.0):
+        import sys
+
+        self.lock_file = Path(lock_file)
+        self.timeout = timeout
+        self.file_handle = None
+        self._is_locked = False
+        self.is_windows = sys.platform == "win32"
+
+        # Platform-specific imports
+        if self.is_windows:
+            import msvcrt
+            self.msvcrt = msvcrt
+        else:
+            import fcntl
+            self.fcntl = fcntl
+
+        # Ensure lock directory exists
+        self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def acquire(self, blocking: bool = True) -> bool:
+        """Acquire the file lock"""
+        if self._is_locked:
+            return True
+
+        try:
+            self.file_handle = open(self.lock_file, 'w')
+
+            if self.is_windows:
+                return self._acquire_windows(blocking)
+            else:
+                return self._acquire_unix(blocking)
+
+        except Exception as e:
+            logger.error(f"Failed to acquire lock {self.lock_file}: {e}")
+            self._cleanup()
+            if blocking:
+                raise DatabaseRegistryError(f"Failed to acquire lock: {e}")
+            return False
+
+    def _acquire_windows(self, blocking: bool) -> bool:
+        """Acquire lock on Windows using msvcrt"""
+        start_time = time.time()
+
+        while True:
+            try:
+                self.msvcrt.locking(self.file_handle.fileno(), self.msvcrt.LK_NBLCK, 1)
+                self._is_locked = True
+                logger.debug(f"Acquired Windows lock: {self.lock_file}")
+                return True
+
+            except OSError:
+                if not blocking:
+                    return False
+
+                if time.time() - start_time > self.timeout:
+                    raise DatabaseRegistryError(f"Lock acquisition timeout after {self.timeout}s")
+
+                time.sleep(0.1)
+
+    def _acquire_unix(self, blocking: bool) -> bool:
+        """Acquire lock on Unix systems using fcntl"""
+        try:
+            if blocking:
+                start_time = time.time()
+                while True:
+                    try:
+                        self.fcntl.flock(self.file_handle.fileno(), self.fcntl.LOCK_EX | self.fcntl.LOCK_NB)
+                        self._is_locked = True
+                        logger.debug(f"Acquired Unix lock: {self.lock_file}")
+                        return True
+                    except (OSError, IOError):
+                        if time.time() - start_time > self.timeout:
+                            raise DatabaseRegistryError(f"Lock acquisition timeout after {self.timeout}s")
+                        time.sleep(0.1)
+            else:
+                self.fcntl.flock(self.file_handle.fileno(), self.fcntl.LOCK_EX | self.fcntl.LOCK_NB)
+                self._is_locked = True
+                logger.debug(f"Acquired Unix lock: {self.lock_file}")
+                return True
+
+        except (OSError, IOError) as e:
+            if not blocking:
+                return False
+            raise DatabaseRegistryError(f"Failed to acquire Unix lock: {e}")
+
+    def release(self):
+        """Release the file lock"""
+        if not self._is_locked or not self.file_handle:
+            return
+
+        try:
+            if self.is_windows:
+                self.msvcrt.locking(self.file_handle.fileno(), self.msvcrt.LK_UNLCK, 1)
+            else:
+                self.fcntl.flock(self.file_handle.fileno(), self.fcntl.LOCK_UN)
+
+            self._is_locked = False
+            logger.debug(f"Released lock: {self.lock_file}")
+
+        except Exception as e:
+            logger.error(f"Error releasing lock {self.lock_file}: {e}")
+        finally:
+            self._cleanup()
+
+    def _cleanup(self):
+        """Clean up file handle"""
+        if self.file_handle:
+            try:
+                self.file_handle.close()
+            except Exception:
+                pass
+            finally:
+                self.file_handle = None
+
+    def __enter__(self):
+        if not self.acquire():
+            raise DatabaseRegistryError(f"Failed to acquire lock: {self.lock_file}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+class DatabaseLockManager:
+    """Cross-platform lock manager for FAISS index coordination"""
+
+    def __init__(self, base_path: Path, lock_timeout: float = 30.0):
+        self.base_path = Path(base_path)
+        self.lock_dir = self.base_path / ".locks"
+        self.lock_timeout = lock_timeout
+        self.lock_dir.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def acquire_read_lock(self, db_name: str):
+        """Acquire a read lock for database operations"""
+        lock_file = self.lock_dir / f"{db_name}.lock"
+
+        logger.debug(f"Acquiring read lock for {db_name}")
+        with CrossPlatformFileLock(lock_file, self.lock_timeout):
+            logger.debug(f"Acquired read lock for {db_name}")
+            try:
+                yield
+            finally:
+                logger.debug(f"Released read lock for {db_name}")
+
+    @contextmanager
+    def acquire_write_lock(self, db_name: str):
+        """Acquire a write lock for database operations"""
+        lock_file = self.lock_dir / f"{db_name}.lock"
+
+        logger.debug(f"Acquiring write lock for {db_name}")
+        with CrossPlatformFileLock(lock_file, self.lock_timeout):
+            logger.debug(f"Acquired write lock for {db_name}")
+            try:
+                yield
+            finally:
+                logger.debug(f"Released write lock for {db_name}")
+
+
+class DatabaseRegistry:
+    """Database registry implementation using cachelib backends"""
+
+    def __init__(self, cache_instance):
+        """
+        Initialize with a cachelib cache instance
+
+        Parameters
+        ----------
+        cache_instance : cachelib.BaseCache
+            Configured cache instance (SimpleCache, RedisCache, etc.)
+        """
+        self.cache = cache_instance
+        self.registry_key = "lvdb:registry"
+        self.metadata_key_prefix = "lvdb:metadata:"
+
+    def _get_registry_set(self) -> set:
+        """Get the set of registered database names"""
+        registry_data = self.cache.get(self.registry_key)
+        if registry_data is None:
+            return set()
+
+        if isinstance(registry_data, str):
+            # Handle JSON-serialized data
+            try:
+                return set(json.loads(registry_data))
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Corrupted registry data, resetting")
+                return set()
+        elif isinstance(registry_data, (list, set)):
+            return set(registry_data)
+        else:
+            logger.warning(f"Unexpected registry data type: {type(registry_data)}")
+            return set()
+
+    def _save_registry_set(self, db_names: set) -> None:
+        """Save the set of registered database names"""
+        # Convert to list for JSON serialization compatibility
+        registry_data = list(db_names)
+
+        # Use JSON for cross-platform compatibility
+        if hasattr(self.cache, 'set'):
+            # Direct set operation
+            self.cache.set(self.registry_key, json.dumps(registry_data))
+        else:
+            # Fallback for caches that don't support set
+            self.cache[self.registry_key] = json.dumps(registry_data)
+
+    def register_database(self, name: str, metadata: Dict[str, Any]) -> None:
+        """Register a database with metadata"""
+        try:
+            # Add to registry set
+            registry = self._get_registry_set()
+            registry.add(name)
+            self._save_registry_set(registry)
+
+            # Store metadata
+            metadata_key = f"{self.metadata_key_prefix}{name}"
+            metadata_json = json.dumps(metadata, default=str)  # default=str handles datetime objects
+
+            if hasattr(self.cache, 'set'):
+                self.cache.set(metadata_key, metadata_json)
+            else:
+                self.cache[metadata_key] = metadata_json
+
+            logger.info(f"Registered database '{name}' in shared registry")
+
+        except Exception as e:
+            logger.error(f"Failed to register database '{name}': {e}")
+            raise DatabaseRegistryError(f"Failed to register database: {e}")
+
+    def unregister_database(self, name: str) -> None:
+        """Unregister a database"""
+        try:
+            # Remove from registry set
+            registry = self._get_registry_set()
+            registry.discard(name)
+            self._save_registry_set(registry)
+
+            # Remove metadata
+            metadata_key = f"{self.metadata_key_prefix}{name}"
+            if hasattr(self.cache, 'delete'):
+                self.cache.delete(metadata_key)
+            else:
+                try:
+                    del self.cache[metadata_key]
+                except KeyError:
+                    pass
+
+            logger.info(f"Unregistered database '{name}' from shared registry")
+
+        except Exception as e:
+            logger.error(f"Failed to unregister database '{name}': {e}")
+            raise DatabaseRegistryError(f"Failed to unregister database: {e}")
+
+    def list_databases(self) -> List[str]:
+        """List all registered databases"""
+        try:
+            registry = self._get_registry_set()
+            return sorted(list(registry))
+        except Exception as e:
+            logger.error(f"Failed to list databases: {e}")
+            return []
+
+    def get_database_metadata(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get metadata for a database"""
+        try:
+            metadata_key = f"{self.metadata_key_prefix}{name}"
+            metadata_json = self.cache.get(metadata_key)
+
+            if metadata_json is None:
+                return None
+
+            if isinstance(metadata_json, str):
+                return json.loads(metadata_json)
+            else:
+                # Already deserialized
+                return metadata_json
+
+        except Exception as e:
+            logger.error(f"Failed to get metadata for database '{name}': {e}")
+            return None
+
+    def database_exists(self, name: str) -> bool:
+        """Check if a database is registered"""
+        try:
+            registry = self._get_registry_set()
+            return name in registry
+        except Exception as e:
+            logger.error(f"Failed to check existence of database '{name}': {e}")
+            return False
+
+    def update_database_metadata(self, name: str, metadata: Dict[str, Any]) -> None:
+        """Update metadata for an existing database"""
+        try:
+            if not self.database_exists(name):
+                raise DatabaseRegistryError(f"Database '{name}' not registered")
+
+            metadata_key = f"{self.metadata_key_prefix}{name}"
+            metadata_json = json.dumps(metadata, default=str)
+
+            if hasattr(self.cache, 'set'):
+                self.cache.set(metadata_key, metadata_json)
+            else:
+                self.cache[metadata_key] = metadata_json
+
+            logger.debug(f"Updated metadata for database '{name}'")
+
+        except Exception as e:
+            logger.error(f"Failed to update metadata for database '{name}': {e}")
+            raise DatabaseRegistryError(f"Failed to update metadata: {e}")
+
 
 class DatabaseManager:
     """
-    Enhanced database manager with error handling, monitoring, and recovery
+    Enhanced database manager with multi-worker coordination, error handling,
+    monitoring, and recovery
 
     Features:
+    - Multi-worker coordination using cachelib registry
+    - Cross-platform file locking for FAISS coordination
     - Comprehensive error handling and recovery
     - Performance monitoring and logging
     - Connection health checks
@@ -46,9 +374,25 @@ class DatabaseManager:
     def __init__(self, app):
         self.app = app
         self.config = app.config
+
+        # Initialize shared registry using cachelib
+        self.registry = self._create_registry()
+
+        # Initialize lock manager for FAISS coordination
+        db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+        self.lock_manager = DatabaseLockManager(db_path)
+
+        # Process-local database cache (existing functionality)
         self.databases: Dict[str, Tuple["LocalVectorDB", datetime]] = {}
         self.lock = threading.RLock()
         self._shutdown_event = threading.Event()
+
+        # Worker identification for coordination
+        self.worker_id = f"worker-{os.getpid()}-{threading.get_ident()}"
+
+        # Registry synchronization
+        self._last_registry_sync = datetime.now()
+        self._registry_sync_interval = timedelta(seconds=30)  # Sync every 30 seconds
 
         # Health monitoring
         self._last_health_check = datetime.now()
@@ -57,9 +401,9 @@ class DatabaseManager:
         # Error tracking
         self._error_counts = {}
         self._last_errors = {}
+        self._start_time = datetime.now()
 
         # Ensure database directory exists
-        db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
         try:
             db_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Database directory ready: {db_path}")
@@ -67,12 +411,63 @@ class DatabaseManager:
             logger.error(f"Failed to create database directory {db_path}: {e}")
             raise DatabaseError(f"Cannot create database directory: {e}")
 
-        # Start background threads
-        self._start_background_tasks()
+        # Start background services
+        self._start_background_services()
 
-    def _start_background_tasks(self):
+        # Initial registry sync from filesystem
+        self._sync_registry_from_filesystem()
+
+    def _create_registry(self) -> DatabaseRegistry:
+        """Create database registry using cachelib"""
+        if self.app.config_obj.use_single_cache:
+            from localvectordb_server._cache import cache
+            return DatabaseRegistry(cache.cache)
+
+        # Get registry configuration from server settings
+        registry_type = self.app.config_obj.server.db_registry_type
+        registry_settings = self.app.config_obj.server.db_registry_settings
+
+        if registry_type == self.app.config_obj.cache_type and not registry_settings:
+            registry_settings = self.app.cache_settings
+
+        logger.info(f"Initializing database registry with type: {registry_type}")
+
+        registry_config_kwargs = {}
+        for key, value in registry_settings.items():
+            if isinstance(value, str) and value.startswith('$'):
+                registry_config_kwargs[key] = os.getenv(value[1:])
+            else:
+                registry_config_kwargs[key] = value
+
+        # Create cache instance based on type
+        if registry_type == "SimpleCache" or registry_type == "memory":
+            cache_instance = SimpleCache(**registry_config_kwargs)
+        elif registry_type == "FileSystemCache":
+            registry_config_kwargs["cache_dir"] = registry_config_kwargs.get("cache_dir", "./.lvdb/registry_cache")
+            cache_instance = FileSystemCache(**registry_config_kwargs)
+        elif registry_type == "RedisCache":
+            cache_instance = RedisCache(**registry_config_kwargs)
+        elif registry_type == "MemcachedCache":
+            cache_instance = MemcachedCache(**registry_config_kwargs)
+        elif registry_type == "UWSGICache":
+            cache_instance = MemcachedCache(**registry_config_kwargs)
+        elif registry_type == "DynamoDbCache":
+            cache_instance = DynamoDbCache(**registry_config_kwargs)
+        elif registry_type == "MongoDbCache":
+            cache_instance = MongoDbCache(**registry_config_kwargs)
+        else:
+            logger.warning(f"Unknown registry type '{registry_type}', falling back to memory")
+            cache_instance = SimpleCache()
+
+        return DatabaseRegistry(cache_instance)
+
+    def _start_background_services(self):
         """Start background monitoring and cleanup tasks"""
         try:
+            # Registry sync thread
+            self._sync_thread = threading.Thread(target=self._registry_sync_loop, daemon=True, name="db-registry-sync")
+            self._sync_thread.start()
+
             # Cleanup thread
             self._cleanup_thread = threading.Thread(
                 target=self._cleanup_loop,
@@ -94,53 +489,89 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to start background tasks: {e}")
 
-    def delete_db(self, db_name):
+    def _registry_sync_loop(self):
+        """Background thread to sync registry periodically"""
+        while not self._shutdown_event.wait(self._registry_sync_interval.total_seconds()):
+            try:
+                self._sync_registry_from_filesystem()
+            except Exception as e:
+                logger.error(f"Error in registry sync loop: {e}")
+
+    def _sync_registry_from_filesystem(self):
+        """Sync registry with actual filesystem state"""
         try:
             db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
             if not db_path.exists():
-                logger.warning(f"Database directory does not exist: {db_path}")
-                return False, "Database directory not found"
+                return
 
-            db = self.databases.get(db_name)
-            if db:
-                db[0].close()
+            # Get databases from filesystem
+            fs_databases = set()
+            for db_file in db_path.glob("*.sqlite"):
+                fs_databases.add(db_file.stem)
 
-            db_logger.log_query(
-                "delete_database_start",
-                database_name=db_name
-            )
-            db_faiss_file = db_path / f"{db_name}.faiss"
-            db_sqlite_file = db_path / f"{db_name}.sqlite"
+            # Get databases from registry
+            registry_databases = set(self.registry.list_databases())
 
-            if db_sqlite_file.exists():
-                os.remove(db_sqlite_file)
-            else:
-                logger.warning(f"Database {db_name} was not found.")
-                return False, "Database file not found"
+            # Register new databases found on filesystem
+            new_databases = fs_databases - registry_databases
+            for db_name in new_databases:
+                self._register_database_from_filesystem(db_name)
 
-            # Faiss may not exist if the database has no records yet
-            if db_faiss_file.exists():
-                os.remove(db_faiss_file)
+            # Unregister databases that no longer exist on filesystem
+            missing_databases = registry_databases - fs_databases
+            for db_name in missing_databases:
+                logger.info(f"Database '{db_name}' no longer exists on filesystem, unregistering")
+                self.registry.unregister_database(db_name)
 
-            db_logger.log_query(
-                "delete_database_success",
-                database_name=db_name
-            )
-
-            return True, None
+            self._last_registry_sync = datetime.now()
 
         except Exception as e:
-            logger.error(f"Error deleting database: {e}")
-            db_logger.log_error("delete_database_failed", e)
+            logger.error(f"Failed to sync registry from filesystem: {e}")
 
-            raise APIError(
-                message=f"Failed to delete database: {str(e)}",
-                error_code="DATABASE_LIST_FAILED",
-                status_code=500,
-                recoverable=False,
-                details={"original_error": str(e)}
-            )
+    def _register_database_from_filesystem(self, db_name: str):
+        """Register a database found on filesystem"""
+        try:
+            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+            sqlite_path = db_path / f"{db_name}.sqlite"
+            faiss_path = db_path / f"{db_name}.faiss"
 
+            # Try to extract metadata from database
+            metadata = {
+                "name": db_name,
+                "created_at": datetime.fromtimestamp(sqlite_path.stat().st_ctime).isoformat(),
+                "last_modified": datetime.fromtimestamp(sqlite_path.stat().st_mtime).isoformat(),
+                "discovered_by": self.worker_id,
+                "file_paths": {
+                    "sqlite": str(sqlite_path),
+                    "faiss": str(faiss_path) if faiss_path.exists() else None
+                }
+            }
+
+            # Try to load database config
+            try:
+                from localvectordb.database import LocalVectorDB
+                with self.lock_manager.acquire_read_lock(db_name):
+                    temp_db = LocalVectorDB(name=db_name, base_path=db_path, create_if_not_exists=False)
+                    stats = temp_db.stats
+                    metadata.update({
+                        "embedding_model": stats.get("embedding_model"),
+                        "embedding_provider": stats.get("embedding_provider"),
+                        "embedding_dimension": stats.get("embedding_dimension"),
+                        "chunk_size": stats.get("chunk_size"),
+                        "chunking_method": stats.get("chunking_method"),
+                        "chunk_overlap": stats.get("chunk_overlap"),
+                        "documents": stats.get("documents", 0),
+                        "chunks": stats.get("chunks", 0)
+                    })
+                    temp_db.close()
+            except Exception as e:
+                logger.warning(f"Could not extract metadata for database '{db_name}': {e}")
+
+            self.registry.register_database(db_name, metadata)
+            logger.info(f"Discovered and registered database '{db_name}'")
+
+        except Exception as e:
+            logger.error(f"Failed to register database '{db_name}' from filesystem: {e}")
 
     @log_performance("create_database")
     def create_db(
@@ -148,31 +579,9 @@ class DatabaseManager:
             metadata_schema: Optional[Dict[str, MetadataFieldType]],
             db_config: DatabaseSettings,
             embedding_config: EmbeddingSettings
-            ) -> "LocalVectorDB":
-        """
-        Create a new database with comprehensive error handling and validation
+    ) -> "LocalVectorDB":
+        """Create a new database with coordination and comprehensive error handling"""
 
-        Parameters
-        ----------
-        new_db_name : str
-            Name for the new database
-        metadata_schema : Optional[Dict[str, MetadataFieldType]]
-            Metadata schema configuration
-        db_config : DatabaseSettings
-            Database configuration
-        embedding_config : EmbeddingSettings
-            Embedding provider configuration
-
-        Returns
-        -------
-        LocalVectorDB
-            Created database instance
-
-        Raises
-        ------
-        APIError
-            If database creation fails
-        """
         with self.lock:
             # Validate database name
             if not self._validate_database_name(new_db_name):
@@ -183,124 +592,127 @@ class DatabaseManager:
                     recoverable=True
                 )
 
-            # Check if database already exists
-            if new_db_name in self.databases:
+            # Check if database already exists in registry
+            if self.registry.database_exists(new_db_name):
                 raise APIError(
-                    message=f"Database '{new_db_name}' already exists in memory",
+                    message=f"Database '{new_db_name}' already exists",
                     error_code="DATABASE_ALREADY_EXISTS",
                     status_code=409,
                     recoverable=True
                 )
 
-            # Check if database files exist on disk
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
-            db_sqlite_file = db_path / f"{new_db_name}.sqlite"
-            if db_sqlite_file.exists():
-                raise APIError(
-                    message=f"Database '{new_db_name}' already exists on disk",
-                    error_code="DATABASE_FILE_EXISTS",
-                    status_code=409,
-                    recoverable=True
-                )
+            from localvectordb.database import LocalVectorDB
 
-            try:
-                from localvectordb.database import LocalVectorDB
-
-                db_logger.log_query(
-                    "create_database_start",
-                    database_name=new_db_name,
-                    embedding_provider=embedding_config.provider,
-                    embedding_model=embedding_config.model,
-                    chunk_size=db_config.chunk_size
-                )
-
-                # Create new database instance with comprehensive error handling
-                db = LocalVectorDB(
-                    name=new_db_name,
-                    base_path=db_path,
-                    metadata_schema=metadata_schema,
-                    embedding_provider=embedding_config.provider,
-                    embedding_model=embedding_config.model,
-                    embedding_config=embedding_config.config,
-                    chunking_method=db_config.chunking_method,
-                    chunk_size=db_config.chunk_size,
-                    chunk_overlap=db_config.chunk_overlap,
-                    enable_gpu=db_config.enable_gpu,
-                    enable_fts=db_config.enable_fts,
-                    connection_pool_size=db_config.connection_pool_size,
-                    create_if_not_exists=True
-                )
-
-                # Store in memory with access timestamp
-                self.databases[new_db_name] = (db, datetime.now())
-
-                db_logger.log_query(
-                    "create_database_success",
-                    database_name=new_db_name,
-                    database_path=str(db_path),
-                    stats=db.stats
-                )
-
-                logger.info(f"Successfully created database: {new_db_name}")
-                return db
-
-            except Exception as e:
-                db_logger.log_error(
-                    "create_database_failed",
-                    e,
-                    database_name=new_db_name,
-                    embedding_provider=embedding_config.provider,
-                    embedding_model=embedding_config.model
-                )
-
-                self._record_error(new_db_name, e)
-
-                # Clean up any partially created files
-                self._cleanup_failed_database(new_db_name)
-
-                # Convert to appropriate API error
-                if "not available" in str(e).lower() or "not found" in str(e).lower():
+            # Create database with write lock
+            with self.lock_manager.acquire_write_lock(new_db_name):
+                # Double-check after acquiring lock
+                if self.registry.database_exists(new_db_name):
                     raise APIError(
-                        message=f"Embedding model '{embedding_config.model}' not available",
-                        error_code="EMBEDDING_MODEL_UNAVAILABLE",
-                        status_code=503,
-                        recoverable=True,
-                        details={
-                            "provider": embedding_config.provider,
-                            "model": embedding_config.model
+                        message=f"Database '{new_db_name}' already exists",
+                        error_code="DATABASE_ALREADY_EXISTS",
+                        status_code=409,
+                        recoverable=True
+                    )
+
+                try:
+                    db_logger.log_query(
+                        "create_database_start",
+                        database_name=new_db_name,
+                        embedding_provider=embedding_config.provider,
+                        embedding_model=embedding_config.model,
+                        chunk_size=db_config.chunk_size
+                    )
+
+                    # Create new database instance
+                    db = LocalVectorDB(
+                        name=new_db_name,
+                        base_path=Path(self.config.get("DB_ROOT_DIR", ".lvdb")),
+                        metadata_schema=metadata_schema,
+                        embedding_provider=embedding_config.provider,
+                        embedding_model=embedding_config.model,
+                        embedding_config=embedding_config.config,
+                        chunking_method=db_config.chunking_method,
+                        chunk_size=db_config.chunk_size,
+                        chunk_overlap=db_config.chunk_overlap,
+                        enable_gpu=db_config.enable_gpu,
+                        enable_fts=db_config.enable_fts,
+                        connection_pool_size=db_config.connection_pool_size,
+                        create_if_not_exists=True
+                    )
+
+                    # Register in shared registry
+                    db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+                    metadata = {
+                        "name": new_db_name,
+                        "created_at": datetime.now().isoformat(),
+                        "last_modified": datetime.now().isoformat(),
+                        "created_by": self.worker_id,
+                        "embedding_model": embedding_config.model,
+                        "embedding_provider": embedding_config.provider,
+                        "embedding_dimension": db.embedding_dimension,
+                        "chunk_size": db_config.chunk_size,
+                        "chunking_method": db_config.chunking_method,
+                        "chunk_overlap": db_config.chunk_overlap,
+                        "file_paths": {
+                            "sqlite": str(db_path / f"{new_db_name}.sqlite"),
+                            "faiss": str(db_path / f"{new_db_name}.faiss")
                         }
+                    }
+
+                    self.registry.register_database(new_db_name, metadata)
+
+                    # Cache locally
+                    self.databases[new_db_name] = (db, datetime.now())
+
+                    db_logger.log_query(
+                        "create_database_success",
+                        database_name=new_db_name,
+                        database_path=str(db_path),
+                        stats=db.stats
                     )
-                else:
-                    raise APIError(
-                        message=f"Failed to create database: {str(e)}",
-                        error_code="DATABASE_CREATION_FAILED",
-                        status_code=500,
-                        recoverable=False,
-                        details={"original_error": str(e)}
+
+                    logger.info(f"Successfully created database: {new_db_name}")
+                    return db
+
+                except Exception as e:
+                    db_logger.log_error(
+                        "create_database_failed",
+                        e,
+                        database_name=new_db_name,
+                        embedding_provider=embedding_config.provider,
+                        embedding_model=embedding_config.model
                     )
+
+                    self._record_error(new_db_name, e)
+                    self._cleanup_failed_database(new_db_name)
+
+                    # Convert to appropriate API error
+                    if "not available" in str(e).lower() or "not found" in str(e).lower():
+                        raise APIError(
+                            message=f"Embedding model '{embedding_config.model}' not available",
+                            error_code="EMBEDDING_MODEL_UNAVAILABLE",
+                            status_code=503,
+                            recoverable=True,
+                            details={
+                                "provider": embedding_config.provider,
+                                "model": embedding_config.model
+                            }
+                        )
+                    else:
+                        raise APIError(
+                            message=f"Failed to create database: {str(e)}",
+                            error_code="DATABASE_CREATION_FAILED",
+                            status_code=500,
+                            recoverable=False,
+                            details={"original_error": str(e)}
+                        )
 
     @log_performance("get_database")
     def get_db(self, name: str) -> "LocalVectorDB":
-        """
-        Get an existing database instance with enhanced error handling
+        """Get an existing database instance with coordination and enhanced error handling"""
 
-        Parameters
-        ----------
-        name : str
-            Database name
-
-        Returns
-        -------
-        LocalVectorDB
-            Database instance
-
-        Raises
-        ------
-        APIError
-            If database not found or cannot be loaded
-        """
         with self.lock:
-            # Check if database is already loaded
+            # Check local cache first
             if name in self.databases:
                 db, _ = self.databases[name]
 
@@ -328,87 +740,89 @@ class DatabaseManager:
                         pass
                     del self.databases[name]
 
-            # Load database from disk
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
-            db_sqlite_file = db_path / f"{name}.sqlite"
+            # Check if database exists in registry
+            if not self.registry.database_exists(name):
+                # Try syncing from filesystem first
+                self._sync_registry_from_filesystem()
 
-            if not db_sqlite_file.exists():
-                raise APIError(
-                    message=f"Database '{name}' not found",
-                    error_code="DATABASE_NOT_FOUND",
-                    status_code=404,
-                    recoverable=True
-                )
+                if not self.registry.database_exists(name):
+                    raise APIError(
+                        message=f"Database '{name}' not found",
+                        error_code="DATABASE_NOT_FOUND",
+                        status_code=404,
+                        recoverable=True
+                    )
 
-            try:
-                from localvectordb.database import LocalVectorDB
+            # Load database with read lock
+            from localvectordb.database import LocalVectorDB
 
-                db_logger.log_query("load_database", database_name=name)
+            with self.lock_manager.acquire_read_lock(name):
+                try:
+                    db_logger.log_query("load_database", database_name=name)
 
-                # Load existing database
-                db = LocalVectorDB(
-                    name=name,
-                    base_path=db_path,
-                    create_if_not_exists=False
-                )
+                    db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+                    db = LocalVectorDB(
+                        name=name,
+                        base_path=db_path,
+                        create_if_not_exists=False
+                    )
 
-                # Verify database is functional
-                if not self._check_database_health(db):
-                    raise DatabaseError(f"Database {name} failed post-load health check")
+                    # Verify database is functional
+                    if not self._check_database_health(db):
+                        raise DatabaseError(f"Database {name} failed post-load health check")
 
-                self.databases[name] = (db, datetime.now())
+                    # Cache locally
+                    self.databases[name] = (db, datetime.now())
 
-                db_logger.log_query("load_database_success", database_name=name, stats=db.stats)
-                logger.info(f"Successfully loaded database: {name}")
+                    db_logger.log_query("load_database_success", database_name=name, stats=db.stats)
+                    logger.info(f"Successfully loaded database: {name}")
+                    return db
 
-                return db
+                except DatabaseNotFoundError:
+                    # Database was in registry but not on filesystem
+                    logger.warning(f"Database '{name}' in registry but not found on filesystem")
+                    self.registry.unregister_database(name)
+                    raise APIError(
+                        message=f"Database '{name}' not found",
+                        error_code="DATABASE_NOT_FOUND",
+                        status_code=404,
+                        recoverable=True
+                    )
+                except Exception as e:
+                    db_logger.log_error("load_database_failed", e, database_name=name)
+                    self._record_error(name, e)
 
-            except DatabaseNotFoundError:
-                raise APIError(
-                    message=f"Database '{name}' not found",
-                    error_code="DATABASE_NOT_FOUND",
-                    status_code=404,
-                    recoverable=True
-                )
-            except Exception as e:
-                db_logger.log_error("load_database_failed", e, database_name=name)
-                self._record_error(name, e)
+                    raise APIError(
+                        message=f"Failed to load database '{name}': {str(e)}",
+                        error_code="DATABASE_LOAD_FAILED",
+                        status_code=500,
+                        recoverable=False,
+                        details={"original_error": str(e)}
+                    )
 
-                raise APIError(
-                    message=f"Failed to load database '{name}': {str(e)}",
-                    error_code="DATABASE_LOAD_FAILED",
-                    status_code=500,
-                    recoverable=False,
-                    details={"original_error": str(e)}
-                )
+    def list_databases(self) -> List[str]:
+        """List all available databases from shared registry with enhanced error handling"""
+        try:
+            # Ensure we have recent data
+            if datetime.now() - self._last_registry_sync > self._registry_sync_interval:
+                self._sync_registry_from_filesystem()
 
-    def list_databases(self) -> list[str]:
-        """
-        List all available databases with error handling
+            return self.registry.list_databases()
+        except Exception as e:
+            logger.error(f"Failed to list databases from registry: {e}")
+            db_logger.log_error("list_databases_failed", e)
+            # Fallback to filesystem scan
+            return self._fallback_list_databases()
 
-        Returns
-        -------
-        list[str]
-            List of database names
-        """
+    def _fallback_list_databases(self) -> List[str]:
+        """Fallback method to list databases from filesystem"""
         try:
             db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
             if not db_path.exists():
-                logger.warning(f"Database directory does not exist: {db_path}")
                 return []
-
-            databases = []
-            for db_file in db_path.iterdir():
-                if db_file.suffix.lower() == ".sqlite":
-                    databases.append(db_file.stem)
-
-            logger.debug(f"Found {len(databases)} databases in {db_path}")
-            return sorted(databases)
-
+            return [d.stem for d in db_path.iterdir() if d.suffix.lower() == ".sqlite"]
         except Exception as e:
-            logger.error(f"Error listing databases: {e}")
-            db_logger.log_error("list_databases_failed", e)
-
+            logger.error(f"Error in fallback list databases: {e}")
             raise APIError(
                 message=f"Failed to list databases: {str(e)}",
                 error_code="DATABASE_LIST_FAILED",
@@ -417,20 +831,142 @@ class DatabaseManager:
                 details={"original_error": str(e)}
             )
 
+    def delete_database(self, name: str) -> bool:
+        """Delete a database with coordination and enhanced error handling"""
+
+        if not self.registry.database_exists(name):
+            return False
+
+        with self.lock_manager.acquire_write_lock(name):
+            try:
+                # Close database if it's cached locally
+                if name in self.databases:
+                    db, _ = self.databases[name]
+                    db.close()
+                    del self.databases[name]
+
+                db_logger.log_query("delete_database_start", database_name=name)
+
+                # Delete database files
+                db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+                sqlite_file = db_path / f"{name}.sqlite"
+                faiss_file = db_path / f"{name}.faiss"
+
+                if sqlite_file.exists():
+                    sqlite_file.unlink()
+                if faiss_file.exists():
+                    faiss_file.unlink()
+
+                # Unregister from shared registry
+                self.registry.unregister_database(name)
+
+                db_logger.log_query("delete_database_success", database_name=name)
+                logger.info(f"Deleted database: {name}")
+                return True
+
+            except Exception as e:
+                logger.error(f"Failed to delete database '{name}': {e}")
+                db_logger.log_error("delete_database_failed", e, database_name=name)
+                raise APIError(
+                    message=f"Failed to delete database: {str(e)}",
+                    error_code="DATABASE_DELETE_FAILED",
+                    status_code=500,
+                    recoverable=False,
+                    details={"original_error": str(e)}
+                )
+
+    @log_performance("search_databases")
+    def search_databases(
+            self,
+            query: str,
+            database_names: Optional[List[str]] = None,
+            search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+            return_type: Literal["documents", "chunks"] = "documents",
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7
+    ) -> Dict[str, Union[List, str]]:
+        """Search across multiple databases with enhanced error handling"""
+
+        if database_names is None:
+            database_names = self.list_databases()
+
+        results = {}
+
+        db_logger.log_query("multi_database_search",
+                            query_length=len(query),
+                            database_count=len(database_names or []),
+                            search_type=search_type)
+
+        # Search each database with individual error handling
+        for db_name in database_names:
+            try:
+                # Get database instance
+                db = self.get_db(db_name)
+
+                # Perform search using unified query interface
+                db_results = db.query(
+                    query=query,
+                    search_type=search_type,
+                    return_type=return_type,
+                    k=k,
+                    score_threshold=score_threshold,
+                    filters=filters,
+                    vector_weight=vector_weight
+                )
+
+                results[db_name] = db_results
+
+            except APIError as e:
+                logger.warning(f"API error searching database {db_name}: {e.message}")
+                results[db_name] = {"error": e.message, "error_code": e.error_code}
+            except Exception as e:
+                logger.error(f"Unexpected error searching database {db_name}: {e}")
+                db_logger.log_error("search_database_failed", e, database_name=db_name)
+                results[db_name] = {"error": f"Search failed: {str(e)}"}
+
+        return results
+
+    @log_performance("get_embeddings")
+    def get_embeddings_for_model(
+            self,
+            query_texts: Union[str, List[str]],
+            provider: str,
+            model: str
+    ) -> List[List[float]]:
+        """Get embeddings with enhanced error handling"""
+        try:
+            from localvectordb.embeddings import EmbeddingRegistry
+
+            if isinstance(query_texts, str):
+                query_texts = [query_texts]
+
+            db_logger.log_query("get_embeddings",
+                                provider=provider,
+                                model=model,
+                                text_count=len(query_texts))
+
+            # Create embedding provider
+            embedding_provider = EmbeddingRegistry.create_provider(provider, model)
+
+            # Get embeddings
+            embeddings = embedding_provider.embed_sync(query_texts)
+
+            return embeddings.tolist()
+
+        except Exception as e:
+            db_logger.log_error("get_embeddings_failed", e, provider=provider, model=model)
+            raise APIError(
+                message=f"Failed to get embeddings: {str(e)}",
+                error_code="EMBEDDING_GENERATION_FAILED",
+                status_code=503,
+                recoverable=True,
+                details={"provider": provider, "model": model}
+            )
+
     def _validate_database_name(self, name: str) -> bool:
-        """
-        Validate database name
-
-        Parameters
-        ----------
-        name : str
-            Database name to validate
-
-        Returns
-        -------
-        bool
-            True if name is valid
-        """
+        """Validate database name"""
         if not name or not isinstance(name, str):
             return False
 
@@ -451,19 +987,7 @@ class DatabaseManager:
         return True
 
     def _check_database_health(self, db: "LocalVectorDB") -> bool:
-        """
-        Check if a database instance is healthy
-
-        Parameters
-        ----------
-        db : LocalVectorDB
-            Database instance to check
-
-        Returns
-        -------
-        bool
-            True if healthy, False otherwise
-        """
+        """Check if a database instance is healthy"""
         try:
             # Check if database is closed
             if db.closed:
@@ -483,14 +1007,7 @@ class DatabaseManager:
             return False
 
     def _cleanup_failed_database(self, db_name: str):
-        """
-        Clean up files from a failed database creation
-
-        Parameters
-        ----------
-        db_name : str
-            Name of the database to clean up
-        """
+        """Clean up files from a failed database creation"""
         try:
             db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
             files_to_remove = [
@@ -507,16 +1024,7 @@ class DatabaseManager:
             logger.error(f"Error cleaning up failed database {db_name}: {e}")
 
     def _record_error(self, db_name: str, error: Exception):
-        """
-        Record error for monitoring and recovery decisions
-
-        Parameters
-        ----------
-        db_name : str
-            Database name
-        error : Exception
-            Error that occurred
-        """
+        """Record error for monitoring and recovery decisions"""
         current_time = datetime.now()
 
         if db_name not in self._error_counts:
@@ -606,31 +1114,28 @@ class DatabaseManager:
                 db_logger.log_query("removed_unhealthy_database", database_name=name)
 
     def get_manager_stats(self) -> Dict[str, Any]:
-        """
-        Get database manager statistics
-
-        Returns
-        -------
-        Dict[str, Any]
-            Manager statistics and health information
-        """
+        """Get database manager statistics"""
         with self.lock:
             active_dbs = len(self.databases)
             total_dbs = len(self.list_databases())
 
             # Calculate uptime
-            start_time = getattr(self, '_start_time', datetime.now())
-            uptime = (datetime.now() - start_time).total_seconds()
+            uptime = (datetime.now() - self._start_time).total_seconds()
 
             stats = {
                 'active_databases': active_dbs,
                 'total_databases': total_dbs,
                 'uptime_seconds': uptime,
+                'worker_id': self.worker_id,
+                'registry_type': getattr(self.app.config_obj.server, 'db_registry_type', 'memory'),
                 'error_counts': dict(self._error_counts),
                 'last_health_check': self._last_health_check.isoformat(),
+                'last_registry_sync': self._last_registry_sync.isoformat(),
                 'background_threads': {
                     'cleanup_running': self._cleanup_thread.is_alive() if hasattr(self, '_cleanup_thread') else False,
-                    'health_check_running': self._health_thread.is_alive() if hasattr(self, '_health_thread') else False
+                    'health_check_running': self._health_thread.is_alive() if hasattr(self,
+                                                                                      '_health_thread') else False,
+                    'registry_sync_running': self._sync_thread.is_alive() if hasattr(self, '_sync_thread') else False
                 }
             }
 
@@ -671,7 +1176,8 @@ class DatabaseManager:
         # Wait for background threads to finish
         for thread_name, thread in [
             ('cleanup', getattr(self, '_cleanup_thread', None)),
-            ('health', getattr(self, '_health_thread', None))
+            ('health', getattr(self, '_health_thread', None)),
+            ('registry-sync', getattr(self, '_sync_thread', None))
         ]:
             if thread and thread.is_alive():
                 logger.info(f"Waiting for {thread_name} thread to finish")
@@ -683,97 +1189,3 @@ class DatabaseManager:
                     logger.error(f"Error joining {thread_name} thread: {e}")
 
         logger.info("Database manager shutdown complete")
-
-    # Search and operation methods with enhanced error handling
-    @log_performance("search_databases")
-    def search_databases(
-            self,
-            query: str,
-            database_names: Optional[list[str]] = None,
-            search_type: Literal["vector", "keyword", "hybrid"] = "vector",
-            return_type: Literal["documents", "chunks"] = "documents",
-            k: int = 10,
-            score_threshold: float = 0.0,
-            filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7
-    ) -> Dict[str, Union[list, str]]:
-        """
-        Search across multiple databases with enhanced error handling
-        """
-        if database_names is None:
-            database_names = self.list_databases()
-
-        results = {}
-
-        db_logger.log_query("multi_database_search",
-                            query_length=len(query),
-                            database_count=len(database_names),
-                            search_type=search_type)
-
-        # Search each database with individual error handling
-        for db_name in database_names:
-            try:
-                # Get database instance
-                db = self.get_db(db_name)
-
-                # Perform search using unified query interface
-                db_results = db.query(
-                    query=query,
-                    search_type=search_type,
-                    return_type=return_type,
-                    k=k,
-                    score_threshold=score_threshold,
-                    filters=filters,
-                    vector_weight=vector_weight
-                )
-
-                results[db_name] = db_results
-
-            except APIError as e:
-                logger.warning(f"API error searching database {db_name}: {e.message}")
-                results[db_name] = {"error": e.message, "error_code": e.error_code}
-            except Exception as e:
-                logger.error(f"Unexpected error searching database {db_name}: {e}")
-                db_logger.log_error("search_database_failed", e, database_name=db_name)
-                results[db_name] = {"error": f"Search failed: {str(e)}"}
-
-        return results
-
-    @log_performance("get_embeddings")
-    def get_embeddings_for_model(
-            self,
-            query_texts: Union[str, list[str]],
-            provider: str,
-            model: str
-    ) -> list[list[float]]:
-        """
-        Get embeddings with enhanced error handling
-        """
-        try:
-            from localvectordb.embeddings import EmbeddingRegistry
-
-            if isinstance(query_texts, str):
-                query_texts = [query_texts]
-
-            db_logger.log_query("get_embeddings",
-                                provider=provider,
-                                model=model,
-                                text_count=len(query_texts))
-
-            # Create embedding provider
-            embedding_provider = EmbeddingRegistry.create_provider(provider, model)
-
-            # Get embeddings
-            embeddings = embedding_provider.embed_sync(query_texts)
-
-            return embeddings.tolist()
-
-        except Exception as e:
-            db_logger.log_error("get_embeddings_failed", e, provider=provider, model=model)
-            raise APIError(
-                message=f"Failed to get embeddings: {str(e)}",
-                error_code="EMBEDDING_GENERATION_FAILED",
-                status_code=503,
-                recoverable=True,
-                details={"provider": provider, "model": model}
-            )

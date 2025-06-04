@@ -277,7 +277,6 @@ def require_api_key(f):
         g.api_key_hash = hash(token)
         g.authenticated = True
 
-        print("auth success")
         return f(*args, **kwargs)
 
     return decorated

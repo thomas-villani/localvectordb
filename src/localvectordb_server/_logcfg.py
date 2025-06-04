@@ -388,7 +388,6 @@ def request_context(operation: str):
     """
     Context manager for tracking operations with request context
     """
-    print("Context manager")
     request_id = str(uuid.uuid4())
     g.request_id = request_id
 

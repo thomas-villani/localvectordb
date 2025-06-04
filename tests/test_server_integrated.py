@@ -26,6 +26,7 @@ from unittest.mock import patch, Mock
 
 from flask import Flask
 from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb_server import Config
 from localvectordb_server.routes import api
 from localvectordb_server.keymanager import KeyManager
 
@@ -69,6 +70,9 @@ def integration_app(temp_dir, test_key_manager):
     app = Flask(__name__)
     app.config['TESTING'] = True
 
+    app.config_obj = Config()
+    app.config_obj.database.root_dir = temp_dir
+    app.config_obj.server.cache_enabled = False
     # Use temporary directory for test databases
     app.config['DB_ROOT_DIR'] = temp_dir
     app.config['REQUIRE_API_KEY'] = True
@@ -139,6 +143,24 @@ class DatabaseManagerMock:
                 from localvectordb.exceptions import DatabaseNotFoundError
                 raise DatabaseNotFoundError(f"Database '{name}' not found")
         return self.databases[name]
+
+    def search_databases(self, query, database_names, search_type, return_type, *args, **kwargs):
+        names = self._created_dbs or database_names
+        all_results = {}
+        from localvectordb.core import QueryResult
+        for name in names:
+            results = []
+            for i in range(5):
+                result = QueryResult(
+                    id=f"doc{i}",
+                    score=0.8,
+                    type='document',
+                    content=f"doc{i} content"
+                )
+                results.append(result)
+            all_results[name] = results
+
+        return all_results
 
     def delete_db(self, name, *args, **kwargs):
         if name in self._created_dbs:
@@ -314,8 +336,6 @@ class TestAuthenticationFlow:
     def test_request_with_valid_api_key(self, integration_client, valid_auth_headers):
         """Test request with valid API key should succeed."""
         response = integration_client.get('/api/v1/databases', headers=valid_auth_headers)
-        print(response.text)
-        print(valid_auth_headers)
         assert response.status_code == 200
 
     def test_api_key_header_formats(self, integration_client, integration_app):
@@ -398,7 +418,6 @@ class TestDatabaseLifecycle:
             mock_exists.return_value = True
 
             response = integration_client.delete('/api/v1/test_lifecycle_db', headers=valid_auth_headers)
-            print(response.text)
             assert response.status_code == 200
             result = json.loads(response.data)
             assert result["status"] == "success"
@@ -633,7 +652,6 @@ class TestEmbeddingIntegration:
                                                content_type='application/json',
                                                headers=valid_auth_headers)
 
-            print(response.text)
             assert response.status_code == 200
             result = json.loads(response.data)
 

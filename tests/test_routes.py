@@ -274,7 +274,6 @@ class TestDatabaseManagementRoutes:
                                    data=json.dumps(data),
                                    content_type='application/json')
 
-            print(response.text)
             # Verify the response
             assert response.status_code == 200
             result = json.loads(response.data)
@@ -664,7 +663,6 @@ class TestSearchRoutes:
         response = client.post('/api/v1/test_db/search/vector',
                                data=json.dumps(data),
                                content_type='application/json')
-        print(response.text)
         assert response.status_code == 200
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
@@ -868,7 +866,6 @@ class TestErrorHandling:
 
         assert response.status_code == 404
         result = json.loads(response.data)
-        print(result)
         assert result["error"]["code"] == "DATABASE_NOT_FOUND"
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)

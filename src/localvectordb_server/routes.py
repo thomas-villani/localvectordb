@@ -179,7 +179,6 @@ def create_database():
         # Create database
         db_logger.log_query("create_database", database_name=name)
 
-        print("About to create the database bitch!")
         try:
             db = current_app.db_manager.create_db(name, metadata_schema, db_config, embedding_config)
 
@@ -224,9 +223,7 @@ def list_databases():
 
     with request_context("list_databases"):
         try:
-            print("getting databases...")
             databases = current_app.db_manager.list_databases()
-            print("databases", databases)
             return jsonify({
                 "databases": databases,
                 "count": len(databases)
@@ -921,39 +918,20 @@ def global_search():
         databases = data.get("databases")  # Optional list of databases to search
         vector_weight = data.get("vector_weight", 0.7)
 
-        # Get databases to search
-        if databases is None:
-            databases = current_app.db_manager.list_databases()
-        elif not isinstance(databases, list):
-            raise ValidationError("Databases must be an array of database names", field="databases")
-
         try:
-            db_logger.log_query("global_search",
-                                search_type=search_type,
-                                database_count=len(databases),
-                                k=k)
 
-            # Search each database
-            results = {}
-            for db_name in databases:
-                try:
-                    db = current_app.db_manager.get_db(db_name)
-                    db_results = db.query(
-                        query=query,
-                        search_type=search_type,
-                        return_type=return_type,
-                        k=k,
-                        score_threshold=score_threshold,
-                        filters=filters,
-                        vector_weight=vector_weight
-                    )
-
-                    # Serialize results
-                    results[db_name] = [serialize_query_result(result) for result in db_results]
-
-                except Exception as e:
-                    logger.error(f"Error searching database {db_name}: {e}")
-                    results[db_name] = {"error": str(e)}
+            results = current_app.db_manager.search_databases(
+                query=query,
+                database_names=databases,
+                search_type=search_type,
+                return_type=return_type,
+                k=k,
+                score_threshold=score_threshold,
+                filters=filters,
+                vector_weight=vector_weight
+            )
+            for db_name, db_results in results.items():
+                results[db_name] = [serialize_query_result(result) for result in db_results]
 
             return jsonify({
                 "results": results,

@@ -362,7 +362,6 @@ class TestPackageStructure:
         # Should only contain items from __all__ plus any documented public items
         expected_public = set(localvectordb.__all__)
         actual_public = set(public_attrs)
-        print(actual_public)
 
         # There might be a few extra public items, but not too many
         extra_items = actual_public - expected_public

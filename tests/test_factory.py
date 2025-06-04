@@ -217,7 +217,6 @@ class TestVectorDBFactory:
 
                 VectorDB("test_db", url)
 
-                print(url, should_be_remote)
                 if should_be_remote:
                     mock_remote.assert_called_once()
                     mock_local.assert_not_called()

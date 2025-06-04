@@ -615,7 +615,6 @@ class PooledConnection:
         return getattr(self.connection, name)
 
     def __enter__(self):
-        # print("Entering connection")
         self._closed = False
         return self.connection
 

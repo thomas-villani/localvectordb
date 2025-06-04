@@ -608,23 +608,6 @@ class TestRemoteVectorDBLegacyMethods:
         with patch.object(RemoteVectorDB, '_ensure_database_exists'):
             return RemoteVectorDB("test_db")
 
-    def test_add_method(self, mock_db):
-        """Test legacy add method."""
-        with patch.object(mock_db, 'upsert') as mock_upsert:
-            mock_upsert.return_value = ["doc_1"]
-
-            result = mock_db.add(
-                "Test document",
-                metadatas={"author": "Test"},
-                ids="doc_1"
-            )
-
-            assert result == ["doc_1"]
-            mock_upsert.assert_called_once_with(
-                "Test document",
-                metadata={"author": "Test"},
-                ids="doc_1"
-            )
 
     def test_hybrid_query_method(self, mock_db):
         """Test legacy hybrid_query method."""

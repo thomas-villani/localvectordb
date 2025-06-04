@@ -53,13 +53,6 @@ def create_app(
     # Apply config to Flask app
     flask_config = config.to_flask_config()
 
-    # Add new logging configuration options
-    # flask_config.update({
-    #     'LOG_STRUCTURED': not debug,  # Use structured logging in production
-    #     'LOG_PERFORMANCE': config.server.debug or os.getenv('LOG_PERFORMANCE', 'false').lower() == 'true',
-    #     'SECURITY_LOG_LEVEL': config.server.auth_log_level or 'INFO',
-    # })
-
     app.config.update(flask_config)
     app.config_obj = config
 
@@ -173,12 +166,14 @@ def create_app(
 
     # Initialize caching
     from localvectordb_server._cache import cache
-    cache.init_app(app)  # configured from flask's config, including whether disabled (NullCache)
 
     if config.server.cache_enabled:
         logger.info(f"Caching enabled with {config.server.cache_type}")
     else:
         logger.info("Caching disabled")
+        app.config["CACHE_TYPE"] = "NullCache"
+
+    cache.init_app(app)  # configured from flask's config, including whether disabled (NullCache)
 
     # Initialize database manager with error handling
     try:

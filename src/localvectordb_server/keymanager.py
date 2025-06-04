@@ -76,7 +76,6 @@ Examples:
         $ lvdb auth prune-expired
 """
 
-import os
 import sqlite3
 import secrets
 import string
@@ -292,7 +291,6 @@ class KeyManager:
         plain_key = self._generate_api_key()
         key_hash = self._hash_key(plain_key)
         created_at = datetime.now(UTC)
-        print("create_key datetime", created_at)
         expires_at = None
         if expires_days is not None:
             expires_at = created_at + timedelta(days=expires_days)
@@ -340,10 +338,8 @@ class KeyManager:
         bool
             True if key is valid and active, False otherwise
         """
-        print("checking", key)
         if not key or not key.startswith(self.KEY_PREFIX):
             return False
-        print("checking")
         with self._get_connection() as conn:
             # Get all active keys
             cursor = conn.execute("""

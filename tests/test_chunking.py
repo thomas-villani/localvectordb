@@ -9,7 +9,6 @@ from localvectordb.chunking import (
     PositionTrackingChunker, SentenceChunker, TokenChunker, WordChunker,
     LineChunker, CharChunker, ParagraphChunker, SectionChunker,
     CodeBlockChunker, ChunkerFactory, reconstruct_document,
-    find_chunk_containing_position, get_chunks_in_range
 )
 from localvectordb.core import Chunk, ChunkPosition
 
@@ -225,9 +224,7 @@ class TestTokenChunker:
         chunker = TokenChunker(max_tokens=3, overlap=1)
         text = "One two three four five six seven"
 
-        print(chunker.max_tokens, chunker.overlap)
         chunks = chunker.chunk(text)
-        print(chunks)
         # Should have multiple chunks
         assert len(chunks) == 3
         # assert chunks[0].split()[-1] == chunks[1].split()[0]

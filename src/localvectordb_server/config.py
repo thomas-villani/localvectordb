@@ -176,6 +176,7 @@ class ServerSettings(BaseSettings):
     rate_limit: str = "100 per minute"
     rate_limit_storage_uri: str = "memory://"
 
+    # Cache settings
     cache_enabled: bool = False
     cache_ignore_errors: bool = True
     cache_timeout: int = 300   # 5 min
@@ -183,12 +184,23 @@ class ServerSettings(BaseSettings):
     # Which cachelib cache to use: https://cachelib.readthedocs.io/en/stable/
     cache_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
                         "MemcachedCache", "UWSGICache", "DynamoDbCache",
-                        "MongoDbCache"] = "SimpleCache"
+                        "MongoDbCache", "NullCache"] = "SimpleCache"
     # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
     cache_settings: dict = None
 
-    proxy_enabled: bool = False
+    # Database registry settings for multi-worker coordination
+    db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
+                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
+                        "MongoDbCache", "NullCache"] = "SimpleCache"
 
+    # Will try to use the cache_settings if not set and cache_types match.
+    db_registry_settings: dict = None
+
+    # Set to True to use the same cache for db_registry as general cache.
+    use_single_cache: bool = False
+
+
+    proxy_enabled: bool = False
     # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
     # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
     proxy_settings: dict = None
@@ -586,6 +598,7 @@ class Config:
         result.update({
             "DEBUG": self.server.debug,
             "ENVIRONMENT": self.server.environment,
+            "DB_ROOT_DIR": self.database.root_dir,
             "LOG_LEVEL": self.server.log_level,
             "LOG_FORMAT": self.server.log_format,
             "REQUIRE_API_KEY": self.server.require_api_key,
