@@ -187,18 +187,32 @@ class AsyncLocalVectorDB:
         self._sync_db: Optional[LocalVectorDB] = None
         self._initialized = False
         self._closed = False
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_initialized(self):
-        """Lazy initialization of the synchronous database"""
-        if not self._initialized and not self._closed:
+        """Lazy initialization of the synchronous database with proper locking"""
+        if self._initialized and not self._closed:
+            return
+
+        async with self._init_lock:
+            # Double-check pattern
+            if self._initialized and not self._closed:
+                return
+
+            if self._closed:
+                raise DatabaseError("Database has been closed")
+
             try:
                 loop = asyncio.get_event_loop()
                 # Initialize the sync database in thread pool to avoid blocking
                 self._sync_db = await loop.run_in_executor(
                     self._executor,
-                    lambda: LocalVectorDB(**self._init_params)
+                    self._create_sync_db
                 )
                 self._initialized = True
+                # This parameter is initiated on __init__ of the class.
+                self._init_params["embedding_dimension"] = self._sync_db.embedding_dimension
+                self._init_params["fts_enabled"] = self._sync_db.fts_enabled
                 logger.info(f"AsyncLocalVectorDB '{self.name}' initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize AsyncLocalVectorDB: {e}")
@@ -242,21 +256,33 @@ class AsyncLocalVectorDB:
         """Check if database is closed"""
         return self._closed or self._sync_db is None or self._sync_db.closed
 
-    # Async property access for database-dependent properties
-    async def get_embedding_dimension(self) -> int:
-        """Get embedding dimension"""
-        await self._ensure_initialized()
-        return self._sync_db.embedding_dimension
+    @property
+    def embedding_dimension(self) -> int:
+        """Get embedding dimension (requires initialization)"""
+        if not self._initialized or self._sync_db is None:
+            raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
+        return self._init_params['embedding_dimension']
 
-    async def get_fts_enabled(self) -> bool:
-        """Check if FTS is enabled"""
-        await self._ensure_initialized()
-        return self._sync_db.fts_enabled
+    @property
+    def fts_enabled(self) -> bool:
+        """Check if FTS is enabled (requires initialization)"""
+        if not self._initialized or self._sync_db is None:
+            raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
+        return self._init_params['fts_enabled']
 
-    async def get_metadata_schema(self) -> Dict[str, MetadataField]:
-        """Get metadata schema"""
-        await self._ensure_initialized()
+    @property
+    def metadata_schema(self) -> Dict[str, MetadataField]:
+        """Get metadata schema (requires initialization)"""
+        if not self._initialized or self._sync_db is None:
+            raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
         return self._sync_db.metadata_schema.copy()
+
+    @property
+    def stats(self) -> Dict[str, Any]:
+        """Get database stats (requires initialization)"""
+        if not self._initialized or self._sync_db is None:
+            raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
+        return self._sync_db.stats
 
     # Optimized async embedding generation
     async def _generate_embeddings_async(
@@ -315,8 +341,7 @@ class AsyncLocalVectorDB:
                 self._executor,
                 self._sync_db._generate_embeddings_chunked,
                 texts,
-                batch_size,
-                len(texts) > 500  # show_progress
+                batch_size
             )
 
     # Core async methods
@@ -627,29 +652,38 @@ class AsyncLocalVectorDB:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(self._executor, self._sync_db.save)
 
-    async def get_stats(self) -> Dict[str, Any]:
-        """Async get database statistics"""
+    async def close(self):
+        # Non-blocking shutdown for better async behavior
+        try:
+            await asyncio.to_thread(self._executor.shutdown, wait=False)
+        except AttributeError:
+            # Fallback for older Python versions
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._executor.shutdown, False)
+
+    async def update_metadata_schema(
+            self,
+            new_schema: Union[str, Dict[str, MetadataField]],
+            drop_columns: bool = False
+    ) -> Dict[str, Any]:
         await self._ensure_initialized()
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             self._executor,
-            lambda: self._sync_db.stats
+            functools.partial(
+                self._sync_db.update_metadata_schema,
+                new_schema=new_schema,
+                drop_columns=drop_columns
+            )
         )
 
-    async def close(self):
-        """Async close database and cleanup resources"""
-        if not self._closed:
-            self._closed = True
-
-            if self._sync_db:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(self._executor, self._sync_db.close)
-                self._sync_db = None
-
-            if self._owns_executor:
-                self._executor.shutdown(wait=True)
-
-            logger.info(f"AsyncLocalVectorDB '{self.name}' closed successfully")
+    async def get_metadata_schema_info(self) -> Dict[str, Any]:
+        await self._ensure_initialized()
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._sync_db.get_metadata_schema_info,
+        )
 
 
 # Factory function for convenient creation

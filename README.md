@@ -1,333 +1,553 @@
 # LocalVectorDB
 
-**LocalVectorDB** is a **document-first vector database** that combines the simplicity of SQLite with the power of FAISS for semantic search. Unlike traditional vector databases that require you to manage chunks manually, LocalVectorDB lets you work with complete documents while automatically handling the chunking, embedding, and indexing behind the scenes.
+A high-performance, document-first vector database with SQLite + FAISS backend, featuring intelligent chunking, unified search, and optional HTTP server.
 
-## ✨ Key Features
+[![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
-- **🗂️ Document-First API**: Work with documents, not chunks—chunking handled automatically
-- **🔍 Unified Search**: Vector, keyword, and hybrid search with normalized scoring
-- **📍 Position Tracking**: Perfect document reconstruction and precise highlighting
-- **🗄️ Structured Metadata**: SQLite-backed metadata with indexed columns and schema validation
-- **🔌 Plugin Embeddings**: Support for Ollama (free, local), OpenAI, and custom providers
-- **🚀 Production Ready**: HTTP server, CLI tools, authentication, and monitoring
-- **☁️ Local + Remote**: Identical API for local databases and remote server connections
+## ✨ Features
+
+### 🗃️ **Document-First Architecture**
+- **Smart Chunking**: Position-tracking chunking with perfect document reconstruction
+- **Metadata Schema**: Structured, indexed metadata fields with validation
+- **Unified API**: Single interface for vector, keyword, and hybrid search
+
+### 🔍 **Advanced Search**
+- **Vector Search**: Semantic similarity using Ollama or OpenAI embeddings
+- **Keyword Search**: Full-text search with SQLite FTS5
+- **Hybrid Search**: Combined vector + keyword with configurable weighting
+- **Metadata Filtering**: SQL-like queries on structured metadata
+
+### 🌐 **Flexible Deployment**
+- **Local Database**: Direct SQLite + FAISS for maximum performance
+- **HTTP Server**: RESTful API with authentication, rate limiting, CORS
+- **Remote Client**: Seamless local/remote switching via factory pattern
+- **Multi-Worker**: Redis-based coordination for distributed deployments
+
+### 📄 **File Processing**
+- **Text Extraction**: PDF, DOCX, PPTX, XLSX, RTF, EPUB support
+- **Batch Upload**: Multi-file processing with metadata extraction
+- **Format Detection**: Automatic MIME type detection and processing
+
+### 🛠️ **Developer Experience**
+- **CLI Tools**: Database management, server control, interactive shell
+- **Configuration**: TOML/JSON config with environment variable support
+- **Comprehensive Logging**: Structured logging with performance monitoring
+- **Type Safety**: Full type annotations and validation
 
 ## 🚀 Quick Start
 
 ### Installation
 
 ```bash
-# Basic installation
 pip install localvectordb
 
-# With server and CLI tools
+# For server features (optional)
 pip install localvectordb[server]
+
+# For all file extraction formats (optional)
+pip install localvectordb[server,extraction]
 ```
 
-### 5-Minute Example
+### Basic Usage
+
+```python
+from localvectordb import VectorDB
+
+# Create or connect to a database
+db = VectorDB("my_docs", "./data")
+
+# Add documents
+doc_ids = db.upsert([
+    "Python is a programming language",
+    "Machine learning with neural networks"
+])
+
+# Search documents
+results = db.query("programming", k=5)
+for result in results:
+    print(f"{result.id}: {result.content} (score: {result.score:.3f})")
+
+# Get specific document
+doc = db.get(doc_ids[0])
+print(f"Content: {doc.content}")
+```
+
+### With Metadata Schema
 
 ```python
 from localvectordb import VectorDB
 from localvectordb.core import MetadataField, MetadataFieldType
 
-# Create a document database with metadata schema
-db = VectorDB(
-    name="my_documents",
-    base_path="./my_vectordb",
-    metadata_schema={
-        'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-        'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-        'date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
-        'tags': MetadataField(type=MetadataFieldType.JSON)
-    },
-    embedding_model="nomic-embed-text",
-    chunk_size=500
-)
+# Define metadata schema
+schema = {
+    'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+    'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+    'created_date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
+    'tags': MetadataField(type=MetadataFieldType.JSON)
+}
+
+db = VectorDB("articles", "./data", metadata_schema=schema)
 
 # Add documents with metadata
-documents = [
-    "LocalVectorDB is a document-first vector database...",
-    "Python is a powerful programming language...",
-    "Machine learning enables computers to learn..."
-]
+db.upsert(
+    documents=["Article about Python programming"],
+    metadata=[{
+        'title': 'Python Guide',
+        'author': 'Jane Doe',
+        'created_date': '2024-01-15',
+        'tags': ['python', 'programming', 'tutorial']
+    }]
+)
 
-metadata = [
-    {"title": "LocalVectorDB Guide", "author": "AI Assistant", "date": "2024-01-01"},
-    {"title": "Python Basics", "author": "Developer", "date": "2024-01-02"},
-    {"title": "ML Introduction", "author": "Data Scientist", "date": "2024-01-03"}
-]
-
-# Insert documents
-doc_ids = db.upsert(documents, metadata=metadata)
-print(f"Added documents: {doc_ids}")
-
-# Search documents
-results = db.query("vector database", search_type="vector", k=3)
-for result in results:
-    print(f"Score: {result.score:.3f} | {result.content[:100]}...")
-
-# Hybrid search combining vector and keyword search  
-results = db.query("python programming", search_type="hybrid", k=2)
-
-# Filter by metadata
-python_docs = db.filter(where={"author": "Developer"})
-
-db.close()
+# Search with metadata filters
+results = db.query(
+    "programming tutorial",
+    filters={'author': 'Jane Doe', 'tags': {'contains': 'python'}}
+)
 ```
 
-## 🌐 Server Usage
-
-### Start the Server
-
-```bash
-# Start LocalVectorDB server
-lvdb serve --host 0.0.0.0 --port 5000
-
-# Create database via CLI
-lvdb create my_database --embedding-model nomic-embed-text
-
-# Add documents 
-lvdb db my_database add document.txt
-
-# Search documents
-lvdb db my_database search "query text" --limit 5
-```
-
-### Remote Client
+### Remote Server Usage
 
 ```python
 from localvectordb import VectorDB
 
-# Connect to remote server (same API as local!)
+# Use HTTP server (automatically detected by URL)
 db = VectorDB(
-    name="my_remote_db", 
-    base_path="http://localhost:5000",
+    "my_docs", 
+    "http://localhost:5000",
     api_key="your_api_key"
 )
 
-# Identical API to local database
+# Same API as local database
 doc_ids = db.upsert(["Remote document content"])
-results = db.query("search query")
+results = db.query("content", search_type="hybrid")
 ```
 
-### REST API
+## 🖥️ Server Deployment
+
+### Start the Server
+
+```bash
+# Quick start with defaults
+lvdb serve
+
+# Production configuration
+lvdb serve --host 0.0.0.0 --port 5000 --config ./config.toml
+```
+
+### Configuration
+
+Create a configuration file:
+
+```bash
+# Interactive setup wizard
+lvdb config init --interactive
+
+# Production setup with Redis
+lvdb config init --redis-registry redis://localhost:6379/1 \
+                  --enable-cache --cache-type redis \
+                  --enable-rate-limiting --enable-cors \
+                  --enable-auth
+```
+
+Example configuration (`config.toml`):
+
+```toml
+[database]
+root_dir = "./databases"
+chunk_size = 500
+chunking_method = "sentences"
+chunk_overlap = 1
+
+[embedding]
+provider = "ollama"
+model = "nomic-embed-text"
+
+[server]
+host = "0.0.0.0"
+port = 5000
+require_api_key = true
+enable_rate_limiting = true
+rate_limit = "100 per minute"
+cors_enabled = true
+cors_allowed_origins = ["http://localhost:3000"]
+```
+
+### API Key Management
+
+```bash
+# Create API key
+lvdb auth create-key --description "Production API"
+
+# List keys
+lvdb auth list-keys --active-only
+
+# Revoke key
+lvdb auth revoke-key key_20241201_abc123
+```
+
+## 📚 API Reference
+
+### Core Methods
+
+#### `upsert(documents, metadata=None, ids=None)`
+Insert or update documents.
+
+```python
+# Single document
+db.upsert("Document content")
+
+# Multiple documents with metadata
+doc_ids = db.upsert(
+    documents=["Doc 1", "Doc 2"],
+    metadata=[{"type": "article"}, {"type": "blog"}],
+    ids=["doc_1", "doc_2"]
+)
+```
+
+#### `query(query, search_type='vector', k=10, filters=None)`
+Unified search interface.
+
+```python
+# Vector search
+results = db.query("search text", search_type="vector", k=5)
+
+# Hybrid search with metadata filter
+results = db.query(
+    "machine learning",
+    search_type="hybrid",
+    vector_weight=0.7,
+    filters={"category": "AI"}
+)
+
+# Keyword search
+results = db.query("exact phrase", search_type="keyword")
+```
+
+#### `get(ids)` / `delete(ids)` / `exists(ids)`
+Document management.
+
+```python
+# Single document
+doc = db.get("doc_1")
+exists = db.exists("doc_1")
+deleted_count = db.delete("doc_1")
+
+# Multiple documents
+docs = db.get(["doc_1", "doc_2"])
+exist_flags = db.exists(["doc_1", "doc_2"])
+deleted_count = db.delete(["doc_1", "doc_2"])
+```
+
+#### `filter(where=None, sql=None, order_by=None, limit=None)`
+SQL-like filtering on metadata.
+
+```python
+# Simple filters
+docs = db.filter(where={"author": "Jane Doe", "status": "published"})
+
+# Complex queries
+docs = db.filter(
+    where={"created_date": {">=": "2024-01-01"}},
+    order_by="created_date DESC",
+    limit=10
+)
+
+# Raw SQL
+docs = db.filter(sql="author LIKE '%Smith%' AND rating > 4.0")
+```
+
+### HTTP API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/databases` | List databases |
+| `POST` | `/api/v1/databases` | Create database |
+| `GET` | `/api/v1/{db}/info` | Database info |
+| `POST` | `/api/v1/{db}/documents` | Upsert documents |
+| `GET` | `/api/v1/{db}/documents/{id}` | Get document |
+| `PUT` | `/api/v1/{db}/documents/{id}` | Update document |
+| `DELETE` | `/api/v1/{db}/documents/{id}` | Delete document |
+| `POST` | `/api/v1/{db}/query` | Search documents |
+| `POST` | `/api/v1/{db}/filter` | Filter documents |
+| `POST` | `/api/v1/{db}/upload` | Upload files |
+
+Example API usage:
 
 ```bash
 # Create database
 curl -X POST http://localhost:5000/api/v1/databases \
+  -H "Authorization: Bearer your_api_key" \
   -H "Content-Type: application/json" \
-  -d '{"name": "api_db", "embedding_model": "nomic-embed-text"}'
+  -d '{"name": "my_db"}'
 
+# Search documents
+curl -X POST http://localhost:5000/api/v1/my_db/query \
+  -H "Authorization: Bearer your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning", "search_type": "hybrid", "k": 5}'
+```
+
+## 🛠️ CLI Reference
+
+### Database Management
+
+```bash
+# List databases
+lvdb list --details
+
+# Create database
+lvdb create mydb --embedding-model nomic-embed-text --chunk-size 500
+
+# Delete database
+lvdb delete mydb --confirm
+```
+
+### Database Operations
+
+```bash
 # Add documents
-curl -X POST http://localhost:5000/api/v1/api_db/documents \
-  -H "Content-Type: application/json" \
-  -d '{"documents": ["Document content"], "metadata": [{"title": "Test"}]}'
+lvdb db mydb add document.txt
+lvdb db mydb add "docs/*.py"
+cat content.txt | lvdb db mydb add -
 
-# Search
-curl -X POST http://localhost:5000/api/v1/api_db/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "search text", "search_type": "vector", "k": 5}'
+# Search documents
+lvdb db mydb search "query text" --search-type hybrid --limit 10
+
+# Get document
+lvdb db mydb get doc_1 --json --metadata
+
+# Interactive shell
+lvdb db mydb shell
 ```
 
-## 📋 Use Cases
-
-### 🔬 Research & Academia
-```python
-# Research paper database with structured metadata
-db = VectorDB("research_papers", metadata_schema={
-    'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-    'authors': MetadataField(type=MetadataFieldType.JSON),
-    'journal': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-    'year': MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
-    'doi': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
-})
-
-# Search for specific research topics
-results = db.query("neural networks", filters={"journal": "Nature", "year": {">=": 2020}})
-```
-
-### 💼 Enterprise Knowledge Base
-```python
-# Company documents with department-based access
-db = VectorDB("company_kb", metadata_schema={
-    'department': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-    'document_type': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-    'confidentiality': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-    'last_updated': MetadataField(type=MetadataFieldType.DATE, indexed=True)
-})
-
-# Secure search with access controls
-results = db.query("project requirements", 
-                  filters={"department": "engineering", "confidentiality": "internal"})
-```
-
-### 🛠️ Code Documentation
-```python
-# Source code with intelligent chunking
-db = VectorDB("codebase", 
-              chunking_method="code-blocks",  # Preserves code structure
-              metadata_schema={
-                  'file_path': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                  'language': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                  'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
-              })
-
-# Find code examples
-results = db.query("authentication middleware", 
-                  filters={"language": "python"}, return_type="chunks")
-```
-
-## 🔧 Advanced Features
-
-### Multiple Search Types
-```python
-# Vector search (semantic similarity)
-vector_results = db.query("machine learning", search_type="vector")
-
-# Keyword search (exact matches)
-keyword_results = db.query("neural networks", search_type="keyword")
-
-# Hybrid search (best of both)
-hybrid_results = db.query("AI algorithms", search_type="hybrid", vector_weight=0.7)
-```
-
-### Flexible Embedding Providers
-```python
-# Local embeddings with Ollama (free, no API keys)
-db_local = VectorDB("local_db", 
-                    embedding_provider="ollama",
-                    embedding_model="nomic-embed-text")
-
-# Cloud embeddings with OpenAI
-db_cloud = VectorDB("cloud_db",
-                    embedding_provider="openai", 
-                    embedding_model="text-embedding-3-small")
-```
-
-### Advanced Chunking Strategies
-```python
-# Different strategies for different content
-sentences_db = VectorDB("articles", chunking_method="sentences")
-paragraphs_db = VectorDB("essays", chunking_method="paragraphs") 
-sections_db = VectorDB("docs", chunking_method="sections")
-code_db = VectorDB("source", chunking_method="code-blocks")
-```
-
-### Production Deployment
-```bash
-# Initialize production configuration
-lvdb config init --format toml --output production.toml
-
-# Start production server with authentication
-lvdb serve --config production.toml --host 0.0.0.0 --port 8080
-
-# Create API keys for authentication
-lvdb auth create-key --description "Production API" --expires-days 90
-
-# Monitor server health
-curl http://localhost:8080/api/v1/health
-```
-
-## 📚 Documentation
-
-- **📖 [Full Documentation](https://localvectordb.readthedocs.io)**: Comprehensive guides and API reference
-- **🚀 [Quickstart Guide](https://localvectordb.readthedocs.io/en/latest/quickstart.html)**: Get up and running in 5 minutes
-- **🔧 [Installation](https://localvectordb.readthedocs.io/en/latest/installation.html)**: Detailed setup instructions
-- **📊 [Examples](https://github.com/your-org/localvectordb/tree/main/examples)**: Real-world usage examples
-- **🛠️ [CLI Reference](https://localvectordb.readthedocs.io/en/latest/cli.html)**: Complete command-line guide
-
-## 🛠️ Requirements
-
-- **Python**: 3.8 or higher
-- **Operating System**: Linux, macOS, Windows
-- **Optional**: [Ollama](https://ollama.ai) for local embeddings (recommended)
-- **Optional**: NVIDIA GPU for accelerated vector operations
-
-## 🔗 Installation Options
+### Configuration
 
 ```bash
-# Minimal installation
-pip install localvectordb
+# View configuration
+lvdb config show --section database
 
-# With HTTP server and CLI tools  
-pip install localvectordb[server]
+# Update settings
+lvdb config set server.port 8080
+lvdb config set database.chunk_size 1000
+```
 
-# Development installation with testing tools
-pip install localvectordb[dev]
+## 🏗️ Architecture
 
-# Install from source
-git clone https://github.com/your-org/localvectordb.git
-cd localvectordb
-pip install -e .[dev]
+### Local Architecture
+```
+┌─────────────────┐    ┌───────────────┐    ┌─────────────┐
+│   Application   │────│ LocalVectorDB │────│   SQLite    │
+└─────────────────┘    └───────────────┘    └─────────────┘
+                              │
+                       ┌──────────────┐
+                       │    FAISS     │
+                       │    Index     │
+                       └──────────────┘
+```
+
+### Server Architecture
+```
+┌─────────────────┐    ┌──────────────┐    ┌─────────────┐
+│     Client      │────│ HTTP Server  │────│ DB Manager  │
+│ (RemoteVectorDB)│    │   (Flask)    │    └─────────────┘
+└─────────────────┘    └──────────────┘           │
+                              │            ┌───────────────┐
+                       ┌──────────────┐    │Multiple DBs   │
+                       │     Auth     │    │(LocalVectorDB)│
+                       │  Rate Limit  │    └───────────────┘
+                       │    CORS      │
+                       └──────────────┘
+```
+
+### Chunking System
+- **Position Tracking**: Exact character positions for perfect reconstruction
+- **Multiple Methods**: Sentences, tokens, paragraphs, sections, code blocks
+- **Overlap Support**: Configurable overlap between chunks
+- **Metadata Preservation**: Document metadata inherited by all chunks
+
+## 📁 File Extraction
+
+Supports automatic text extraction from various formats:
+
+| Format | Library | Status |
+|--------|---------|--------|
+| PDF | pdfplumber, PyPDF2 | ✅ |
+| DOCX | python-docx | ✅ |
+| PPTX | python-pptx | ✅ |
+| XLSX | openpyxl | ✅ |
+| RTF | striprtf | ✅ |
+| EPUB | ebooklib | ✅ |
+| TXT, MD, etc. | Built-in | ✅ |
+
+```python
+# Upload files via HTTP API
+files = {'files': open('document.pdf', 'rb')}
+response = requests.post(
+    'http://localhost:5000/api/v1/mydb/upload',
+    files=files,
+    headers={'Authorization': 'Bearer your_api_key'}
+)
+```
+
+## ⚙️ Configuration Options
+
+### Database Settings
+- `root_dir`: Database storage directory
+- `chunk_size`: Maximum tokens per chunk
+- `chunking_method`: Algorithm for splitting text
+- `chunk_overlap`: Overlap between adjacent chunks
+- `default_metadata_schema`: Schema for new databases
+
+### Embedding Settings
+- `provider`: "ollama" or "openai"
+- `model`: Model name (e.g., "nomic-embed-text")
+- `base_url`: Custom API endpoint
+- `api_key`: API key for providers requiring authentication
+
+### Server Settings
+- `host` / `port`: Server binding
+- `require_api_key`: Enable authentication
+- `enable_rate_limiting`: Rate limiting with configurable limits
+- `cors_enabled`: CORS support for web apps
+- `cache_enabled`: Response caching (memory, file, Redis)
+
+## 🔧 Production Deployment
+
+### Docker Deployment
+
+```dockerfile
+FROM python:3.12-slim
+
+RUN pip install localvectordb[server,extraction]
+
+COPY config.toml /app/config.toml
+WORKDIR /app
+
+EXPOSE 5000
+CMD ["lvdb", "serve", "--config", "config.toml"]
+```
+
+### Multi-Worker Setup
+
+```bash
+# Configure Redis registry
+lvdb config set server.db_registry_type "RedisCache"
+lvdb config set server.db_registry_settings '{"host": "redis", "port": 6379, "db": 1}'
+
+# Start multiple workers
+gunicorn -w 4 -b 0.0.0.0:5000 "localvectordb_server:create_app()"
+```
+
+### Environment Variables
+
+```bash
+export LVDB_SERVER_CONFIG="/path/to/config.toml"
+export LVDB_DATABASE_ROOT_DIR="/data/databases"
+export LVDB_EMBEDDING_PROVIDER="ollama"
+export LVDB_EMBEDDING_MODEL="nomic-embed-text"
+export OPENAI_API_KEY="your-openai-key"  # if using OpenAI
+```
+
+## 🧪 Examples
+
+### Research Paper Database
+
+```python
+from localvectordb import VectorDB
+from localvectordb.core import get_common_metadata_schemas
+
+# Use predefined research paper schema
+schema = get_common_metadata_schemas("research_papers")
+db = VectorDB("papers", "./data", metadata_schema=schema)
+
+# Add papers
+db.upsert(
+    documents=["Paper content..."],
+    metadata=[{
+        'title': 'Attention Is All You Need',
+        'authors': ['Vaswani', 'Shazeer', 'Parmar'],
+        'publication_date': '2017-06-12',
+        'journal': 'NIPS',
+        'keywords': ['attention', 'transformer', 'neural networks']
+    }]
+)
+
+# Search by topic and filter by date
+results = db.query(
+    "transformer architecture",
+    filters={"publication_date": {">=": "2017-01-01"}},
+    search_type="hybrid"
+)
+```
+
+### Code Repository Search
+
+```python
+# Create database for code files
+db = VectorDB("code", "./data", 
+              chunking_method="code-blocks",
+              chunk_size=1000)
+
+# Add Python files
+import glob
+for file_path in glob.glob("**/*.py", recursive=True):
+    with open(file_path, 'r') as f:
+        content = f.read()
+    
+    db.upsert(
+        documents=[content],
+        metadata=[{
+            'file_path': file_path,
+            'language': 'python',
+            'last_modified': os.path.getmtime(file_path)
+        }]
+    )
+
+# Search for specific functions
+results = db.query("async def", search_type="keyword")
 ```
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ### Development Setup
+
 ```bash
-git clone https://github.com/your-org/localvectordb.git
+git clone https://github.com/yourusername/localvectordb.git
 cd localvectordb
-pip install -e .[dev]
+
+# Install in development mode
+pip install -e ".[server,extraction,dev]"
 
 # Run tests
 pytest
 
-# Run linting
-flake8 src/
-black src/
-
-# Build documentation
-cd docs/
-make html
+# Start development server
+lvdb serve --debug
 ```
-
-## 📊 Performance
-
-LocalVectorDB is designed for both development and production use:
-
-- **🏃‍♂️ Fast**: SQLite + FAISS provide excellent performance for most use cases
-- **📈 Scalable**: Handle millions of documents with proper hardware
-- **💾 Efficient**: Smart chunking and connection pooling minimize resource usage
-- **🔧 Tunable**: Extensive configuration options for optimization
-
-## 🆚 Comparison
-
-| Feature | LocalVectorDB | Pinecone | Weaviate | ChromaDB |
-|---------|---------------|----------|----------|----------|
-| **Local Development** | ✅ | ❌ | ✅ | ✅ |
-| **Document-First API** | ✅ | ❌ | ❌ | ❌ |
-| **Position Tracking** | ✅ | ❌ | ❌ | ❌ |
-| **Structured Metadata** | ✅ | ✅ | ✅ | ❌ |
-| **Hybrid Search** | ✅ | ❌ | ✅ | ❌ |
-| **No API Keys Required** | ✅ | ❌ | ✅ | ✅ |
-| **Production Ready** | ✅ | ✅ | ✅ | ⚠️ |
 
 ## 📄 License
 
-This project is licensed under the [Creative Commons Attribution-NonCommercial 4.0 International License](https://creativecommons.org/licenses/by-nc/4.0/).
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License - see the [LICENSE](LICENSE) file for details.
 
-- ✅ **Permitted**: Personal use, research, education, non-commercial projects
-- ❌ **Requires Permission**: Commercial use, redistribution in commercial products
-- 📧 **Commercial Licensing**: Contact [thomas.villani@gmail.com](mailto:thomas.villani@gmail.com) for commercial licensing options
+## 🆘 Support
+
+- 📖 **Documentation**: [Full documentation](https://localvectordb.readthedocs.io)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/thoams-villani/localvectordb/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/thomas-villani/localvectordb/discussions)
+- 📧 **Contact**: thomas.villani@gmail.com
 
 ## 🙏 Acknowledgments
 
-- **[FAISS](https://github.com/facebookresearch/faiss)**: Meta's vector similarity search library
-- **[SQLite](https://www.sqlite.org/)**: The world's most deployed database engine
-- **[Ollama](https://ollama.ai)**: Local AI model runtime
-- **[tiktoken](https://github.com/openai/tiktoken)**: OpenAI's tokenization library
-
-## 📞 Support
-
-- **🐛 [Bug Reports](https://github.com/your-org/localvectordb/issues)**: Found a bug? Let us know!
-- **💡 [Feature Requests](https://github.com/your-org/localvectordb/discussions)**: Have an idea? We'd love to hear it!
-- **💬 [Community Discord](https://discord.gg/localvectordb)**: Join our community for help and discussions
-- **📧 [Email Support](mailto:support@localvectordb.com)**: Direct support for commercial users
-
----
-
-**⭐ Star this repo if LocalVectorDB is useful for your projects!**
-
-*Built with ❤️ for the AI and developer community*
+- [FAISS](https://github.com/facebookresearch/faiss) for vector similarity search
+- [SQLite](https://sqlite.org/) for the document database
+- [Ollama](https://ollama.ai/) for local embedding models
+- [Flask](https://flask.palletsprojects.com/) for the HTTP server
+- [Click](https://click.palletsprojects.com/) for the Click CLI library
+- All the contributors who made this project possible

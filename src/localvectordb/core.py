@@ -498,11 +498,18 @@ class DatabaseSchema:
                 if len(field_def) == 2:
                     field_type, should_index = field_def
                     required = False
+                    default_value = None
                 elif len(field_def) == 3:
                     field_type, should_index, required = field_def
+                    default_value = None
+                elif len(field_def) == 4:
+                    field_type, should_index, required, default_value = field_def
                 else:
-                    raise ValueError(f"Schema definition tuple must be 2 or 3 items, found: {len(field_def)}")
-                field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index, required=required)
+                    raise ValueError(
+                        f"Schema definition tuple must be 2-4 items: "
+                        f"(field_type, should_index[, required, default_value]). Found: {len(field_def)}")
+                field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index,
+                                          required=required, default_value=default_value)
 
             # Store schema definition
             conn.execute("""INSERT OR REPLACE INTO metadata_schema 
@@ -588,17 +595,269 @@ class DatabaseSchema:
             self.metadata_fields = schema
             return schema
 
-    def add_metadata_field(self, field_name: str, field_def: MetadataField, db_connection=None):
-        """Add a new metadata field to the schema"""
+    def update_metadata_schema(self,
+                               new_schema: Dict[str, MetadataField],
+                               db_connection=None,
+                               drop_columns: bool = False
+                               ) -> Dict[str, Any]:
+        """
+        Update the metadata schema, adding new fields and updating existing ones
+
+        Parameters
+        ----------
+        new_schema : Dict[str, MetadataField]
+            The new metadata schema to apply
+        db_connection : sqlite3.Connection, optional
+            Database connection to use
+        drop_columns : bool, default=False
+            Whether to actually drop columns that are no longer in the schema.
+            If False, columns are kept but removed from schema for safety.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Summary of changes made including added, removed, and modified fields
+        """
         with self._lock:
             if db_connection is None:
                 db_connection = sqlite3.connect(self.db_path)
 
-            with db_connection as conn:
-                self._setup_metadata_schema(conn, {field_name: field_def})
-                conn.commit()
+            changes = {
+                'added_fields': [],
+                'removed_fields': [],
+                'modified_fields': [],
+                'populated_defaults': [],
+                'dropped_columns': [],
+                'warnings': [],
+                'errors': []
+            }
 
-                self.metadata_fields[field_name] = field_def
+            # Load current schema
+            current_schema = self.load_metadata_schema(db_connection)
+
+            # Define reserved column names that cannot be used for metadata fields
+            RESERVED_COLUMNS = {
+                "id", "content", "content_hash", "created_at", "updated_at"
+            }
+
+            with db_connection as conn:
+                try:
+                    # Validate new schema field names and required fields
+                    for field_name, field_def in new_schema.items():
+                        if field_name.lower() in RESERVED_COLUMNS:
+                            raise ValueError(
+                                f"Metadata field name '{field_name}' conflicts with reserved column name. "
+                                f"Reserved columns are: {', '.join(sorted(RESERVED_COLUMNS))}"
+                            )
+
+                        # Validate required fields have defaults if they're new
+                        if (field_def.required and
+                                field_name not in current_schema and
+                                field_def.default_value is None):
+                            raise ValueError(
+                                f"Required field '{field_name}' must have a default_value when added to "
+                                f"existing database with documents"
+                            )
+
+                    # Handle new and modified fields
+                    for field_name, field_def in new_schema.items():
+                        # Normalize field definition
+                        if isinstance(field_def, str):
+                            field_def = MetadataField(MetadataFieldType(field_def), False, required=False)
+                        elif isinstance(field_def, tuple):
+                            if len(field_def) == 2:
+                                field_type, should_index = field_def
+                                required = False
+                                default_value = None
+                            elif len(field_def) == 3:
+                                field_type, should_index, required = field_def
+                                default_value = None
+                            elif len(field_def) == 4:
+                                field_type, should_index, required, default_value = field_def
+                            else:
+                                raise ValueError(
+                                    f"Schema definition tuple must be 2-4 items: "
+                                    f"(field_type, should_index[, required, default_value]). Found: {len(field_def)}")
+                            field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index,
+                                                      required=required, default_value=default_value)
+
+                        if field_name not in current_schema:
+                            # New field - add it
+                            try:
+                                # Store schema definition
+                                conn.execute("""INSERT OR REPLACE INTO metadata_schema 
+                                    (field_name, field_type, indexed, required, default_value)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (
+                                    field_name,
+                                    field_def.type.value,
+                                    field_def.indexed,
+                                    field_def.required,
+                                    json.dumps(field_def.default_value) if field_def.default_value is not None else None
+                                ))
+
+                                # Add column to documents table
+                                self._add_metadata_column(conn, field_name, field_def)
+                                changes['added_fields'].append(field_name)
+
+                                # Populate default values for existing rows if required or if default provided
+                                if field_def.default_value is not None:
+                                    try:
+                                        # Check if there are existing documents
+                                        cursor = conn.execute("SELECT COUNT(*) FROM documents")
+                                        doc_count = cursor.fetchone()[0]
+
+                                        if doc_count > 0:
+                                            # Format the value for SQL based on type
+                                            if field_def.type == MetadataFieldType.JSON:
+                                                sql_value = json.dumps(field_def.default_value)
+                                            elif field_def.type == MetadataFieldType.DATE:
+                                                if isinstance(field_def.default_value, datetime):
+                                                    sql_value = field_def.default_value.isoformat()
+                                                else:
+                                                    sql_value = str(field_def.default_value)
+                                            else:
+                                                sql_value = field_def.default_value
+
+                                            # Update existing rows with default value
+                                            conn.execute(
+                                                f"UPDATE documents SET {field_name} = ? WHERE {field_name} IS NULL",
+                                                (sql_value,)
+                                            )
+
+                                            rows_updated = conn.execute("SELECT changes()").fetchone()[0]
+                                            if rows_updated > 0:
+                                                changes['populated_defaults'].append({
+                                                    'field_name': field_name,
+                                                    'rows_updated': rows_updated,
+                                                    'default_value': field_def.default_value
+                                                })
+
+                                    except Exception as e:
+                                        changes['warnings'].append(
+                                            f"Failed to populate default values for '{field_name}': {str(e)}"
+                                        )
+
+                                elif field_def.required:
+                                    changes['warnings'].append(
+                                        f"Required field '{field_name}' added without default value. "
+                                        f"Existing documents will have NULL values."
+                                    )
+
+                            except Exception as e:
+                                changes['errors'].append(f"Failed to add field '{field_name}': {str(e)}")
+
+                        else:
+                            # Existing field - check if it needs updates
+                            current_field = current_schema[field_name]
+                            field_changed = False
+                            change_details = {}
+
+                            # Check if any properties changed
+                            if current_field.type != field_def.type:
+                                change_details['type'] = {'old': current_field.type.value, 'new': field_def.type.value}
+                                field_changed = True
+
+                            if current_field.indexed != field_def.indexed:
+                                change_details['indexed'] = {'old': current_field.indexed, 'new': field_def.indexed}
+                                field_changed = True
+
+                            if current_field.required != field_def.required:
+                                change_details['required'] = {'old': current_field.required, 'new': field_def.required}
+                                field_changed = True
+
+                            if current_field.default_value != field_def.default_value:
+                                change_details['default_value'] = {
+                                    'old': current_field.default_value, 'new': field_def.default_value
+                                }
+                                field_changed = True
+
+                            if field_changed:
+                                try:
+                                    # Update schema definition
+                                    conn.execute("""UPDATE metadata_schema 
+                                        SET field_type = ?, indexed = ?, required = ?, default_value = ?
+                                        WHERE field_name = ?
+                                    """, (
+                                        field_def.type.value,
+                                        field_def.indexed,
+                                        field_def.required,
+                                        json.dumps(
+                                            field_def.default_value) if field_def.default_value is not None else None,
+                                        field_name
+                                    ))
+
+                                    # Handle index changes
+                                    if 'indexed' in change_details:
+                                        if field_def.indexed:
+                                            # Add index
+                                            index_name = f'idx_documents_{field_name}'
+                                            try:
+                                                conn.execute(
+                                                    f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+                                            except Exception as e:
+                                                changes['errors'].append(
+                                                    f"Failed to create index on '{field_name}': {str(e)}")
+                                        else:
+                                            # Remove index (if it exists)
+                                            index_name = f'idx_documents_{field_name}'
+                                            try:
+                                                conn.execute(f'DROP INDEX IF EXISTS {index_name}')
+                                            except Exception as e:
+                                                changes['errors'].append(
+                                                    f"Failed to drop index on '{field_name}': {str(e)}")
+
+                                    # Note: We don't change column types in SQLite as it's complex and risky
+                                    # The schema update is mainly for validation and indexing purposes
+
+                                    changes['modified_fields'].append({
+                                        'field_name': field_name,
+                                        'changes': change_details
+                                    })
+
+                                except Exception as e:
+                                    changes['errors'].append(f"Failed to modify field '{field_name}': {str(e)}")
+
+                    # Handle removed fields
+                    for field_name in current_schema:
+                        if field_name not in new_schema:
+                            try:
+                                # Remove from schema table
+                                conn.execute("DELETE FROM metadata_schema WHERE field_name = ?", (field_name,))
+                                changes['removed_fields'].append(field_name)
+
+                                # Optionally drop the actual column
+                                if drop_columns:
+                                    try:
+                                        # SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
+                                        # For safety, we'll warn but not actually drop columns by default
+                                        changes['warnings'].append(
+                                            f"Column dropping requested for '{field_name}' but not implemented for safety. "
+                                            f"Column data is preserved."
+                                        )
+                                        # TODO: Implement table recreation for column dropping if needed
+
+                                    except Exception as e:
+                                        changes['errors'].append(f"Failed to drop column '{field_name}': {str(e)}")
+                                else:
+                                    changes['warnings'].append(
+                                        f"Field '{field_name}' removed from schema but column data preserved. "
+                                        f"Use drop_columns=True to actually remove column data."
+                                    )
+                            except Exception as e:
+                                changes['errors'].append(f"Failed to remove field '{field_name}' from schema: {str(e)}")
+
+                    conn.commit()
+
+                    # Update in-memory schema
+                    self.metadata_fields = new_schema.copy()
+
+                except Exception as e:
+                    conn.rollback()
+                    changes['errors'].append(f"Schema update failed: {str(e)}")
+                    raise
+
+            return changes
 
 
 
@@ -621,7 +880,6 @@ class PooledConnection:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Return connection to pool on exit"""
         if not self._closed:
-            # print("Returning connection to pool")
             self.pool.return_connection(self.connection)
             self._closed = True
 
@@ -790,3 +1048,71 @@ def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, Metad
             raise KeyError(f"Schema `{schema}` was not found in predefined schema templates. Available options: "
                            f"{", ".join(schemas.keys())}")
         return schemas.get(schema)
+
+
+class ReadWriteLock:
+    """
+    ReadWriteLock that supports re-entrant write locks from the same thread
+    """
+
+    def __init__(self):
+        self._read_ready = threading.Condition(threading.RLock())
+        self._readers = 0
+        self._writer_thread: Optional[threading.Thread] = None
+        self._writer_count = 0  # Track nested write locks
+
+    @contextmanager
+    def read_lock(self):
+        """Acquire read lock (multiple readers allowed, unless writer active)"""
+        current_thread = threading.current_thread()
+
+        with self._read_ready:
+            # If current thread already holds write lock, allow read
+            if self._writer_thread == current_thread:
+                yield
+                return
+
+            # Otherwise wait for any writer to finish
+            while self._writer_thread is not None:
+                self._read_ready.wait()
+
+            self._readers += 1
+
+        try:
+            yield
+        finally:
+            with self._read_ready:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._read_ready.notify_all()
+
+    @contextmanager
+    def write_lock(self):
+        """Acquire write lock (exclusive, but re-entrant for same thread)"""
+        current_thread = threading.current_thread()
+
+        with self._read_ready:
+            # If same thread already holds write lock, just increment counter
+            if self._writer_thread == current_thread:
+                self._writer_count += 1
+                try:
+                    yield
+                finally:
+                    self._writer_count -= 1
+                return
+
+            # Otherwise wait for readers to finish and acquire write lock
+            while self._readers > 0 or self._writer_thread is not None:
+                self._read_ready.wait()
+
+            self._writer_thread = current_thread
+            self._writer_count = 1
+
+        try:
+            yield
+        finally:
+            with self._read_ready:
+                self._writer_count -= 1
+                if self._writer_count == 0:
+                    self._writer_thread = None
+                    self._read_ready.notify_all()

@@ -111,7 +111,6 @@ class KeyRecord:
         """Check if the key is expired"""
         if not self.expires_at:
             return False
-        print("now=", datetime.now(UTC))
         return datetime.now(UTC) > self.expires_at
 
     @property
@@ -253,7 +252,7 @@ class KeyManager:
     def _hash_key(self, key: str) -> str:
         """Hash an API key using bcrypt"""
         # Use bcrypt with a reasonable cost factor
-        salt = bcrypt.gensalt(rounds=12)
+        salt = bcrypt.gensalt(rounds=14)
         return bcrypt.hashpw(key.encode('utf-8'), salt).decode('utf-8')
 
     def _verify_key(self, key: str, key_hash: str) -> bool:

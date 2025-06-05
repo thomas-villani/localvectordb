@@ -36,7 +36,7 @@ import numpy as np
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import (
     DatabaseSchema, ConnectionPool, Document, Chunk, QueryResult,
-    MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas
+    MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas, ReadWriteLock
 )
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError
@@ -179,6 +179,7 @@ class LocalVectorDB:
 
         # Threading
         self._lock = threading.RLock()
+        self._read_write_lock = ReadWriteLock()
 
         # State
         # self._closed = False
@@ -473,8 +474,12 @@ class LocalVectorDB:
     def _init_faiss_index(self, enable_gpu: bool):
         """Initialize FAISS index with ID mapping support"""
         if self.index_path and self.index_path.exists():
-            # Load existing index
-            loaded_index = faiss.read_index(str(self.index_path))
+
+            try:
+                # Load existing index
+                loaded_index = faiss.read_index(str(self.index_path))
+            except RuntimeError as e:
+                raise DatabaseError(f"Error loading faiss index: {str(e)}")
 
             # Check if it's already an IndexIDMap
             if hasattr(loaded_index, 'id_map'):
@@ -577,7 +582,7 @@ class LocalVectorDB:
         List[str]
             List of document IDs that were upserted
         """
-        with self._lock:
+        with self._read_write_lock.write_lock():
             # Normalize inputs
             if isinstance(documents, str):
                 documents = [documents]
@@ -618,7 +623,7 @@ class LocalVectorDB:
 
             # Save state
             self._save_next_doc_id()
-            self.save()
+            self._save_internal()
 
             return result_ids
 
@@ -647,8 +652,7 @@ class LocalVectorDB:
     def _generate_embeddings_chunked(
             self,
             texts: List[str],
-            chunk_size: int = 100,
-            show_progress: bool = False
+            batch_size: int = 100
     ) -> np.ndarray:
         """
         Generate embeddings in manageable batches to prevent memory issues
@@ -657,10 +661,8 @@ class LocalVectorDB:
         ----------
         texts : List[str]
             List of text strings to embed
-        chunk_size : int
+        batch_size : int
             Number of texts to process at once
-        show_progress : bool
-            Whether to log progress for large batches
 
         Returns
         -------
@@ -670,19 +672,27 @@ class LocalVectorDB:
         if not texts:
             return np.array([]).reshape(0, self.embedding_dimension)
 
-        embeddings = []
-        total_batches = (len(texts) + chunk_size - 1) // chunk_size
+            # Pre-allocate the final array
+        total_embeddings = len(texts)
+        final_embeddings = np.empty(
+            (total_embeddings, self.embedding_dimension),
+            dtype=np.float32
+        )
 
-        for i in range(0, len(texts), chunk_size):
-            batch = texts[i:i + chunk_size]
+        current_idx = 0
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
             batch_embeddings = self.embedding_provider.embed_sync(batch)
-            embeddings.append(batch_embeddings)
 
-            if show_progress and total_batches > 5:
-                batch_num = (i // chunk_size) + 1
-                logger.info(f"Generated embeddings for batch {batch_num}/{total_batches}")
+            # Write directly to final array
+            current_batch_size = len(batch_embeddings)
+            final_embeddings[current_idx:current_idx + current_batch_size] = batch_embeddings
+            current_idx += current_batch_size
 
-        return np.vstack(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
+            # Optional: Clear batch from memory immediately
+            del batch_embeddings
+
+        return final_embeddings
 
     def _filter_similar_chunks_vectorized(
             self,
@@ -977,8 +987,7 @@ class LocalVectorDB:
         # show_progress = len(chunk_texts) > 500
         embeddings = self._generate_embeddings_chunked(
             chunk_texts,
-            chunk_size=embedding_batch_size,
-            show_progress=False
+            batch_size=embedding_batch_size
         )
 
         # Apply similarity filtering if requested
@@ -1116,11 +1125,9 @@ class LocalVectorDB:
             return []
 
         # Generate embeddings in batches
-        # show_progress = len(chunk_texts) > 500
         embeddings = self._generate_embeddings_chunked(
             chunk_texts,
-            chunk_size=embedding_batch_size,
-            show_progress=False
+            batch_size=embedding_batch_size
         )
 
         # Apply similarity filtering if requested
@@ -1244,7 +1251,7 @@ class LocalVectorDB:
         ValueError
             If errors="raise" and duplicate document IDs are found
         """
-        with self._lock:
+        with self._read_write_lock.write_lock():
             # Normalize inputs
             if isinstance(documents, str):
                 documents = [documents]
@@ -1303,7 +1310,7 @@ class LocalVectorDB:
 
             # Save state
             self._save_next_doc_id()
-            self.save()
+            self._save_internal()
 
             return result_ids
 
@@ -1327,46 +1334,47 @@ class LocalVectorDB:
         if single_id:
             ids = [ids]
 
-        with self.connection_pool.get_connection() as conn:
-            # Build query to get documents with metadata
-            metadata_columns = list(self.metadata_schema.keys())
-            if metadata_columns:
-                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
-            else:
-                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+        with self._read_write_lock.read_lock():
+            with self.connection_pool.get_connection() as conn:
+                # Build query to get documents with metadata
+                metadata_columns = list(self.metadata_schema.keys())
+                if metadata_columns:
+                    columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
+                else:
+                    columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
 
-            placeholders = ','.join(['?'] * len(ids))
-            sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
+                placeholders = ','.join(['?'] * len(ids))
+                sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
 
-            cursor = conn.execute(sql, ids)
-            rows = cursor.fetchall()
+                cursor = conn.execute(sql, ids)
+                rows = cursor.fetchall()
 
-            documents = []
-            for row in rows:
-                # Extract metadata
-                metadata = {}
-                for col_name in metadata_columns:
-                    if col_name in row.keys():
-                        value = row[col_name]
-                        if col_name in self.metadata_schema:
-                            field_def = self.metadata_schema[col_name]
-                            if field_def.type == MetadataFieldType.JSON and value:
-                                value = json.loads(value)
-                        metadata[col_name] = value
+                documents = []
+                for row in rows:
+                    # Extract metadata
+                    metadata = {}
+                    for col_name in metadata_columns:
+                        if col_name in row.keys():
+                            value = row[col_name]
+                            if col_name in self.metadata_schema:
+                                field_def = self.metadata_schema[col_name]
+                                if field_def.type == MetadataFieldType.JSON and value:
+                                    value = json.loads(value)
+                            metadata[col_name] = value
 
-                doc = Document(
-                    id=row['id'],
-                    content=row['content'],
-                    metadata=metadata,
-                    created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
-                    updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None,
-                    content_hash=row['content_hash']
-                )
-                documents.append(doc)
+                    doc = Document(
+                        id=row['id'],
+                        content=row['content'],
+                        metadata=metadata,
+                        created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
+                        updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None,
+                        content_hash=row['content_hash']
+                    )
+                    documents.append(doc)
 
-        if single_id:
-            return documents[0] if documents else None
-        return documents
+            if single_id:
+                return documents[0] if documents else None
+            return documents
 
     # TODO: needs to check chunks
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
@@ -1412,7 +1420,7 @@ class LocalVectorDB:
         int
             Number of documents deleted
         """
-        with self._lock:
+        with self._read_write_lock.write_lock():
             if isinstance(ids, str):
                 ids = [ids]
 
@@ -1469,7 +1477,7 @@ class LocalVectorDB:
         bool
             True if document was updated, False if not found
         """
-        with self._lock:
+        with self._read_write_lock.write_lock():
             # Get existing document
             existing_doc = self.get(doc_id)
             if not existing_doc:
@@ -1560,14 +1568,15 @@ class LocalVectorDB:
         List[QueryResult]
             Search results with normalized scores
         """
-        if search_type == 'vector':
-            return self._vector_search(query, return_type, k, score_threshold, filters)
-        elif search_type == 'keyword':
-            return self._keyword_search(query, return_type, k, score_threshold, filters)
-        elif search_type == 'hybrid':
-            return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight)
-        else:
-            raise ValueError(f"Unknown search type: {search_type}")
+        with self._read_write_lock.read_lock():
+            if search_type == 'vector':
+                return self._vector_search(query, return_type, k, score_threshold, filters)
+            elif search_type == 'keyword':
+                return self._keyword_search(query, return_type, k, score_threshold, filters)
+            elif search_type == 'hybrid':
+                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight)
+            else:
+                raise ValueError(f"Unknown search type: {search_type}")
 
     def _vector_search(
             self,
@@ -1586,9 +1595,9 @@ class LocalVectorDB:
         # since we'll be deduplicating by document ID
         search_k = k * 3 if return_type == 'documents' else k * 2
 
-        with self._lock:
-            # Search FAISS index
-            distances, indices = self.index.search(query_embedding, search_k)
+
+        # Search FAISS index
+        distances, indices = self.index.search(query_embedding, search_k)
 
         # Get chunk information
         chunk_results = []
@@ -1985,6 +1994,7 @@ class LocalVectorDB:
 
             query_parts.append(f"WHERE {' AND '.join(conditions)}")
         elif sql:
+            # TODO: need to sanitize properly or not allow raw sql
             query_parts.append(f"WHERE {sql}")
 
         # Add ORDER BY
@@ -2027,16 +2037,206 @@ class LocalVectorDB:
 
         return documents
 
+    def update_metadata_schema(
+            self,
+            new_schema: Union[str, Dict[str, MetadataField]],
+            drop_columns: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Update the metadata schema for the database
+
+        This method allows you to add new metadata fields, modify existing ones,
+        or remove fields from the schema. Existing document data is preserved.
+
+        Parameters
+        ----------
+        new_schema : Union[str, Dict[str, MetadataField]]
+            The new metadata schema to apply. Can be:
+            - str: Schema name from common schemas (e.g., 'research_papers')
+            - Dict[str, MetadataField]: Complete field definitions
+            - Dict[str, str]: Simple type-only definitions (e.g., {'field': 'text'})
+            - Dict[str, tuple]: Tuple definitions (type, indexed) or (type, indexed, required)
+        drop_columns : bool, default=False
+            Whether to actually drop columns that are no longer in the schema.
+            If False, columns are kept but removed from schema for safety.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Summary of changes made including:
+            - added_fields: List of newly added field names
+            - removed_fields: List of removed field names
+            - modified_fields: List of modified fields with change details
+            - populated_defaults: List of fields where default values were populated
+            - dropped_columns: List of actually dropped columns (if drop_columns=True)
+            - warnings: List of warnings about potential issues
+            - errors: List of any errors encountered
+
+        Examples
+        --------
+        Add new metadata fields::
+
+            new_schema = {
+                'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                'priority': MetadataField(type=MetadataFieldType.INTEGER, default_value=0),
+                'tags': MetadataField(type=MetadataFieldType.JSON)
+            }
+
+            changes = db.update_metadata_schema(new_schema)
+            print(f"Added fields: {changes['added_fields']}")
+
+        Use shorthand syntax::
+
+            new_schema = {
+                'category': 'text',  # Simple type
+                'priority': ('integer', False, True),  # (type, indexed, required)
+                'rating': ('real', True)  # (type, indexed)
+            }
+
+            changes = db.update_metadata_schema(new_schema)
+
+        Apply a common schema::
+
+            changes = db.update_metadata_schema('research_papers')
+
+        Notes
+        -----
+        - Field names cannot conflict with reserved columns: id, content, content_hash, created_at, updated_at
+        - Removed fields are removed from the schema but columns are kept for data safety
+        - Type changes are recorded but don't modify existing data (SQLite limitation)
+        - Index changes are applied immediately
+        - Changes are applied in a transaction and rolled back on error
+        """
+        with self._lock:
+            # Handle special cases
+            if isinstance(new_schema, str):
+                # Load from common schemas
+                new_schema = get_common_metadata_schemas(new_schema)
+            elif isinstance(new_schema, dict):
+                # Convert any shorthand definitions
+                normalized_schema = {}
+                for field_name, field_def in new_schema.items():
+                    if isinstance(field_def, str):
+                        normalized_schema[field_name] = MetadataField(MetadataFieldType(field_def))
+                    elif isinstance(field_def, tuple):
+                        if len(field_def) == 2:
+                            field_type, indexed = field_def
+                            normalized_schema[field_name] = MetadataField(
+                                MetadataFieldType(field_type), indexed=indexed
+                            )
+                        elif len(field_def) == 3:
+                            field_type, indexed, required = field_def
+                            normalized_schema[field_name] = MetadataField(
+                                MetadataFieldType(field_type), indexed=indexed, required=required
+                            )
+                        else:
+                            raise ValueError(f"Tuple definition for '{field_name}' must have 2 or 3 elements")
+                    elif isinstance(field_def, MetadataField):
+                        normalized_schema[field_name] = field_def
+                    else:
+                        raise ValueError(f"Invalid field definition for '{field_name}': {type(field_def)}")
+
+                new_schema = normalized_schema
+
+            if not isinstance(new_schema, dict):
+                raise ValueError("new_schema must be a dictionary, string (schema name), or Dict[str, MetadataField]")
+
+            # Validate new schema
+            for field_name, field_def in new_schema.items():
+                if not isinstance(field_name, str) or not field_name.strip():
+                    raise ValueError("Metadata field names must be non-empty strings")
+                if not isinstance(field_def, MetadataField):
+                    raise ValueError(f"Field definition for '{field_name}' must be a MetadataField instance")
+
+            try:
+                # Apply schema changes
+                with self.connection_pool.get_connection() as conn:
+                    changes = self.schema.update_metadata_schema(new_schema, conn, drop_columns)
+
+                # Update in-memory schema
+                self.metadata_schema = new_schema.copy()
+
+                # Log the changes
+                logger.info(f"Updated metadata schema for database '{self.name}'")
+                if changes['added_fields']:
+                    logger.info(f"Added fields: {changes['added_fields']}")
+                if changes['removed_fields']:
+                    logger.info(f"Removed fields: {changes['removed_fields']}")
+                if changes['modified_fields']:
+                    modified_names = [f['field_name'] for f in changes['modified_fields']]
+                    logger.info(f"Modified fields: {modified_names}")
+                if changes['populated_defaults']:
+                    populated_info = [(p['field_name'], p['rows_updated']) for p in changes['populated_defaults']]
+                    logger.info(f"Populated default values: {populated_info}")
+                if changes['warnings']:
+                    for warning in changes['warnings']:
+                        logger.warning(f"Schema update warning: {warning}")
+                if changes['errors']:
+                    logger.error(f"Errors during schema update: {changes['errors']}")
+
+                # Save the database to persist changes
+                self.save()
+
+                return changes
+
+            except Exception as e:
+                logger.error(f"Failed to update metadata schema: {e}")
+                raise DatabaseError(f"Schema update failed: {str(e)}")
+
+    def get_metadata_schema_info(self) -> Dict[str, Any]:
+        """
+        Get detailed information about the current metadata schema
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing:
+            - fields: Dict of field definitions
+            - field_count: Number of fields
+            - indexed_fields: List of indexed field names
+            - required_fields: List of required field names
+            - field_types: Summary of field types used
+        """
+        info = {
+            'fields': {},
+            'field_count': len(self.metadata_schema),
+            'indexed_fields': [],
+            'required_fields': [],
+            'field_types': {}
+        }
+
+        for field_name, field_def in self.metadata_schema.items():
+            info['fields'][field_name] = {
+                'type': field_def.type.value,
+                'indexed': field_def.indexed,
+                'required': field_def.required,
+                'default_value': field_def.default_value
+            }
+
+            if field_def.indexed:
+                info['indexed_fields'].append(field_name)
+            if field_def.required:
+                info['required_fields'].append(field_name)
+
+            field_type = field_def.type.value
+            info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
+
+        return info
+
+    def _save_internal(self):
+        """For saving the database to disk. Doesn't acquire lock."""
+        if not self.is_memory_only and hasattr(self.index, 'ntotal') and self.index.ntotal > 0:
+            # If using GPU, move to CPU for saving
+            if hasattr(self.index, 'index') and hasattr(self.index.index, 'device'):  # GPU index wrapper
+                cpu_index = faiss.index_gpu_to_cpu(self.index)
+                faiss.write_index(cpu_index, str(self.index_path))
+            else:
+                faiss.write_index(self.index, str(self.index_path))
+
     def save(self):
         """Save the FAISS index to disk"""
-        with self._lock:
-            if not self.is_memory_only and hasattr(self.index, 'ntotal') and self.index.ntotal > 0:
-                # If using GPU, move to CPU for saving
-                if hasattr(self.index, 'index') and hasattr(self.index.index, 'device'):  # GPU index wrapper
-                    cpu_index = faiss.index_gpu_to_cpu(self.index)
-                    faiss.write_index(cpu_index, str(self.index_path))
-                else:
-                    faiss.write_index(self.index, str(self.index_path))
+        with self._read_write_lock.write_lock():
+            self._save_internal()
 
     def close(self):
         """Close the database"""

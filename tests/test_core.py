@@ -413,23 +413,6 @@ class TestDatabaseSchema:
         assert loaded_schema['rating'].type == MetadataFieldType.REAL
         assert loaded_schema['rating'].required is True
 
-    @patch('sqlite3.connect')
-    def test_add_metadata_field(self, mock_connect, temp_dir):
-        """Test adding new metadata field."""
-        mock_conn = Mock()
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_cursor = Mock()
-        mock_cursor.fetchall.return_value = []
-        mock_conn.execute.return_value = mock_cursor
-
-        db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
-
-        field = MetadataField(type=MetadataFieldType.TEXT, indexed=True)
-        schema.add_metadata_field('author', field)
-
-        assert 'author' in schema.metadata_fields
-        assert schema.metadata_fields['author'] == field
 
 
 

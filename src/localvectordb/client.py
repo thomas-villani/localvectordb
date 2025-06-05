@@ -753,6 +753,183 @@ class RemoteVectorDB:
         # No-op for remote client - server handles saving automatically
         pass
 
+    def update_metadata_schema(
+            self,
+            new_schema: Union[str, Dict[str, Any]],
+            drop_columns: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Update the metadata schema for the remote database
+
+        This method allows you to add new metadata fields, modify existing ones,
+        or remove fields from the schema. Existing document data is preserved.
+
+        Parameters
+        ----------
+        new_schema : Union[str, Dict[str, Any]]
+            The new metadata schema to apply. Can be:
+            - str: Schema name from common schemas (e.g., 'research_papers')
+            - Dict[str, MetadataField]: Complete field definitions
+            - Dict[str, str]: Simple type-only definitions (e.g., {'field': 'text'})
+            - Dict[str, tuple]: Tuple definitions (type, indexed) or (type, indexed, required)
+            - Dict[str, dict]: Full field configuration objects
+        drop_columns : bool, default=False
+            Whether to actually drop columns that are no longer in the schema.
+            If False, columns are kept but removed from schema for safety.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Summary of changes made including:
+            - added_fields: List of newly added field names
+            - removed_fields: List of removed field names
+            - modified_fields: List of modified fields with change details
+            - populated_defaults: List of fields where default values were populated
+            - dropped_columns: List of actually dropped columns (if drop_columns=True)
+            - warnings: List of warnings about potential issues
+            - errors: List of any errors encountered
+
+        Examples
+        --------
+        Add new metadata fields::
+
+            new_schema = {
+                'category': {'type': 'text', 'indexed': True, 'required': True, 'default_value': 'general'},
+                'rating': {'type': 'real', 'default_value': 0.0},
+                'tags': {'type': 'json', 'default_value': []}
+            }
+
+            changes = db.update_metadata_schema(new_schema)
+            print(f"Added fields: {changes['added_fields']}")
+            print(f"Populated defaults: {changes['populated_defaults']}")
+
+        Use shorthand syntax::
+
+            new_schema = {
+                'category': 'text',  # Simple type
+                'priority': ('integer', False, True),  # (type, indexed, required)
+                'rating': ('real', True)  # (type, indexed)
+            }
+
+            changes = db.update_metadata_schema(new_schema)
+
+        Apply a common schema::
+
+            changes = db.update_metadata_schema('research_papers')
+
+        Notes
+        -----
+        - Field names cannot conflict with reserved columns: id, content, content_hash, created_at, updated_at
+        - Removed fields are removed from the schema but columns are kept for data safety
+        - Type changes are recorded but don't modify existing data (SQLite limitation)
+        - Index changes are applied immediately
+        - Changes are applied in a transaction and rolled back on error
+        """
+        # Handle different input formats
+        if isinstance(new_schema, str):
+            # Send schema name to server
+            schema_data = new_schema
+        elif isinstance(new_schema, dict):
+            # Convert to server-compatible format
+            schema_data = {}
+            for field_name, field_def in new_schema.items():
+                if isinstance(field_def, str):
+                    # Simple type string
+                    schema_data[field_name] = field_def
+                elif isinstance(field_def, tuple):
+                    # Tuple format: (type, indexed) or (type, indexed, required)
+                    if len(field_def) == 2:
+                        field_type, indexed = field_def
+                        schema_data[field_name] = {
+                            'type': field_type,
+                            'indexed': indexed
+                        }
+                    elif len(field_def) == 3:
+                        field_type, indexed, required = field_def
+                        schema_data[field_name] = {
+                            'type': field_type,
+                            'indexed': indexed,
+                            'required': required
+                        }
+                    else:
+                        raise ValueError(f"Tuple definition for '{field_name}' must have 2 or 3 elements")
+                elif hasattr(field_def, 'type'):
+                    # MetadataField object
+                    schema_data[field_name] = {
+                        'type': field_def.type.value if hasattr(field_def.type, 'value') else str(field_def.type),
+                        'indexed': field_def.indexed,
+                        'required': field_def.required,
+                        'default_value': field_def.default_value
+                    }
+                elif isinstance(field_def, dict):
+                    # Dictionary configuration
+                    schema_data[field_name] = field_def
+                else:
+                    raise ValueError(f"Invalid field definition for '{field_name}': {type(field_def)}")
+        else:
+            raise ValueError("new_schema must be a string, dictionary, or MetadataField mapping")
+
+        # Prepare request payload
+        payload = {
+            'metadata_schema': schema_data,
+            'drop_columns': drop_columns
+        }
+
+        url = self._build_url(f"/api/v1/{self.name}/schema")
+        with httpx.Client() as client:
+            response = client.put(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+
+        result = self._handle_response(response)
+
+        # Update local metadata schema cache
+        if 'new_schema' in result:
+            self.metadata_schema = {}
+            for field_name, field_config in result['new_schema'].items():
+                self.metadata_schema[field_name] = MetadataField(
+                    type=MetadataFieldType(field_config['type']),
+                    indexed=field_config.get('indexed', False),
+                    required=field_config.get('required', False),
+                    default_value=field_config.get('default_value')
+                )
+
+        return result.get('changes', {})
+
+    def get_metadata_schema_info(self) -> Dict[str, Any]:
+        """
+        Get detailed information about the current metadata schema
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing:
+            - fields: Dict of field definitions
+            - field_count: Number of fields
+            - indexed_fields: List of indexed field names
+            - required_fields: List of required field names
+            - field_types: Summary of field types used
+
+        Examples
+        --------
+        Get schema information::
+
+            schema_info = db.get_metadata_schema_info()
+            print(f"Total fields: {schema_info['field_count']}")
+            print(f"Indexed fields: {schema_info['indexed_fields']}")
+            print(f"Required fields: {schema_info['required_fields']}")
+            print(f"Field types: {schema_info['field_types']}")
+
+            # Detailed field information
+            for field_name, field_info in schema_info['fields'].items():
+                print(f"{field_name}: {field_info['type']} "
+                      f"(indexed={field_info['indexed']}, required={field_info['required']})")
+        """
+        url = self._build_url(f"/api/v1/{self.name}/schema")
+        with httpx.Client() as client:
+            response = client.get(url, headers=self._get_headers(), timeout=self.request_timeout)
+
+        result = self._handle_response(response)
+        return result.get('schema_info', {})
+
     @property
     def closed(self):
         return self.ping()

@@ -8,7 +8,6 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb_server/_error_handlers.py
-# src/localvectordb_server/error_handlers.py
 """
 Enhanced error handling framework for LocalVectorDB Server with
 standardized error responses, validation, and recovery strategies.
@@ -228,7 +227,6 @@ def handle_errors(f):
             return f(*args, **kwargs)
         except Exception as e:
             error_response, status_code = standardize_error_response(e)
-            print("We got one!", str(e))
             return jsonify(error_response), status_code
 
     return wrapper
