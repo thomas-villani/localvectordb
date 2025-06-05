@@ -12,6 +12,7 @@ API Documentation
    localvectordb.factory
    localvectordb.client
    localvectordb.utils
+   localvectordb.async_database
    localvectordb_server.routes
    localvectordb_server.config
    localvectordb_server.cli

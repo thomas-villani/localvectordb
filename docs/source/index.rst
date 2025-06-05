@@ -31,6 +31,7 @@ scale to distributed deployments without changing your code.
    overview
    embeddings
    chunking
+   async
    server
    cli
    routes
