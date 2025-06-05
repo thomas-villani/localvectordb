@@ -840,34 +840,36 @@ def filter_documents(db_name):
     like $gt, $lt, $contains, $exists, etc. Raw SQL support has been removed
     to prevent injection attacks.
 
-    Request body supports:
-    {
-        "where": {
-            // Simple format
-            "author": "John Doe",
-            "year": 2023,
+    Request body supports::
 
-            // Advanced format with operators
-            "rating": {"$gte": 4.0, "$lte": 5.0},
-            "tags": {"$contains": "python"},
-            "category": {"$in": ["tech", "science"]},
-            "title": {"$ilike": "%tutorial%"},
+        {
+            "where": {
+                // Simple format
+                "author": "John Doe",
+                "year": 2023,
 
-            // Logical operators
-            "$and": [
-                {"year": {"$gte": 2020}},
-                {"$or": [
-                    {"author": "John Doe"},
-                    {"category": "featured"}
-                ]}
-            ]
-        },
-        "order_by": "created_at DESC",
-        "limit": 100,
-        "offset": 0
-    }
+                // Advanced format with operators
+                "rating": {"$gte": 4.0, "$lte": 5.0},
+                "tags": {"$contains": "python"},
+                "category": {"$in": ["tech", "science"]},
+                "title": {"$ilike": "%tutorial%"},
+
+                // Logical operators
+                "$and": [
+                    {"year": {"$gte": 2020}},
+                    {"$or": [
+                        {"author": "John Doe"},
+                        {"category": "featured"}
+                    ]}
+                ]
+            },
+            "order_by": "created_at DESC",
+            "limit": 100,
+            "offset": 0
+        }
 
     Supported operators:
+
     - Comparison: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin
     - String: $like, $ilike, $contains, $startswith, $endswith
     - Existence: $exists, $not_exists

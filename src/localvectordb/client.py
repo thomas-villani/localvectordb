@@ -16,102 +16,103 @@ It implements the same document-focused interface as the new LocalVectorDB class
 connects to a remote server via HTTP.
 
 Main Components:
-    - RemoteVectorDB: Client for connecting to a LocalVectorDB server
-    - Document: Document object for remote use
-    - QueryResult: Search result object
-    - MetadataField: Metadata field definition
+
+- RemoteVectorDB: Client for connecting to a LocalVectorDB server
+- Document: Document object for remote use
+- QueryResult: Search result object
+- MetadataField: Metadata field definition
 
 Examples
 --------
 
-    Basic usage::
+Basic usage::
 
-        from localvectordb.client import RemoteVectorDB
-        from localvectordb.core import MetadataField, MetadataFieldType
+    from localvectordb.client import RemoteVectorDB
+    from localvectordb.core import MetadataField, MetadataFieldType
 
-        # Connect to an existing database
-        db = RemoteVectorDB(
-            name="my_database",
-            base_url="http://localhost:5000",
-            api_key="your_api_key"
-        )
+    # Connect to an existing database
+    db = RemoteVectorDB(
+        name="my_database",
+        base_url="http://localhost:5000",
+        api_key="your_api_key"
+    )
 
-        # Upsert documents
-        db.upsert(["Document 1", "Document 2"])
+    # Upsert documents
+    db.upsert(["Document 1", "Document 2"])
 
-        # Search for similar documents
-        results = db.query("search query", k=5)
+    # Search for similar documents
+    results = db.query("search query", k=5)
 
-    Creating a new database with metadata schema::
+Creating a new database with metadata schema::
 
-        from localvectordb.core import MetadataField, MetadataFieldType
+    from localvectordb.core import MetadataField, MetadataFieldType
 
-        db = RemoteVectorDB(
-            name="new_database",
-            base_url="http://localhost:5000",
-            api_key="your_api_key",
-            create_if_not_exists=True,
-            metadata_schema={
-                'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                'publish_date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
-                'tags': MetadataField(type=MetadataFieldType.JSON)
-            },
-            embedding_model="nomic-embed-text",
-            embedding_provider="ollama",
-            chunk_size=512,
-            chunking_method="sentences",
-            chunk_overlap=1
-        )
+    db = RemoteVectorDB(
+        name="new_database",
+        base_url="http://localhost:5000",
+        api_key="your_api_key",
+        create_if_not_exists=True,
+        metadata_schema={
+            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            'publish_date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            'tags': MetadataField(type=MetadataFieldType.JSON)
+        },
+        embedding_model="nomic-embed-text",
+        embedding_provider="ollama",
+        chunk_size=512,
+        chunking_method="sentences",
+        chunk_overlap=1
+    )
 
-    Document operations::
+Document operations::
 
-        # Upsert documents with metadata
-        docs = ["Python programming guide", "Machine learning tutorial"]
-        metadata = [
-            {"author": "Jane Doe", "publish_date": "2024-01-01", "tags": ["python", "programming"]},
-            {"author": "John Smith", "publish_date": "2024-02-01", "tags": ["ml", "ai"]}
-        ]
-        doc_ids = db.upsert(docs, metadata=metadata)
+    # Upsert documents with metadata
+    docs = ["Python programming guide", "Machine learning tutorial"]
+    metadata = [
+        {"author": "Jane Doe", "publish_date": "2024-01-01", "tags": ["python", "programming"]},
+        {"author": "John Smith", "publish_date": "2024-02-01", "tags": ["ml", "ai"]}
+    ]
+    doc_ids = db.upsert(docs, metadata=metadata)
 
-        # Get documents
-        doc = db.get(doc_ids[0])
-        docs = db.get(doc_ids)
+    # Get documents
+    doc = db.get(doc_ids[0])
+    docs = db.get(doc_ids)
 
-        # Update a document
-        db.update(doc_ids[0], content="Updated content", metadata={"author": "Jane Smith"})
+    # Update a document
+    db.update(doc_ids[0], content="Updated content", metadata={"author": "Jane Smith"})
 
-        # Delete documents
-        db.delete(doc_ids)
+    # Delete documents
+    db.delete(doc_ids)
 
-    Unified search interface::
+Unified search interface::
 
-        # Vector search
-        results = db.query("python programming", search_type="vector", k=5)
+    # Vector search
+    results = db.query("python programming", search_type="vector", k=5)
 
-        # Keyword search
-        results = db.query("python programming", search_type="keyword", k=5)
+    # Keyword search
+    results = db.query("python programming", search_type="keyword", k=5)
 
-        # Hybrid search
-        results = db.query("python programming", search_type="hybrid", k=5, vector_weight=0.7)
+    # Hybrid search
+    results = db.query("python programming", search_type="hybrid", k=5, vector_weight=0.7)
 
-        # Search with filters
-        results = db.query(
-            "programming guide",
-            search_type="vector",
-            filters={"author": "Jane Doe", "publish_date": {">=": "2024-01-01"}}
-        )
+    # Search with filters
+    results = db.query(
+        "programming guide",
+        search_type="vector",
+        filters={"author": "Jane Doe", "publish_date": {">=": "2024-01-01"}}
+    )
 
-    SQL-like filtering::
+MongoDB-like filtering::
 
-        # Filter documents by metadata
-        docs = db.filter(where={"author": "Jane Doe"})
+    # Filter documents by metadata
+    docs = db.filter(where={"author": "Jane Doe"})
 
-        # SQL filtering with ordering and pagination
-        docs = db.filter(
-            where={"publish_date": {">=": "2024-01-01"}},
-            order_by="publish_date DESC",
-            limit=10
-        )
+    # SQL filtering with ordering and pagination
+    docs = db.filter(
+        where={"publish_date": {"$gte": "2024-01-01"}},
+        order_by="publish_date DESC",
+        limit=10
+    )
 
 .. Note::
 
@@ -712,10 +713,12 @@ class RemoteVectorDB:
         where : Optional[Dict[str, Any]]
             Filter conditions using either simple format or MongoDB-style operators.
 
-            Simple format:
+            Simple format::
+
                 {"author": "John Doe", "year": 2023}
 
-            Advanced format with operators:
+            Advanced format with operators::
+
                 {
                     "author": {"$eq": "John Doe"},
                     "year": {"$gte": 2020, "$lte": 2024},
@@ -728,12 +731,13 @@ class RemoteVectorDB:
                 }
 
             Supported operators:
-                - Comparison: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin
-                - String: $like, $ilike, $contains, $startswith, $endswith
-                - Existence: $exists, $not_exists
-                - Type: $type
-                - Logical: $and, $or, $not
-                - JSON: $contains, $not_contains (for JSON fields)
+
+            - Comparison: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin
+            - String: $like, $ilike, $contains, $startswith, $endswith
+            - Existence: $exists, $not_exists
+            - Type: $type
+            - Logical: $and, $or, $not
+            - JSON: $contains, $not_contains (for JSON fields)
 
         order_by : Optional[str]
             ORDER BY clause (field name with optional ASC/DESC)

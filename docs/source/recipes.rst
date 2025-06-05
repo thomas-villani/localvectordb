@@ -1,6 +1,6 @@
-====================================================
-LocalVectorDB Recipes: Common Patterns and Solutions
-====================================================
+=======
+Recipes
+=======
 
 This page contains practical recipes for common tasks when working with LocalVectorDB. Each recipe includes complete,
 runnable code examples that you can adapt for your specific use case.
@@ -13,7 +13,7 @@ Database Setup and Configuration
 ================================
 
 Creating a Database with Custom Settings
------------------------------------------
+----------------------------------------
 
 .. code-block:: python
 
@@ -1302,4 +1302,5 @@ These recipes provide a solid foundation for working with LocalVectorDB in produ
    - Performance monitoring and optimization
    - Robust backup and disaster recovery
 
-These patterns can be combined and customized for your specific use cases. Remember to always test thoroughly in development environments before deploying to production!
+These patterns can be combined and customized for your specific use cases. Remember to always test thoroughly in
+development environments before deploying to production!

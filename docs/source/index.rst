@@ -24,7 +24,7 @@ scale to distributed deployments without changing your code.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Contents
 
    quickstart
    installation

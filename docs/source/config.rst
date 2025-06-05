@@ -58,6 +58,10 @@ Database Configuration
    chunk_overlap = 1
    chunking_method = "lines"
 
+   # Faiss index parameters (optional, for advanced users only)
+   faiss_index_type = "IndexFlatL2"
+   # faiss_index_hnsw_flat_neighbors = 16
+   # faiss_index_lsh_bits = 1536
 
 Embedding Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^

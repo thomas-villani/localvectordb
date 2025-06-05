@@ -21,6 +21,11 @@ Full Configuration File
    chunk_overlap = 1
    chunking_method = "lines"
 
+   # Faiss index settings
+   faiss_index_type = "IndexFlatL2"       # Can be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH
+   # faiss_index_hnsw_flat_neighbors = 0  # Only used for IndexHNSWFlat, set the number of neighbors for the graph
+   # faiss_index_lsh_bits = 1536          # Only used for IndexLSH Typically set to twice the embedding dimension
+
    [database.default_metadata_schema]
    file_path = { type = "text", indexed = true, required = false }
    created_at = { type = "date", indexed = true, required = false }
@@ -136,6 +141,18 @@ Database Settings
      - bool
      - ``true``
      - Whether to enable Full-Text Search (FTS) capabilities.
+   * - ``faiss_index_type``
+     - str
+     - ``IndexFlatL2``
+     - The type of faiss index to use: ``IndexFlatL2`` (exact L2 distance), ``IndexFlatIP`` (exact inner product), ``IndexHNSWFlat`` (graph-based approximate-nearest neighbors, fast), ``IndexLSH`` (binary hashing)
+   * - faiss_index_hnsw_flat_neighbors
+     - int
+     - ``null``
+     - The number of neighbors for the ``IndexHNSWFlat`` index. Ignored if using a different index.
+   * - faiss_index_lsh_bits
+     - int
+     - ``null``
+     - The number of bits to use for the binary hashing, defaults to 2x the number of embedding dimensions if not provided and using ``IndexLSH``, ignored otherwise.
    * - ``chunk_size``
      - int
      - ``500``

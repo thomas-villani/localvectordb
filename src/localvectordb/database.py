@@ -12,6 +12,7 @@
 LocalVectorDB v1.0
 
 This module contains the main LocalVectorDB v1.0 implementation with:
+
 - Document-first API that hides chunking complexity
 - Direct SQLite implementation
 - Unified query interface with normalized scoring
@@ -1950,7 +1951,7 @@ class LocalVectorDB:
         """
         Filter documents using enhanced metadata filtering
 
-        This method now supports advanced MongoDB-style filtering with operators
+        This method supports advanced MongoDB-style filtering with operators
         like $gt, $lt, $contains, $exists, etc. The SQL injection vulnerability
         has been removed by eliminating raw SQL support.
 
