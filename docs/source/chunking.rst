@@ -16,8 +16,8 @@ Overview
 Chunking Methods
 ----------------
 
-Sentences (Recommended)
-~~~~~~~~~~~~~~~~~~~~~~~
+Sentences
+~~~~~~~~~
 
 Splits text at sentence boundaries while respecting token limits.
 
