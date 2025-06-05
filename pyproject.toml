@@ -24,6 +24,18 @@ ollama = "localvectordb.embeddings:OllamaEmbeddings"
 openai = "localvectordb.embeddings:OpenAIEmbeddings"
 mock = "localvectordb.embeddings:MockEmbeddings"
 
+[project.entry-points."localvectordb_server.file_extractors"]
+docx = "localvectordb_server.extractors.office_extractors:DocxExtractor"
+pptx = "localvectordb_server.extractors.office_extractors:PptxExtractor"
+xlsx = "localvectordb_server.extractors.office_extractors:XlsxExtractor"
+html = "localvectordb_server.extractors.web_extractors:HTMLExtractor"
+xml = "localvectordb_server.extractors.web_extractors:XMLExtractor"
+text = "localvectordb_server.extractors.text_extractors:TextFileExtractor"
+fallback = "localvectordb_server.extractors.text_extractors:TextFallbackExtractor"
+pdfplumber = "localvectordb_server.extractors.pdf_extractors:PDFPlumberExtractor"
+pypdf2 = "localvectordb_server.extractors.pdf_extractors:PyPDF2Extractor"
+epub = "localvectordb_server.extractors.other_extractors:EPubExtractor"
+rtf = "localvectordb_server.extractors.other_extractors:RTFExtractor"
 
 [project.scripts]
 lvdb = "localvectordb_server.cli:cli"
@@ -48,6 +60,35 @@ dev = [
     "sphinx-autodoc-typehints>=3.2.0",
     "sphinx-rtd-theme>=3.0.2",
 ]
+file-extraction = [
+    "openpyxl>=3.1.5",
+    "python-docx>=1.1.2",
+    "python-pptx>=1.0.2",
+    "pdfplumber>=0.11.6",
+    "pypdf2>=3.0.1",
+    "beautifulsoup4>=4.13.4",
+    "lxml>=5.4.0",
+    "ebooklib>=0.19",
+    "striprtf>=0.0.29",
+]
+file-extraction-office = [
+    "openpyxl>=3.1.5",
+    "python-docx>=1.1.2",
+    "python-pptx>=1.0.2",
+]
+file-extraction-pdf = [
+    "pdfplumber>=0.11.6",
+    "pypdf2>=3.0.1",
+]
+file-extraction-web = [
+    "beautifulsoup4>=4.13.4",
+    "lxml>=5.4.0",
+]
+file-extraction-rtf-epub = [
+    "ebooklib>=0.19",
+    "striprtf>=0.0.29",
+]
+
 
 
 [tool.bumpversion]

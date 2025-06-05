@@ -15,4 +15,5 @@ API Documentation
    localvectordb_server.routes
    localvectordb_server.config
    localvectordb_server.cli
+   localvectordb_server.extractors
 

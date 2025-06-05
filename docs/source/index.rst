@@ -36,4 +36,7 @@ scale to distributed deployments without changing your code.
    routes
    config
    config.params
+   server.advanced
    modules
+   recipes
+   tutorials

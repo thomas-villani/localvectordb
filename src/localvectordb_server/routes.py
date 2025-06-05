@@ -14,8 +14,9 @@ localvectordb_server/routes.py - LocalVectorDB v1.0 API Routes
 Enhanced API routes with structured logging, comprehensive error handling,
 input validation, and performance monitoring.
 """
-
+import json
 import logging
+from datetime import datetime
 from math import ceil
 from typing import Dict, Any
 
@@ -32,6 +33,14 @@ from localvectordb_server._error_handlers import (
     validate_search_params, validate_database_creation_params
 )
 from localvectordb_server._logcfg import log_performance, request_context, DatabaseLogger
+import mimetypes
+from werkzeug.utils import secure_filename
+
+# Add this import after the existing imports in routes.py
+from localvectordb_server.extractors import get_extractor_registry, get_supported_formats
+FILE_EXTRACTION_AVAILABLE = True
+
+
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
@@ -1060,4 +1069,362 @@ def get_embeddings():
                 status_code=503,
                 recoverable=True,
                 details={"provider": provider, "model": model}
+            )
+
+
+@api.route("/api/v1/<db_name>/upload", methods=["POST"])
+@require_api_key
+@handle_errors
+@log_performance("upload_files")
+def upload_files(db_name):
+    """
+    Upload files to the database with automatic text extraction
+
+    Supports both single and multiple file uploads. Files are processed to extract
+    text content using appropriate extractors based on file type.
+
+    Form data:
+    - files: File(s) to upload (required)
+    - metadata: JSON string with metadata for files (optional)
+    - batch_size: Batch size for processing (default: 100)
+    - ids: JSON string with the list of document ids for files (optional)
+    - use_filename_as_id : boolean, ignored if `ids` is provided (optional)
+
+    Returns JSON with uploaded file IDs and extraction details.
+    """
+
+    with request_context("upload_files"):
+        # Check if server uploads are enabled
+        if not current_app.config_obj.server.file_upload_enabled:
+            raise APIError(
+                message="File extraction route is not enabled",
+                error_code="EXTRACTION_NOT_AVAILABLE",
+                status_code=503
+            )
+        # Check if files are present
+        if 'files' not in request.files:
+            raise ValidationError("No files provided", field="files")
+
+        files = request.files.getlist('files')
+        if not files or all(f.filename == '' for f in files):
+            raise ValidationError("No files selected", field="files")
+
+        file_ids = None
+        ids_param = request.form.get('ids')
+        use_filenames_as_ids = request.form.get("use_filename_as_id", "false").lower() == "true"
+
+        if ids_param:
+            try:
+                # Try JSON array first
+                file_ids = json.loads(ids_param)
+                if not isinstance(file_ids, list):
+                    raise ValueError("IDs must be an array")
+            except json.JSONDecodeError:
+                # Fallback to comma-separated string
+                file_ids = [id_str.strip() for id_str in ids_param.split(',') if id_str.strip()]
+
+        # Validate IDs if provided
+        if file_ids is not None:
+            if len(file_ids) != len(files):
+                raise ValidationError(
+                    f"Number of IDs ({len(file_ids)}) must match number of files ({len(files)})",
+                    field="ids"
+                )
+
+        # Get form parameters
+        extract_text = request.form.get('extract_text', 'true').lower() == 'true'
+        batch_size = int(request.form.get('batch_size', '100'))
+
+        # Parse metadata if provided
+        metadata_json = request.form.get('metadata')
+        base_metadata = {}
+        if metadata_json:
+            try:
+                base_metadata = json.loads(metadata_json)
+            except json.JSONDecodeError:
+                raise ValidationError("Invalid JSON in metadata field", field="metadata")
+
+        # Validate batch size
+        if batch_size < 1 or batch_size > 1000:
+            raise ValidationError("Batch size must be between 1 and 1000", field="batch_size", value=batch_size)
+
+        try:
+            db = current_app.db_manager.get_db(db_name)
+
+            documents = []
+            metadata_list = []
+            extraction_results = []
+            document_ids = []
+
+            extractor_registry = get_extractor_registry()
+
+            db_logger.log_query("upload_files",
+                                database_name=db_name,
+                                file_count=len(files)
+                                )
+
+            for file_idx, file in enumerate(files):
+                if file.filename == '':
+                    continue
+
+                if file_ids is not None:
+                    file_id = file_ids[file_idx]
+                elif use_filenames_as_ids:
+                    file_id = file.filename
+                else:
+                    file_id = None
+
+                # Secure the filename
+                filename = secure_filename(file.filename)
+                if not filename:
+                    filename = "uploaded_file"
+
+                # Read file content
+                file_content = file.read()
+                if len(file_content) == 0:
+                    logger.warning(f"Empty file uploaded: {filename}")
+                    continue
+
+                # Get mimetype
+                mimetype = file.content_type or mimetypes.guess_type(filename)[0]
+
+                # Prepare file metadata - only include fields that exist in the database schema
+                file_metadata = base_metadata.copy()
+
+                # Standard file upload metadata (only add if in schema)
+                standard_metadata = {
+                    'source': 'file_upload',
+                    'original_filename': file.filename,
+                    'secure_filename': filename,
+                    'file_size_bytes': len(file_content),
+                    'mimetype': mimetype,
+                    'upload_timestamp': datetime.now().isoformat()
+                }
+
+                # Only add metadata fields that exist in the database schema
+                for key, value in standard_metadata.items():
+                    if key in db.metadata_schema:
+                        file_metadata[key] = value
+
+                # Extract text content
+
+                try:
+                    extraction_result = extractor_registry.extract_text(
+                        file_content, filename, mimetype
+                    )
+
+                    if extraction_result.success:
+                        documents.append(extraction_result.text)
+                        document_ids.append(file_id)
+                        # Add extraction metadata - only fields that exist in schema
+                        extraction_metadata = {
+                            # 'extraction_success': True,
+                            'extraction_method': extraction_result.method,
+                            'text_length': len(extraction_result.text),
+                            **extraction_result.metadata  # Include all extraction metadata
+                        }
+
+                        # Filter extraction metadata to only include schema fields
+                        for key, value in extraction_metadata.items():
+                            if key in db.metadata_schema:
+                                file_metadata[key] = value
+
+                        extraction_results.append({
+                            'filename': filename,
+                            'extraction_success': True,
+                            'extraction_method': extraction_result.method,
+                            'text_length': len(extraction_result.text) if extraction_result.text else 0,
+                            'error': None,
+                            'metadata_fields_used': [key for key in extraction_result.metadata.keys() if
+                                                     key in db.metadata_schema],
+                            'metadata_fields_ignored': [key for key in extraction_result.metadata.keys() if
+                                                        key not in db.metadata_schema]
+                        })
+                    else:
+                        extraction_results.append({
+                            'filename': filename,
+                            'extraction_success': False,
+                            'error': extraction_result.error if not extraction_result.success else None,
+                            'metadata_fields_used': [],
+                            'metadata_fields_ignored': []
+                        })
+
+                except Exception as e:
+                    logger.error(f"Error extracting text from {filename}: {e}")
+
+                    extraction_results.append({
+                        'filename': filename,
+                        'extraction_success': False,
+                        'error': str(e),
+                        'metadata_fields_used': [],
+                        'metadata_fields_ignored': []
+                    })
+
+                metadata_list.append(file_metadata)
+
+            if not documents:
+                raise ValidationError("No valid files to process")
+
+            # Upsert documents to database
+            result_ids = db.upsert(
+                documents=documents,
+                metadata=metadata_list,
+                batch_size=batch_size
+            )
+
+            db_logger.log_query("upload_files_success",
+                                database_name=db_name,
+                                processed_files=len(documents),
+                                result_count=len(result_ids))
+
+            # Prepare response
+            response_data = {
+                "message": f"Successfully processed {len(documents)} file(s)",
+                "files_processed": len(documents),
+                "document_ids": result_ids,
+                "extraction_results": extraction_results,
+                "status": "success"
+            }
+
+            # Add extraction summary
+            if extract_text and FILE_EXTRACTION_AVAILABLE:
+                successful_extractions = sum(1 for r in extraction_results if r['extraction_success'])
+                response_data["extraction_summary"] = {
+                    "total_files": len(extraction_results),
+                    "successful_extractions": successful_extractions,
+                    "failed_extractions": len(extraction_results) - successful_extractions,
+                    "supported_formats": get_supported_formats()
+                }
+
+            return jsonify(response_data)
+
+        except Exception as e:
+            db_logger.log_error("upload_files", e, database_name=db_name)
+            raise
+
+
+@api.route("/api/v1/upload/supported-formats", methods=["GET"])
+@require_api_key
+@handle_errors
+def get_upload_supported_formats():
+    """
+    Get information about supported file formats for upload
+
+    Returns information about which file formats can be processed
+    and what extraction methods are available.
+    """
+
+    if not current_app.config_obj.server.file_upload_enabled:
+        raise APIError(
+            message="File extraction route is not enabled",
+            error_code="EXTRACTION_NOT_AVAILABLE",
+            status_code=503
+        )
+
+    supported = get_supported_formats()
+
+    # Convert to the expected format for API response
+    format_details = {}
+    for format_key, format_info in supported.items():
+        format_details[format_key] = {
+            "extensions": format_info.get('extensions', []),
+            "mimetypes": format_info.get('mimetypes', []),
+            "description": f"{format_key.upper()} files",
+            "extractors": format_info.get('extractors', []),
+            "supported": format_info.get('available', False)
+        }
+
+    response = {
+        "extraction_available": True,
+        "supported_formats": format_details,
+        "basic_text_support": True,
+        "text_file_extensions": [".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".xml", ".csv"],
+    }
+
+    if current_app.config["ENVIRONMENT"] == "development":
+        response["installation_hints"] = {
+            "pdf": "pip install pdfplumber or pip install PyPDF2",
+            "docx": "pip install python-docx",
+            "pptx": "pip install python-pptx",
+            "xlsx": "pip install openpyxl",
+            "rtf": "pip install striprtf"
+        }
+
+    return jsonify(response)
+
+
+@api.route("/api/v1/upload/extract-preview", methods=["POST"])
+@require_api_key
+@handle_errors
+@log_performance("extract_preview")
+def extract_preview():
+    """
+    Preview text extraction from uploaded files without adding to database
+
+    This endpoint allows testing text extraction on files before committing
+    them to the database. Useful for validating extraction quality.
+
+    Form data:
+    - file: Single file to preview (required)
+
+    Returns extracted text and extraction metadata.
+    """
+
+    with request_context("extract_preview"):
+        if not current_app.config_obj.server.file_upload_enabled:
+            raise APIError(
+                message="File extraction is not enabled",
+                error_code="EXTRACTION_NOT_AVAILABLE",
+                status_code=503
+            )
+
+        if 'file' not in request.files:
+            raise ValidationError("No file provided", field="file")
+
+        file = request.files['file']
+        if file.filename == '':
+            raise ValidationError("No file selected", field="file")
+
+        try:
+            # Secure the filename
+            filename = secure_filename(file.filename)
+            if not filename:
+                filename = "preview_file"
+
+            # Read file content
+            file_content = file.read()
+            mimetype = file.content_type or mimetypes.guess_type(filename)[0]
+
+            # Extract text
+            extractor_registry = get_extractor_registry()
+            extraction_result = extractor_registry.extract_text(
+                file_content, filename, mimetype
+            )
+
+            # Prepare response
+            response_data = {
+                "filename": filename,
+                "original_filename": file.filename,
+                "file_size_bytes": len(file_content),
+                "mimetype": mimetype,
+                "extraction_success": extraction_result.success,
+                "extraction_method": extraction_result.method,
+                "extraction_metadata": extraction_result.metadata,
+                "extracted_text": extraction_result.text,
+                "text_length": len(extraction_result.text),
+                "text_preview": extraction_result.text[:500] + "..." if len(
+                    extraction_result.text) > 500 else extraction_result.text
+            }
+
+            if not extraction_result.success:
+                response_data["extraction_error"] = extraction_result.error
+
+            return jsonify(response_data)
+
+        except Exception as e:
+            logger.error(f"Error during extraction preview: {e}")
+            raise APIError(
+                message=f"Preview extraction failed: {str(e)}",
+                error_code="EXTRACTION_PREVIEW_FAILED",
+                status_code=500
             )

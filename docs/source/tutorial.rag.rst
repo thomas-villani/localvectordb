@@ -1,6 +1,6 @@
-=====================================================
+=======================================================
 LocalVectorDB Tutorial: Building a RAG Chat Application
-=====================================================
+=======================================================
 
 This tutorial will guide you through building a complete Retrieval-Augmented Generation (RAG) chat application using LocalVectorDB and Ollama. By the end, you'll have a working chatbot that can answer questions based on your own documents.
 
@@ -388,26 +388,26 @@ Let's create a simple command-line interface for our RAG chatbot:
 
                elif user_input.lower() == 'help':
                    print("""
-Available commands:
-- quit: Exit the chat
-- help: Show this help message
-- stats: Show database statistics
-- categories: List available categories
-- search [category]: Search within a specific category
+   Available commands:
+   - quit: Exit the chat
+   - help: Show this help message
+   - stats: Show database statistics
+   - categories: List available categories
+   - search [category]: Search within a specific category
 
-You can also ask any question and I'll search my knowledge base!
+   You can also ask any question and I'll search my knowledge base!
                    """)
                    continue
 
                elif user_input.lower() == 'stats':
                    stats = db.stats
                    print(f"""
-Database Statistics:
-- Documents: {stats['documents']}
-- Chunks: {stats['chunks']}
-- Index vectors: {stats['index_vectors']}
-- Embedding model: {stats['embedding_model']}
-- FTS enabled: {stats['fts_enabled']}
+   Database Statistics:
+   - Documents: {stats['documents']}
+   - Chunks: {stats['chunks']}
+   - Index vectors: {stats['index_vectors']}
+   - Embedding model: {stats['embedding_model']}
+   - FTS enabled: {stats['fts_enabled']}
                    """)
                    continue
 
@@ -443,6 +443,7 @@ Database Statistics:
                break
            except Exception as e:
                print(f"Error: {str(e)}")
+
 
 Advanced Features
 =================

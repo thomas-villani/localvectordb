@@ -45,6 +45,7 @@ Full Configuration File
    port = 5000
    log_level = "INFO"
    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+   file_upload_enabled = true   # enables the /api/v1/<db-name>/upload route
    max_request_size = 104857600
    enable_rate_limiting = false
    rate_limit = "100 per minute"
@@ -229,6 +230,10 @@ Server Settings
      - str
      - ``'%(asctime)s - %(name)s - %(levelname)s - %(message)s'``
      - Format string for log messages.
+   * - ``file_upload_enabled``
+     - bool
+     - ``false``
+     - Whether to allow file uploads via the ``/api/v1/<db-name>/upload`` route.
    * - ``max_request_size``
      - int
      - ``104857600`` (100 MB)

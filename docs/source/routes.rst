@@ -592,6 +592,385 @@ List documents with pagination and filtering.
 
    filtered_docs = response.json()["documents"]
 
+File Upload Operations
+----------------------
+
+The LocalVectorDB Server supports file uploads with automatic text extraction from various document formats.
+This feature allows you to upload documents directly to your vector database without manual text extraction.
+
+.. important:: The file upload routes are only enabled if the ``server.file_upload_enabled`` is set to ``true``.
+
+
+Supported File Formats
+^^^^^^^^^^^^^^^^^^^^^^^
+
+**Always Supported (Basic Text)**:
+
+- ``.txt`` - Plain text files
+- ``.md`` - Markdown files
+- ``.py``, ``.js``, ``.html``, ``.css`` - Code and markup files
+- ``.json``, ``.xml``, ``.csv`` - Structured text files
+
+**Optionally Supported (With Additional Dependencies)**:
+
+- ``.pdf`` - PDF documents (via PyPDF2 or pdfplumber)
+- ``.docx`` - Microsoft Word documents (via python-docx)
+- ``.pptx`` - Microsoft PowerPoint presentations (via python-pptx)
+- ``.xlsx``, ``.xls`` - Microsoft Excel spreadsheets (via openpyxl)
+- ``.html``, ``.htm`` - HTML web pages (via beautifulsoup4)
+- ``.xml``, ``.rss``, ``.atom``, ``.svg`` - XML documents and feeds (via beautifulsoup4)
+- ``.rtf`` - Rich Text Format documents (via striprtf)
+
+Installation Requirements
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Basic Installation**:
+
+.. code-block:: bash
+
+   pip install localvectordb-server
+
+**With File Extraction Support**:
+
+.. code-block:: bash
+
+   # Standard file extraction capabilities
+   pip install localvectordb-server[file-extraction]
+
+   # For only .docx, .pptx, and .xlsx support
+   pip install localvectordb-server[file-extraction-office]
+
+   # Manual installation of specific extractors
+   pip install PyPDF2 python-docx python-pptx openpyxl striprtf beautifulsoup4
+
+Upload Files to Database
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Upload one or more files to a database with automatic text extraction.
+
+**Endpoint**: ``POST /api/v1/{db_name}/upload``
+
+**Headers**:
+
+- ``Authorization: Bearer {api_key}`` (if authentication enabled)
+- ``Content-Type: multipart/form-data``
+
+**Form Data**:
+
+- ``files``: File(s) to upload (required, supports multiple files)
+- ``metadata``: JSON string with base metadata to apply to all files (optional)
+- ``ids``: JSON array or comma-separated string of document IDs (optional)
+- ``use_filename_as_id``: Boolean to use filename as document ID (optional, ignored if ``ids`` provided)
+- ``extract_text``: Boolean to enable text extraction (default: true)
+- ``batch_size``: Batch size for processing (default: 100, max: 1000)
+
+.. note::
+   Only metadata fields that exist in the database's metadata schema will be stored. Extraction metadata and file
+   metadata that don't match schema fields will be ignored but reported in the response.
+
+**curl Example**:
+
+.. code-block:: bash
+
+   # Upload multiple files with metadata
+   curl -X POST "http://localhost:5000/api/v1/research_papers/upload" \
+     -H "Authorization: Bearer lvdb_your_api_key" \
+     -F "files=@document.pdf" \
+     -F "files=@presentation.pptx" \
+     -F "metadata={\"category\":\"research\",\"project\":\"AI\"}" \
+     -F "ids=[\"research_doc_1\", \"presentation_slides\"]" \
+     -F "extract_text=true" \
+     -F "batch_size=50"
+
+   # Upload single file using filename as ID
+   curl -X POST "http://localhost:5000/api/v1/my_database/upload" \
+     -H "Authorization: Bearer lvdb_your_api_key" \
+     -F "files=@important_doc.pdf" \
+     -F "use_filename_as_id=true" \
+     -F "metadata={\"priority\":\"high\"}"
+
+**Python Example**:
+
+.. code-block:: python
+
+   import requests
+
+   # Upload multiple files
+   files = [
+       ('files', ('document.pdf', open('document.pdf', 'rb'), 'application/pdf')),
+       ('files', ('presentation.pptx', open('presentation.pptx', 'rb'),
+                  'application/vnd.openxmlformats-officedocument.presentationml.presentation'))
+   ]
+
+   data = {
+       'metadata': '{"category":"research","project":"AI"}',
+       'ids': '["research_doc_1", "presentation_slides"]',
+       'extract_text': 'true',
+       'batch_size': '50'
+   }
+
+   response = requests.post(
+       "http://localhost:5000/api/v1/research_papers/upload",
+       headers={"Authorization": "Bearer lvdb_your_api_key"},
+       files=files,
+       data=data
+   )
+
+   result = response.json()
+   print(f"Processed {result['files_processed']} files")
+   print(f"Document IDs: {result['document_ids']}")
+
+   # Close files
+   for _, file_tuple in files:
+       file_tuple[1].close()
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "message": "Successfully processed 2 file(s)",
+     "files_processed": 2,
+     "document_ids": ["research_doc_1", "presentation_slides"],
+     "extraction_results": [
+       {
+         "filename": "document.pdf",
+         "extraction_success": true,
+         "extraction_method": "pdfplumber",
+         "text_length": 1543,
+         "error": null,
+         "metadata_fields_used": ["extraction_method", "file_size_bytes"],
+         "metadata_fields_ignored": ["page_count", "extraction_library"]
+       },
+       {
+         "filename": "presentation.pptx",
+         "extraction_success": true,
+         "extraction_method": "python-pptx",
+         "text_length": 892,
+         "error": null,
+         "metadata_fields_used": ["extraction_method"],
+         "metadata_fields_ignored": ["slide_count", "extraction_library"]
+       }
+     ],
+     "extraction_summary": {
+       "total_files": 2,
+       "successful_extractions": 2,
+       "failed_extractions": 0,
+       "supported_formats": {
+         "pdf": true,
+         "docx": true,
+         "pptx": true,
+         "xlsx": true,
+         "rtf": false
+       }
+     },
+     "status": "success"
+   }
+
+Get Supported File Formats
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Get information about supported file formats and extraction capabilities.
+
+**Endpoint**: ``GET /api/v1/upload/supported-formats``
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -X GET "http://localhost:5000/api/v1/upload/supported-formats" \
+     -H "Authorization: Bearer lvdb_your_api_key"
+
+**Python Example**:
+
+.. code-block:: python
+
+   response = requests.get(
+       "http://localhost:5000/api/v1/upload/supported-formats",
+       headers={"Authorization": "Bearer lvdb_your_api_key"}
+   )
+
+   formats = response.json()["supported_formats"]
+   print("Supported formats:")
+   for format_name, info in formats.items():
+       if info["supported"]:
+           print(f"  {format_name}: {info['extensions']} - {info['description']}")
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "extraction_available": true,
+     "supported_formats": {
+       "pdf": {
+         "extensions": [".pdf"],
+         "mimetypes": ["application/pdf"],
+         "description": "PDF files",
+         "extractors": ["PDFPlumberExtractor", "PyPDF2Extractor"],
+         "supported": true
+       },
+       "docx": {
+         "extensions": [".docx"],
+         "mimetypes": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+         "description": "DOCX files",
+         "extractors": ["DocxExtractor"],
+         "supported": true
+       }
+     },
+     "basic_text_support": true,
+     "text_file_extensions": [".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".xml", ".csv"],
+     "installation_hints": {  // Only returned in development mode
+       "pdf": "pip install pdfplumber or pip install PyPDF2",
+       "docx": "pip install python-docx",
+       "pptx": "pip install python-pptx",
+       "xlsx": "pip install openpyxl",
+       "rtf": "pip install striprtf"
+     }
+   }
+
+Preview Text Extraction
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Preview text extraction from a file without adding it to the database.
+
+**Endpoint**: ``POST /api/v1/upload/extract-preview``
+
+**Form Data**:
+
+- ``file``: Single file to preview (required)
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -X POST "http://localhost:5000/api/v1/my_database/upload/extract-preview" \
+     -H "Authorization: Bearer lvdb_your_api_key" \
+     -F "file=@sample.pdf"
+
+**Python Example**:
+
+.. code-block:: python
+
+   with open('sample.pdf', 'rb') as f:
+       files = {'file': ('sample.pdf', f, 'application/pdf')}
+
+       response = requests.post(
+           "http://localhost:5000/api/v1/my_database/upload/extract-preview",
+           headers={"Authorization": "Bearer lvdb_your_api_key"},
+           files=files
+       )
+
+   preview = response.json()
+   print(f"File: {preview['filename']}")
+   print(f"Extraction method: {preview['extraction_method']}")
+   print(f"Text length: {preview['text_length']}")
+   print(f"Preview: {preview['text_preview']}")
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "filename": "sample.pdf",
+     "original_filename": "sample.pdf",
+     "file_size_bytes": 245760,
+     "mimetype": "application/pdf",
+     "extraction_success": true,
+     "extraction_method": "pdfplumber",
+     "extraction_metadata": {
+       "page_count": 5,
+       "extraction_library": "pdfplumber",
+       "processing_time_ms": 234
+     },
+     "extracted_text": "Full extracted text content here...",
+     "text_length": 1543,
+     "text_preview": "First 500 characters of extracted text..."
+   }
+
+Metadata Schema Considerations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The file upload API respects the database's metadata schema. Only metadata fields that are defined in the database schema will be stored with the documents. This includes both:
+
+1. **User-provided metadata** (via the ``metadata`` form field)
+2. **Extraction metadata** (generated by file extractors)
+
+**Common Extraction Metadata Fields**:
+
+Different extractors generate various metadata fields. To capture this information, consider adding these fields to your database schema:
+
+.. code-block:: python
+
+   from localvectordb.core import MetadataField, MetadataFieldType
+
+   # File upload metadata schema
+   upload_schema = {
+       # Basic file information
+       'source': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'original_filename': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'file_size_bytes': MetadataField(type=MetadataFieldType.INTEGER),
+       'mimetype': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'upload_timestamp': MetadataField(type=MetadataFieldType.DATE, indexed=True),
+
+       # Extraction information
+       'extraction_method': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'extraction_success': MetadataField(type=MetadataFieldType.BOOLEAN, indexed=True),
+       'text_length': MetadataField(type=MetadataFieldType.INTEGER),
+
+       # Format-specific metadata (add as needed)
+       'page_count': MetadataField(type=MetadataFieldType.INTEGER),      # PDF
+       'slide_count': MetadataField(type=MetadataFieldType.INTEGER),     # PowerPoint
+       'sheet_count': MetadataField(type=MetadataFieldType.INTEGER),     # Excel
+       'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True), # HTML, Office docs
+       'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True), # Office docs
+   }
+
+**Viewing Metadata Usage**:
+
+The upload response includes ``metadata_fields_used`` and ``metadata_fields_ignored`` arrays showing which extraction metadata was stored vs. ignored due to schema constraints.
+
+**Example with Database Creation**:
+
+.. code-block:: python
+
+   # Create database with file upload schema
+   response = requests.post(
+       "http://localhost:5000/api/v1/databases",
+       headers={
+           "Content-Type": "application/json",
+           "Authorization": "Bearer your_api_key"
+       },
+       json={
+           "name": "document_library",
+           "metadata_schema": {
+               "source": {"type": "text", "indexed": True},
+               "original_filename": {"type": "text", "indexed": True},
+               "file_size_bytes": {"type": "integer"},
+               "mimetype": {"type": "text", "indexed": True},
+               "upload_timestamp": {"type": "date", "indexed": True},
+               "extraction_method": {"type": "text", "indexed": True},
+               "page_count": {"type": "integer"},
+               "category": {"type": "text", "indexed": True},
+               "tags": {"type": "json"}
+           }
+       }
+   )
+
+   # Now upload files with metadata that matches the schema
+   files = [('files', ('document.pdf', open('document.pdf', 'rb'), 'application/pdf'))]
+   data = {
+       'metadata': '{"category":"research","tags":["AI","ML"]}',
+       'extract_text': 'true'
+   }
+
+   upload_response = requests.post(
+       "http://localhost:5000/api/v1/document_library/upload",
+       headers={"Authorization": "Bearer your_api_key"},
+       files=files,
+       data=data
+   )
+
 Search Operations
 -----------------
 

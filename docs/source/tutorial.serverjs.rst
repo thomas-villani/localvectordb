@@ -1,6 +1,6 @@
-==================================================================
+========================================================================
 JavaScript Search App Tutorial: Building a Simple Document Search Engine
-==================================================================
+========================================================================
 
 This tutorial will guide you through building a simple web-based document search engine using the LocalVectorDB server API. You'll create a single-page application that can search through documents using vector similarity, keyword search, or hybrid search - all without writing any Python code!
 
@@ -165,13 +165,11 @@ HTML Structure (index.html)
                </div>
 
                <div id="noResults" class="no-results hidden">
-                   <div class="no-results-icon">📭</div>
                    <h3>No results found</h3>
                    <p>Try adjusting your search terms or using a different search type.</p>
                </div>
 
                <div id="errorMessage" class="error-message hidden">
-                   <div class="error-icon">⚠️</div>
                    <h3>Something went wrong</h3>
                    <p id="errorText">Please check if the LocalVectorDB server is running.</p>
                </div>
@@ -513,7 +511,7 @@ CSS Styling (styles.css)
    }
 
 JavaScript Functionality (script.js)
--------------------------------------
+------------------------------------
 
 .. code-block:: javascript
 
@@ -693,13 +691,13 @@ JavaScript Functionality (script.js)
            <div class="result-content">${escapeHtml(content)}</div>
            <div class="result-metadata">
                <div class="metadata-item">
-                   📄 <span>ID: ${escapeHtml(result.id)}</span>
+                   <span>ID: ${escapeHtml(result.id)}</span>
                </div>
                <div class="metadata-item">
-                   🎯 <span>Type: ${escapeHtml(result.type)}</span>
+                   <span>Type: ${escapeHtml(result.type)}</span>
                </div>
                <div class="metadata-item">
-                   📏 <span>Length: ${result.content.length} chars</span>
+                   <span>Length: ${result.content.length} chars</span>
                </div>
            </div>
        `;
@@ -800,7 +798,7 @@ JavaScript Functionality (script.js)
            }
        };
 
-       console.log('🛠️ Development tools available at window.searchDemo');
+       console.log('Development tools available at window.searchDemo');
    }
 
 Running the Application
@@ -1013,6 +1011,8 @@ Congratulations! You've built a complete document search engine using LocalVecto
 - RESTful API usage
 - Search result processing
 
-This foundation can be extended into more sophisticated applications like document management systems, knowledge bases, or AI-powered search engines. The modular design makes it easy to add features like authentication, file uploads, advanced filtering, and more.
+This foundation can be extended into more sophisticated applications like document management systems, knowledge bases,
+or AI-powered search engines. The modular design makes it easy to add features like authentication, file uploads,
+advanced filtering, and more.
 
-Happy searching! 🔍
+Happy searching!

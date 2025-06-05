@@ -164,8 +164,8 @@ class ServerSettings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
-
-    # Performance settings
+    # Turn on to accept various file formats with upload route
+    file_upload_enabled: bool = False
     max_request_size: int = 100 * 1024 * 1024  # 100MB default
 
     # Feature flags
@@ -173,7 +173,9 @@ class ServerSettings(BaseSettings):
     enable_structured_logging: bool = not debug
     enable_performance_logging: bool = False
     enable_rate_limiting: bool = False
+    # Settings for Flask-Limiter
     rate_limit: str = "100 per minute"
+    # Can also provide a redis url
     rate_limit_storage_uri: str = "memory://"
 
     # Cache settings

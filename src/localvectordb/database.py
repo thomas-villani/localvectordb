@@ -598,6 +598,9 @@ class LocalVectorDB:
             elif len(ids) != len(documents):
                 raise ValueError("Number of IDs must match number of documents")
 
+            # Handle if they included some ids but not others.
+            ids = [(self._generate_doc_id() if i is None else i) for i in ids]
+
             # Validate metadata against schema
             self._validate_metadata_batch(metadata)
 
