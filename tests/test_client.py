@@ -527,21 +527,6 @@ class TestRemoteVectorDBQuery:
         assert payload["limit"] == 10
         assert payload["offset"] == 5
 
-    @patch('httpx.Client')
-    def test_filter_with_sql(self, mock_client_class, mock_db):
-        """Test filtering with raw SQL."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"documents": []}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
-
-        mock_db.filter(sql="author = 'Test' AND rating > 4.0")
-
-        payload = mock_client.post.call_args[1]["json"]
-        assert payload["sql"] == "author = 'Test' AND rating > 4.0"
-
 
 class TestRemoteVectorDBProperties:
     """Test RemoteVectorDB properties and utility methods."""

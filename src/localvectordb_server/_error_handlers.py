@@ -94,7 +94,7 @@ def standardize_error_response(
     Convert any exception to a standardized error response
     """
     logger = logging.getLogger('localvectordb.errors')
-
+    print(str(repr(error)))
     # Handle our custom API errors
     if isinstance(error, APIError):
         logger.error(

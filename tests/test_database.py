@@ -964,8 +964,8 @@ class TestLocalVectorDBFilter:
 
         with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
             mock_db.filter(where={
-                "rating": {">": 4.0},
-                "author": {"IN": ["Author1", "Author2"]}
+                "rating": {"$gt": 4.0},
+                "author": {"$in": ["Author1", "Author2"]}
             })
 
         # Check that complex conditions were processed
@@ -1000,19 +1000,6 @@ class TestLocalVectorDBFilter:
         sql_query = call_args[0]
         assert "LIMIT 10" in sql_query
         assert "OFFSET 5" in sql_query
-
-    def test_filter_with_raw_sql(self, mock_db):
-        """Test filtering with raw SQL where clause."""
-        mock_conn = create_mock_connection()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_pooled = create_mock_pooled_connection(mock_conn)
-
-        with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
-            mock_db.filter(sql="rating > 4.0 AND author LIKE '%test%'")
-
-        call_args = mock_conn.execute.call_args[0]
-        sql_query = call_args[0]
-        assert "rating > 4.0 AND author LIKE '%test%'" in sql_query
 
 
 class TestLocalVectorDBProperties:

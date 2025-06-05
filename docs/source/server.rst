@@ -72,3 +72,5 @@ Learn More
 - :doc:`Server Routes API <routes>`
 - :doc:`Server Configuration <config>`
 - :doc:`Command Line Interface (CLI) Overview <cli>`
+- :doc:`Advanced Server Usage <server.advanced>`
+

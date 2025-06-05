@@ -1178,7 +1178,7 @@ Advanced filtering using SQL-like queries.
 .. code-block:: json
 
    {
-     "where": {"journal": "Science", "year": {">=": 2020}},
+     "where": {"journal": "Science", "year": {"$gte": 2020}},
      "order_by": "year DESC",
      "limit": 50,
      "offset": 0
@@ -1194,7 +1194,7 @@ Advanced filtering using SQL-like queries.
      -d '{
        "where": {
          "journal": "Science",
-         "year": {">=": 2020}
+         "year": {"$gte": 2020}
        },
        "order_by": "year DESC",
        "limit": 20
@@ -1237,6 +1237,203 @@ Advanced filtering using SQL-like queries.
            "limit": 25
        }
    )
+
+Update Metadata Schema
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Update the metadata schema for an existing database. This allows you to add new metadata fields, modify existing ones, or remove fields from the schema.
+
+**Endpoint**: ``PUT /api/v1/{db_name}/schema``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "metadata_schema": {
+       "category": {"type": "text", "indexed": true, "required": true, "default_value": "general"},
+       "priority": {"type": "integer", "default_value": 0},
+       "tags": {"type": "json", "default_value": []},
+       "rating": {"type": "real", "indexed": true}
+     },
+     "drop_columns": false
+   }
+
+**Parameters**:
+
+- ``metadata_schema``: New schema definition (required)
+- ``drop_columns``: Whether to actually drop removed columns (default: false)
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -X PUT http://localhost:5000/api/v1/research_papers/schema \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer your_api_key" \
+     -d '{
+       "metadata_schema": {
+         "category": {"type": "text", "indexed": true, "required": true, "default_value": "research"},
+         "impact_factor": {"type": "real", "indexed": true},
+         "keywords": {"type": "json"},
+         "peer_reviewed": {"type": "boolean", "default_value": true}
+       },
+       "drop_columns": false
+     }'
+
+**Python Example**:
+
+.. code-block:: python
+
+   new_schema = {
+       "category": {"type": "text", "indexed": True, "required": True, "default_value": "research"},
+       "impact_factor": {"type": "real", "indexed": True},
+       "keywords": {"type": "json"},
+       "peer_reviewed": {"type": "boolean", "default_value": True}
+   }
+
+   response = requests.put(
+       "http://localhost:5000/api/v1/research_papers/schema",
+       headers={
+           "Content-Type": "application/json",
+           "Authorization": "Bearer your_api_key"
+       },
+       json={
+           "metadata_schema": new_schema,
+           "drop_columns": False  # Keep old columns for safety
+       }
+   )
+
+   changes = response.json()["changes"]
+   print(f"Added fields: {changes['added_fields']}")
+   print(f"Modified fields: {changes['modified_fields']}")
+   print(f"Populated defaults: {changes['populated_defaults']}")
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "message": "Successfully updated metadata schema for database 'research_papers'",
+     "status": "success",
+     "changes": {
+       "added_fields": ["impact_factor", "keywords", "peer_reviewed"],
+       "removed_fields": [],
+       "modified_fields": [
+         {
+           "field_name": "category",
+           "changes": ["added_default_value", "made_required"]
+         }
+       ],
+       "populated_defaults": [
+         {
+           "field_name": "category",
+           "rows_updated": 1250,
+           "default_value": "research"
+         },
+         {
+           "field_name": "peer_reviewed",
+           "rows_updated": 1250,
+           "default_value": true
+         }
+       ],
+       "dropped_columns": [],
+       "warnings": [],
+       "errors": []
+     },
+     "new_schema": {
+       "category": {"type": "text", "indexed": true, "required": true, "default_value": "research"},
+       "impact_factor": {"type": "real", "indexed": true, "required": false, "default_value": null},
+       "keywords": {"type": "json", "indexed": false, "required": false, "default_value": null},
+       "peer_reviewed": {"type": "boolean", "indexed": false, "required": false, "default_value": true}
+     }
+   }
+
+Get Metadata Schema Information
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Get detailed information about the current metadata schema for a database.
+
+**Endpoint**: ``GET /api/v1/{db_name}/schema``
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -H "Authorization: Bearer your_api_key" \
+        http://localhost:5000/api/v1/research_papers/schema
+
+**Python Example**:
+
+.. code-block:: python
+
+   response = requests.get(
+       "http://localhost:5000/api/v1/research_papers/schema",
+       headers={"Authorization": "Bearer your_api_key"}
+   )
+
+   schema_info = response.json()["schema_info"]
+
+   print(f"Total fields: {schema_info['field_count']}")
+   print(f"Indexed fields: {schema_info['indexed_fields']}")
+   print(f"Required fields: {schema_info['required_fields']}")
+
+   # Show field details
+   for field_name, field_info in schema_info['fields'].items():
+       print(f"{field_name}: {field_info['type']} "
+             f"(indexed={field_info['indexed']}, required={field_info['required']})")
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "database": "research_papers",
+     "schema_info": {
+       "fields": {
+         "title": {
+           "type": "text",
+           "indexed": true,
+           "required": false,
+           "default_value": null
+         },
+         "authors": {
+           "type": "json",
+           "indexed": false,
+           "required": false,
+           "default_value": null
+         },
+         "journal": {
+           "type": "text",
+           "indexed": true,
+           "required": false,
+           "default_value": null
+         },
+         "impact_factor": {
+           "type": "real",
+           "indexed": true,
+           "required": false,
+           "default_value": null
+         }
+       },
+       "field_count": 4,
+       "indexed_fields": ["title", "journal", "impact_factor"],
+       "required_fields": [],
+       "field_types": {
+         "text": 2,
+         "json": 1,
+         "real": 1
+       }
+     },
+     "status": "success"
+   }
+
+.. note::
+   - Field names cannot conflict with reserved columns: ``id``, ``content``, ``content_hash``, ``created_at``, ``updated_at``
+   - Removed fields are removed from the schema but columns are kept for data safety unless ``drop_columns=true``
+   - Type changes are recorded but don't modify existing data (SQLite limitation)
+   - Index changes are applied immediately
+   - Changes are applied in a transaction and rolled back on error
 
 Global Operations
 -----------------

@@ -116,6 +116,10 @@ class DatabaseSettings(BaseSettings):
     enable_gpu: bool = False
     enable_fts: bool = True
 
+    faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2"
+    faiss_index_hnsw_flat_neighbors: int = None  # Only used for IndexHNSWFlat
+    faiss_index_lsh_bits: int = None  # Only used for IndexLSH, number of bits for the index.
+
     # Default database parameters when creating new ones
     chunk_size: int = 500  # Renamed from chunk_tokens for v1.0
     chunk_overlap: int = 1
@@ -144,6 +148,9 @@ class DatabaseSettings(BaseSettings):
 
         if self.chunk_overlap >= self.chunk_size:
             raise ConfigurationError("chunk_overlap must be less than chunk_size")
+
+        if self.faiss_index_type and self.faiss_index_type not in ("IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"):
+            raise ConfigurationError("faiss_index_type must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
 
         # Validate metadata schema
         for field_name, field_config in self.default_metadata_schema.items():

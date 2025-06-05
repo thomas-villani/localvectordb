@@ -16,6 +16,7 @@ input validation, and performance monitoring.
 """
 import json
 import logging
+import re
 from datetime import datetime
 from math import ceil
 from typing import Dict, Any
@@ -828,13 +829,52 @@ def hybrid_search(db_name):
         return search_handler(db_name, data)
 
 
-# Filter and Metadata Routes
 @api.route("/api/v1/<db_name>/filter", methods=["POST"])
 @require_api_key
 @handle_errors
 @log_performance("filter_documents")
 def filter_documents(db_name):
-    """Filter documents by metadata and other criteria"""
+    """Filter documents by metadata with enhanced filtering capabilities
+
+    This endpoint now supports advanced MongoDB-style filtering with operators
+    like $gt, $lt, $contains, $exists, etc. Raw SQL support has been removed
+    to prevent injection attacks.
+
+    Request body supports:
+    {
+        "where": {
+            // Simple format
+            "author": "John Doe",
+            "year": 2023,
+
+            // Advanced format with operators
+            "rating": {"$gte": 4.0, "$lte": 5.0},
+            "tags": {"$contains": "python"},
+            "category": {"$in": ["tech", "science"]},
+            "title": {"$ilike": "%tutorial%"},
+
+            // Logical operators
+            "$and": [
+                {"year": {"$gte": 2020}},
+                {"$or": [
+                    {"author": "John Doe"},
+                    {"category": "featured"}
+                ]}
+            ]
+        },
+        "order_by": "created_at DESC",
+        "limit": 100,
+        "offset": 0
+    }
+
+    Supported operators:
+    - Comparison: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin
+    - String: $like, $ilike, $contains, $startswith, $endswith
+    - Existence: $exists, $not_exists
+    - Type: $type
+    - Logical: $and, $or, $not
+    - JSON: $contains, $not_contains (for JSON fields)
+    """
 
     with request_context("filter_documents"):
         if not request.is_json:
@@ -845,21 +885,22 @@ def filter_documents(db_name):
             raise ValidationError("Request body cannot be empty")
 
         where = data.get("where")
-        sql = data.get("sql")
         order_by = data.get("order_by")
         limit = data.get("limit")
         offset = data.get("offset", 0)
 
-        if not where and not sql:
-            raise ValidationError("Either 'where' or 'sql' must be provided")
-
         # Validate types
         if where is not None:
             validate_field_type(data, "where", dict)
-        if sql is not None:
-            validate_field_type(data, "sql", str)
         if order_by is not None:
             validate_field_type(data, "order_by", str)
+            # Basic validation for ORDER BY to prevent injection
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(\s+(ASC|DESC))?$', order_by.strip(), re.IGNORECASE):
+                raise ValidationError(
+                    "Invalid order_by format. Use 'field_name' or 'field_name ASC/DESC'",
+                    field="order_by",
+                    value=order_by
+                )
         if limit is not None:
             validate_field_type(data, "limit", int)
             if limit < 1 or limit > 10000:
@@ -875,12 +916,11 @@ def filter_documents(db_name):
             db_logger.log_query("filter_documents",
                                 database_name=db_name,
                                 has_where=where is not None,
-                                has_sql=sql is not None,
+                                filter_complexity=len(str(where)) if where else 0,
                                 limit=limit)
 
             documents = db.filter(
                 where=where,
-                sql=sql,
                 order_by=order_by,
                 limit=limit,
                 offset=offset
@@ -889,9 +929,19 @@ def filter_documents(db_name):
             # Serialize results
             serialized_docs = [serialize_document(doc) for doc in documents]
 
+            db_logger.log_query("filter_documents_success",
+                                database_name=db_name,
+                                result_count=len(serialized_docs))
+
             return jsonify({
                 "documents": serialized_docs,
-                "count": len(serialized_docs)
+                "count": len(serialized_docs),
+                "filter_info": {
+                    "where_provided": where is not None,
+                    "order_by_provided": order_by is not None,
+                    "limit": limit,
+                    "offset": offset
+                }
             })
 
         except Exception as e:
@@ -975,7 +1025,6 @@ def health_check():
         }), 503
 
 
-# Embedding Routes
 @api.route("/api/v1/<db_name>/embeddings", methods=["POST"])
 @require_api_key
 @handle_errors
@@ -999,24 +1048,9 @@ def get_embeddings_for_db(db_name):
         elif not isinstance(texts, list):
             raise ValidationError("`texts` must be a string or array of strings", field="texts")
 
-        provider = data.get("provider")
-        if not provider:
-            raise ValidationError("`provider` must be provided", field="provider")
-        elif not isinstance(provider, str):
-            raise ValidationError("`provider` must be a string", field="provider")
-
-        model = data.get("model")
-        if not model:
-            raise ValidationError("`model` must be provided", field="model")
-        elif not isinstance(provider, str):
-            raise ValidationError("`model` must be a string", field="model")
-
-        from localvectordb.embeddings import EmbeddingRegistry
-        if provider not in EmbeddingRegistry.list():
-            raise ValidationError(f"`provider` must be one of: {EmbeddingRegistry.list()}", field="provider")
-
         try:
-            embeddings = current_app.db_manager.get_embeddings_for_model(texts, provider, model)
+            db = current_app.db_manager.get_db(db_name)
+            embeddings = db.embedding_provider.embed_sync(texts).tolist()
 
             return jsonify({"embeddings": embeddings})
 
@@ -1053,7 +1087,8 @@ def get_embeddings():
 
         from localvectordb.embeddings import EmbeddingRegistry
         if provider not in EmbeddingRegistry.list():
-            raise ValidationError(f"Provider must be one of: {', '.join(EmbeddingRegistry.list())}", field="provider", value=provider)
+            raise ValidationError(f"Provider must be one of: {', '.join(EmbeddingRegistry.list())}",
+                                  field="provider", value=provider)
 
         try:
             embedding_provider = EmbeddingRegistry.create_provider(provider, model)

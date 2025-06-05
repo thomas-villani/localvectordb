@@ -19,6 +19,9 @@ class DatabaseNotFoundError(DatabaseError, KeyError):
     """Raised if the Database cannot be found"""
     pass
 
+class MetadataFilterError(DatabaseError, ValueError):
+    """Raised when there's an error in metadata filter specification or processing"""
+    pass
 
 class DuplicateDocumentIDError(BaseLocalVectorDBException, ValueError):
     """Raised when inserting document(s) and the id(s) already exist"""

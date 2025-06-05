@@ -67,7 +67,7 @@ Available Models:
 - ``snowflake-arctic-embed``: Optimized for retrieval tasks
 
 OpenAI Provider
-^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^
 
 High-quality cloud embeddings with API costs.
 

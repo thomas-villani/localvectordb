@@ -626,7 +626,6 @@ class AsyncLocalVectorDB:
     async def filter(
             self,
             where: Optional[Dict[str, Any]] = None,
-            sql: Optional[str] = None,
             order_by: Optional[str] = None,
             limit: Optional[int] = None,
             offset: int = 0
@@ -639,7 +638,6 @@ class AsyncLocalVectorDB:
             functools.partial(
                 self._sync_db.filter,
                 where=where,
-                sql=sql,
                 order_by=order_by,
                 limit=limit,
                 offset=offset

@@ -750,7 +750,7 @@ class TestGlobalSearchRoutes:
     """Test global search routes."""
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
-    def test_global_search_all_dbs(self, client, app):
+    def test_global_search_all_dbs(self, client, app, sample_query_result):
         """Test global search across all databases."""
         # Setup mock databases
         mock_db1 = Mock()
@@ -760,6 +760,10 @@ class TestGlobalSearchRoutes:
 
         app.db_manager.list_databases.return_value = ['db1', 'db2']
         app.db_manager.get_db.side_effect = lambda name: mock_db1 if name == 'db1' else mock_db2
+        app.db_manager.search_databases.return_value = {
+            "db1": [sample_query_result],
+            "db2": [sample_query_result]
+        }
 
         data = {
             "query": "test query",
@@ -777,11 +781,14 @@ class TestGlobalSearchRoutes:
         assert "db2" in result["results"]
 
     @patch('localvectordb_server.routes.require_api_key', lambda f: f)
-    def test_global_search_specific_dbs(self, client, app):
+    def test_global_search_specific_dbs(self, client, app, sample_query_result):
         """Test global search on specific databases."""
         mock_db = Mock()
         mock_db.query.return_value = []
         app.db_manager.get_db.return_value = mock_db
+        app.db_manager.search_databases.return_value = {
+            "db1": [sample_query_result]
+        }
 
         data = {
             "query": "test query",

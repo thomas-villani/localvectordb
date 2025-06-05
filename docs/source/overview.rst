@@ -212,17 +212,10 @@ Filtering and Querying Metadata
 
    # Complex filters
    docs = db.filter(where={
-       "priority": {">=": 3},
-       "category": {"in": ["tech", "business"]},
-       "publish_date": {"between": ["2024-01-01", "2024-12-31"]}
+       "priority": {"$gte": 3},
+       "category": {"$in": ["tech", "business"]},
+       "publish_date": {"$between": ["2024-01-01", "2024-12-31"]}
    })
-
-   # SQL-like queries
-   docs = db.filter(
-       sql="priority > 3 AND category LIKE '%tech%'",
-       order_by="priority DESC",
-       limit=10
-   )
 
    # Pagination
    docs = db.filter(
@@ -301,6 +294,53 @@ Working with Chunks
        print(f"Chunk from document: {result.document_id}")
        print(f"Position: line {result.position.line}")
        print(f"Content: {result.content}")
+
+Updating Metadata Schema
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can update a database's metadata schema after creation to add new fields, modify existing ones, or change indexing:
+
+.. code-block:: python
+
+   # Add new metadata fields to existing database
+   new_schema = {
+       # Keep existing fields
+       'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+
+       # Add new fields
+       'category': MetadataField(
+           type=MetadataFieldType.TEXT,
+           indexed=True,
+           required=True,
+           default_value="general"
+       ),
+       'rating': MetadataField(type=MetadataFieldType.REAL, indexed=True),
+       'tags': MetadataField(type=MetadataFieldType.JSON, default_value=[])
+   }
+
+   # Apply schema update
+   changes = db.update_metadata_schema(new_schema)
+
+   # Review what changed
+   print(f"Added fields: {changes['added_fields']}")
+   print(f"Populated defaults: {len(changes['populated_defaults'])} documents updated")
+
+   # Use shorthand syntax for simple updates
+   db.update_metadata_schema({
+       'priority': 'integer',           # Simple type
+       'reviewed': ('boolean', True),   # (type, indexed)
+       'version': ('integer', False, True)  # (type, indexed, required)
+   })
+
+   # Apply a predefined schema
+   db.update_metadata_schema('research_papers')  # Uses common schema
+
+.. note::
+   - Existing document data is preserved when updating schema
+   - New required fields get populated with default values automatically
+   - Removed fields are kept in the database for safety (use ``drop_columns=True`` to actually remove)
+   - Schema changes are applied in a transaction and rolled back on error
 
 Database Statistics and Management
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

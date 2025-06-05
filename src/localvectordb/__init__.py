@@ -199,6 +199,8 @@ from localvectordb.core import MetadataField
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.factory import VectorDB
+from localvectordb.async_database import AsyncLocalVectorDB, create_async_vectordb
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
-           "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions"]
+           "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions",
+           "AsyncLocalVectorDB", "create_async_vectordb", "async_database"]

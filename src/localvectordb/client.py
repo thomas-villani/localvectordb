@@ -696,22 +696,48 @@ class RemoteVectorDB:
     def filter(
             self,
             where: Optional[Dict[str, Any]] = None,
-            sql: Optional[str] = None,
             order_by: Optional[str] = None,
             limit: Optional[int] = None,
             offset: int = 0
     ) -> List[Document]:
         """
-        Filter documents using SQL-like queries
+        Filter documents using enhanced metadata filtering
+
+        This method now supports advanced MongoDB-style filtering with operators
+        like $gt, $lt, $contains, $exists, etc. Raw SQL support has been removed
+        for security reasons.
 
         Parameters
         ----------
         where : Optional[Dict[str, Any]]
-            Simple filter conditions
-        sql : Optional[str]
-            Raw SQL WHERE clause
+            Filter conditions using either simple format or MongoDB-style operators.
+
+            Simple format:
+                {"author": "John Doe", "year": 2023}
+
+            Advanced format with operators:
+                {
+                    "author": {"$eq": "John Doe"},
+                    "year": {"$gte": 2020, "$lte": 2024},
+                    "tags": {"$contains": "python"},
+                    "rating": {"$in": [4, 5]},
+                    "$and": [
+                        {"category": "tech"},
+                        {"$or": [{"lang": "en"}, {"lang": "es"}]}
+                    ]
+                }
+
+            Supported operators:
+                - Comparison: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin
+                - String: $like, $ilike, $contains, $startswith, $endswith
+                - Existence: $exists, $not_exists
+                - Type: $type
+                - Logical: $and, $or, $not
+                - JSON: $contains, $not_contains (for JSON fields)
+
         order_by : Optional[str]
-            ORDER BY clause
+            ORDER BY clause (field name with optional ASC/DESC)
+            Examples: "created_at DESC", "author ASC", "rating"
         limit : Optional[int]
             Maximum number of results
         offset : int
@@ -721,17 +747,77 @@ class RemoteVectorDB:
         -------
         List[Document]
             Filtered documents
+
+        Examples
+        --------
+        Simple filtering::
+
+            # Simple equality
+            docs = db.filter(where={"author": "John Doe"})
+
+            # Multiple conditions (AND)
+            docs = db.filter(where={"author": "John Doe", "year": 2023})
+
+        Advanced filtering::
+
+            # Range queries
+            docs = db.filter(where={
+                "year": {"$gte": 2020, "$lte": 2024},
+                "rating": {"$gt": 4.0}
+            })
+
+            # String operations
+            docs = db.filter(where={
+                "title": {"$contains": "python"},
+                "author": {"$startswith": "Dr."}
+            })
+
+            # List operations
+            docs = db.filter(where={
+                "category": {"$in": ["tech", "science"]},
+                "tags": {"$contains": "tutorial"}
+            })
+
+            # Logical operations
+            docs = db.filter(where={
+                "$and": [
+                    {"year": {"$gte": 2020}},
+                    {"$or": [
+                        {"author": "John Doe"},
+                        {"author": "Jane Smith"}
+                    ]}
+                ]
+            })
+
+            # Existence checks
+            docs = db.filter(where={
+                "optional_field": {"$exists": False},
+                "required_field": {"$exists": True}
+            })
+
+        Ordering and pagination::
+
+            # Order by field
+            docs = db.filter(
+                where={"category": "tech"},
+                order_by="created_at DESC",
+                limit=10,
+                offset=20
+            )
+
+        Notes
+        -----
+        - All queries are converted to safe parameterized SQL on the server
+        - Field names are validated against the metadata schema
+        - Raw SQL is no longer supported to prevent injection attacks
+        - JSON fields support special operations like $contains
         """
+
         # Prepare request payload
         payload = {
+            "where": where,
             "offset": offset
         }
-
-        if where is not None:
-            payload["where"] = where
-
-        if sql is not None:
-            payload["sql"] = sql
 
         if order_by is not None:
             payload["order_by"] = order_by

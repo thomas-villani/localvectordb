@@ -39,7 +39,8 @@ from localvectordb.core import (
     MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas, ReadWriteLock
 )
 from localvectordb.embeddings import EmbeddingRegistry
-from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError
+from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError, MetadataFilterError
+from localvectordb._filters import FilterQueryBuilder
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,11 @@ class LocalVectorDB:
             chunking_method: str = "sentences",
             chunk_size: int = 500,
             chunk_overlap: int = 1,
+
+            # Index type
+            faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
+            faiss_index_hnsw_flat_neighbors: int = None,  # Only used for IndexHNSWFlat
+            faiss_index_lsh_bits: int = None,
 
             # Performance settings
             enable_gpu: bool = False,
@@ -175,7 +181,7 @@ class LocalVectorDB:
             self._init_fts()
 
         # FAISS index setup
-        self._init_faiss_index(enable_gpu)
+        self._init_faiss_index(enable_gpu, faiss_index_type, faiss_index_hnsw_flat_neighbors, faiss_index_lsh_bits)
 
         # Threading
         self._lock = threading.RLock()
@@ -471,7 +477,11 @@ class LocalVectorDB:
         # Should have roughly one fewer operator than terms
         return operator_count <= term_count
 
-    def _init_faiss_index(self, enable_gpu: bool):
+    def _init_faiss_index(self,
+                          enable_gpu: bool,
+                          faiss_index_type,
+                          faiss_index_hnsw_flat_neighbors: int | None,
+                          faiss_index_lsh_bits: int | None):
         """Initialize FAISS index with ID mapping support"""
         if self.index_path and self.index_path.exists():
 
@@ -489,8 +499,20 @@ class LocalVectorDB:
                 raise DatabaseError("Expected FAISS index to have `id_map` attribute. Invalid faiss index!")
 
         else:
+            if faiss_index_type == "IndexFlatL2":
+                base_index = faiss.IndexFlatL2(self.embedding_dimension)
+            elif faiss_index_type == "IndexFlatIP":
+                base_index = faiss.IndexFlatIP(self.embedding_dimension)
+            elif faiss_index_type == "IndexHNSWFlat":
+                base_index = faiss.IndexHNSWFlat(self.embedding_dimension,
+                                                 faiss_index_hnsw_flat_neighbors or 16)
+            elif faiss_index_type == "IndexLSH":
+                base_index = faiss.IndexLSH(self.embedding_dimension,
+                                            faiss_index_lsh_bits or self.embedding_dimension * 2)
+            else:
+                raise ValueError("Invalid faiss index for LocalVectorDB. "
+                                 "Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
             # Create new index with ID mapping
-            base_index = faiss.IndexFlatL2(self.embedding_dimension)
             self.index = faiss.IndexIDMap(base_index)
             logger.info(f"Created new FAISS IndexIDMap with dimension {self.embedding_dimension}")
 
@@ -1918,37 +1940,54 @@ class LocalVectorDB:
 
         return metadata
 
-    # TODO: expand metadata filtering
-    @staticmethod
-    def _matches_filters(metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
-        """Check if metadata matches filters"""
-        # Simple implementation - would be expanded for complex filters
-        for key, expected_value in filters.items():
-            if key not in metadata:
-                return False
-            if metadata[key] != expected_value:
-                return False
-        return True
-
     def filter(
             self,
             where: Optional[Dict[str, Any]] = None,
-            sql: Optional[str] = None,
             order_by: Optional[str] = None,
             limit: Optional[int] = None,
             offset: int = 0
     ) -> List[Document]:
         """
-        Filter documents using SQL-like queries
+        Filter documents using enhanced metadata filtering
+
+        This method now supports advanced MongoDB-style filtering with operators
+        like $gt, $lt, $contains, $exists, etc. The SQL injection vulnerability
+        has been removed by eliminating raw SQL support.
 
         Parameters
         ----------
         where : Optional[Dict[str, Any]]
-            Simple filter conditions
-        sql : Optional[str]
-            Raw SQL WHERE clause
+            Filter conditions using either simple format or MongoDB-style operators.
+
+            Simple format::
+
+                {"author": "John Doe", "year": 2023}
+
+            Advanced format with operators::
+
+                {
+                    "author": {"$eq": "John Doe"},
+                    "year": {"$gte": 2020, "$lte": 2024},
+                    "tags": {"$contains": "python"},
+                    "rating": {"$in": [4, 5]},
+                    "$and": [
+                        {"category": "tech"},
+                        {"$or": [{"lang": "en"}, {"lang": "es"}]}
+                    ]
+                }
+
+            Supported operators:
+
+                - Comparison: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin
+                - String: $like, $ilike, $contains, $startswith, $endswith
+                - Existence: $exists, $not_exists
+                - Type: $type
+                - Logical: $and, $or, $not
+                - JSON: $contains, $not_contains (for JSON fields)
+
         order_by : Optional[str]
-            ORDER BY clause
+            ORDER BY clause (field name with optional ASC/DESC)
+            Examples: "created_at DESC", "author ASC", "rating"
         limit : Optional[int]
             Maximum number of results
         offset : int
@@ -1958,7 +1997,61 @@ class LocalVectorDB:
         -------
         List[Document]
             Filtered documents
+
+        Examples
+        --------
+        Simple filtering::
+
+            # Simple equality
+            docs = db.filter(where={"author": "John Doe"})
+
+            # Multiple conditions (AND)
+            docs = db.filter(where={"author": "John Doe", "year": 2023})
+
+        Advanced filtering::
+
+            # Range queries
+            docs = db.filter(where={
+                "year": {"$gte": 2020, "$lte": 2024},
+                "rating": {"$gt": 4.0}
+            })
+
+            # String operations
+            docs = db.filter(where={
+                "title": {"$contains": "python"},
+                "author": {"$startswith": "Dr."}
+            })
+
+            # List operations
+            docs = db.filter(where={
+                "category": {"$in": ["tech", "science"]},
+                "tags": {"$contains": "tutorial"}
+            })
+
+            # Logical operations
+            docs = db.filter(where={
+                "$and": [
+                    {"year": {"$gte": 2020}},
+                    {"$or": [
+                        {"author": "John Doe"},
+                        {"author": "Jane Smith"}
+                    ]}
+                ]
+            })
+
+            # Existence checks
+            docs = db.filter(where={
+                "optional_field": {"$exists": False},
+                "required_field": {"$exists": True}
+            })
+
+        Notes
+        -----
+        - All queries are converted to safe parameterized SQL
+        - Field names are validated against the metadata schema
+        - JSON fields support special operations like $contains
         """
+
         # Build SQL query
         metadata_columns = list(self.metadata_schema.keys())
         if metadata_columns:
@@ -1969,42 +2062,45 @@ class LocalVectorDB:
         query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
         params = []
 
-        # Add WHERE clause
+        # Build WHERE clause using new filter system
         if where:
-            conditions = []
-            for key, value in where.items():
-                if isinstance(value, (str, int, float, bool)):
-                    conditions.append(f"{key} = ?")
-                    params.append(value)
-                elif isinstance(value, dict):
-                    operator = next(k for k in value)
-                    condition = value[operator]
-                    if isinstance(condition, (list, tuple)):
-                        if operator.lower() == "between":
-                            clause = f"{key} BETWEEN ? AND ?"
-                            if len(condition) != 2:
-                                raise ValueError(f"'between' operator requires 2 operands. Found: {condition}")
-                        else:
-                            clause = f"{key} {operator} (" + ",".join("?" * len(condition)) + ")"
-                        params += condition
-                    else:
-                        clause = f"{key} {operator} ?"
-                        params.append(condition)
-                    conditions.append(clause)
+            try:
+                filter_builder = FilterQueryBuilder(self.metadata_schema)
+                where_clause, filter_params = filter_builder.build_where_clause(where)
+                if where_clause:
+                    query_parts.append(f"WHERE {where_clause}")
+                    params.extend(filter_params)
+            except Exception as e:
+                raise MetadataFilterError(f"Error building filter query: {str(e)}")
 
-            query_parts.append(f"WHERE {' AND '.join(conditions)}")
-        elif sql:
-            # TODO: need to sanitize properly or not allow raw sql
-            query_parts.append(f"WHERE {sql}")
-
-        # Add ORDER BY
+        # Validate and add ORDER BY clause
         if order_by:
-            query_parts.append(f"ORDER BY {order_by}")
+            # Parse order_by to validate field names
+            order_parts = order_by.strip().split()
+            if len(order_parts) > 2:
+                raise MetadataFilterError("Invalid ORDER BY clause format")
+
+            field_name = order_parts[0]
+            direction = order_parts[1].upper() if len(order_parts) == 2 else 'ASC'
+
+            if direction not in ('ASC', 'DESC'):
+                raise MetadataFilterError("ORDER BY direction must be ASC or DESC")
+
+            # Validate field name
+            if field_name not in columns:
+                raise MetadataFilterError(f"Cannot order by field '{field_name}' - not in schema")
+
+            query_parts.append(f"ORDER BY {field_name} {direction}")
 
         # Add LIMIT/OFFSET
         if limit:
+            if not isinstance(limit, int) or limit <= 0:
+                raise MetadataFilterError("Limit must be a positive integer")
             query_parts.append(f"LIMIT {limit}")
+
         if offset:
+            if not isinstance(offset, int) or offset < 0:
+                raise MetadataFilterError("Offset must be a non-negative integer")
             query_parts.append(f"OFFSET {offset}")
 
         # Execute query
@@ -2022,7 +2118,10 @@ class LocalVectorDB:
                         if value is not None and col_name in self.metadata_schema:
                             field_def = self.metadata_schema[col_name]
                             if field_def.type == MetadataFieldType.JSON:
-                                value = json.loads(value)
+                                try:
+                                    value = json.loads(value)
+                                except (json.JSONDecodeError, TypeError):
+                                    pass  # Keep as string if not valid JSON
                         metadata[col_name] = value
 
                 doc = Document(
@@ -2036,6 +2135,32 @@ class LocalVectorDB:
                 documents.append(doc)
 
         return documents
+
+    @staticmethod
+    def _matches_filters(metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+        """
+        Check if metadata matches filter criteria (in-memory validation)
+
+        This method now uses the enhanced filtering system for consistent
+        behavior between SQL and in-memory filtering.
+
+        Parameters
+        ----------
+        metadata : Dict[str, Any]
+            Document metadata to check
+        filters : Dict[str, Any]
+            Filter criteria in MongoDB-style format
+
+        Returns
+        -------
+        bool
+            True if metadata matches all filter criteria
+        """
+        if not filters:
+            return True
+
+        from localvectordb._filters import matches_metadata_filter
+        return matches_metadata_filter(metadata, filters)
 
     def update_metadata_schema(
             self,

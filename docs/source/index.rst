@@ -31,6 +31,7 @@ scale to distributed deployments without changing your code.
    overview
    embeddings
    chunking
+   metadata.filtering
    async
    server
    cli
