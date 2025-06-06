@@ -197,7 +197,8 @@ class DatabaseManagerMock:
         db.chunk_overlap = 1
         db.metadata_schema = {}
         db.fts_enabled = True
-        db.stats = {'documents': 0, 'chunks': 0, 'index_vectors': 0}
+        db._stats = {'documents': 0, 'chunks': 0, 'index_vectors': 0}
+        db.get_stats = lambda: db._stats
 
         # Document storage for more realistic behavior
         db._documents = {}
@@ -223,9 +224,9 @@ class DatabaseManagerMock:
                 result_ids.append(doc_id)
 
             # Update stats
-            db.stats['documents'] = len(db._documents)
-            db.stats['chunks'] = len(db._documents) * 2  # Simulate chunking
-            db.stats['index_vectors'] = db.stats['chunks']
+            db._stats['documents'] = len(db._documents)
+            db._stats['chunks'] = len(db._documents) * 2  # Simulate chunking
+            db._stats['index_vectors'] = db._stats['chunks']
 
             return result_ids
 
@@ -253,9 +254,9 @@ class DatabaseManagerMock:
                 count = 1 if db._documents.pop(doc_id, None) else 0
 
             # Update stats
-            db.stats['documents'] = len(db._documents)
-            db.stats['chunks'] = len(db._documents) * 2
-            db.stats['index_vectors'] = db.stats['chunks']
+            db._stats['documents'] = len(db._documents)
+            db._stats['chunks'] = len(db._documents) * 2
+            db._stats['index_vectors'] = db._stats['chunks']
 
             return count
 

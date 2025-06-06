@@ -591,7 +591,7 @@ class DatabaseManager:
                 from localvectordb.database import LocalVectorDB
                 with self.lock_manager.acquire_read_lock(db_name):
                     temp_db = LocalVectorDB(name=db_name, base_path=db_path, create_if_not_exists=False)
-                    stats = temp_db.stats
+                    stats = temp_db.get_stats()
                     metadata.update({
                         "embedding_model": stats.get("embedding_model"),
                         "embedding_provider": stats.get("embedding_provider"),
@@ -707,7 +707,7 @@ class DatabaseManager:
                         "create_database_success",
                         database_name=new_db_name,
                         database_path=str(db_path),
-                        stats=db.stats
+                        stats=db.get_stats()
                     )
 
                     logger.info(f"Successfully created database: {new_db_name}")
@@ -813,7 +813,7 @@ class DatabaseManager:
                     # Cache locally
                     self.databases[name] = (db, datetime.now())
 
-                    db_logger.log_query("load_database_success", database_name=name, stats=db.stats)
+                    db_logger.log_query("load_database_success", database_name=name, stats=db.get_stats())
                     logger.info(f"Successfully loaded database: {name}")
                     return db
 
@@ -1033,7 +1033,7 @@ class DatabaseManager:
                 return False
 
             # Try a simple operation
-            stats = db.stats
+            stats = db.get_stats()
 
             # Basic sanity checks
             if stats['documents'] < 0 or stats['chunks'] < 0:
@@ -1185,7 +1185,7 @@ class DatabaseManager:
                     db_stats[name] = {
                         'last_access': last_access.isoformat(),
                         'idle_seconds': (datetime.now() - last_access).total_seconds(),
-                        'stats': db.stats
+                        'stats': db.get_stats()
                     }
                 except Exception as e:
                     db_stats[name] = {'error': str(e)}

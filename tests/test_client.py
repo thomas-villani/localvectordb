@@ -572,7 +572,7 @@ class TestRemoteVectorDBProperties:
         mock_client.get.return_value = mock_response
         mock_client_class.return_value.__enter__.return_value = mock_client
 
-        stats = mock_db.stats
+        stats = mock_db.get_stats()
 
         assert stats["documents"] == 100
         assert stats["chunks"] == 500

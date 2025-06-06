@@ -437,7 +437,7 @@ class TestLocalVectorDBRetrieval:
             mock_pool.return_value = mock_pool_instance
 
             db = LocalVectorDB(name="test", base_path=":memory:")
-            db.metadata_schema = {}
+            db._metadata_schema = {}
 
             return db
 
@@ -659,7 +659,7 @@ class TestLocalVectorDBUpdate:
             mock_pool.return_value = mock_pool_instance
 
             db = LocalVectorDB(name="test", base_path=":memory:")
-            db.metadata_schema = {}
+            db._metadata_schema = {}
 
             return db
 
@@ -807,7 +807,7 @@ class TestLocalVectorDBQuery:
 
             db = LocalVectorDB(name="test", base_path=":memory:")
             db.index = mock_index
-            db.fts_enabled = True
+            db._fts_enabled = True
 
             return db
 
@@ -928,7 +928,7 @@ class TestLocalVectorDBFilter:
             mock_pool.return_value = mock_pool_instance
 
             db = LocalVectorDB(name="test", base_path=":memory:")
-            db.metadata_schema = {"author": Mock(), "rating": Mock()}
+            db._metadata_schema = {"author": Mock(), "rating": Mock()}
 
             return db
 
@@ -1050,7 +1050,7 @@ class TestLocalVectorDBProperties:
                 chunk_overlap=50
             )
             db.index = mock_index
-            db.fts_enabled = True
+            db._fts_enabled = True
 
             return db
 
@@ -1066,7 +1066,7 @@ class TestLocalVectorDBProperties:
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
         with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
-            stats = mock_db.stats
+            stats = mock_db.get_stats()
 
         assert stats['documents'] == 50
         assert stats['chunks'] == 200

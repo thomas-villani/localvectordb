@@ -144,7 +144,7 @@ def get_stdin_input(input_required=True, err_msg=None):
 def _print_db_stats(db: "LocalVectorDB"):
     """Print database statistics for v1.0"""
     try:
-        stats = db.stats
+        stats = db.get_stats()
 
         click.secho("Database Statistics:", fg="blue", bold=True)
 
@@ -1283,7 +1283,7 @@ def list_databases(config, db_folder, details):
                 try:
                     from localvectordb.database import LocalVectorDB
                     db = LocalVectorDB(name, db_folder, create_if_not_exists=False)
-                    stats = db.stats
+                    stats = db.get_stats()
                     click.echo(f"{name:<25}{stats['documents']:<10}{stats['chunks']:<10}"
                                f"{stats['embedding_model']:<25}{stats['chunking_method']:<20}")
                     db.close()
@@ -2110,7 +2110,7 @@ def show_db_info(ctx):
     db = ctx.obj["db"]
 
     try:
-        stats = db.stats
+        stats = db.get_stats()
         click.echo("Database Info\n"
                    "-------------")
         click.echo(f"  Database: {db.name}")
@@ -2644,7 +2644,7 @@ def shell(ctx):
         click.echo(click.style(f"Connected to database: ", fg="green")
                    + click.style(db.name, fg="green", underline=True))
 
-        stats = db.stats
+        stats = db.get_stats()
         click.secho(f"Documents: {stats['documents']}, Chunks: {stats['chunks']}", fg="blue")
         click.echo(f"Type 'help' for available commands, 'exit' to quit")
 
@@ -2799,7 +2799,7 @@ def shell(ctx):
 
                 if command.lower() == 'count':
                     try:
-                        stats = db.stats
+                        stats = db.get_stats()
                         click.secho(f"Document count: {stats['documents']}, Chunk count: {stats['chunks']}", fg="blue")
                     except Exception as e:
                         click.secho(f"Error: {str(e)}", fg="bright_red")
@@ -2811,7 +2811,7 @@ def shell(ctx):
 
                 if command.lower() == 'info':
                     try:
-                        stats = db.stats
+                        stats = db.get_stats()
                         click.secho("Database Information:", fg="blue")
                         click.echo(f"  Name: {db.name}")
                         click.echo(f"  Embedding model: {stats['embedding_model']}")

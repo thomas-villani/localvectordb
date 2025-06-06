@@ -14,7 +14,7 @@ LocalVectorDB v1.0 Core Components
 This module contains the foundational classes and data structures for the new
 document-first architecture.
 """
-
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Literal, Type, Generator
+from typing import Any, Dict, List, Optional, Literal, Type, Generator
 
 from localvectordb.exceptions import ConnectionPoolError
 
@@ -313,6 +313,391 @@ class QueryResult:
             document_id=data.get("document_id"),
             position=position,
         )
+
+
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Union, Any, Literal
+from datetime import datetime
+
+from localvectordb.core import Document, QueryResult, MetadataField
+from localvectordb.embeddings import EmbeddingProvider
+
+
+class BaseVectorDB(ABC):
+    """
+    Abstract base class defining the interface for vector databases.
+
+    This class defines the common interface that both LocalVectorDB and RemoteVectorDB
+    must implement, allowing QueryBuilder and other components to work with either
+    implementation seamlessly.
+    """
+
+    # Core database operations
+    @abstractmethod
+    def upsert(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None
+    ) -> List[str]:
+        """Insert or update documents in the database."""
+        pass
+
+    @abstractmethod
+    def insert(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise"
+    ) -> List[str]:
+        """Insert new documents into the database."""
+        pass
+
+    @abstractmethod
+    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+        """Retrieve documents by ID."""
+        pass
+
+    @abstractmethod
+    def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
+        """Check if documents exist."""
+        pass
+
+    @abstractmethod
+    def delete(self, ids: Union[str, List[str]]) -> int:
+        """Delete documents."""
+        pass
+
+    @abstractmethod
+    def update(
+            self,
+            doc_id: str,
+            content: Optional[str] = None,
+            metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Update a document's content and/or metadata."""
+        pass
+
+    # Query operations
+    @abstractmethod
+    def query(
+            self,
+            query: str,
+            *,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+    ) -> List[QueryResult]:
+        """Unified query interface for all search types."""
+        pass
+
+    @abstractmethod
+    def filter(
+            self,
+            where: Optional[Dict[str, Any]] = None,
+            order_by: Optional[str] = None,
+            limit: Optional[int] = None,
+            offset: int = 0
+    ) -> List[Document]:
+        """Filter documents using metadata filtering."""
+        pass
+
+    # Configuration and metadata properties
+    @property
+    @abstractmethod
+    def embedding_model(self) -> str:
+        """Return the embedding model name."""
+        pass
+
+    @property
+    @abstractmethod
+    def embedding_provider(self) -> Union[str, EmbeddingProvider]:
+        """Return the embedding provider name or instance."""
+        pass
+
+    @property
+    @abstractmethod
+    def embedding_dimension(self) -> int:
+        """Return the dimension of the embeddings."""
+        pass
+
+    @property
+    @abstractmethod
+    def chunk_size(self) -> int:
+        """Return the maximum tokens per chunk."""
+        pass
+
+    @property
+    @abstractmethod
+    def chunk_overlap(self) -> int:
+        """Return the chunk overlap."""
+        pass
+
+    @property
+    @abstractmethod
+    def chunking_method(self) -> str:
+        """Return the chunking method."""
+        pass
+
+    @property
+    @abstractmethod
+    def fts_enabled(self) -> bool:
+        """Return whether full-text search is enabled."""
+        pass
+
+    @property
+    @abstractmethod
+    def metadata_schema(self) -> Dict[str, MetadataField]:
+        """Return the metadata schema."""
+        pass
+
+    @abstractmethod
+    def get_stats(self) -> Dict[str, Any]:
+        """Get database statistics."""
+        pass
+
+    @property
+    @abstractmethod
+    def closed(self) -> bool:
+        """Return whether the database connection is closed."""
+        pass
+
+    # Schema management
+    @abstractmethod
+    def update_metadata_schema(
+            self,
+            new_schema: Union[str, Dict[str, MetadataField]],
+            drop_columns: bool = False
+    ) -> Dict[str, Any]:
+        """Update the metadata schema."""
+        pass
+
+    @abstractmethod
+    def get_metadata_schema_info(self) -> Dict[str, Any]:
+        """Get detailed information about the current metadata schema."""
+        pass
+
+    # Database lifecycle
+    @abstractmethod
+    def save(self):
+        """Save the database."""
+        pass
+
+    @abstractmethod
+    def close(self):
+        """Close the database."""
+        pass
+
+    # Context manager support
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def query_builder(self) -> "QueryBuilder":
+        """
+        Create a new QueryBuilder for this database.
+
+        Returns
+        -------
+        QueryBuilder
+            A new QueryBuilder instance for building complex queries
+
+        Examples
+        --------
+        Basic search::
+
+            results = db.query_builder().search("machine learning").execute()
+
+        Complex multi-field search with semantic filtering::
+
+            results = (db.query_builder()
+                .search_field("title", "neural networks", weight=0.3)
+                .search_field("content", "deep learning", weight=0.7)
+                .semantic_filter("methodology", "supervised learning", threshold=0.8)
+                .filter("year", gte=2020)
+                .hybrid(vector_weight=0.6)
+                .limit(20)
+                .execute())
+
+        Async usage::
+
+            results = await (db.query_builder()
+                .search("machine learning")
+                .semantic_filter("category", "research")
+                .execute_async())
+        """
+        from localvectordb.query_builder import QueryBuilder
+        return QueryBuilder(self)
+
+    def ping(self) -> bool:
+        """Check if the database is accessible. Override in subclasses."""
+        return not self.closed
+
+    # Helper methods for QueryBuilder
+    def is_async_database(self) -> bool:
+        """Check if this is an async database implementation."""
+        import asyncio
+        # Check if any of the main methods are coroutines
+        return (
+            asyncio.iscoroutinefunction(getattr(self, 'query', None)) or
+            asyncio.iscoroutinefunction(getattr(self, 'filter', None)) or
+            hasattr(self, '_is_async_db')  # Allow explicit marking
+        )
+
+    def supports_async_embeddings(self) -> bool:
+        """Check if the database supports async embedding generation."""
+        return (
+            hasattr(self, 'embedding_provider') and
+            hasattr(self.embedding_provider, 'embed_async') and
+            asyncio.iscoroutinefunction(self.embedding_provider.embed_async)
+        ) or hasattr(self, '_generate_embeddings_async')
+
+
+class AsyncBaseVectorDB(BaseVectorDB):
+    """
+    Async version of BaseVectorDB for databases that have native async support.
+
+    This class provides the same interface but with async methods.
+    """
+
+    @abstractmethod
+    async def upsert(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None
+    ) -> List[str]:
+        """Insert or update documents in the database asynchronously."""
+        pass
+
+    @abstractmethod
+    async def insert(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise"
+    ) -> List[str]:
+        """Insert new documents into the database asynchronously."""
+        pass
+
+    @abstractmethod
+    async def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+        """Retrieve documents by ID asynchronously."""
+        pass
+
+    @abstractmethod
+    async def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
+        """Check if documents exist asynchronously."""
+        pass
+
+    @abstractmethod
+    async def delete(self, ids: Union[str, List[str]]) -> int:
+        """Delete documents asynchronously."""
+        pass
+
+    @abstractmethod
+    async def update(
+            self,
+            doc_id: str,
+            content: Optional[str] = None,
+            metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Update a document's content and/or metadata asynchronously."""
+        pass
+
+    @abstractmethod
+    async def query(
+            self,
+            query: str,
+            *,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+    ) -> List[QueryResult]:
+        """Unified query interface for all search types asynchronously."""
+        pass
+
+    @abstractmethod
+    async def filter(
+            self,
+            where: Optional[Dict[str, Any]] = None,
+            order_by: Optional[str] = None,
+            limit: Optional[int] = None,
+            offset: int = 0
+    ) -> List[Document]:
+        """Filter documents using metadata filtering asynchronously."""
+        pass
+
+    @abstractmethod
+    async def save(self):
+        """Save the database asynchronously."""
+        pass
+
+    @abstractmethod
+    async def close(self):
+        """Close the database asynchronously."""
+        pass
+
+    @abstractmethod
+    async def update_metadata_schema(
+            self,
+            new_schema: Union[str, Dict[str, MetadataField]],
+            drop_columns: bool = False
+    ) -> Dict[str, Any]:
+        """Update the metadata schema asynchronously."""
+        pass
+
+    @abstractmethod
+    async def get_metadata_schema_info(self) -> Dict[str, Any]:
+        """Get detailed information about the current metadata schema asynchronously."""
+        pass
+
+    # Async context manager support
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+    def is_async_database(self) -> bool:
+        """Always returns True for async databases."""
+        return True
+
+    # Override QueryBuilder to return async-aware builder
+    def query_builder(self) -> "QueryBuilder":
+        """
+        Create a new QueryBuilder for this async database.
+
+        The QueryBuilder will automatically detect that this is an async database
+        and use async execution methods when available.
+        """
+        from localvectordb.query_builder import QueryBuilder
+        builder = QueryBuilder(self)
+        builder._is_async_db = True  # Mark as async for the executor
+        return builder
+
+# Type alias for better readability
+AnyVectorDB = Union["LocalVectorDB", "RemoteVectorDB", "AsyncLocalVectorDB", "AsyncRemoteVectorDB",
+                    AsyncBaseVectorDB, BaseVectorDB]
+
 
 class DatabaseSchema:
     """

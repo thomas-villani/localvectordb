@@ -37,17 +37,18 @@ import numpy as np
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import (
     DatabaseSchema, ConnectionPool, Document, Chunk, QueryResult,
-    MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas, ReadWriteLock
+    MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas, ReadWriteLock, BaseVectorDB
 )
-from localvectordb.embeddings import EmbeddingRegistry
+from localvectordb.embeddings import EmbeddingRegistry, EmbeddingProvider
 from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError, MetadataFilterError
-from localvectordb._filters import FilterQueryBuilder
+from localvectordb._filters import FilterQueryBuilder, matches_metadata_filter
+from localvectordb.query_builder import QueryBuilder
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
 
 
-class LocalVectorDB:
+class LocalVectorDB(BaseVectorDB):
     """
     Document-first vector database with SQLite + FAISS + embeddings
 
@@ -84,6 +85,7 @@ class LocalVectorDB:
         If False, raises DatabaseNotFoundError if the database doesn't exist.
     """
 
+
     def __init__(
             self,
             name: str,
@@ -118,6 +120,7 @@ class LocalVectorDB:
             # Other
             create_if_not_exists: bool = True,
     ):
+        super().__init__()
         self.name = name
         self.is_memory_only = (name == ":memory:" or base_path == ":memory:")
 
@@ -139,45 +142,45 @@ class LocalVectorDB:
 
         # Configuration
         if isinstance(metadata_schema, str):
-            self.metadata_schema = get_common_metadata_schemas(metadata_schema)
+            self._metadata_schema = get_common_metadata_schemas(metadata_schema)
         else:
-            self.metadata_schema = metadata_schema or {}
+            self._metadata_schema = metadata_schema or {}
         self.doc_id_pattern = doc_id_pattern
 
         # Chunking setup
-        self.chunking_method = chunking_method
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self._chunking_method = chunking_method
+        self._chunk_size = chunk_size
+        self._chunk_overlap = chunk_overlap
         self.chunker = ChunkerFactory.create_chunker(
             chunking_method, chunk_size, chunk_overlap
         )
 
         # Initialize embedding provider
         embedding_config = embedding_config or {}
-        self.embedding_provider = EmbeddingRegistry.create_provider(
+        self._embedding_provider = EmbeddingRegistry.create_provider(
             embedding_provider, embedding_model, **embedding_config
         )
 
         # Validate embedding model
-        if not self.embedding_provider.validate_model():
+        if not self._embedding_provider.validate_model():
             raise ValueError(f"Embedding model '{embedding_model}' is not available")
 
-        self.embedding_dimension = self.embedding_provider.get_dimension()
+        self._embedding_dimension = self._embedding_provider.get_dimension()
 
         # Database setup
         self.schema = DatabaseSchema(self.db_path)
         self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
 
         # Initialize schema
-        self.schema.initialize(self.metadata_schema, db_connection=self.connection_pool.get_connection())
+        self.schema.initialize(self._metadata_schema, db_connection=self.connection_pool.get_connection())
 
         # Load existing metadata schema if database already exists
         if not self.is_memory_only and self.db_path.exists():
             existing_schema = self.schema.load_metadata_schema(db_connection=self.connection_pool.get_connection())
-            self.metadata_schema.update(existing_schema)
+            self._metadata_schema.update(existing_schema)
 
         # FTS setup
-        self.fts_enabled = False
+        self._fts_enabled = False
         if enable_fts:
             self._init_fts()
 
@@ -201,16 +204,45 @@ class LocalVectorDB:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def __del__(self):
-        try:
-            if hasattr(self, 'connection_pool') and not self.connection_pool.closed:
-                self.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
+
+    @property
+    def embedding_provider(self) -> Union[str, EmbeddingProvider]:
+        return self._embedding_provider
+
+    @property
+    def embedding_dimension(self) -> int:
+        return self._embedding_dimension
+
+    @property
+    def chunk_size(self) -> int:
+        return self._chunk_size
+
+    @property
+    def chunk_overlap(self) -> int:
+        return self._chunk_overlap
+
+    @property
+    def chunking_method(self) -> str:
+        return self._chunking_method
+
+    @property
+    def fts_enabled(self) -> bool:
+        return self._fts_enabled
+
+    @property
+    def embedding_model(self) -> str:
+        return self.embedding_provider.model
+
+    @property
+    def metadata_schema(self) -> dict[str, MetadataField]:
+        return self._metadata_schema.copy()
 
     @property
     def closed(self):
         return self.connection_pool.closed
+
+    def ping(self):
+        return not self.closed
 
     def _check_fts5_availability(self) -> bool:
         """Check if FTS5 is available in SQLite"""
@@ -230,7 +262,7 @@ class LocalVectorDB:
     def _init_fts(self):
         """Initialize Full-Text Search (FTS5) if available"""
         if not self._check_fts5_availability():
-            self.fts_enabled = False
+            self._fts_enabled = False
             return
 
         try:
@@ -300,12 +332,12 @@ class LocalVectorDB:
                 """)
 
                 conn.commit()
-                self.fts_enabled = True
+                self._fts_enabled = True
                 logger.info("FTS5 initialized successfully")
 
         except Exception as e:
             logger.error(f"Error setting up FTS5: {e}")
-            self.fts_enabled = False
+            self._fts_enabled = False
 
     def _sanitize_fts_query(self, query: str) -> str:
         """
@@ -1337,8 +1369,6 @@ class LocalVectorDB:
 
             return result_ids
 
-
-    # TODO: how are we gonna get chunks? Allow the id to have a chunk indicator.
     def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
         """
         Retrieve documents by ID
@@ -1399,7 +1429,6 @@ class LocalVectorDB:
                 return documents[0] if documents else None
             return documents
 
-    # TODO: needs to check chunks
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """
         Check if documents exist
@@ -2160,7 +2189,6 @@ class LocalVectorDB:
         if not filters:
             return True
 
-        from localvectordb._filters import matches_metadata_filter
         return matches_metadata_filter(metadata, filters)
 
     def update_metadata_schema(
@@ -2280,7 +2308,7 @@ class LocalVectorDB:
                     changes = self.schema.update_metadata_schema(new_schema, conn, drop_columns)
 
                 # Update in-memory schema
-                self.metadata_schema = new_schema.copy()
+                self._metadata_schema = new_schema.copy()
 
                 # Log the changes
                 logger.info(f"Updated metadata schema for database '{self.name}'")
@@ -2369,8 +2397,7 @@ class LocalVectorDB:
         self.save()
         self.connection_pool.close_all()
 
-    @property
-    def stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get database statistics"""
         with self.connection_pool.get_connection() as conn:
             # Document count

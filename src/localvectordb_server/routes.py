@@ -255,7 +255,7 @@ def get_database_info(db_name):
     with request_context("get_database_info"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            stats = db.stats
+            stats = db.get_stats()
 
             return jsonify({
                 "name": db.name,
@@ -374,19 +374,31 @@ def upsert_documents(db_name):
         if batch_size < 1 or batch_size > 1000:
             raise ValidationError("Batch size must be between 1 and 1000", field="batch_size", value=batch_size)
 
+        similarity_threshold = data.get("similarity_threshold", None)
+        if similarity_threshold is not None:
+            validate_field_type(data, "similarity_threshold", (int, float))
+            if similarity_threshold < 0 or similarity_threshold > 1:
+                raise ValidationError(
+                    "Similarity threshold must be between 0 and 1",
+                    field="similarity_threshold",
+                    value=similarity_threshold
+                )
+
         try:
             db = current_app.db_manager.get_db(db_name)
 
             db_logger.log_query("upsert_documents",
                                 database_name=db_name,
                                 document_count=len(documents),
-                                batch_size=batch_size)
+                                batch_size=batch_size,
+                                similarity_threshold=similarity_threshold)
 
             result_ids = db.upsert(
                 documents=documents,
                 metadata=metadata,
                 ids=ids,
-                batch_size=batch_size
+                batch_size=batch_size,
+                similarity_threshold=similarity_threshold
             )
 
             db_logger.log_query("upsert_documents_success",
@@ -1054,7 +1066,10 @@ def get_embeddings_for_db(db_name):
             db = current_app.db_manager.get_db(db_name)
             embeddings = db.embedding_provider.embed_sync(texts).tolist()
 
-            return jsonify({"embeddings": embeddings})
+            return jsonify({"embeddings": embeddings,
+                            "provider": db.embedding_provider.provider_name,
+                            "model": db.embedding_provider.model
+                           })
 
         except Exception as e:
             db_logger.log_error("get_embeddings_for_db", e, database_name=db_name)

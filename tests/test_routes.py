@@ -77,7 +77,7 @@ def mock_db():
         'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
     }
     db.fts_enabled = True
-    db.stats = {
+    db.get_stats = lambda: {
         'documents': 10,
         'chunks': 25,
         'index_vectors': 25

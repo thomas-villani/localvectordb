@@ -120,18 +120,332 @@ MongoDB-like filtering::
     to be a drop-in replacement for the new LocalVectorDB, allowing code to work with
     either local or remote databases with minimal changes.
 """
-import time
-from typing import Union, Any, Optional, Literal, Dict, List
+import logging
+from typing import Union, Literal
 
-import httpx
-
-from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document
+from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError
 )
 
+import asyncio
+import logging
+import time
+from typing import List, Optional, Dict, Any
+from concurrent.futures import ThreadPoolExecutor
 
-class RemoteVectorDB:
+import httpx
+import numpy as np
+
+from localvectordb.embeddings import EmbeddingProvider
+
+logger = logging.getLogger(__name__)
+
+
+class RemoteEmbeddingProvider(EmbeddingProvider):
+    """
+    Embedding provider that proxies requests to a LocalVectorDB server.
+
+    This provider mimics the interface of local embedding providers but makes
+    HTTP requests to the server's embedding endpoint. This allows RemoteVectorDB
+    to seamlessly support semantic filtering and other embedding-dependent features.
+
+    Parameters
+    ----------
+    db_name : str
+        Name of the database on the server
+    base_url : str
+        Base URL of the LocalVectorDB server
+    api_key : Optional[str]
+        API key for authentication
+    request_timeout : Optional[int]
+        Timeout for HTTP requests in seconds
+    authorization_header : str
+        Authorization header name, by default "Authorization"
+
+    Examples
+    --------
+    Direct usage (typically handled automatically by RemoteVectorDB)::
+
+        provider = RemoteEmbeddingProvider(
+            db_name="research_papers",
+            base_url="http://localhost:5000",
+            api_key="your_api_key"
+        )
+
+        embeddings = provider.embed_sync(["text to embed"])
+        dimension = provider.get_dimension()
+    """
+
+    def __init__(
+            self,
+            db_name: str,
+            base_url: str,
+            api_key: Optional[str] = None,
+            request_timeout: Optional[int] = None,
+            authorization_header: str = "Authorization",
+            model: str = "remote",  # Required by base class
+            **kwargs
+    ):
+        # Initialize base class with dummy model name
+        super().__init__(model, **kwargs)
+
+        self.db_name = db_name
+        self.base_url = base_url.rstrip('/')
+        self.api_key = api_key
+        self.request_timeout = request_timeout or 300
+        self.authorization_header = authorization_header
+
+        # Cache for database info to avoid repeated requests
+        self._db_info_cache: Optional[Dict[str, Any]] = None
+        self._cache_timestamp: float = 0
+        self._cache_ttl: float = 300  # 5 minutes cache TTL
+
+        # Derived info from database
+        self._provider_name: Optional[str] = None
+        self._model_name: Optional[str] = None
+        self._dimension: Optional[int] = None
+        self._validated: bool = False
+
+        # Load initial database info
+        self._ensure_db_info()
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get HTTP headers including authentication."""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers[self.authorization_header] = f"Bearer {self.api_key}"
+        return headers
+
+    def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
+        """Handle HTTP response and raise appropriate exceptions."""
+        if response.status_code == 200:
+            return response.json()
+
+        try:
+            error_data = response.json()
+            error_msg = error_data.get("error", str(response.status_code))
+        except Exception:
+            error_msg = f"HTTP {response.status_code}: {response.text}"
+
+        if response.status_code == 404:
+            raise RuntimeError(f"Database '{self.db_name}' not found on server")
+        elif response.status_code == 401:
+            raise RuntimeError("Authentication failed. Check your API key.")
+        else:
+            raise RuntimeError(f"Server error: {error_msg}")
+
+    def _ensure_db_info(self, force_refresh: bool = False) -> None:
+        """Ensure database info is loaded and cached."""
+        current_time = time.time()
+
+        if (not force_refresh and
+                self._db_info_cache and
+                current_time - self._cache_timestamp < self._cache_ttl):
+            return
+
+        try:
+            self._load_db_info()
+            self._cache_timestamp = current_time
+        except Exception as e:
+            logger.error(f"Failed to load database info for {self.db_name}: {e}")
+            if not self._db_info_cache:
+                # If we have no cached info at all, re-raise the error
+                raise RuntimeError(f"Cannot connect to database '{self.db_name}': {e}")
+            # Otherwise, use stale cache and log warning
+            logger.warning(f"Using stale cache for database {self.db_name} due to error: {e}")
+
+    def _load_db_info(self) -> None:
+        """Load database information from server."""
+        url = f"{self.base_url}/api/v1/{self.db_name}/info"
+
+        with httpx.Client() as client:
+            response = client.get(
+                url,
+                headers=self._get_headers(),
+                timeout=self.request_timeout
+            )
+
+        db_info = self._handle_response(response)
+        self._db_info_cache = db_info
+
+        # Extract relevant configuration
+        config = db_info.get("config", {})
+        self._provider_name = config.get("embedding_provider", "unknown")
+        self._model_name = config.get("embedding_model", "unknown")
+        self._dimension = config.get("embedding_dimension", 0)
+
+        if self._dimension <= 0:
+            raise RuntimeError(f"Invalid embedding dimension: {self._dimension}")
+
+        self._validated = True
+        logger.debug(f"Loaded database info: provider={self._provider_name}, "
+                     f"model={self._model_name}, dimension={self._dimension}")
+
+
+    @property
+    def provider_name(self) -> str:
+        """Return the underlying embedding provider name."""
+        self._ensure_db_info()
+        return f"remote-{self._provider_name}"
+
+    @property
+    def model(self) -> str:
+        """Return the underlying embedding model name."""
+        self._ensure_db_info()
+        return self._model_name
+
+    @property
+    def max_batch_size(self) -> int:
+        """Maximum batch size for this provider."""
+        # Conservative default for remote provider to avoid timeouts
+        return 100
+
+    def validate_model(self) -> bool:
+        """Check if the remote model is available."""
+        try:
+            self._ensure_db_info()
+            return self._validated
+        except Exception:
+            return False
+
+    def get_dimension(self) -> int:
+        """Get embedding dimension from the remote database."""
+        self._ensure_db_info()
+        return self._dimension
+
+    async def embed_batch(
+            self,
+            texts: List[str],
+            batch_size: Optional[int] = None
+    ) -> np.ndarray:
+        """Generate embeddings using the remote server."""
+        if not texts:
+            return np.array([]).reshape(0, self.get_dimension())
+
+        batch_size = batch_size or self.max_batch_size
+        all_embeddings = []
+
+        async with httpx.AsyncClient() as client:
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
+
+                try:
+                    embeddings = await self._embed_batch_request(client, batch)
+                    all_embeddings.extend(embeddings)
+
+                except Exception as e:
+                    logger.error(f"Error getting embeddings for batch {i // batch_size + 1}: {e}")
+                    raise RuntimeError(f"Failed to get embeddings from server: {e}")
+
+        return np.array(all_embeddings, dtype=np.float32)
+
+    async def _embed_batch_request(
+            self,
+            client: httpx.AsyncClient,
+            texts: List[str]
+    ) -> List[List[float]]:
+        """Make a single embedding request to the server."""
+        url = f"{self.base_url}/api/v1/{self.db_name}/embeddings"
+
+        payload = {"texts": texts}
+
+        response = await client.post(
+            url,
+            json=payload,
+            headers=self._get_headers(),
+            timeout=self.request_timeout
+        )
+
+        result = self._handle_response(response)
+        embeddings = result.get("embeddings", [])
+
+        if len(embeddings) != len(texts):
+            raise RuntimeError(
+                f"Server returned {len(embeddings)} embeddings for {len(texts)} texts"
+            )
+
+        return embeddings
+
+    def embed_sync(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+        """Synchronous wrapper for embed_batch."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an async context, run in thread pool
+                with ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self.embed_batch(texts, batch_size))
+                    return future.result()
+            else:
+                return loop.run_until_complete(self.embed_batch(texts, batch_size))
+        except RuntimeError:
+            # No event loop, create one
+            return asyncio.run(self.embed_batch(texts, batch_size))
+
+    def get_config_info(self) -> Dict[str, Any]:
+        """Get detailed configuration information about the remote embedding setup."""
+        self._ensure_db_info()
+        return {
+            "provider_name": self._provider_name,
+            "model_name": self._model_name,
+            "dimension": self._dimension,
+            "remote_database": self.db_name,
+            "server_url": self.base_url,
+            "max_batch_size": self.max_batch_size,
+            "cache_ttl": self._cache_ttl,
+            "last_cache_update": self._cache_timestamp
+        }
+
+    def refresh_cache(self) -> None:
+        """Force refresh of the database info cache."""
+        self._ensure_db_info(force_refresh=True)
+
+    def test_connection(self) -> Dict[str, Any]:
+        """Test the connection to the remote server and return diagnostic info."""
+        start_time = time.time()
+
+        try:
+            # Test basic connectivity
+            self._ensure_db_info(force_refresh=True)
+
+            # Test embedding functionality with a simple request
+            test_embeddings = self.embed_sync(["test connection"])
+
+            end_time = time.time()
+
+            return {
+                "status": "success",
+                "response_time_seconds": end_time - start_time,
+                "server_reachable": True,
+                "authentication_valid": True,
+                "embedding_functional": True,
+                "test_embedding_dimension": len(test_embeddings[0]) if len(test_embeddings) > 0 else 0,
+                "server_info": {
+                    "provider": self._provider_name,
+                    "model": self._model_name,
+                    "dimension": self._dimension
+                }
+            }
+
+        except Exception as e:
+            end_time = time.time()
+            return {
+                "status": "error",
+                "response_time_seconds": end_time - start_time,
+                "error": str(e),
+                "server_reachable": "unknown",
+                "authentication_valid": "unknown",
+                "embedding_functional": False
+            }
+
+    def __repr__(self) -> str:
+        """String representation of the provider."""
+        status = "connected" if self._validated else "disconnected"
+        return (f"RemoteEmbeddingProvider(db='{self.db_name}', "
+                f"server='{self.base_url}', status='{status}')")
+
+
+class RemoteVectorDB(BaseVectorDB):
     """Client for interacting with a LocalVectorDB v1.0 server.
 
     This client provides the same document-focused interface as LocalVectorDB v1.0
@@ -171,6 +485,7 @@ class RemoteVectorDB:
         The server can be configured to accept alternate headers, and the client can too.
     """
 
+
     def __init__(
             self,
             name: str,
@@ -188,15 +503,25 @@ class RemoteVectorDB:
             enable_gpu: bool = False,
             enable_fts: bool = True,
             request_timeout: int = None,
-            authorization_header: str = "Authorization"
+            authorization_header: str = "Authorization",
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            connection_pool_limits: Optional[httpx.Limits] = None
     ):
         self.name = name
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
         self.request_timeout = request_timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self._connection_pool_limits = connection_pool_limits or httpx.Limits(
+            max_keepalive_connections=20,
+            max_connections=100,
+            keepalive_expiry=30.0
+        )
 
         # Configuration
-        self.metadata_schema = metadata_schema or {}
+        self._metadata_schema = metadata_schema or {}
         self._embedding_provider = embedding_provider
         self._embedding_model = embedding_model
         self._embedding_config = embedding_config or {}
@@ -212,7 +537,14 @@ class RemoteVectorDB:
 
         # State variables to be loaded from server
         self._embedding_dimension = 0
-        # self._closed = False
+
+        self._remote_embedding_provider = RemoteEmbeddingProvider(
+            db_name=self.name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            request_timeout=self.request_timeout,
+            authorization_header=self._authorization_header
+        )
 
         # Check if database exists and create if needed
         if create_if_not_exists:
@@ -221,6 +553,65 @@ class RemoteVectorDB:
             # Load existing database info
             self._load_database_info()
 
+    def _make_request_with_retry(
+            self,
+            method: str,
+            url: str,
+            **kwargs
+    ) -> httpx.Response | None:
+        """Make HTTP request with exponential backoff retry"""
+
+        last_exception = None
+
+        # Configure httpx client with connection pooling
+        client_kwargs = {
+            'timeout': httpx.Timeout(self.request_timeout or 30.0),
+            'limits': self._connection_pool_limits,
+            'headers': self._get_headers()
+        }
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.Client(**client_kwargs) as client:
+                    response = client.request(method, url, **kwargs)
+
+                    # Don't retry on 4xx errors (client errors)
+                    if 400 <= response.status_code < 500:
+                        return response
+
+                    # Success or 5xx error that we might retry
+                    if response.status_code < 500:
+                        return response
+
+                    # 5xx error - might retry
+                    if attempt == self.max_retries:
+                        return response  # Last attempt, return even if error
+
+                    # Wait before retry with exponential backoff
+                    delay = self.retry_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Request failed with {response.status_code}, retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{self.max_retries + 1})"
+                    )
+                    time.sleep(delay)
+
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                last_exception = e
+
+                if attempt == self.max_retries:
+                    raise ConnectionError(f"Failed to connect after {self.max_retries + 1} attempts: {e}")
+
+                # Wait before retry
+                delay = self.retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"Request failed with {type(e).__name__}: {e}, retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{self.max_retries + 1})"
+                )
+                time.sleep(delay)
+        # Should not reach here, but just in case
+        if last_exception:
+            raise last_exception
+        return None
 
     def _get_headers(self) -> dict:
         """Get headers for API requests including authentication if provided"""
@@ -282,9 +673,7 @@ class RemoteVectorDB:
     def _load_database_info(self) -> None:
         """Load database information from server"""
         url = self._build_url(f"/api/v1/{self.name}/info")
-        with httpx.Client() as client:
-            response = client.get(url, headers=self._get_headers(), timeout=self.request_timeout)
-
+        response = self._make_request_with_retry("GET", url)
         db_info = self._handle_response(response)
 
         # Update configuration from server
@@ -302,7 +691,7 @@ class RemoteVectorDB:
 
         # Load metadata schema
         schema_data = config.get("metadata_schema", {})
-        self.metadata_schema = {}
+        self._metadata_schema = {}
         for field_name, field_config in schema_data.items():
             self.metadata_schema[field_name] = MetadataField(
                 type=MetadataFieldType(field_config["type"]),
@@ -339,22 +728,25 @@ class RemoteVectorDB:
             "enable_fts": self._enable_fts
         }
 
-        with httpx.Client() as client:
-            response = client.post(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("POST", url, json=payload)
 
         created_db_info = self._handle_response(response)
         config = created_db_info.get("config", {})
         self._embedding_dimension = config.get("embedding_dimension", 0)
 
     @property
+    def embedding_provider(self) -> RemoteEmbeddingProvider:
+        """Return the remote embedding provider instance."""
+        return self._remote_embedding_provider
+
+    @property
+    def metadata_schema(self) -> Dict[str, MetadataField]:
+        return self._metadata_schema.copy()
+
+    @property
     def embedding_model(self) -> str:
         """Return the embedding model name"""
         return self._embedding_model
-
-    @property
-    def embedding_provider(self) -> str:
-        """Return the provider name"""
-        return self._embedding_provider
 
     @property
     def embedding_dimension(self) -> int:
@@ -381,12 +773,10 @@ class RemoteVectorDB:
         """Return whether full-text search is enabled"""
         return self._enable_fts
 
-    @property
-    def stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get database statistics"""
         url = self._build_url(f"/api/v1/{self.name}/info")
-        with httpx.Client() as client:
-            response = client.get(url, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("GET", url)
         db_info = self._handle_response(response)
         return db_info.get("stats", {})
 
@@ -395,7 +785,8 @@ class RemoteVectorDB:
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None
     ) -> List[str]:
         """
         Insert or update documents in the database
@@ -410,6 +801,8 @@ class RemoteVectorDB:
             Document IDs (auto-generated if not provided)
         batch_size : int
             Batch size for processing, by default 100
+        similarity_threshold : float, optional
+            Skip adding any chunks that are more similar than this value. Good for "pre-deduplication"
 
         Returns
         -------
@@ -437,8 +830,7 @@ class RemoteVectorDB:
             payload["ids"] = ids
 
         url = self._build_url(f"/api/v1/{self.name}/documents")
-        with httpx.Client() as client:
-            response = client.post(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
         return result.get("ids", [])
@@ -500,8 +892,7 @@ class RemoteVectorDB:
             payload["similarity_threshold"] = similarity_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/documents/insert")
-        with httpx.Client() as client:
-            response = client.post(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
         return result.get("ids", [])
@@ -524,8 +915,7 @@ class RemoteVectorDB:
         if single_id:
             url = self._build_url(f"/api/v1/{self.name}/documents/{ids}")
 
-            with httpx.Client() as client:
-                response = client.get(url, headers=self._get_headers(), timeout=self.request_timeout)
+            response = self._make_request_with_retry("GET", url)
 
             try:
                 result = self._handle_response(response)
@@ -535,6 +925,7 @@ class RemoteVectorDB:
                 return None
         else:
             # Handle multiple IDs - make individual requests for each ID
+            # TODO: make server handle multiple!
             docs = []
             for doc_id in ids:
                 doc = self.get(doc_id)
@@ -557,12 +948,10 @@ class RemoteVectorDB:
             Existence status for each ID
         """
         single_id = isinstance(ids, str)
-        check_ids = [ids] if single_id else ids
+        payload = {"ids": ([ids] if single_id else ids)}
 
         url = self._build_url(f"/api/v1/{self.name}/documents/exists")
-        with httpx.Client() as client:
-            response = client.post(url, headers=self._get_headers(), json={"ids": check_ids},
-                                   timeout=self.request_timeout)
+        response = self._make_request_with_retry("POST", url, json=payload)
         results = self._handle_response(response)
 
         return results.get("exists")[0] if single_id else results.get("exists")
@@ -587,8 +976,7 @@ class RemoteVectorDB:
         deleted_count = 0
         for doc_id in ids:
             url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
-            with httpx.Client() as client:
-                response = client.delete(url, headers=self._get_headers(), timeout=self.request_timeout)
+            response = self._make_request_with_retry("DELETE", url)
             result = self._handle_response(response)
             deleted_count += result.get("deleted_count", 0)
 
@@ -627,8 +1015,7 @@ class RemoteVectorDB:
             payload["metadata"] = metadata
 
         url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
-        with httpx.Client() as client:
-            response = client.put(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("PUT", url, json=payload)
 
         try:
             result = self._handle_response(response)
@@ -686,8 +1073,7 @@ class RemoteVectorDB:
             payload["filters"] = filters
 
         url = self._build_url(f"/api/v1/{self.name}/query")
-        with httpx.Client() as client:
-            response = client.post(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
         # Process results
@@ -830,8 +1216,7 @@ class RemoteVectorDB:
             payload["limit"] = limit
 
         url = self._build_url(f"/api/v1/{self.name}/filter")
-        with httpx.Client() as client:
-            response = client.post(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
         # Process results
@@ -966,14 +1351,13 @@ class RemoteVectorDB:
         }
 
         url = self._build_url(f"/api/v1/{self.name}/schema")
-        with httpx.Client() as client:
-            response = client.put(url, json=payload, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("PUT", url, json=payload)
 
         result = self._handle_response(response)
 
         # Update local metadata schema cache
         if 'new_schema' in result:
-            self.metadata_schema = {}
+            self._metadata_schema = {}
             for field_name, field_config in result['new_schema'].items():
                 self.metadata_schema[field_name] = MetadataField(
                     type=MetadataFieldType(field_config['type']),
@@ -1014,9 +1398,7 @@ class RemoteVectorDB:
                       f"(indexed={field_info['indexed']}, required={field_info['required']})")
         """
         url = self._build_url(f"/api/v1/{self.name}/schema")
-        with httpx.Client() as client:
-            response = client.get(url, headers=self._get_headers(), timeout=self.request_timeout)
-
+        response = self._make_request_with_retry("GET", url)
         result = self._handle_response(response)
         return result.get('schema_info', {})
 
@@ -1030,8 +1412,7 @@ class RemoteVectorDB:
             return self._last_ping_status
 
         url = self._build_url(f"/api/v1/databases")
-        with httpx.Client() as client:
-            response = client.post(url, headers=self._get_headers(), timeout=self.request_timeout)
+        response = self._make_request_with_retry("GET", url)
         databases = response.json().get("databases", [])
 
         self._last_ping_status = self.name in databases
@@ -1093,7 +1474,7 @@ class RemoteVectorDB:
             with httpx.Client() as client:
                 response = client.get(url, headers=headers)
         except httpx.ConnectError as e:
-            raise DatabaseError(f"Could not connect to remote database: {str(e)}") from e
+            raise DatabaseError(f"Could not connect to remote database server: {str(e)}") from e
 
         if response.status_code == 200:
             result = response.json()

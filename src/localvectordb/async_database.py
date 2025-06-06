@@ -83,13 +83,13 @@ from pathlib import Path
 import numpy as np
 
 from localvectordb.database import LocalVectorDB
-from localvectordb.core import Document, QueryResult, MetadataField
+from localvectordb.core import Document, QueryResult, MetadataField, AsyncBaseVectorDB
 from localvectordb.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
 
 
-class AsyncLocalVectorDB:
+class AsyncLocalVectorDB(AsyncBaseVectorDB):
     """
     Async wrapper for LocalVectorDB using composition and optimized async operations.
 
@@ -218,6 +218,10 @@ class AsyncLocalVectorDB:
                 logger.error(f"Failed to initialize AsyncLocalVectorDB: {e}")
                 raise DatabaseError(f"Database initialization failed: {e}")
 
+    def _create_sync_db(self) -> LocalVectorDB:
+        """Create the underlying synchronous LocalVectorDB instance"""
+        return LocalVectorDB(**self._init_params)
+
     # Async context manager support
     async def __aenter__(self):
         await self._ensure_initialized()
@@ -277,12 +281,11 @@ class AsyncLocalVectorDB:
             raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
         return self._sync_db.metadata_schema.copy()
 
-    @property
-    def stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get database stats (requires initialization)"""
         if not self._initialized or self._sync_db is None:
             raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
-        return self._sync_db.stats
+        return self._sync_db.get_stats()
 
     # Optimized async embedding generation
     async def _generate_embeddings_async(
@@ -682,6 +685,50 @@ class AsyncLocalVectorDB:
             self._executor,
             self._sync_db.get_metadata_schema_info,
         )
+
+    async def _generate_embeddings_async(
+            self,
+            texts: List[str],
+            batch_size: int = 100
+    ) -> np.ndarray:
+        """Generate embeddings asynchronously for semantic filtering in QueryBuilder"""
+        await self._ensure_initialized()
+
+        if not texts:
+            return np.array([]).reshape(0, self._sync_db.embedding_dimension)
+
+        # Use async embedding generation if available
+        if hasattr(self._sync_db.embedding_provider, 'embed_async'):
+            if len(texts) <= batch_size:
+                return await self._sync_db.embedding_provider.embed_async(texts)
+            else:
+                # Process in batches
+                embeddings = []
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i:i + batch_size]
+                    batch_embeddings = await self._sync_db.embedding_provider.embed_async(batch)
+                    embeddings.append(batch_embeddings)
+                return np.vstack(embeddings)
+        else:
+            # Fall back to sync in thread pool
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_db._generate_embeddings_chunked,
+                texts,
+                batch_size
+            )
+
+    # 2. Helper methods for QueryBuilder compatibility
+    def is_async_database(self) -> bool:
+        """Mark this as an async database for QueryBuilder"""
+        return True
+
+    def supports_async_embeddings(self) -> bool:
+        """Check if async embeddings are supported"""
+        if not self._initialized:
+            return False
+        return hasattr(self._sync_db.embedding_provider, 'embed_async')
 
 
 # Factory function for convenient creation
