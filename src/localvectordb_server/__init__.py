@@ -5,16 +5,15 @@ localvectordb_server/__init__.py
 Enhanced server for interacting with `localvectordb.LocalVectorDB` via http
 with structured logging, error handling, and performance monitoring.
 """
-import os
 import logging
+import os
 from typing import Union
 
 from localvectordb.exceptions import ConfigurationError
 from localvectordb_server._dbmanager import DatabaseManager
-from localvectordb_server._logcfg import configure_logging
-from localvectordb_server.config import Config, load_config
-from localvectordb_server._logcfg import setup_request_logging
 from localvectordb_server._error_handlers import register_error_handlers
+from localvectordb_server._logcfg import configure_logging, setup_request_logging
+from localvectordb_server.config import Config, load_config
 
 
 def create_app(

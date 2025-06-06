@@ -120,24 +120,20 @@ MongoDB-like filtering::
     to be a drop-in replacement for the new LocalVectorDB, allowing code to work with
     either local or remote databases with minimal changes.
 """
-import logging
-from typing import Union, Literal
-
-from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB
-from localvectordb.exceptions import (
-    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError
-)
-
 import asyncio
 import logging
 import time
-from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
+from typing import Union, Literal, List, Optional, Dict, Any
 
 import httpx
 import numpy as np
 
+from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB
 from localvectordb.embeddings import EmbeddingProvider
+from localvectordb.exceptions import (
+    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError
+)
 
 logger = logging.getLogger(__name__)
 

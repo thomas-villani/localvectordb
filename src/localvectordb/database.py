@@ -34,6 +34,7 @@ from typing import Dict, List, Optional, Union, Literal, Any, Tuple
 import faiss
 import numpy as np
 
+from localvectordb._filters import FilterQueryBuilder, matches_metadata_filter
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import (
     DatabaseSchema, ConnectionPool, Document, Chunk, QueryResult,
@@ -41,8 +42,6 @@ from localvectordb.core import (
 )
 from localvectordb.embeddings import EmbeddingRegistry, EmbeddingProvider
 from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError, MetadataFilterError
-from localvectordb._filters import FilterQueryBuilder, matches_metadata_filter
-from localvectordb.query_builder import QueryBuilder
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)

@@ -76,15 +76,15 @@ Examples:
         $ lvdb auth prune-expired
 """
 
-import sqlite3
-import secrets
-import string
 import logging
-from datetime import datetime, timedelta, UTC
+import secrets
+import sqlite3
+import string
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from contextlib import contextmanager
 
 import bcrypt
 

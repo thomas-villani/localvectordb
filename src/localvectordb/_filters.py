@@ -36,8 +36,8 @@ The filtering system supports:
 
 import json
 import re
-from typing import Any, Dict, List, Tuple, Union, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Tuple, Union, Optional
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DatabaseError

@@ -16,14 +16,14 @@ standardized error responses, validation, and recovery strategies.
 import logging
 import traceback
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple, Union
 from functools import wraps
+from typing import Dict, Any, Optional, Tuple
 
-from flask import jsonify, request, g, current_app
-from werkzeug.exceptions import HTTPException, BadRequest, NotFound, Unauthorized, Forbidden
+from flask import jsonify, g, current_app
+from werkzeug.exceptions import HTTPException
 
 from localvectordb.exceptions import (
-    BaseLocalVectorDBException, DatabaseError, DatabaseNotFoundError,
+    BaseLocalVectorDBException, DatabaseNotFoundError,
     DuplicateDocumentIDError, EmbeddingError, ConfigurationError,
     ConnectionPoolError, OllamaNotFoundError
 )

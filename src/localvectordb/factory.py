@@ -15,7 +15,7 @@ local and remote database implementations, with support for both sync and async 
 """
 
 from pathlib import Path
-from typing import Union, Optional, Literal, Dict, Any
+from typing import Union, Literal
 
 from localvectordb.client import RemoteVectorDB
 from localvectordb.database import LocalVectorDB

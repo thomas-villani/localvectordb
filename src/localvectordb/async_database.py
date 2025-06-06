@@ -77,13 +77,13 @@ import functools
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Union, Literal, Any
 from pathlib import Path
+from typing import Dict, List, Optional, Union, Literal, Any
 
 import numpy as np
 
-from localvectordb.database import LocalVectorDB
 from localvectordb.core import Document, QueryResult, MetadataField, AsyncBaseVectorDB
+from localvectordb.database import LocalVectorDB
 from localvectordb.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)

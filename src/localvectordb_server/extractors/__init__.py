@@ -18,7 +18,7 @@ All dependencies are optional and gracefully degrade if not available.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, List, Type
+from typing import Optional, Dict, Any, List
 
 from localvectordb import MetadataField
 

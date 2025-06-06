@@ -10,18 +10,20 @@
 # src/localvectordb/query_builder.py
 
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import (
-    Dict, List, Union, Optional, Any, Iterator,
-    Literal, Callable
-)
-import numpy as np
 from enum import Enum
+from typing import (
+    Dict, List, Optional, Any, Iterator,
+    Literal
+)
+
+import numpy as np
 
 from localvectordb.core import QueryResult, Document, AnyVectorDB
 

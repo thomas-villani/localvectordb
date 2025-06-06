@@ -81,10 +81,10 @@ Notes:
 import glob
 import json
 import os
-from typing import Any, Union, get_type_hints
 from dataclasses import asdict
 from datetime import datetime, UTC
 from pathlib import Path
+from typing import Any, Union, get_type_hints
 
 import click
 

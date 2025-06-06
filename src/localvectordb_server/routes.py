@@ -16,29 +16,30 @@ input validation, and performance monitoring.
 """
 import json
 import logging
+import mimetypes
 import re
 from datetime import datetime
 from math import ceil
 from typing import Dict, Any
 
 from flask import Blueprint, request, jsonify, current_app
+from werkzeug.utils import secure_filename
+
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key
-from localvectordb_server._checkdeps import check_ollama_service
-from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 from localvectordb_server._cache import cache
+from localvectordb_server._checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
     handle_errors, APIError, ValidationError,
     validate_required_fields, validate_field_type, validate_pagination_params,
     validate_search_params, validate_database_creation_params
 )
 from localvectordb_server._logcfg import log_performance, request_context, DatabaseLogger
-import mimetypes
-from werkzeug.utils import secure_filename
-
+from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 # Add this import after the existing imports in routes.py
 from localvectordb_server.extractors import get_extractor_registry, get_supported_formats
+
 FILE_EXTRACTION_AVAILABLE = True
 
 

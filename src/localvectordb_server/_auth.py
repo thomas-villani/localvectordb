@@ -21,7 +21,6 @@ Features:
 """
 
 import logging
-import os
 import time
 from functools import wraps
 
