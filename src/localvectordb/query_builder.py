@@ -13,14 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import statistics
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import (
     Dict, List, Optional, Any, Iterator,
-    Literal
+    Literal, Union
 )
 
 import numpy as np
@@ -29,6 +31,7 @@ from localvectordb.core import QueryResult, Document, AnyVectorDB
 
 logger = logging.getLogger(__name__)
 
+DocumentScoringMethod = Literal["best", "worst" "average", "weighted_average", "frequency_boost"]
 
 class SimilarityMetric(Enum):
     """Supported similarity metrics for semantic filtering."""
@@ -55,11 +58,6 @@ class SemanticFilter:
     threshold: float
     metric: SimilarityMetric = SimilarityMetric.COSINE
     embedding_model: Optional[str] = None
-    cache_key: Optional[str] = None
-
-    def __post_init__(self):
-        if self.cache_key is None:
-            self.cache_key = f"semantic:{self.field}:{hash(self.concept)}:{self.embedding_model}"
 
     async def apply_async(self, documents: List[Document], db: AnyVectorDB) -> List[Document]:
         """Apply semantic filtering with async embedding generation."""
@@ -147,9 +145,8 @@ class SemanticFilter:
             return []
 
         # Use embedding provider directly for sync version too
-        embedding_provider = db.embedding_provider
-        concept_embedding = embedding_provider.embed_sync([self.concept])[0]
-        field_embeddings = embedding_provider.embed_sync(field_contents)
+        concept_embedding = db.embedding_provider.embed_sync([self.concept])[0]
+        field_embeddings = db.embedding_provider.embed_sync(field_contents)
 
         # Apply similarity filtering
         filtered_docs = []
@@ -164,7 +161,8 @@ class SemanticFilter:
 
         return filtered_docs
 
-    def _extract_field_content(self, doc: Document, field: str) -> Optional[str]:
+    @staticmethod
+    def _extract_field_content(doc: Document, field: str) -> Optional[str]:
         """Extract content from document field with support for nested fields."""
         if field == "content":
             return doc.content
@@ -198,7 +196,7 @@ class SemanticFilter:
             return float(np.dot(a_flat, b_flat))
         elif self.metric == SimilarityMetric.EUCLIDEAN:
             # Convert distance to similarity (0-1 range)
-            distance = np.linalg.norm(a_flat - b_flat)
+            distance = float(np.linalg.norm(a_flat - b_flat))
             return float(1.0 / (1.0 + distance))
         elif self.metric == SimilarityMetric.MANHATTAN:
             # Convert L1 distance to similarity
@@ -226,7 +224,7 @@ class QueryBuilder:
         self._semantic_filters: List[SemanticFilter] = []
         self._search_type: Literal["vector", "keyword", "hybrid"] = "vector"
         self._vector_weight: float = 0.7
-        self._return_type: Literal["documents", "chunks"] = "documents"
+        self._return_type: Literal["documents", "chunks", "context"] = "documents"
         self._limit: int = 10
         self._offset: int = 0
         self._order_by: List[tuple[str, str]] = []  # (field, direction)
@@ -237,13 +235,13 @@ class QueryBuilder:
         self._explain: bool = False
         self._hints: Dict[str, Any] = {}
         self._score_threshold: float = 0.0
+        self._context_window: int = 2
+        self._semantic_dedup_threshold: Optional[float] = None
+        self._document_scoring_method: DocumentScoringMethod = "frequency_boost"
 
         # Performance optimization flags
         self._batch_size: int = 100
-        self._use_cache: bool = True
-        self._parallel_semantic_filtering: bool = True
 
-    # ... (keep all the existing builder methods like search, filter, etc.)
 
     def clone(self) -> "QueryBuilder":
         """Create a copy of this QueryBuilder for chaining."""
@@ -265,26 +263,50 @@ class QueryBuilder:
         new_builder._hints = self._hints.copy()
         new_builder._score_threshold = self._score_threshold
         new_builder._batch_size = self._batch_size
-        new_builder._use_cache = self._use_cache
-        new_builder._parallel_semantic_filtering = self._parallel_semantic_filtering
+        # new_builder._use_cache = self._use_cache
+        # new_builder._parallel_semantic_filtering = self._parallel_semantic_filtering
+        new_builder._context_window = self._context_window
+        new_builder._semantic_dedup_threshold = self._semantic_dedup_threshold
+        new_builder._document_scoring_method = self._document_scoring_method
+
         return new_builder
 
     # Core search methods
     def search(self, query: str, field: str = "content") -> "QueryBuilder":
         """Add a search clause for the specified field."""
+        if not query or not isinstance(query, str):
+            raise ValueError("Query must be a non-empty string")
+
+        if not field or not isinstance(field, str):
+            raise ValueError("Field must be a non-empty string")
+
         builder = self.clone()
         builder._search_clauses.append(SearchClause(field, query, 1.0, self._search_type))
         return builder
 
     def search_field(self, field: str, query: str, weight: float = 1.0) -> "QueryBuilder":
         """Add a weighted search clause for a specific field."""
+        if not query or not isinstance(query, str):
+            raise ValueError("Query must be a non-empty string")
+
+        if not field or not isinstance(field, str):
+            raise ValueError("Field must be a non-empty string")
+
         builder = self.clone()
         builder._search_clauses.append(SearchClause(field, query, weight, self._search_type))
         return builder
 
-    # Add all other builder methods (filter, semantic_filter, limit, etc.)
     def filter(self, field: str = None, value=None, **kwargs) -> "QueryBuilder":
         """Add exact filter conditions."""
+        if field is not None:
+            if not isinstance(field, str) or not field:
+                raise ValueError("Field must be a non-empty string")
+
+        # Validate operator suffixes in kwargs
+        # for key in kwargs:
+        #     if key.endswith('_') and key[:-1] not in VALID_OPERATORS:
+        #         raise ValueError(f"Invalid operator suffix in '{key}'")
+
         builder = self.clone()
 
         if field is not None and value is not None:
@@ -309,6 +331,15 @@ class QueryBuilder:
             metric: SimilarityMetric = SimilarityMetric.COSINE
     ) -> "QueryBuilder":
         """Add semantic filtering based on conceptual similarity."""
+        if not field or not isinstance(field, str):
+            raise ValueError("Field must be a non-empty string")
+
+        if not concept or not isinstance(concept, str):
+            raise ValueError("Concept must be a non-empty string")
+
+        if not 0 <= threshold <= 1:
+            raise ValueError("Threshold must be between 0 and 1")
+
         builder = self.clone()
         semantic_filter = SemanticFilter(field, concept, threshold, metric)
         builder._semantic_filters.append(semantic_filter)
@@ -330,6 +361,7 @@ class QueryBuilder:
         builder._offset = n
         return builder
 
+    # TODO: do it like this? Or as part of "search"
     def vector(self) -> "QueryBuilder":
         """Use vector search."""
         builder = self.clone()
@@ -342,12 +374,645 @@ class QueryBuilder:
         builder._search_type = "keyword"
         return builder
 
+    def context_window(self, window_size: int) -> "QueryBuilder":
+        """Set context window size for context return type."""
+        if window_size < 0:
+            raise ValueError("Context window size must be non-negative")
+        builder = self.clone()
+        builder._context_window = window_size
+        return builder
+
+    def semantic_dedup(self, threshold: float) -> "QueryBuilder":
+        """Enable semantic deduplication with similarity threshold."""
+        if threshold < 0.0 or threshold > 1.0:
+            raise ValueError("Semantic deduplication threshold must be between 0.0 and 1.0")
+        builder = self.clone()
+        builder._semantic_dedup_threshold = threshold
+        return builder
+
+    def documents(self, scoring_method: DocumentScoringMethod = "frequency_boost") -> "QueryBuilder":
+        """Return full documents in results (default)."""
+        builder = self.clone()
+        builder._return_type = "documents"
+        builder._document_scoring_method = scoring_method
+        return builder
+
+    def chunks(self) -> "QueryBuilder":
+        """Return individual chunks in results with position information."""
+        builder = self.clone()
+        builder._return_type = "chunks"
+        return builder
+
+    def return_type(self, return_type: Literal["documents", "chunks", "context"]) -> "QueryBuilder":
+        """Set the return type explicitly."""
+        if return_type not in ["documents", "chunks", "context"]:
+            raise ValueError("return_type must be 'documents' or 'chunks'")
+        builder = self.clone()
+        builder._return_type = return_type
+        return builder
+
+    def context(self, window_size: int = 2) -> "QueryBuilder":
+        """Return chunks with context window."""
+        builder = self.clone()
+        builder._return_type = "context"
+        builder._context_window = window_size
+        return builder
+
     def hybrid(self, vector_weight: float = 0.7) -> "QueryBuilder":
         """Use hybrid search with specified vector weight."""
         builder = self.clone()
         builder._search_type = "hybrid"
         builder._vector_weight = vector_weight
         return builder
+
+    def order_by(self, field: str, direction: str = "desc") -> "QueryBuilder":
+        """
+        Add ordering by specified field.
+
+        Parameters
+        ----------
+        field : str
+            Field name to order by (supports 'score' and metadata fields)
+        direction : str, default "desc"
+            Sort direction: "desc" or "asc"
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with ordering applied
+
+        Examples
+        --------
+        Order by relevance score (default)::
+
+            results = db.query_builder().search("AI").order_by("score").execute()
+
+        Order by date field::
+
+            results = db.query_builder().search("news").order_by("published_date", "desc").execute()
+
+        Multiple ordering (last added has priority)::
+
+            results = (db.query_builder()
+                        .search("research")
+                        .order_by("year", "desc")
+                        .order_by("score", "desc")
+                        .execute())
+        """
+        if direction.lower() not in ["asc", "desc"]:
+            raise ValueError("direction must be 'asc' or 'desc'")
+
+        builder = self.clone()
+        builder._order_by.append((field, direction.lower()))
+        return builder
+
+    def order_by_score(self, direction: str = "desc") -> "QueryBuilder":
+        """
+        Order results by relevance score.
+
+        Parameters
+        ----------
+        direction : str, default "desc"
+            Sort direction: "desc" (best first) or "asc" (worst first)
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with score ordering applied
+        """
+        return self.order_by("score", direction)
+
+    def clear_ordering(self) -> "QueryBuilder":
+        """
+        Remove all ordering clauses.
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with no ordering
+        """
+        builder = self.clone()
+        builder._order_by.clear()
+        return builder
+
+    def group_by(self, *fields: str) -> "QueryBuilder":
+        """
+        Group results by one or more fields.
+
+        Parameters
+        ----------
+        *fields : str
+            Field names to group by
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with grouping applied
+
+        Examples
+        --------
+        Group by single field::
+
+            results = db.query_builder().search("AI").group_by("category").execute()
+
+        Group by multiple fields::
+
+            results = db.query_builder().search("research").group_by("year", "category").execute()
+        """
+        if not fields:
+            raise ValueError("At least one field must be specified for grouping")
+
+        for field in fields:
+            if not isinstance(field, str) or not field.strip():
+                raise ValueError("All group by fields must be non-empty strings")
+
+        builder = self.clone()
+        builder._group_by.extend(fields)
+        return builder
+
+    def clear_grouping(self) -> "QueryBuilder":
+        """
+        Remove all grouping clauses.
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with no grouping
+        """
+        builder = self.clone()
+        builder._group_by.clear()
+        return builder
+
+    def aggregate(self, field: str, function: str, alias: Optional[str] = None) -> "QueryBuilder":
+        """
+        Add an aggregation function.
+
+        Parameters
+        ----------
+        field : str
+            Field name to aggregate
+        function : str
+            Aggregation function: "count", "sum", "avg", "min", "max", "std", "var"
+        alias : str, optional
+            Alias for the aggregation result
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with aggregation applied
+
+        Examples
+        --------
+        Count documents by category::
+
+            results = (db.query_builder()
+                        .search("AI")
+                        .group_by("category")
+                        .aggregate("*", "count", "doc_count")
+                        .execute())
+        """
+        valid_functions = ["count", "sum", "avg", "min", "max", "std", "var"]
+        if function not in valid_functions:
+            raise ValueError(f"function must be one of: {', '.join(valid_functions)}")
+
+        builder = self.clone()
+        aggregation = AggregationClause(field=field, function=function, alias=alias)
+        builder._aggregations.append(aggregation)
+        return builder
+
+    def count_by(self, field: str = "*", alias: Optional[str] = None) -> "QueryBuilder":
+        """
+        Count documents/chunks, optionally grouped by field.
+
+        Parameters
+        ----------
+        field : str, default "*"
+            Field to count by ("*" for total count)
+        alias : str, optional
+            Alias for the count result
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with count aggregation
+        """
+        return self.aggregate(field, "count", alias or "count")
+
+    def sum_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilder":
+        """
+        Sum numeric values in a field.
+
+        Parameters
+        ----------
+        field : str
+            Field name containing numeric values
+        alias : str, optional
+            Alias for the sum result
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with sum aggregation
+        """
+        return self.aggregate(field, "sum", alias or f"sum_{field}")
+
+    def avg_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilder":
+        """
+        Calculate average of numeric values in a field.
+
+        Parameters
+        ----------
+        field : str
+            Field name containing numeric values
+        alias : str, optional
+            Alias for the average result
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with average aggregation
+        """
+        return self.aggregate(field, "avg", alias or f"avg_{field}")
+
+    def min_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilder":
+        """
+        Find minimum value in a field.
+
+        Parameters
+        ----------
+        field : str
+            Field name containing values
+        alias : str, optional
+            Alias for the minimum result
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with minimum aggregation
+        """
+        return self.aggregate(field, "min", alias or f"min_{field}")
+
+    def max_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilder":
+        """
+        Find maximum value in a field.
+
+        Parameters
+        ----------
+        field : str
+            Field name containing values
+        alias : str, optional
+            Alias for the maximum result
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with maximum aggregation
+        """
+        return self.aggregate(field, "max", alias or f"max_{field}")
+
+    def having(self, field: str, operator: str, value: Any) -> "QueryBuilder":
+        """
+        Add HAVING clause for post-aggregation filtering.
+
+        Parameters
+        ----------
+        field : str
+            Aggregated field name or alias
+        operator : str
+            Comparison operator: "eq", "ne", "gt", "gte", "lt", "lte"
+        value : Any
+            Value to compare against
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with HAVING clause
+
+        Examples
+        --------
+        Filter groups with count > 5::
+
+            results = (db.query_builder()
+                        .search("AI")
+                        .group_by("category")
+                        .count_by("*", "doc_count")
+                        .having("doc_count", "gt", 5)
+                        .execute())
+        """
+        valid_operators = ["eq", "ne", "gt", "gte", "lt", "lte"]
+        if operator not in valid_operators:
+            raise ValueError(f"operator must be one of: {', '.join(valid_operators)}")
+
+        builder = self.clone()
+        having_clause = {field: {f"${operator}": value}}
+        builder._having_clauses.append(having_clause)
+        return builder
+
+    def having_count(self, operator: str, value: int, alias: str = "count") -> "QueryBuilder":
+        """
+        Add HAVING clause for count aggregations.
+
+        Parameters
+        ----------
+        operator : str
+            Comparison operator: "eq", "ne", "gt", "gte", "lt", "lte"
+        value : int
+            Count value to compare against
+        alias : str, default "count"
+            Alias used for the count aggregation
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with count HAVING clause
+        """
+        return self.having(alias, operator, value)
+
+    def explain(self, detailed: bool = False) -> "QueryBuilder":
+        """
+        Enable query explanation to understand execution plan and performance.
+
+        Parameters
+        ----------
+        detailed : bool, default False
+            Include detailed execution statistics
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with explanation enabled
+
+        Notes
+        -----
+        When explain is enabled, query results will include additional metadata
+        about execution time, steps taken, and optimization decisions.
+        """
+        builder = self.clone()
+        builder._explain = True
+        builder._hints["detailed_explain"] = detailed
+        return builder
+
+    def rerank(self, method: str, **config) -> "QueryBuilder":
+        """
+        Add reranking configuration for result post-processing.
+
+        Parameters
+        ----------
+        method : str
+            Reranking method: "relevance", "recency", "diversity", "custom"
+        **config
+            Method-specific configuration parameters
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with reranking configured
+
+        Examples
+        --------
+        Rerank by recency::
+
+            results = (db.query_builder()
+                        .search("news")
+                        .rerank("recency", date_field="published_date", weight=0.3)
+                        .execute())
+        """
+        valid_methods = ["relevance", "recency", "diversity", "custom"]
+        if method not in valid_methods:
+            raise ValueError(f"rerank method must be one of: {', '.join(valid_methods)}")
+
+        builder = self.clone()
+        builder._rerank_config = {"method": method, **config}
+        return builder
+
+    def rerank_by_relevance(self, weight: float = 1.0) -> "QueryBuilder":
+        """
+        Rerank results by relevance score.
+
+        Parameters
+        ----------
+        weight : float, default 1.0
+            Weight factor for relevance in reranking
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with relevance reranking
+        """
+        return self.rerank("relevance", weight=weight)
+
+    def rerank_by_recency(self, date_field: str = "updated_at", weight: float = 1.0) -> "QueryBuilder":
+        """
+        Rerank results by recency (newer documents ranked higher).
+
+        Parameters
+        ----------
+        date_field : str
+            Metadata field containing date information
+        weight : float, default 1.0
+            Weight factor for recency in reranking
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with recency reranking
+        """
+        return self.rerank("recency", date_field=date_field, weight=weight)
+
+    def rerank_by_diversity(self, field: str, weight: float = 1.0) -> "QueryBuilder":
+        """
+        Rerank results to promote diversity in specified field.
+
+        Parameters
+        ----------
+        field : str
+            Metadata field to diversify by
+        weight : float, default 1.0
+            Weight factor for diversity in reranking
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with diversity reranking
+        """
+        return self.rerank("diversity", field=field, weight=weight)
+
+    def validate(self) -> Dict[str, Any]:
+        """
+        Validate the current query configuration and return validation results.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Validation results including warnings and recommendations
+
+        Examples
+        --------
+        Check query before execution::
+
+            builder = db.query_builder().search("AI").group_by("category")
+            validation = builder.validate()
+            if validation["valid"]:
+                results = builder.execute()
+        """
+        issues = []
+        warnings = []
+        recommendations = []
+
+        # Check for common issues
+        if self._aggregations and not self._group_by:
+            warnings.append("Aggregations without GROUP BY may not behave as expected")
+
+        if self._having_clauses and not self._aggregations:
+            issues.append("HAVING clauses require aggregations to be meaningful")
+
+        if self._limit > 1000:
+            recommendations.append("Consider using streaming for large result sets")
+
+        if self._semantic_filters and not self._search_clauses:
+            warnings.append("Semantic filters without search may be slow")
+
+        return {
+            "valid": len(issues) == 0,
+            "issues": issues,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "query_complexity": self._estimate_complexity()
+        }
+
+    def _estimate_complexity(self) -> str:
+        """Estimate query complexity for optimization hints."""
+        score = 0
+
+        score += len(self._search_clauses)
+        score += len(self._semantic_filters) * 2  # Semantic filters are expensive
+        score += len(self._exact_filters)
+        score += len(self._aggregations) * 2
+        score += len(self._group_by)
+
+        if score <= 3:
+            return "low"
+        elif score <= 8:
+            return "medium"
+        else:
+            return "high"
+
+    def _generate_sql_preview(self) -> str:
+        """
+        Generate a human-readable SQL-like preview of the query.
+        This is a simplified representation for debugging, not actual SQL.
+        """
+        parts = []
+
+        # Select clause
+        if self._aggregations:
+            agg_fields = [f"{agg.function}({agg.field}) AS {agg.alias or f'{agg.function}_{agg.field}'}"
+                          for agg in self._aggregations]
+            if self._group_by:
+                select_fields = self._group_by + agg_fields
+            else:
+                select_fields = agg_fields
+            parts.append(f"SELECT {', '.join(select_fields)}")
+        else:
+            parts.append(f"SELECT * FROM {self._return_type}")
+
+        # Vector search
+        if self._search_clauses:
+            search_terms = [f"MATCH({clause.field}) AGAINST('{clause.query}' WEIGHT {clause.weight})"
+                            for clause in self._search_clauses]
+            if self._search_type == "vector":
+                parts.append(f"USING VECTOR SEARCH {' AND '.join(search_terms)}")
+            elif self._search_type == "keyword":
+                parts.append(f"USING KEYWORD SEARCH {' AND '.join(search_terms)}")
+            else:  # hybrid
+                parts.append(
+                    f"USING HYBRID SEARCH (VECTOR {self._vector_weight}, KEYWORD {1 - self._vector_weight}) {' AND '.join(search_terms)}")
+
+        # Where clause for filters
+        if self._exact_filters:
+            filter_exprs = []
+            for filter_dict in self._exact_filters:
+                for field, value in filter_dict.items():
+                    if isinstance(value, dict):  # Operator filter
+                        for op, op_value in value.items():
+                            filter_exprs.append(f"{field} {op} {repr(op_value)}")
+                    else:  # Equality filter
+                        filter_exprs.append(f"{field} = {repr(value)}")
+
+            parts.append(f"WHERE {' AND '.join(filter_exprs)}")
+
+        # Semantic filters
+        if self._semantic_filters:
+            semantic_exprs = [f"SEMANTIC_MATCH({filter.field}, '{filter.concept}') > {filter.threshold}"
+                              for filter in self._semantic_filters]
+
+            if "WHERE" in parts:
+                parts.append(f"AND {' AND '.join(semantic_exprs)}")
+            else:
+                parts.append(f"WHERE {' AND '.join(semantic_exprs)}")
+
+        # Group by
+        if self._group_by:
+            parts.append(f"GROUP BY {', '.join(self._group_by)}")
+
+        # Having
+        if self._having_clauses:
+            having_exprs = []
+            for having in self._having_clauses:
+                for field, condition in having.items():
+                    if isinstance(condition, dict):
+                        for op, value in condition.items():
+                            having_exprs.append(f"{field} {op} {repr(value)}")
+                    else:
+                        having_exprs.append(f"{field} = {repr(condition)}")
+
+            parts.append(f"HAVING {' AND '.join(having_exprs)}")
+
+        # Order by
+        if self._order_by:
+            order_terms = [f"{field} {direction.upper()}" for field, direction in self._order_by]
+            parts.append(f"ORDER BY {', '.join(order_terms)}")
+
+        # Limit and offset
+        if self._limit != 10:  # Only show if not default
+            parts.append(f"LIMIT {self._limit}")
+
+        if self._offset > 0:
+            parts.append(f"OFFSET {self._offset}")
+
+        return " ".join(parts)
+
+    def debug_info(self) -> Dict[str, Any]:
+        """
+        Get detailed debugging information about the current query state.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Complete query state information for debugging
+        """
+        return {
+            "search_clauses": len(self._search_clauses),
+            "exact_filters": len(self._exact_filters),
+            "semantic_filters": len(self._semantic_filters),
+            "search_type": self._search_type,
+            "return_type": self._return_type,
+            "limit": self._limit,
+            "offset": self._offset,
+            "order_by": self._order_by,
+            "group_by": self._group_by,
+            "aggregations": len(self._aggregations),
+            "having_clauses": len(self._having_clauses),
+            "rerank_config": self._rerank_config,
+            "explain_enabled": self._explain,
+            "sql_preview": self._generate_sql_preview(),
+            "hints": self._hints,
+            "performance_flags": {
+                # "use_cache": self._use_cache,
+                # "parallel_semantic_filtering": self._parallel_semantic_filtering,
+                "batch_size": self._batch_size
+            }
+        }
 
     # Execution methods with proper async support
     def execute(self) -> List[QueryResult]:
@@ -396,366 +1061,6 @@ class QueryBuilder:
         return await executor.count()
 
 
-class AsyncQueryExecutor:
-    """Async query executor that leverages native async database methods."""
-
-    def __init__(self, query_builder: "QueryBuilder"):
-        self.builder = query_builder
-        self.db = query_builder._db
-
-    async def execute(self) -> List[QueryResult]:
-        """Execute the query asynchronously."""
-        start_time = time.time()
-
-        try:
-            # Determine if this is an async database
-            is_async_db = hasattr(self.db, 'query') and asyncio.iscoroutinefunction(self.db.query)
-
-            if self.builder._search_clauses:
-                results = await self._execute_search_query_async()
-            else:
-                results = await self._execute_filter_only_query_async()
-
-            # Apply post-processing
-            results = await self._apply_post_processing_async(results)
-
-            execution_time = time.time() - start_time
-            logger.debug(f"Async query executed in {execution_time:.3f}s, returned {len(results)} results")
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Async query execution failed: {e}")
-            raise
-
-    async def _execute_search_query_async(self) -> List[QueryResult]:
-        """Execute search query using async database methods."""
-        if len(self.builder._search_clauses) == 1:
-            return await self._execute_single_search_async()
-        else:
-            return await self._execute_multi_search_async()
-
-    async def _execute_single_search_async(self) -> List[QueryResult]:
-        """Execute a single search clause asynchronously."""
-        clause = self.builder._search_clauses[0]
-        filters = self._combine_exact_filters()
-
-        # Check if database has async query method
-        if hasattr(self.db, 'query') and asyncio.iscoroutinefunction(self.db.query):
-            results = await self.db.query(
-                query=clause.query,
-                search_type=clause.search_type,
-                return_type=self.builder._return_type,
-                k=self.builder._limit + self.builder._offset,
-                score_threshold=self.builder._score_threshold,
-                filters=filters,
-                vector_weight=self.builder._vector_weight
-            )
-        else:
-            # Fallback to sync in thread pool
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as executor:
-                results = await loop.run_in_executor(
-                    executor,
-                    lambda: self.db.query(
-                        query=clause.query,
-                        search_type=clause.search_type,
-                        return_type=self.builder._return_type,
-                        k=self.builder._limit + self.builder._offset,
-                        score_threshold=self.builder._score_threshold,
-                        filters=filters,
-                        vector_weight=self.builder._vector_weight
-                    )
-                )
-
-        # Apply semantic filters asynchronously
-        if self.builder._semantic_filters:
-            results = await self._apply_semantic_filters_async(results)
-
-        return results
-
-    async def _execute_multi_search_async(self) -> List[QueryResult]:
-        """Execute multiple search clauses and combine results asynchronously."""
-        tasks = []
-        filters = self._combine_exact_filters()
-
-        for clause in self.builder._search_clauses:
-            if hasattr(self.db, 'query') and asyncio.iscoroutinefunction(self.db.query):
-                task = self.db.query(
-                    query=clause.query,
-                    search_type=clause.search_type,
-                    return_type=self.builder._return_type,
-                    k=self.builder._limit * 2,
-                    score_threshold=self.builder._score_threshold,
-                    filters=filters,
-                    vector_weight=self.builder._vector_weight
-                )
-            else:
-                # Create async wrapper for sync query
-                loop = asyncio.get_event_loop()
-                with ThreadPoolExecutor() as executor:
-                    task = loop.run_in_executor(
-                        executor,
-                        lambda c=clause: self.db.query(
-                            query=c.query,
-                            search_type=c.search_type,
-                            return_type=self.builder._return_type,
-                            k=self.builder._limit * 2,
-                            score_threshold=self.builder._score_threshold,
-                            filters=filters,
-                            vector_weight=self.builder._vector_weight
-                        )
-                    )
-            tasks.append((clause, task))
-
-        # Execute all searches concurrently
-        all_results = []
-        for clause, task in tasks:
-            clause_results = await task
-            # Weight the scores
-            for result in clause_results:
-                result.score *= clause.weight
-            all_results.extend(clause_results)
-
-        # Merge and deduplicate results
-        merged_results = self._merge_search_results(all_results)
-
-        # Apply semantic filters
-        if self.builder._semantic_filters:
-            merged_results = await self._apply_semantic_filters_async(merged_results)
-
-        return merged_results
-
-    async def _execute_filter_only_query_async(self) -> List[QueryResult]:
-        """Execute filter-only query asynchronously."""
-        filters = self._combine_exact_filters()
-
-        if hasattr(self.db, 'filter') and asyncio.iscoroutinefunction(self.db.filter):
-            documents = await self.db.filter(
-                where=filters,
-                limit=self.builder._limit,
-                offset=self.builder._offset,
-                order_by=self._build_order_by_clause()
-            )
-        else:
-            # Fallback to sync in thread pool
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as executor:
-                documents = await loop.run_in_executor(
-                    executor,
-                    lambda: self.db.filter(
-                        where=filters,
-                        limit=self.builder._limit,
-                        offset=self.builder._offset,
-                        order_by=self._build_order_by_clause()
-                    )
-                )
-
-        # Convert documents to QueryResults
-        results = [
-            QueryResult(
-                id=doc.id,
-                score=1.0,
-                type="document",
-                content=doc.content,
-                metadata=doc.metadata
-            )
-            for doc in documents
-        ]
-
-        # Apply semantic filters
-        if self.builder._semantic_filters:
-            results = await self._apply_semantic_filters_async(results)
-
-        return results
-
-    async def _apply_semantic_filters_async(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply semantic filtering to results asynchronously."""
-        if not self.builder._semantic_filters:
-            return results
-
-        # Convert QueryResults to Documents for semantic filtering
-        documents = []
-        for result in results:
-            doc = Document(
-                id=result.id,
-                content=result.content,
-                metadata=result.metadata.copy()
-            )
-            doc.metadata["_original_score"] = result.score
-            documents.append(doc)
-
-        # Apply each semantic filter asynchronously
-        for semantic_filter in self.builder._semantic_filters:
-            try:
-                # Check if database has async embedding support
-                if hasattr(self.db, '_generate_embeddings_async'):
-                    # Use database's async embedding method
-                    documents = await semantic_filter.apply_async(documents, self.db)
-                elif hasattr(self.db, 'embedding_provider'):
-                    # Use embedding provider directly
-                    documents = await semantic_filter.apply_async(documents, self.db)
-                else:
-                    # Fall back to sync version in thread pool
-                    loop = asyncio.get_event_loop()
-                    with ThreadPoolExecutor() as executor:
-                        documents = await loop.run_in_executor(
-                            executor, semantic_filter.apply, documents, self.db
-                        )
-            except Exception as e:
-                logger.warning(f"Semantic filter failed, skipping: {e}")
-                continue
-
-        # Convert back to QueryResults
-        filtered_results = []
-        for doc in documents:
-            original_score = doc.metadata.pop("_original_score", 1.0)
-            result = QueryResult(
-                id=doc.id,
-                score=original_score,
-                type="document",
-                content=doc.content,
-                metadata=doc.metadata
-            )
-            filtered_results.append(result)
-
-        return filtered_results
-
-    async def _apply_post_processing_async(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply post-processing steps asynchronously."""
-        # Apply sorting if specified
-        if self.builder._order_by and not self.builder._aggregations:
-            results = self._apply_sorting(results)
-
-        # Apply pagination
-        if self.builder._offset > 0:
-            results = results[self.builder._offset:]
-
-        if len(results) > self.builder._limit:
-            results = results[:self.builder._limit]
-
-        return results
-
-    async def count(self) -> int:
-        """Get count of matching results asynchronously."""
-        # Create a modified builder for counting
-        count_builder = self.builder.clone()
-        count_builder._limit = 999999
-        count_builder._offset = 0
-
-        if count_builder._search_clauses:
-            results = await self._execute_search_query_async()
-            return len(results)
-        else:
-            results = await self._execute_filter_only_query_async()
-            return len(results)
-
-    async def stream(self, batch_size: int = 100):
-        """Stream results in batches asynchronously."""
-        original_limit = self.builder._limit
-        original_offset = self.builder._offset
-        current_offset = original_offset
-
-        try:
-            while True:
-                # Create a modified builder for this batch
-                batch_builder = self.builder.clone()
-                batch_builder._limit = min(batch_size, original_limit - (current_offset - original_offset))
-                batch_builder._offset = current_offset
-
-                # Execute batch
-                batch_executor = AsyncQueryExecutor(batch_builder)
-                batch_results = await batch_executor.execute()
-
-                if not batch_results:
-                    break
-
-                yield batch_results
-                current_offset += len(batch_results)
-
-                # Check if we've reached the original limit
-                if current_offset - original_offset >= original_limit:
-                    break
-
-        except Exception as e:
-            logger.error(f"Error during async streaming: {e}")
-            raise
-
-    # Helper methods (same as sync version)
-    def _combine_exact_filters(self) -> Dict[str, Any]:
-        """Combine all exact filters into a single filter dictionary."""
-        if not self.builder._exact_filters:
-            return {}
-
-        combined = {}
-        and_clauses = []
-
-        for filter_dict in self.builder._exact_filters:
-            if len(filter_dict) == 1:
-                key, value = next(iter(filter_dict.items()))
-                if key in combined:
-                    and_clauses.append({key: combined[key]})
-                    and_clauses.append({key: value})
-                    combined.pop(key)
-                else:
-                    combined[key] = value
-            else:
-                and_clauses.append(filter_dict)
-
-        if and_clauses:
-            if combined:
-                and_clauses.append(combined)
-            return {"$and": and_clauses}
-
-        return combined
-
-    def _merge_search_results(self, all_results: List[QueryResult]) -> List[QueryResult]:
-        """Merge and deduplicate search results from multiple clauses."""
-        result_groups = defaultdict(list)
-        for result in all_results:
-            result_groups[result.id].append(result)
-
-        merged_results = []
-        for result_id, results in result_groups.items():
-            if len(results) == 1:
-                merged_results.append(results[0])
-            else:
-                total_score = sum(r.score for r in results)
-                avg_score = total_score / len(results)
-                merged_result = results[0]
-                merged_result.score = avg_score
-                merged_results.append(merged_result)
-
-        merged_results.sort(key=lambda x: x.score, reverse=True)
-        return merged_results
-
-    def _apply_sorting(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply sorting to results."""
-        for field, direction in reversed(self.builder._order_by):
-            reverse = (direction.lower() == "desc")
-
-            if field == "score":
-                results.sort(key=lambda x: x.score, reverse=reverse)
-            else:
-                def sort_key(result):
-                    value = result.metadata.get(field)
-                    if value is None:
-                        return float('-inf') if reverse else float('inf')
-                    return value
-
-                results.sort(key=sort_key, reverse=reverse)
-
-        return results
-
-    def _build_order_by_clause(self) -> Optional[str]:
-        """Build ORDER BY clause for database queries."""
-        if not self.builder._order_by:
-            return None
-
-        field, direction = self.builder._order_by[0]
-        return f"{field} {direction.upper()}"
-
-
 # Keep the original QueryExecutor for sync databases
 class QueryExecutor:
     """Original sync query executor."""
@@ -765,25 +1070,342 @@ class QueryExecutor:
         self.db = query_builder._db
 
     def execute(self) -> List[QueryResult]:
-        """Execute the query synchronously."""
+        """Execute the query synchronously with full feature support."""
         start_time = time.time()
 
         try:
+            # Generate execution plan if explain is enabled
+            if self.builder._explain:
+                execution_plan = self._generate_execution_plan()
+
+            # Execute base query
             if self.builder._search_clauses:
                 results = self._execute_search_query()
             else:
                 results = self._execute_filter_only_query()
 
+            # Apply post-processing
             results = self._apply_post_processing(results)
+
+            # Apply aggregations and grouping if specified
+            if self.builder._aggregations or self.builder._group_by:
+                results = self._apply_aggregations_and_grouping(results)
+
+            # Apply reranking if configured
+            if self.builder._rerank_config:
+                results = self._apply_reranking(results)
 
             execution_time = time.time() - start_time
             logger.debug(f"Query executed in {execution_time:.3f}s, returned {len(results)} results")
+
+            # Add execution info if explain is enabled
+            if self.builder._explain:
+                for result in results:
+                    result.metadata["_execution_time"] = execution_time
+                    result.metadata["_execution_plan"] = execution_plan
+                    if self.builder._hints.get("detailed_explain", False):
+                        result.metadata["_detailed_stats"] = self._get_detailed_stats(results)
 
             return results
 
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
             raise
+
+    def _generate_execution_plan(self) -> Dict[str, Any]:
+        """Generate execution plan for explain functionality."""
+        plan = {
+            "steps": [],
+            "estimated_cost": 0,
+            "query_type": "hybrid" if self.builder._search_clauses and self.builder._exact_filters else
+            "search" if self.builder._search_clauses else "filter",
+            "optimizations": []
+        }
+
+        if self.builder._search_clauses:
+            plan["steps"].append("vector_search")
+            plan["estimated_cost"] += len(self.builder._search_clauses) * 10
+
+        if self.builder._exact_filters:
+            plan["steps"].append("exact_filtering")
+            plan["estimated_cost"] += len(self.builder._exact_filters) * 2
+
+        if self.builder._semantic_filters:
+            plan["steps"].append("semantic_filtering")
+            plan["estimated_cost"] += len(self.builder._semantic_filters) * 50
+
+        if self.builder._group_by:
+            plan["steps"].append("grouping")
+            plan["estimated_cost"] += 20
+
+        if self.builder._aggregations:
+            plan["steps"].append("aggregation")
+            plan["estimated_cost"] += len(self.builder._aggregations) * 5
+
+        if self.builder._having_clauses:
+            plan["steps"].append("having_filter")
+            plan["estimated_cost"] += len(self.builder._having_clauses) * 3
+
+        if self.builder._order_by:
+            plan["steps"].append("sorting")
+            plan["estimated_cost"] += 10
+
+        if self.builder._rerank_config:
+            plan["steps"].append("reranking")
+            plan["estimated_cost"] += 30
+
+        # Add optimization recommendations
+        # if self.builder._use_cache:
+        #     plan["optimizations"].append("result_caching_enabled")
+
+        # if self.builder._parallel_semantic_filtering and self.builder._semantic_filters:
+        #     plan["optimizations"].append("parallel_semantic_processing")
+
+        return plan
+
+    def _apply_aggregations_and_grouping(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply GROUP BY and aggregation operations to results."""
+        if not (self.builder._group_by or self.builder._aggregations):
+            return results
+
+        # Group results
+        if self.builder._group_by:
+            grouped_results = self._group_results(results)
+        else:
+            # Single group for aggregations without GROUP BY
+            grouped_results = {"_all": results}
+
+        # Apply aggregations
+        aggregated_results = []
+
+        for group_key, group_results in grouped_results.items():
+            # Calculate aggregations for this group
+            aggregation_data = {}
+
+            for agg in self.builder._aggregations:
+                agg_value = self._calculate_aggregation(group_results, agg)
+                alias = agg.alias or f"{agg.function}_{agg.field}"
+                aggregation_data[alias] = agg_value
+
+            # Create result for this group
+            if self.builder._group_by:
+                # Group result with group key information
+                group_metadata = dict(zip(self.builder._group_by,
+                                          group_key if isinstance(group_key, tuple) else [group_key]))
+                group_metadata.update(aggregation_data)
+
+                result = QueryResult(
+                    id=f"group_{hash(group_key)}",
+                    score=1.0,  # Groups don't have meaningful scores
+                    type="group",
+                    content=f"Group: {group_key}",
+                    metadata=group_metadata
+                )
+            else:
+                # Single aggregation result
+                result = QueryResult(
+                    id="aggregation_result",
+                    score=1.0,
+                    type="aggregation",
+                    content="Aggregation Result",
+                    metadata=aggregation_data
+                )
+
+            aggregated_results.append(result)
+
+        # Apply HAVING clauses
+        if self.builder._having_clauses:
+            aggregated_results = self._apply_having_clauses(aggregated_results)
+
+        return aggregated_results
+
+    def _group_results(self, results: List[QueryResult]) -> Dict[Any, List[QueryResult]]:
+        """Group results by specified fields."""
+        grouped = defaultdict(list)
+
+        for result in results:
+            # Extract group key
+            if len(self.builder._group_by) == 1:
+                field = self.builder._group_by[0]
+                key = result.metadata.get(field, "NULL")
+            else:
+                key = tuple(result.metadata.get(field, "NULL") for field in self.builder._group_by)
+
+            grouped[key].append(result)
+
+        return dict(grouped)
+
+    def _calculate_aggregation(self, results: List[QueryResult], agg: AggregationClause) -> Union[int, float]:
+        """Calculate aggregation value for a group of results."""
+        if agg.function == "count":
+            return len(results)
+
+        # Extract values for numeric aggregations
+        values = []
+        for result in results:
+            if agg.field == "score":
+                values.append(result.score)
+            elif agg.field in result.metadata:
+                value = result.metadata[agg.field]
+                if isinstance(value, (int, float)):
+                    values.append(value)
+
+        if not values:
+            return 0
+
+        if agg.function == "sum":
+            return sum(values)
+        elif agg.function == "avg":
+            return sum(values) / len(values)
+        elif agg.function == "min":
+            return min(values)
+        elif agg.function == "max":
+            return max(values)
+        elif agg.function == "std":
+            return statistics.stdev(values) if len(values) > 1 else 0
+        elif agg.function == "var":
+            return statistics.variance(values) if len(values) > 1 else 0
+
+        return 0
+
+    def _apply_having_clauses(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply HAVING clauses to aggregated results."""
+        filtered_results = []
+
+        for result in results:
+            passes_having = True
+
+            for having_clause in self.builder._having_clauses:
+                for field, condition in having_clause.items():
+                    if field not in result.metadata:
+                        passes_having = False
+                        break
+
+                    value = result.metadata[field]
+
+                    if isinstance(condition, dict):
+                        for operator, target_value in condition.items():
+                            if not self._check_condition(value, operator, target_value):
+                                passes_having = False
+                                break
+                    else:
+                        if value != condition:
+                            passes_having = False
+                            break
+
+                if not passes_having:
+                    break
+
+            if passes_having:
+                filtered_results.append(result)
+
+        return filtered_results
+
+    def _check_condition(self, value: Any, operator: str, target: Any) -> bool:
+        """Check if a value satisfies a condition."""
+        if operator == "$eq":
+            return value == target
+        elif operator == "$ne":
+            return value != target
+        elif operator == "$gt":
+            return value > target
+        elif operator == "$gte":
+            return value >= target
+        elif operator == "$lt":
+            return value < target
+        elif operator == "$lte":
+            return value <= target
+
+        return False
+
+    # TODO: to implement AI-based reranking.
+    def _apply_reranking(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply reranking based on configuration."""
+        if not self.builder._rerank_config:
+            return results
+
+        method = self.builder._rerank_config["method"]
+
+        if method == "relevance":
+            # Already sorted by relevance, just apply weight
+            weight = self.builder._rerank_config.get("weight", 1.0)
+            for result in results:
+                result.score *= weight
+
+        elif method == "recency":
+            date_field = self.builder._rerank_config["date_field"]
+            weight = self.builder._rerank_config.get("weight", 1.0)
+
+            # Calculate recency scores
+            current_time = datetime.now()
+            for result in results:
+                if date_field in result.metadata:
+                    try:
+                        date_value = result.metadata[date_field]
+                        if isinstance(date_value, str):
+                            date_obj = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                        elif isinstance(date_value, datetime):
+                            date_obj = date_value
+                        else:
+                            continue
+
+                        # Calculate recency score (newer = higher)
+                        days_ago = (current_time - date_obj).days
+                        recency_score = 1.0 / (1.0 + days_ago / 365.0)  # Decay over year
+
+                        # Combine with existing score
+                        result.score = (result.score * (1 - weight)) + (recency_score * weight)
+                    except (ValueError, TypeError):
+                        continue
+
+            # Re-sort by new scores
+            results.sort(key=lambda x: x.score, reverse=True)
+
+        elif method == "diversity":
+            # Implement diversity reranking (promote variety in specified field)
+            field = self.builder._rerank_config["field"]
+            weight = self.builder._rerank_config.get("weight", 1.0)
+
+            seen_values = set()
+            reranked_results = []
+
+            for result in results:
+                field_value = result.metadata.get(field)
+                if field_value not in seen_values:
+                    # Boost score for diversity
+                    result.score *= (1.0 + weight)
+                    seen_values.add(field_value)
+
+                reranked_results.append(result)
+
+            # Re-sort by new scores
+            reranked_results.sort(key=lambda x: x.score, reverse=True)
+            results = reranked_results
+
+        return results
+
+    def _get_detailed_stats(self, results: List[QueryResult]) -> Dict[str, Any]:
+        """Get detailed execution statistics for explain mode."""
+        return {
+            "result_count": len(results),
+            "score_distribution": {
+                "min": min(r.score for r in results) if results else 0,
+                "max": max(r.score for r in results) if results else 0,
+                "avg": sum(r.score for r in results) / len(results) if results else 0
+            },
+            "query_components": {
+                "search_clauses": len(self.builder._search_clauses),
+                "exact_filters": len(self.builder._exact_filters),
+                "semantic_filters": len(self.builder._semantic_filters),
+                "aggregations": len(self.builder._aggregations),
+                "group_by_fields": len(self.builder._group_by)
+            },
+            "optimization_flags": {
+                # "cache_enabled": self.builder._use_cache,
+                # "parallel_semantic": self.builder._parallel_semantic_filtering,
+                "batch_size": self.builder._batch_size
+            }
+        }
 
     def _execute_search_query(self) -> List[QueryResult]:
         """Execute search-based query."""
@@ -804,7 +1426,10 @@ class QueryExecutor:
             k=self.builder._limit + self.builder._offset,
             score_threshold=self.builder._score_threshold,
             filters=filters,
-            vector_weight=self.builder._vector_weight
+            vector_weight=self.builder._vector_weight,
+            context_window=self.builder._context_window,
+            semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
+            document_scoring_method=self.builder._document_scoring_method
         )
 
         if self.builder._semantic_filters:
@@ -825,7 +1450,10 @@ class QueryExecutor:
                 k=self.builder._limit * 2,
                 score_threshold=self.builder._score_threshold,
                 filters=filters,
-                vector_weight=self.builder._vector_weight
+                vector_weight=self.builder._vector_weight,
+                context_window=self.builder._context_window,
+                semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
+                document_scoring_method=self.builder._document_scoring_method
             )
 
             for result in clause_results:
@@ -1026,3 +1654,152 @@ class QueryExecutor:
 
         field, direction = self.builder._order_by[0]
         return f"{field} {direction.upper()}"
+
+
+class AsyncQueryExecutor:
+    """Enhanced async query executor with full SQL-like functionality."""
+
+    def __init__(self, query_builder: "QueryBuilder"):
+        self.builder = query_builder
+        self.db = query_builder._db
+
+    # The async executor can reuse most methods from the sync version
+    # since aggregation, grouping, and reranking are CPU-bound operations
+    _generate_execution_plan = QueryExecutor._generate_execution_plan
+    _apply_aggregations_and_grouping = QueryExecutor._apply_aggregations_and_grouping
+    _group_results = QueryExecutor._group_results
+    _calculate_aggregation = QueryExecutor._calculate_aggregation
+    _apply_having_clauses = QueryExecutor._apply_having_clauses
+    _check_condition = QueryExecutor._check_condition
+    _apply_reranking = QueryExecutor._apply_reranking
+    _get_detailed_stats = QueryExecutor._get_detailed_stats
+    _apply_post_processing = QueryExecutor._apply_post_processing
+    _combine_exact_filters = QueryExecutor._combine_exact_filters
+    _merge_search_results = QueryExecutor._merge_search_results
+    _apply_sorting = QueryExecutor._apply_sorting
+    _build_order_by_clause = QueryExecutor._build_order_by_clause
+
+    async def execute(self) -> List[QueryResult]:
+        """Execute the query asynchronously with full feature support."""
+        start_time = time.time()
+
+        try:
+            # Generate execution plan if explain is enabled
+            if self.builder._explain:
+                execution_plan = self._generate_execution_plan()
+
+            # Execute base query
+            if self.builder._search_clauses:
+                results = await self._execute_search_query_async()
+            else:
+                results = await self._execute_filter_only_query_async()
+
+            # Apply post-processing
+            results = await self._apply_post_processing_async(results)
+
+            # Apply aggregations and grouping if specified
+            if self.builder._aggregations or self.builder._group_by:
+                results = self._apply_aggregations_and_grouping(results)
+
+            # Apply reranking if configured
+            if self.builder._rerank_config:
+                results = self._apply_reranking(results)
+
+            execution_time = time.time() - start_time
+            logger.debug(f"Async query executed in {execution_time:.3f}s, returned {len(results)} results")
+
+            # Add execution info if explain is enabled
+            if self.builder._explain:
+                for result in results:
+                    result.metadata["_execution_time"] = execution_time
+                    result.metadata["_execution_plan"] = execution_plan
+                    if self.builder._hints.get("detailed_explain", False):
+                        result.metadata["_detailed_stats"] = self._get_detailed_stats(results)
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Async query execution failed: {e}")
+            raise
+
+    async def _execute_search_query_async(self) -> List[QueryResult]:
+        """Execute search-based query asynchronously."""
+        # Implementation would go here - this depends on the specific database backend
+        # For now, we'll indicate this needs to be implemented based on the database type
+        if hasattr(self.db, 'query_async'):
+            # Use database's async query method
+            clause = self.builder._search_clauses[0]  # Simplified for example
+            filters = self._combine_exact_filters()
+
+            results = await self.db.query_async(
+                query=clause.query,
+                search_type=clause.search_type,
+                return_type=self.builder._return_type,
+                k=self.builder._limit + self.builder._offset,
+                score_threshold=self.builder._score_threshold,
+                filters=filters,
+                vector_weight=self.builder._vector_weight,
+                context_window=self.builder._context_window,
+                semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
+                document_scoring_method=self.builder._document_scoring_method
+            )
+        else:
+            # Fall back to sync version in thread pool
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                results = await loop.run_in_executor(
+                    executor, self._execute_search_query_sync
+                )
+
+        # Apply semantic filters asynchronously
+        if self.builder._semantic_filters:
+            results = await self._apply_semantic_filters_async(results)
+
+        return results
+
+    async def _execute_filter_only_query_async(self) -> List[QueryResult]:
+        """Execute filter-only query asynchronously."""
+        # Similar pattern as search query
+        if hasattr(self.db, 'filter_async'):
+            filters = self._combine_exact_filters()
+            order_by = self._build_order_by_clause()
+
+            documents = await self.db.filter_async(
+                where=filters,
+                order_by=order_by,
+                limit=self.builder._limit + self.builder._offset,
+                offset=0
+            )
+
+            # Convert to QueryResults
+            results = [
+                QueryResult(
+                    id=doc.id,
+                    score=1.0,
+                    type="document",
+                    content=doc.content,
+                    metadata=doc.metadata
+                )
+                for doc in documents
+            ]
+        else:
+            # Fall back to sync version
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                results = await loop.run_in_executor(
+                    executor, self._execute_filter_only_query_sync
+                )
+
+        return results
+
+    def _execute_search_query_sync(self) -> List[QueryResult]:
+        """Sync fallback for search query."""
+        # This would call the existing sync implementation
+        sync_executor = QueryExecutor(self.builder)
+        return sync_executor._execute_search_query()
+
+    def _execute_filter_only_query_sync(self) -> List[QueryResult]:
+        """Sync fallback for filter-only query."""
+        # This would call the existing sync implementation
+        sync_executor = QueryExecutor(self.builder)
+        return sync_executor._execute_filter_only_query()

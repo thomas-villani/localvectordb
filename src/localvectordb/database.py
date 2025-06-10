@@ -1916,7 +1916,7 @@ class LocalVectorDB(BaseVectorDB):
 
         elif return_type == 'documents':
             # Aggregate to document level
-            document_results = self._aggregate_document_scores_with_frequency_boost(
+            document_results = self._aggregate_document_scores_with_method(
                 chunk_results, document_scoring_method
             )
             return document_results[:k]
@@ -2008,7 +2008,7 @@ class LocalVectorDB(BaseVectorDB):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
-            document_results = self._aggregate_document_scores_with_frequency_boost(
+            document_results = self._aggregate_document_scores_with_method(
                 chunk_results, document_scoring_method
             )
             return document_results[:k]
@@ -2070,7 +2070,7 @@ class LocalVectorDB(BaseVectorDB):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
-            document_results = self._aggregate_document_scores_with_frequency_boost(
+            document_results = self._aggregate_document_scores_with_method(
                 combined_results, document_scoring_method
             )
             return document_results[:k]
@@ -2236,7 +2236,7 @@ class LocalVectorDB(BaseVectorDB):
             return final_results[:k]
         elif return_type == 'documents':
             # Aggregate to document level
-            document_results = self._aggregate_document_scores_with_frequency_boost(
+            document_results = self._aggregate_document_scores_with_method(
                 chunk_results, document_scoring_method
             )
             return document_results[:k]
@@ -2307,7 +2307,7 @@ class LocalVectorDB(BaseVectorDB):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
-            document_results = self._aggregate_document_scores_with_frequency_boost(
+            document_results = self._aggregate_document_scores_with_method(
                 combined_results, document_scoring_method
             )
             return document_results[:k]
@@ -2536,7 +2536,7 @@ class LocalVectorDB(BaseVectorDB):
 
         return context_results
 
-    def _aggregate_document_scores_with_frequency_boost(
+    def _aggregate_document_scores_with_method(
             self,
             chunk_results: List[QueryResult],
             method: Literal["best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
