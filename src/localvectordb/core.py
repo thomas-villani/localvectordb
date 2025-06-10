@@ -390,11 +390,15 @@ class BaseVectorDB(ABC):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
             vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
     ) -> List[QueryResult]:
         """Unified query interface for all search types."""
         pass
@@ -626,11 +630,15 @@ class AsyncBaseVectorDB(BaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
             vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
     ) -> List[QueryResult]:
         """Unified query interface for all search types asynchronously."""
         pass

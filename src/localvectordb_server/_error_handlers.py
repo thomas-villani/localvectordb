@@ -288,53 +288,90 @@ def validate_pagination_params(page: Optional[int] = None, limit: Optional[int] 
 
 
 def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate search request parameters"""
-    # Required fields
+    """Validate search parameters with enhanced validation"""
+
+    # Validate required fields
     validate_required_fields(data, ['query'])
 
-    # Type validation
-    validate_field_type(data, 'query', str, required=True)
-    validate_field_type(data, 'search_type', str)
-    validate_field_type(data, 'return_type', str)
-    validate_field_type(data, 'k', int)
-    validate_field_type(data, 'score_threshold', (int, float))
-    validate_field_type(data, 'filters', dict)
-    validate_field_type(data, 'vector_weight', (int, float))
+    query = data["query"]
+    if not isinstance(query, str) or not query.strip():
+        raise ValidationError("Query must be a non-empty string", field="query")
 
-    # Value validation
-    if 'search_type' in data and data['search_type'] not in ['vector', 'keyword', 'hybrid']:
+    # Validate search_type
+    search_type = data.get("search_type", "vector")
+    if search_type not in ["vector", "keyword", "hybrid"]:
         raise ValidationError(
             "search_type must be one of: vector, keyword, hybrid",
-            field='search_type',
-            value=data['search_type']
+            field="search_type",
+            value=search_type
         )
 
-    if 'return_type' in data and data['return_type'] not in ['documents', 'chunks']:
+    # Validate return_type (UPDATED)
+    return_type = data.get("return_type", "documents")
+    if return_type not in ["documents", "chunks", "context"]:
         raise ValidationError(
-            "return_type must be one of: documents, chunks",
-            field='return_type',
-            value=data['return_type']
+            "return_type must be one of: documents, chunks, context",
+            field="return_type",
+            value=return_type
         )
 
-    if 'k' in data and (data['k'] < 1 or data['k'] > 1000):
+    # Validate k
+    k = data.get("k", 10)
+    validate_field_type(data, "k", int)
+    if k < 1 or k > 1000:
+        raise ValidationError("k must be between 1 and 1000", field="k", value=k)
+
+    # Validate score_threshold
+    score_threshold = data.get("score_threshold", 0.0)
+    validate_field_type(data, "score_threshold", (int, float))
+    if score_threshold < 0.0 or score_threshold > 1.0:
         raise ValidationError(
-            "k must be between 1 and 1000",
-            field='k',
-            value=data['k']
+            "score_threshold must be between 0.0 and 1.0",
+            field="score_threshold",
+            value=score_threshold
         )
 
-    if 'score_threshold' in data and (data['score_threshold'] < 0 or data['score_threshold'] > 1):
+    # Validate vector_weight
+    vector_weight = data.get("vector_weight", 0.7)
+    validate_field_type(data, "vector_weight", (int, float))
+    if vector_weight < 0.0 or vector_weight > 1.0:
         raise ValidationError(
-            "score_threshold must be between 0 and 1",
-            field='score_threshold',
-            value=data['score_threshold']
+            "vector_weight must be between 0.0 and 1.0",
+            field="vector_weight",
+            value=vector_weight
         )
 
-    if 'vector_weight' in data and (data['vector_weight'] < 0 or data['vector_weight'] > 1):
+    # NEW VALIDATIONS:
+
+    # Validate context_window
+    context_window = data.get("context_window", 2)
+    validate_field_type(data, "context_window", int)
+    if context_window < 0 or context_window > 20:
         raise ValidationError(
-            "vector_weight must be between 0 and 1",
-            field='vector_weight',
-            value=data['vector_weight']
+            "context_window must be between 0 and 20",
+            field="context_window",
+            value=context_window
+        )
+
+    # Validate semantic_dedup_threshold
+    semantic_dedup_threshold = data.get("semantic_dedup_threshold")
+    if semantic_dedup_threshold is not None:
+        validate_field_type(data, "semantic_dedup_threshold", (int, float))
+        if semantic_dedup_threshold < 0.0 or semantic_dedup_threshold > 1.0:
+            raise ValidationError(
+                "semantic_dedup_threshold must be between 0.0 and 1.0",
+                field="semantic_dedup_threshold",
+                value=semantic_dedup_threshold
+            )
+
+    # Validate document_scoring_method
+    document_scoring_method = data.get("document_scoring_method", "frequency_boost")
+    valid_methods = ["best", "average", "weighted_average", "frequency_boost"]
+    if document_scoring_method not in valid_methods:
+        raise ValidationError(
+            f"document_scoring_method must be one of: {', '.join(valid_methods)}",
+            field="document_scoring_method",
+            value=document_scoring_method
         )
 
     return data

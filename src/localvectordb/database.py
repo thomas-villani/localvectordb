@@ -27,6 +27,7 @@ import math
 import re
 import sqlite3
 import threading
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Literal, Any, Tuple
@@ -984,7 +985,10 @@ class LocalVectorDB(BaseVectorDB):
             embedding_batch_size: int = 100
     ) -> List[str]:
         """
-        Optimized batch upsert with vectorized operations
+        Optimized batch upsert with chunk-level content hash comparison
+
+        This method avoids re-embedding chunks that haven't changed, improving efficiency
+        for documents with minor updates.
 
         Parameters
         ----------
@@ -1007,6 +1011,7 @@ class LocalVectorDB(BaseVectorDB):
         # Check which documents need updates
         docs_to_process = []
 
+
         with self.connection_pool.get_connection() as conn:
             for doc_text, metadata, doc_id in zip(documents, metadata_batch, ids):
                 cursor = conn.execute(
@@ -1022,102 +1027,115 @@ class LocalVectorDB(BaseVectorDB):
         if not docs_to_process:
             return ids  # No changes needed
 
-        # Generate chunks for all documents
-        all_chunks = []
-        chunk_texts = []
-        doc_chunk_mapping = []
+        # Get all existing chunks for all documents in one connection
+        existing_chunks_by_doc = {}
+        doc_ids = [doc[2] for doc in docs_to_process]
+
+        if doc_ids:
+            with self.connection_pool.get_connection() as conn:
+                placeholders = ','.join(['?'] * len(doc_ids))
+                cursor = conn.execute(f'''
+                    SELECT document_id, chunk_index, content_hash, faiss_id 
+                    FROM chunks 
+                    WHERE document_id IN ({placeholders})
+                ''', doc_ids)
+
+                for row in cursor.fetchall():
+                    doc_id = row['document_id']
+                    if doc_id not in existing_chunks_by_doc:
+                        existing_chunks_by_doc[doc_id] = {}
+                    existing_chunks_by_doc[doc_id][row['chunk_index']] = {
+                        'content_hash': row['content_hash'],
+                        'faiss_id': row['faiss_id']
+                    }
+
+        # Process each document
+        documents_data = []  # Document data for bulk insert
+        all_chunks_for_db = []  # Chunks for bulk insert
+        all_old_faiss_ids = []  # FAISS IDs to remove
 
         for doc_text, metadata, doc_id, content_hash in docs_to_process:
-            chunks = self.chunker.chunk(doc_text)
-            doc_info = (doc_text, metadata, doc_id, content_hash)
+            # Get existing chunks for this document
+            existing_chunks = existing_chunks_by_doc.get(doc_id, {})
 
-            for chunk in chunks:
-                chunk.faiss_id = None
-                all_chunks.append(chunk)
-                chunk_texts.append(chunk.content)
-                doc_chunk_mapping.append(doc_info)
+            # Generate new chunks
+            new_chunks = self.chunker.chunk(doc_text)
 
-        # Generate embeddings in batches
-        # show_progress = len(chunk_texts) > 500
-        embeddings = self._generate_embeddings_chunked(
-            chunk_texts,
-            batch_size=embedding_batch_size
-        )
+            # Identify unchanged chunks vs. chunks needing embedding
+            unchanged_chunks = []
+            chunks_to_embed = []
+            chunk_texts = []
 
-        # Apply similarity filtering if requested
-        if similarity_threshold is not None and similarity_threshold > 0:
-            all_chunks, embeddings, doc_chunk_mapping = self._filter_similar_chunks_vectorized(
-                embeddings, all_chunks, doc_chunk_mapping, similarity_threshold
-            )
+            for chunk in new_chunks:
+                existing = existing_chunks.get(chunk.index)
 
-        # Group chunks and embeddings by document
-        doc_chunks_map = {}
-        embedding_idx = 0
+                if existing and existing['content_hash'] == chunk.content_hash and existing['faiss_id'] is not None:
+                    # Chunk hasn't changed, reuse FAISS ID
+                    chunk.faiss_id = existing['faiss_id']
+                    unchanged_chunks.append(chunk)
+                else:
+                    # New or changed chunk, needs embedding
+                    chunks_to_embed.append(chunk)
+                    chunk_texts.append(chunk.content)
 
-        for chunk, doc_info in zip(all_chunks, doc_chunk_mapping):
-            doc_id = doc_info[2]
-            if doc_id not in doc_chunks_map:
-                doc_chunks_map[doc_id] = {
-                    'doc_info': doc_info,
-                    'chunks': [],
-                    'embeddings': []
-                }
-            doc_chunks_map[doc_id]['chunks'].append(chunk)
-            if embedding_idx < len(embeddings):
-                doc_chunks_map[doc_id]['embeddings'].append(embeddings[embedding_idx])
-                embedding_idx += 1
+            # Generate embeddings only for chunks that need it
+            if chunks_to_embed:
+                # Generate embeddings
+                embeddings = self._generate_embeddings_chunked(
+                    chunk_texts,
+                    batch_size=embedding_batch_size
+                )
 
-        # Database transaction with bulk operations
+                # Apply similarity filtering if requested
+                if similarity_threshold is not None and similarity_threshold > 0:
+                    doc_info = (doc_text, metadata, doc_id, content_hash)
+                    doc_chunk_mapping = [doc_info] * len(chunks_to_embed)
+
+                    filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
+                        embeddings, chunks_to_embed, doc_chunk_mapping, similarity_threshold
+                    )
+
+                    chunks_to_embed = filtered_chunks
+                    embeddings = filtered_embeddings
+
+                # Add vectors to FAISS
+                if len(chunks_to_embed) > 0 and embeddings.size > 0:
+                    self._add_vectors_to_faiss_bulk(embeddings, chunks_to_embed)
+
+            # Combine unchanged and new chunks
+            all_chunks = unchanged_chunks + chunks_to_embed
+
+            # Sort chunks by index for consistency
+            all_chunks.sort(key=lambda x: x.index)
+
+            # Identify FAISS IDs to remove (those from existing chunks that are not being reused)
+            used_faiss_ids = {chunk.faiss_id for chunk in unchanged_chunks if chunk.faiss_id is not None}
+            existing_faiss_ids = {c['faiss_id'] for c in existing_chunks.values() if c['faiss_id'] is not None}
+            faiss_ids_to_remove = list(existing_faiss_ids - used_faiss_ids)
+            all_old_faiss_ids.extend(faiss_ids_to_remove)
+
+            # Add document data for bulk insert
+            documents_data.append((doc_id, doc_text, content_hash, metadata))
+
+            # Add chunk data for bulk insert
+            for chunk in all_chunks:
+                all_chunks_for_db.append((doc_id, chunk))
+
+        # Remove old FAISS IDs that are no longer used
+        if all_old_faiss_ids:
+            self._remove_old_vectors_bulk(all_old_faiss_ids)
+
+        # Database transaction to update documents and chunks
         with self.connection_pool.get_connection() as conn:
             try:
                 conn.execute('BEGIN')
 
-                # Collect old FAISS IDs for removal
-                all_old_faiss_ids = []
-                for doc_id in doc_chunks_map.keys():
-                    cursor = conn.execute(
-                        'SELECT faiss_id FROM chunks WHERE document_id = ? AND faiss_id IS NOT NULL',
-                        (doc_id,)
-                    )
-                    old_ids = [row['faiss_id'] for row in cursor.fetchall()]
-                    all_old_faiss_ids.extend(old_ids)
-
-                    # Delete existing document and chunks
+                # Delete existing documents and chunks
+                for doc_id in doc_ids:
                     conn.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
-
-                # Remove old vectors from FAISS (bulk operation)
-                if all_old_faiss_ids:
-                    self._remove_old_vectors_bulk(all_old_faiss_ids)
-
-                # Prepare bulk document data
-                documents_data = []
-                all_chunks_for_faiss = []
-                all_embeddings_for_faiss = []
-                all_chunks_for_db = []
-
-                for doc_id, doc_data in doc_chunks_map.items():
-                    doc_text, metadata, doc_id, content_hash = doc_data['doc_info']
-                    chunks = doc_data['chunks']
-                    doc_embeddings = doc_data['embeddings']
-
-                    # Prepare document data
-                    documents_data.append((doc_id, doc_text, content_hash, metadata))
-
-                    # Collect chunks and embeddings for bulk FAISS operation
-                    all_chunks_for_faiss.extend(chunks)
-                    all_embeddings_for_faiss.extend(doc_embeddings)
-
-                    # Prepare chunk data for database
-                    for chunk in chunks:
-                        all_chunks_for_db.append((doc_id, chunk))
 
                 # Bulk insert documents
                 self._insert_documents_bulk(conn, documents_data)
-
-                # Bulk add vectors to FAISS
-                if all_embeddings_for_faiss:
-                    embeddings_array = np.array(all_embeddings_for_faiss)
-                    self._add_vectors_to_faiss_bulk(embeddings_array, all_chunks_for_faiss)
 
                 # Bulk insert chunks
                 self._insert_chunks_bulk(conn, all_chunks_for_db)
@@ -1129,6 +1147,172 @@ class LocalVectorDB(BaseVectorDB):
                 raise e
 
         return ids
+
+    def _upsert_with_precomputed_embeddings(
+            self,
+            documents: List[str],
+            metadata_list: List[Dict[str, Any]],
+            ids_list: List[str],
+            chunks: List[Chunk],
+            embeddings: np.ndarray,
+            doc_chunk_mapping: List[int],
+            similarity_threshold: Optional[float] = None
+    ) -> List[str]:
+        """
+        Upsert documents using precomputed chunks and embeddings
+
+        This helper method is used when chunking and embedding generation have
+        already been completed, particularly useful for async implementations.
+
+        Parameters
+        ----------
+        documents : List[str]
+            List of document texts
+        metadata_list : List[Dict[str, Any]]
+            List of metadata dicts
+        ids_list : List[str]
+            List of document IDs
+        chunks : List[Chunk]
+            Precomputed chunks for all documents
+        embeddings : np.ndarray
+            Precomputed embeddings corresponding to chunks
+        doc_chunk_mapping : List[int]
+            Mapping from chunk index to document index in documents/metadata_list/ids_list
+        similarity_threshold : Optional[float]
+            Similarity threshold for filtering (0-1, higher=more similar)
+
+        Returns
+        -------
+        List[str]
+            List of processed document IDs
+        """
+        # Validate input
+        if not (len(chunks) == len(embeddings) == len(doc_chunk_mapping)):
+            raise ValueError("Number of chunks must match number of embeddings and doc_chunk_mapping")
+
+        # Build a map of document IDs to document content hashes
+        doc_hash_map = {}
+        for doc_text, doc_id in zip(documents, ids_list):
+            doc_hash_map[doc_id] = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
+
+        # Get existing document hashes to detect changes
+        existing_doc_hashes = {}
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ','.join(['?'] * len(ids_list))
+            if placeholders:  # Only execute if there are documents
+                cursor = conn.execute(
+                    f'SELECT id, content_hash FROM documents WHERE id IN ({placeholders})',
+                    ids_list
+                )
+                existing_doc_hashes = {row['id']: row['content_hash'] for row in cursor.fetchall()}
+
+        # Filter to only documents that need updating
+        docs_to_update_indices = set()
+        docs_to_update = []
+
+        for i, (doc_id, doc_hash) in enumerate(zip(ids_list, [doc_hash_map[id] for id in ids_list])):
+            if doc_id not in existing_doc_hashes or existing_doc_hashes[doc_id] != doc_hash:
+                docs_to_update_indices.add(i)
+                docs_to_update.append(doc_id)
+
+        if not docs_to_update:
+            return ids_list  # No changes needed
+
+        # Organize chunks and embeddings by document
+        doc_chunks_map = {i: [] for i in docs_to_update_indices}
+        doc_embeddings_map = {i: [] for i in docs_to_update_indices}
+        doc_indices_map = {i: [] for i in docs_to_update_indices}
+
+        for i, (chunk, doc_idx) in enumerate(zip(chunks, doc_chunk_mapping)):
+            if doc_idx in docs_to_update_indices:
+                doc_chunks_map[doc_idx].append(chunk)
+                doc_embeddings_map[doc_idx].append(embeddings[i])
+                doc_indices_map[doc_idx].append(i)
+
+        # Apply similarity filtering if requested
+        filtered_chunks_by_doc = {}
+        filtered_embeddings_by_doc = {}
+
+        for doc_idx in docs_to_update_indices:
+            doc_chunks = doc_chunks_map.get(doc_idx, [])
+            doc_embeddings = np.array(doc_embeddings_map.get(doc_idx, []))
+
+            # Apply similarity filtering if requested
+            if similarity_threshold is not None and similarity_threshold > 0 and len(doc_chunks) > 0:
+                # Create doc_info tuple for compatibility with existing filtering method
+                doc_id = ids_list[doc_idx]
+                doc_info = (documents[doc_idx], metadata_list[doc_idx], doc_id, doc_hash_map[doc_id])
+                doc_chunk_info_mapping = [doc_info] * len(doc_chunks)
+
+                filtered_c, filtered_e, _ = self._filter_similar_chunks_vectorized(
+                    doc_embeddings, doc_chunks, doc_chunk_info_mapping, similarity_threshold
+                )
+
+                filtered_chunks_by_doc[doc_idx] = filtered_c
+                filtered_embeddings_by_doc[doc_idx] = filtered_e
+            else:
+                filtered_chunks_by_doc[doc_idx] = doc_chunks
+                filtered_embeddings_by_doc[doc_idx] = doc_embeddings
+
+        # Get FAISS IDs to remove
+        old_faiss_ids = []
+        with self.connection_pool.get_connection() as conn:
+            for doc_id in docs_to_update:
+                cursor = conn.execute(
+                    'SELECT faiss_id FROM chunks WHERE document_id = ? AND faiss_id IS NOT NULL',
+                    (doc_id,)
+                )
+                old_faiss_ids.extend(row['faiss_id'] for row in cursor.fetchall())
+
+        # Remove old vectors from FAISS
+        if old_faiss_ids:
+            self._remove_old_vectors_bulk(old_faiss_ids)
+
+        # Add new vectors to FAISS by document
+        for doc_idx in docs_to_update_indices:
+            doc_chunks = filtered_chunks_by_doc.get(doc_idx, [])
+            doc_embeddings = filtered_embeddings_by_doc.get(doc_idx, np.array([]))
+
+            if len(doc_chunks) > 0 and doc_embeddings.size > 0:
+                self._add_vectors_to_faiss_bulk(doc_embeddings, doc_chunks)
+
+        # Prepare data for bulk database operations
+        documents_data = []
+        chunks_data = []
+
+        for doc_idx in docs_to_update_indices:
+            doc_id = ids_list[doc_idx]
+            documents_data.append((
+                doc_id,
+                documents[doc_idx],
+                doc_hash_map[doc_id],
+                metadata_list[doc_idx]
+            ))
+
+            # Add chunks for this document
+            for chunk in filtered_chunks_by_doc.get(doc_idx, []):
+                chunks_data.append((doc_id, chunk))
+
+        # Database transaction
+        with self.connection_pool.get_connection() as conn:
+            try:
+                conn.execute('BEGIN')
+
+                # Delete existing documents and their chunks
+                for doc_id in docs_to_update:
+                    conn.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
+
+                # Bulk insert documents and chunks
+                self._insert_documents_bulk(conn, documents_data)
+                self._insert_chunks_bulk(conn, chunks_data)
+
+                conn.commit()
+
+            except Exception as e:
+                conn.rollback()
+                raise e
+
+        return ids_list
 
     def _insert_batch(
             self,
@@ -1588,11 +1772,16 @@ class LocalVectorDB(BaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',  # Add 'context'
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
             vector_weight: float = 0.7,  # For hybrid search
+            # NEW PARAMETERS:
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -1603,8 +1792,8 @@ class LocalVectorDB(BaseVectorDB):
             Query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
-        return_type : Literal['documents', 'chunks']
-            Whether to return full documents or individual chunks
+        return_type : Literal['documents', 'chunks', 'context']
+            Whether to return full documents, individual chunks, or chunks with context
         k : int
             Maximum number of results to return
         score_threshold : float
@@ -1613,6 +1802,12 @@ class LocalVectorDB(BaseVectorDB):
             Metadata filters
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : str
+            Method for aggregating chunk scores into document scores
 
         Returns
         -------
@@ -1621,36 +1816,40 @@ class LocalVectorDB(BaseVectorDB):
         """
         with self._read_write_lock.read_lock():
             if search_type == 'vector':
-                return self._vector_search(query, return_type, k, score_threshold, filters)
+                return self._vector_search(query, return_type, k, score_threshold, filters,
+                                           context_window, semantic_dedup_threshold, document_scoring_method)
             elif search_type == 'keyword':
-                return self._keyword_search(query, return_type, k, score_threshold, filters)
+                return self._keyword_search(query, return_type, k, score_threshold, filters,
+                                            context_window, semantic_dedup_threshold, document_scoring_method)
             elif search_type == 'hybrid':
-                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight)
+                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight,
+                                           context_window, semantic_dedup_threshold, document_scoring_method)
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
 
     def _vector_search(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks'],
+            return_type: Literal['documents', 'chunks', 'context'],
             k: int,
             score_threshold: float,
-            filters: Optional[Dict[str, Any]]
+            filters: Optional[Dict[str, Any]],
+            context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: str
     ) -> List[QueryResult]:
-        """Perform vector similarity search"""
+        """Perform vector similarity search with enhanced processing"""
 
         # Generate query embedding
         query_embedding = self.embedding_provider.embed_sync([query])
 
-        # For document-level results, we need to search more chunks initially
-        # since we'll be deduplicating by document ID
-        search_k = k * 3 if return_type == 'documents' else k * 2
-
+        # Search more chunks initially since we might deduplicate and need enough for final k
+        initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
 
         # Search FAISS index
-        distances, indices = self.index.search(query_embedding, search_k)
+        distances, indices = self.index.search(query_embedding, initial_k)
 
-        # Get chunk information
+        # Get chunk information - ALWAYS get chunks first
         chunk_results = []
 
         with self.connection_pool.get_connection() as conn:
@@ -1671,7 +1870,6 @@ class LocalVectorDB(BaseVectorDB):
                     continue
 
                 # Convert distance to normalized score (0-1, higher=better)
-                # L2 distance is always >= 0, we'll use a simple conversion
                 score = max(0.0, 1.0 / (1.0 + float(dist)))
 
                 if score < score_threshold:
@@ -1694,64 +1892,52 @@ class LocalVectorDB(BaseVectorDB):
                     end_column=row['end_col']
                 )
 
-                if return_type == 'chunks':
-                    result = QueryResult(
-                        id=f"{row['document_id']}:{row['chunk_index']}",
-                        score=score,
-                        type='chunk',
-                        content=row['content'],
-                        metadata=doc_metadata,
-                        document_id=row['doc_id'],
-                        position=position
-                    )
-                    chunk_results.append(result)
-                else:  # documents - collect for deduplication
-                    chunk_results.append({
-                        'doc_id': row['doc_id'],
-                        'score': score,
-                        'doc_content': row['doc_content'],
-                        'metadata': doc_metadata,
-                        'chunk_content': row['content'],
-                        'position': position
-                    })
+                result = QueryResult(
+                    id=f"{row['document_id']}:{row['chunk_index']}",
+                    score=score,
+                    type='chunk',
+                    content=row['content'],
+                    metadata=doc_metadata,
+                    document_id=row['doc_id'],
+                    position=position
+                )
+                chunk_results.append(result)
 
-        if return_type == 'chunks':
-            # Sort by score and limit for chunks
+        # Apply semantic deduplication if requested
+        if semantic_dedup_threshold is not None:
+            chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
+
+        # Process based on return type
+        if return_type == 'context':
+            # Add context window and return
+            final_results = self._add_context_window(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+
+        elif return_type == 'documents':
+            # Aggregate to document level
+            document_results = self._aggregate_document_scores_with_frequency_boost(
+                chunk_results, document_scoring_method
+            )
+            return document_results[:k]
+
+        else:  # return_type == 'chunks'
+            # Sort by score and limit
             chunk_results.sort(key=lambda x: x.score, reverse=True)
             return chunk_results[:k]
-        else:
-            # For documents, deduplicate and keep best score per document
-            doc_map = {}
-            for chunk_data in chunk_results:
-                doc_id = chunk_data['doc_id']
-                if doc_id not in doc_map or chunk_data['score'] > doc_map[doc_id]['score']:
-                    doc_map[doc_id] = chunk_data
-
-            # Convert to QueryResult objects
-            document_results = []
-            for doc_data in doc_map.values():
-                result = QueryResult(
-                    id=doc_data['doc_id'],
-                    score=doc_data['score'],
-                    type='document',
-                    content=doc_data['doc_content'],
-                    metadata=doc_data['metadata']
-                )
-                document_results.append(result)
-
-            # Sort by score and limit
-            document_results.sort(key=lambda x: x.score, reverse=True)
-            return document_results[:k]
 
     def _keyword_search(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks'],
+            return_type: Literal['documents', 'chunks', 'context'],
             k: int,
             score_threshold: float,
-            filters: Optional[Dict[str, Any]]
+            filters: Optional[Dict[str, Any]],
+            context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: str
     ) -> List[QueryResult]:
-        """Perform keyword search using FTS5"""
+        """Perform keyword search using FTS5 with enhanced processing"""
         if not self.fts_enabled:
             logger.warning("FTS not available, returning empty results")
             return []
@@ -1761,122 +1947,101 @@ class LocalVectorDB(BaseVectorDB):
         if not sanitized_query:
             return []
 
-        results = []
+        # Always get chunks first, then process based on return_type
+        initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
+
+        chunk_results = []
 
         with self.connection_pool.get_connection() as conn:
-            if return_type == 'documents':
-                # Search documents directly - no deduplication needed
-                cursor = conn.execute('''
-                    SELECT d.*, rank
-                    FROM documents_fts, documents d
-                    WHERE documents_fts.rowid = d.rowid
-                    AND documents_fts MATCH ?
-                    ORDER BY rank
-                    LIMIT ?
-                ''', (sanitized_query, k * 2))  # Get extra for filtering
+            # Search chunks - get extra for potential deduplication if needed
+            cursor = conn.execute('''
+                SELECT c.*, d.id as doc_id, d.content as doc_content, rank
+                FROM chunks_fts, chunks c, documents d
+                WHERE chunks_fts.rowid = c.id
+                AND c.document_id = d.id
+                AND chunks_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            ''', (sanitized_query, initial_k))
 
+            for row in cursor.fetchall():
+                # Convert FTS5 rank to normalized score
+                score = 1.0 - min(1.0, math.exp(float(row['rank'])))
 
-                for row in cursor.fetchall():
-                    # Convert FTS5 rank to normalized score (0-1, higher=better)
-                    # FTS5 rank is negative (lower is better), convert to positive score
-                    # fts_rank = abs(float(row['rank']))
-                    # score = max(0.0, 1.0 / (1.0 + fts_rank))
+                if score < score_threshold:
+                    continue
 
-                    score = 1.0 - min(1.0, math.exp(float(row['rank'])))
+                # Create chunk position
+                position = ChunkPosition(
+                    start=row['start_pos'],
+                    end=row['end_pos'],
+                    line=row['start_line'],
+                    column=row['start_col'],
+                    end_line=row['end_line'],
+                    end_column=row['end_col']
+                )
 
-                    if score < score_threshold:
-                        continue
+                # Get document metadata
+                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
 
-                    # Get document metadata
-                    doc_metadata = self._get_document_metadata(conn, row['id'])
+                # Apply metadata filters
+                if filters and not self._matches_filters(doc_metadata, filters):
+                    continue
 
-                    # Apply metadata filters
-                    if filters and not self._matches_filters(doc_metadata, filters):
-                        continue
+                result = QueryResult(
+                    id=f"{row['document_id']}:{row['chunk_index']}",
+                    score=score,
+                    type='chunk',
+                    content=row['content'],
+                    metadata=doc_metadata,
+                    document_id=row['doc_id'],
+                    position=position
+                )
+                chunk_results.append(result)
 
-                    result = QueryResult(
-                        id=row['id'],
-                        score=score,
-                        type='document',
-                        content=row['content'],
-                        metadata=doc_metadata
-                    )
-                    results.append(result)
+        # Apply same processing pipeline as vector search
+        if semantic_dedup_threshold is not None:
+            chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
 
-            else:  # chunks
-                # Search chunks - get extra for potential deduplication if needed
-                cursor = conn.execute('''
-                    SELECT c.*, d.id as doc_id, d.content as doc_content, rank
-                    FROM chunks_fts, chunks c, documents d
-                    WHERE chunks_fts.rowid = c.id
-                    AND c.document_id = d.id
-                    AND chunks_fts MATCH ?
-                    ORDER BY rank
-                    LIMIT ?
-                ''', (sanitized_query, k * 2))  # Get extra for filtering
-
-                for row in cursor.fetchall():
-                    # Convert FTS5 rank to normalized score
-                    # fts_rank = abs(float(row['rank']))
-                    # score = max(0.0, 1.0 / (1.0 + fts_rank))
-                    score = 1.0 - min(1.0, math.exp(float(row['rank'])))
-
-                    if score < score_threshold:
-                        continue
-
-                    # Create chunk position
-                    position = ChunkPosition(
-                        start=row['start_pos'],
-                        end=row['end_pos'],
-                        line=row['start_line'],
-                        column=row['start_col'],
-                        end_line=row['end_line'],
-                        end_column=row['end_col']
-                    )
-
-                    # Get document metadata
-                    doc_metadata = self._get_document_metadata(conn, row['doc_id'])
-
-                    # Apply metadata filters
-                    if filters and not self._matches_filters(doc_metadata, filters):
-                        continue
-
-                    result = QueryResult(
-                        id=f"{row['document_id']}:{row['chunk_index']}",
-                        score=score,
-                        type='chunk',
-                        content=row['content'],
-                        metadata=doc_metadata,
-                        document_id=row['doc_id'],
-                        position=position
-                    )
-                    results.append(result)
-
-        # Sort by score and limit
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results[:k]
+        if return_type == 'context':
+            final_results = self._add_context_window(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            document_results = self._aggregate_document_scores_with_frequency_boost(
+                chunk_results, document_scoring_method
+            )
+            return document_results[:k]
+        else:  # chunks
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            return chunk_results[:k]
 
     def _hybrid_search(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks'],
+            return_type: Literal['documents', 'chunks', 'context'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
-            vector_weight: float
+            vector_weight: float,
+            context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: str
     ) -> List[QueryResult]:
-        """Perform hybrid search combining vector and keyword"""
+        """Perform hybrid search combining vector and keyword with enhanced processing"""
         if not self.fts_enabled:
             logger.info("FTS not available, falling back to vector search")
-            return self._vector_search(query, return_type, k, score_threshold, filters)
+            return self._vector_search(query, return_type, k, score_threshold, filters,
+                                       context_window, semantic_dedup_threshold, document_scoring_method)
 
         # Get more results than requested for better reranking
-        # Increase the multiplier to account for potential deduplication
         search_k = min(k * 4, 100)
 
-        # Perform both searches
-        vector_results = self._vector_search(query, return_type, search_k, 0.0, filters)
-        keyword_results = self._keyword_search(query, return_type, search_k, 0.0, filters)
+        # Perform both searches - always get chunks
+        vector_results = self._vector_search(query, 'chunks', search_k, 0.0, filters,
+                                             0, None, "best")  # No processing yet
+        keyword_results = self._keyword_search(query, 'chunks', search_k, 0.0, filters,
+                                               0, None, "best")  # No processing yet
 
         # If either returns no results, return the other
         if not vector_results:
@@ -1885,13 +2050,586 @@ class LocalVectorDB(BaseVectorDB):
             return vector_results[:k]
 
         # Combine results with weighted scoring
-        return self._combine_search_results(
+        combined_results = self._combine_search_results(
             vector_results=vector_results,
             keyword_results=keyword_results,
             vector_weight=vector_weight,
-            k=k,
-            score_threshold=score_threshold
+            k=search_k,  # Don't limit yet
+            score_threshold=0.0  # Don't filter yet
         )
+
+        # Apply same processing pipeline
+        if semantic_dedup_threshold is not None:
+            combined_results = self._apply_semantic_deduplication(combined_results, semantic_dedup_threshold)
+
+        # Filter by score threshold now
+        combined_results = [r for r in combined_results if r.score >= score_threshold]
+
+        if return_type == 'context':
+            final_results = self._add_context_window(combined_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            document_results = self._aggregate_document_scores_with_frequency_boost(
+                combined_results, document_scoring_method
+            )
+            return document_results[:k]
+        else:  # chunks
+            combined_results.sort(key=lambda x: x.score, reverse=True)
+            return combined_results[:k]
+
+    def _search_with_embedding(
+            self,
+            query: str,
+            query_embedding: np.ndarray,
+            *,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
+    ) -> List[QueryResult]:
+        """
+        Execute search with a precomputed query embedding
+
+        This helper method allows async implementations to generate the embedding
+        asynchronously and then pass it to this method for searching.
+
+        Parameters
+        ----------
+        query : str
+            Original query text (used for keyword search in hybrid mode)
+        query_embedding : np.ndarray
+            Precomputed embedding for the query
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks', 'context']
+            Whether to return full documents, individual chunks, or chunks with context
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : str
+            Method for aggregating chunk scores into document scores
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with normalized scores
+        """
+        # Handle different search types
+        if search_type == 'vector':
+            results = self._vector_search_with_embedding(
+                query_embedding, return_type, k, score_threshold, filters,
+                context_window, semantic_dedup_threshold, document_scoring_method
+            )
+        elif search_type == 'keyword':
+            # Keyword search doesn't use embeddings, use standard method
+            results = self._keyword_search(
+                query, return_type, k, score_threshold, filters,
+                context_window, semantic_dedup_threshold, document_scoring_method
+            )
+        elif search_type == 'hybrid':
+            results = self._hybrid_search_with_embedding(
+                query, query_embedding, return_type, k, score_threshold, filters, vector_weight,
+                context_window, semantic_dedup_threshold, document_scoring_method
+            )
+        else:
+            raise ValueError(f"Unknown search type: {search_type}")
+
+        return results
+
+    def _vector_search_with_embedding(
+            self,
+            query_embedding: np.ndarray,
+            return_type: Literal['documents', 'chunks', 'context'],
+            k: int,
+            score_threshold: float,
+            filters: Optional[Dict[str, Any]],
+            context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: str
+    ) -> List[QueryResult]:
+        """Perform vector similarity search with a precomputed embedding"""
+        # Search more chunks initially since we might deduplicate and need enough for final k
+        initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
+
+        # Search FAISS index
+        distances, indices = self.index.search(query_embedding, initial_k)
+
+        # Get chunk information - ALWAYS get chunks first
+        chunk_results = []
+
+        with self.connection_pool.get_connection() as conn:
+            for dist, idx in zip(distances[0], indices[0]):
+                if idx == -1:  # Invalid index
+                    continue
+
+                # Get chunk info
+                cursor = conn.execute('''
+                    SELECT c.*, d.id as doc_id, d.content as doc_content
+                    FROM chunks c
+                    JOIN documents d ON c.document_id = d.id  
+                    WHERE c.faiss_id = ?
+                ''', (int(idx),))
+
+                row = cursor.fetchone()
+                if not row:
+                    continue
+
+                # Convert distance to normalized score (0-1, higher=better)
+                score = max(0.0, 1.0 / (1.0 + float(dist)))
+
+                if score < score_threshold:
+                    continue
+
+                # Get document metadata
+                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
+
+                # Apply metadata filters early
+                if filters and not self._matches_filters(doc_metadata, filters):
+                    continue
+
+                # Create chunk position
+                position = ChunkPosition(
+                    start=row['start_pos'],
+                    end=row['end_pos'],
+                    line=row['start_line'],
+                    column=row['start_col'],
+                    end_line=row['end_line'],
+                    end_column=row['end_col']
+                )
+
+                result = QueryResult(
+                    id=f"{row['document_id']}:{row['chunk_index']}",
+                    score=score,
+                    type='chunk',
+                    content=row['content'],
+                    metadata=doc_metadata,
+                    document_id=row['doc_id'],
+                    position=position
+                )
+                chunk_results.append(result)
+
+        # Apply semantic deduplication if requested
+        if semantic_dedup_threshold is not None:
+            chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
+
+        # Process based on return type
+        if return_type == 'context':
+            # Add context window and return
+            final_results = self._add_context_window(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            # Aggregate to document level
+            document_results = self._aggregate_document_scores_with_frequency_boost(
+                chunk_results, document_scoring_method
+            )
+            return document_results[:k]
+        else:  # return_type == 'chunks'
+            # Sort by score and limit
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            return chunk_results[:k]
+
+    def _hybrid_search_with_embedding(
+            self,
+            query: str,
+            query_embedding: np.ndarray,
+            return_type: Literal['documents', 'chunks', 'context'],
+            k: int,
+            score_threshold: float,
+            filters: Optional[Dict[str, Any]],
+            vector_weight: float,
+            context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: str
+    ) -> List[QueryResult]:
+        """Perform hybrid search with a precomputed embedding"""
+        if not self.fts_enabled:
+            # Fall back to vector search if FTS is not available
+            return self._vector_search_with_embedding(
+                query_embedding, return_type, k, score_threshold, filters,
+                context_window, semantic_dedup_threshold, document_scoring_method
+            )
+
+        # Get more results than requested for better reranking
+        search_k = min(k * 4, 100)
+
+        # Perform vector search with precomputed embedding
+        vector_results = self._vector_search_with_embedding(
+            query_embedding, 'chunks', search_k, 0.0, filters, 0, None, "best"
+        )
+
+        # Perform keyword search
+        keyword_results = self._keyword_search(
+            query, 'chunks', search_k, 0.0, filters, 0, None, "best"
+        )
+
+        # If either returns no results, return the other
+        if not vector_results:
+            return keyword_results[:k]
+        if not keyword_results:
+            return vector_results[:k]
+
+        # Combine results with weighted scoring
+        combined_results = self._combine_search_results(
+            vector_results=vector_results,
+            keyword_results=keyword_results,
+            vector_weight=vector_weight,
+            k=search_k,  # Don't limit yet
+            score_threshold=0.0  # Don't filter yet
+        )
+
+        # Apply semantic deduplication if requested
+        if semantic_dedup_threshold is not None:
+            combined_results = self._apply_semantic_deduplication(combined_results, semantic_dedup_threshold)
+
+        # Filter by score threshold now
+        combined_results = [r for r in combined_results if r.score >= score_threshold]
+
+        # Process based on return type
+        if return_type == 'context':
+            final_results = self._add_context_window(combined_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            document_results = self._aggregate_document_scores_with_frequency_boost(
+                combined_results, document_scoring_method
+            )
+            return document_results[:k]
+        else:  # chunks
+            combined_results.sort(key=lambda x: x.score, reverse=True)
+            return combined_results[:k]
+
+    def _apply_semantic_deduplication(
+            self,
+            results: List[QueryResult],
+            threshold: float
+    ) -> List[QueryResult]:
+        """
+        Apply semantic deduplication to search results using FAISS index embeddings.
+
+        Parameters
+        ----------
+        results : List[QueryResult]
+            Initial search results to deduplicate
+        threshold : float
+            Similarity threshold (0-1, higher=more similar). Chunks above this threshold are considered duplicates.
+
+        Returns
+        -------
+        List[QueryResult]
+            Deduplicated results with highest-scored chunk from each similar group
+        """
+        if not results or threshold is None or threshold <= 0:
+            return results
+
+        # Extract FAISS IDs from chunk results
+        faiss_ids = []
+        valid_results = []
+
+        # TODO: can we get all the rows at once? This is silly to get them one at a time.
+        for result in results:
+            if result.type == 'chunk':
+                # For chunk results, we need to get the FAISS ID from the database
+                with self.connection_pool.get_connection() as conn:
+                    cursor = conn.execute(
+                        'SELECT faiss_id FROM chunks WHERE document_id = ? AND chunk_index = ?',
+                        (result.document_id, self._extract_chunk_index_from_id(result.id))
+                    )
+                    row = cursor.fetchone()
+                    if row and row['faiss_id'] is not None:
+                        faiss_ids.append(row['faiss_id'])
+                        valid_results.append(result)
+            else:
+                # For document results, we can't easily deduplicate without chunk info
+                valid_results.append(result)
+
+        if len(faiss_ids) < 2:
+            return results  # Not enough chunks to deduplicate
+
+        try:
+            # Reconstruct embeddings from FAISS index
+            embeddings = np.array([
+                self.index.reconstruct(int(faiss_id)) for faiss_id in faiss_ids
+            ])
+
+            # Calculate pairwise cosine similarities
+            # Normalize embeddings for cosine similarity
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            normalized_embeddings = embeddings / norms
+            similarity_matrix = np.dot(normalized_embeddings, normalized_embeddings.T)
+
+            # Find groups of similar chunks
+            processed = set()
+            keep_indices = []
+
+            for i in range(len(valid_results)):
+                if i in processed:
+                    continue
+
+                # Find all chunks similar to this one
+                similar_indices = np.where(similarity_matrix[i] >= threshold)[0]
+
+                # Among similar chunks, keep the one with highest score
+                best_idx = i
+                best_score = valid_results[i].score
+
+                for j in similar_indices:
+                    if j != i and valid_results[j].score > best_score:
+                        best_idx = j
+                        best_score = valid_results[j].score
+                    processed.add(j)
+
+                keep_indices.append(best_idx)
+                processed.add(i)
+
+            # Return deduplicated results
+            deduplicated = [valid_results[i] for i in sorted(set(keep_indices))]
+
+            logger.debug(f"Semantic deduplication: {len(results)} → {len(deduplicated)} results "
+                         f"(removed {len(results) - len(deduplicated)} similar chunks)")
+
+            return deduplicated
+
+        except Exception as e:
+            logger.warning(f"Semantic deduplication failed: {e}")
+            return results
+
+    @staticmethod
+    def _extract_chunk_index_from_id(chunk_id: str) -> int:
+        """Extract chunk index from chunk ID format 'doc_id:chunk_index'"""
+        try:
+            return int(chunk_id.split(':')[-1])
+        except (ValueError, IndexError, TypeError):
+            return 0
+
+    def _add_context_window(
+            self,
+            results: List[QueryResult],
+            context_window: int
+    ) -> List[QueryResult]:
+        """
+        Add context window around found chunks by including surrounding chunks.
+
+        Parameters
+        ----------
+        results : List[QueryResult]
+            Chunk-level search results to add context to
+        context_window : int
+            Number of chunks to include before and after each found chunk
+
+        Returns
+        -------
+        List[QueryResult]
+            Results with expanded content including context chunks
+        """
+        if context_window <= 0 or not results:
+            return results
+
+        context_results = []
+
+        with self.connection_pool.get_connection() as conn:
+            for result in results:
+                if result.type != 'chunk':
+                    # For document results, just pass through
+                    context_results.append(result)
+                    continue
+
+                doc_id = result.document_id
+                chunk_index = self._extract_chunk_index_from_id(result.id)
+
+                # Get surrounding chunks
+                start_index = max(0, chunk_index - context_window)
+                end_index = chunk_index + context_window + 1  # +1 because range is exclusive
+
+                cursor = conn.execute('''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col
+                    FROM chunks 
+                    WHERE document_id = ? AND chunk_index >= ? AND chunk_index < ?
+                    ORDER BY chunk_index
+                ''', (doc_id, start_index, end_index))
+
+                context_chunks = cursor.fetchall()
+
+                if not context_chunks:
+                    # No context found, use original result
+                    context_results.append(result)
+                    continue
+
+                # Combine chunks into single content
+                combined_content = []
+                min_start_pos = float('inf')
+                max_end_pos = 0
+                min_start_line = float('inf')
+                min_start_col = float('inf')
+                max_end_line = 0
+                max_end_col = 0
+
+                found_original = False
+
+                for chunk_row in context_chunks:
+                    combined_content.append(chunk_row['content'])
+
+                    # Track if we found our original chunk
+                    if chunk_row['chunk_index'] == chunk_index:
+                        found_original = True
+
+                    # Update position boundaries
+                    min_start_pos = min(min_start_pos, chunk_row['start_pos'])
+                    max_end_pos = max(max_end_pos, chunk_row['end_pos'])
+                    min_start_line = min(min_start_line, chunk_row['start_line'])
+                    max_end_line = max(max_end_line, chunk_row['end_line'])
+
+                    if chunk_row['start_line'] == min_start_line:
+                        min_start_col = min(min_start_col, chunk_row['start_col'])
+                    if chunk_row['end_line'] == max_end_line:
+                        max_end_col = max(max_end_col, chunk_row['end_col'])
+
+                # Create new position spanning the entire context
+                context_position = ChunkPosition(
+                    start=int(min_start_pos),
+                    end=int(max_end_pos),
+                    line=int(min_start_line),
+                    column=int(min_start_col),
+                    end_line=int(max_end_line),
+                    end_column=int(max_end_col)
+                )
+
+                # Create new result with combined content
+                # Use a separator to distinguish chunks (could be configurable)
+                separator = "\n\n---\n\n"
+                combined_text = separator.join(combined_content)
+
+                context_result = QueryResult(
+                    id=f"{doc_id}:context:{chunk_index}",
+                    score=result.score,  # Keep original score
+                    type='chunk',  # Still a chunk type, but with context
+                    content=combined_text,
+                    metadata=result.metadata.copy(),
+                    document_id=doc_id,
+                    position=context_position
+                )
+
+                # Add metadata about context
+                context_result.metadata['_context_window'] = context_window
+                context_result.metadata['_original_chunk_index'] = chunk_index
+                context_result.metadata['_context_chunk_count'] = len(context_chunks)
+                context_result.metadata['_context_start_index'] = start_index
+                context_result.metadata['_context_end_index'] = end_index - 1
+
+                context_results.append(context_result)
+
+        return context_results
+
+    def _aggregate_document_scores_with_frequency_boost(
+            self,
+            chunk_results: List[QueryResult],
+            method: Literal["best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
+    ) -> List[QueryResult]:
+        """
+        Aggregate chunk results into document results with enhanced scoring.
+
+        Parameters
+        ----------
+        chunk_results : List[QueryResult]
+            Chunk-level search results to aggregate by document
+        method : str
+            Scoring method: "best", "average", "worst", "weighted_average", or "frequency_boost"
+
+        Returns
+        -------
+        List[QueryResult]
+            Document-level results with aggregated scores
+        """
+        if not chunk_results:
+            return []
+
+        # Group chunks by document
+        doc_groups = defaultdict(list)
+        for result in chunk_results:
+            doc_id = result.document_id if result.type == 'chunk' else result.id
+            doc_groups[doc_id].append(result)
+
+        document_results = []
+
+        with self.connection_pool.get_connection() as conn:
+            for doc_id, chunks in doc_groups.items():
+                # Calculate aggregated score based on method
+                scores = [chunk.score for chunk in chunks]
+
+                if method == "best":
+                    final_score = max(scores)
+                elif method == "worst":
+                    final_score = min(scores)
+                elif method == "average":
+                    final_score = sum(scores) / len(scores)
+                elif method == "weighted_average":
+                    # Weight by normalized scores
+                    weights = np.array(scores)
+                    weights = weights / weights.sum() if weights.sum() > 0 else weights
+                    final_score = np.average(scores, weights=weights)
+                elif method == "frequency_boost":
+                    best_score = max(scores)
+                    chunk_count = len(chunks)
+                    # Frequency boost: best_score × log(1 + chunk_count)
+                    frequency_multiplier = math.log(1 + chunk_count)
+                    final_score = min(1.0, best_score * frequency_multiplier)  # Cap at 1.0
+                else:
+                    final_score = max(scores)  # Default to best
+
+                # Get document content and metadata
+                cursor = conn.execute(
+                    'SELECT content FROM documents WHERE id = ?', (doc_id,)
+                )
+                doc_row = cursor.fetchone()
+
+                if not doc_row:
+                    continue
+
+                # Get document metadata
+                doc_metadata = self._get_document_metadata(conn, doc_id)
+
+                # Add aggregation metadata
+                doc_metadata['_aggregation_method'] = method
+                doc_metadata['_chunk_count'] = len(chunks)
+                doc_metadata['_best_chunk_score'] = max(scores)
+                doc_metadata['_average_chunk_score'] = sum(scores) / len(scores)
+
+                if method == "frequency_boost":
+                    doc_metadata['_frequency_multiplier'] = math.log(1 + len(chunks))
+                    doc_metadata['_original_best_score'] = max(scores)
+
+                # Create document result
+                doc_result = QueryResult(
+                    id=doc_id,
+                    score=final_score,
+                    type='document',
+                    content=doc_row['content'],
+                    metadata=doc_metadata
+                )
+
+                document_results.append(doc_result)
+
+        # Sort by final score
+        document_results.sort(key=lambda x: x.score, reverse=True)
+
+        return document_results
+
 
     @staticmethod
     def _combine_search_results(

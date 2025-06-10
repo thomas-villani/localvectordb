@@ -1024,11 +1024,16 @@ class RemoteVectorDB(BaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',  # Add 'context'
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7,  # For hybrid search
+            vector_weight: float = 0.7,
+            # NEW PARAMETERS:
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "weighted_average", "frequency_boost"] = "frequency_boost"
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -1039,8 +1044,8 @@ class RemoteVectorDB(BaseVectorDB):
             Query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
-        return_type : Literal['documents', 'chunks']
-            Whether to return full documents or individual chunks
+        return_type : Literal['documents', 'chunks', 'context']
+            Whether to return full documents, individual chunks, or chunks with context
         k : int
             Maximum number of results to return
         score_threshold : float
@@ -1049,6 +1054,12 @@ class RemoteVectorDB(BaseVectorDB):
             Metadata filters
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : str
+            Method for aggregating chunk scores into document scores
 
         Returns
         -------
@@ -1062,11 +1073,16 @@ class RemoteVectorDB(BaseVectorDB):
             "return_type": return_type,
             "k": k,
             "score_threshold": score_threshold,
-            "vector_weight": vector_weight
+            "vector_weight": vector_weight,
+            "context_window": context_window,
+            "document_scoring_method": document_scoring_method
         }
 
         if filters is not None:
             payload["filters"] = filters
+
+        if semantic_dedup_threshold is not None:
+            payload["semantic_dedup_threshold"] = semantic_dedup_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/query")
         response = self._make_request_with_retry("POST", url, json=payload)

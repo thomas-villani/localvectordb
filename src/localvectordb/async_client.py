@@ -753,11 +753,15 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7,  # For hybrid search
+            vector_weight: float = 0.7,  # For search_type='hybrid'
+            context_window: int = 2,     # For return_type='context'
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -778,6 +782,12 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
             Metadata filters
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : str
+            Method for aggregating chunk scores into document scores
 
         Returns
         -------

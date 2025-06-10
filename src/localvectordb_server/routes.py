@@ -723,6 +723,11 @@ def search_handler(db_name, search_params):
     filters = search_params.get("filters", search_params.get("metadata_filters"))
     vector_weight = search_params.get("vector_weight", 0.7)
 
+    # NEW PARAMETERS:
+    context_window = search_params.get("context_window", 2)
+    semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
+    document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
+
     try:
         db = current_app.db_manager.get_db(db_name)
 
@@ -740,7 +745,10 @@ def search_handler(db_name, search_params):
             k=k,
             score_threshold=score_threshold,
             filters=filters,
-            vector_weight=vector_weight
+            vector_weight=vector_weight,
+            context_window=context_window,
+            semantic_dedup_threshold=semantic_dedup_threshold,
+            document_scoring_method=document_scoring_method
         )
 
         # Serialize results
@@ -755,7 +763,13 @@ def search_handler(db_name, search_params):
             "results": serialized_results,
             "search_type": search_type,
             "return_type": return_type,
-            "total_results": len(serialized_results)
+            "total_results": len(serialized_results),
+            # Include processing info in response
+            "processing_info": {
+                "context_window": context_window if return_type == 'context' else None,
+                "semantic_dedup_applied": semantic_dedup_threshold is not None,
+                "document_scoring_method": document_scoring_method if return_type == 'documents' else None
+            }
         })
 
     except Exception as e:

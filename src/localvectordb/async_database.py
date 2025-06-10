@@ -74,17 +74,18 @@ Performance optimizations::
 
 import asyncio
 import functools
+import hashlib
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Literal, Any
+from typing import Dict, List, Optional, Union, Literal, Any, Tuple
 
 import numpy as np
 
 from localvectordb.core import Document, QueryResult, MetadataField, AsyncBaseVectorDB
 from localvectordb.database import LocalVectorDB
-from localvectordb.exceptions import DatabaseError
+from localvectordb.exceptions import DatabaseError, DuplicateDocumentIDError
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +358,7 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             similarity_threshold: Optional[float] = None
     ) -> List[str]:
         """
-        Async upsert documents with optimized embedding generation
+        Async upsert documents with optimized embedding generation and chunk reuse
 
         Parameters
         ----------
@@ -379,38 +380,7 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
         """
         await self._ensure_initialized()
 
-        # For large operations, use optimized async approach
-        if isinstance(documents, str):
-            documents = [documents]
-
-        if len(documents) > 10:  # Threshold for optimization
-            return await self._upsert_optimized(documents, metadata, ids, batch_size, similarity_threshold)
-        else:
-            # For small operations, delegate to sync version in thread pool
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                self._executor,
-                functools.partial(
-                    self._sync_db.upsert,
-                    documents=documents,
-                    metadata=metadata,
-                    ids=ids,
-                    batch_size=batch_size,
-                    similarity_threshold=similarity_threshold
-                )
-            )
-
-    async def _upsert_optimized(
-            self,
-            documents: List[str],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None
-    ) -> List[str]:
-        """Optimized upsert for large document batches"""
-
-        # Normalize inputs in thread pool (CPU-bound)
+        # Normalize inputs in thread pool
         loop = asyncio.get_event_loop()
         normalized_data = await loop.run_in_executor(
             self._executor,
@@ -420,14 +390,144 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
 
         documents, metadata_list, ids_list = normalized_data
 
-        # Generate chunks in thread pool (CPU-bound)
-        chunk_data = await loop.run_in_executor(
+        # First, check which documents need updates based on content hash
+        docs_to_update_indices = await self._identify_changed_documents(documents, ids_list)
+
+        if not docs_to_update_indices:
+            # No documents need updating
+            return ids_list
+
+        # Filter to only process documents that need updating
+        update_documents = [documents[i] for i in docs_to_update_indices]
+        update_metadata = [metadata_list[i] for i in docs_to_update_indices]
+        update_ids = [ids_list[i] for i in docs_to_update_indices]
+
+        # Process in batches if there are many documents to update
+        if len(update_documents) > 10:
+            result_ids = await self._batch_upsert_documents(
+                update_documents, update_metadata, update_ids, batch_size, similarity_threshold
+            )
+        else:
+            # For small batches, use the sync method in thread pool
+            result_ids = await loop.run_in_executor(
+                self._executor,
+                functools.partial(
+                    self._sync_db.upsert,
+                    documents=update_documents,
+                    metadata=update_metadata,
+                    ids=update_ids,
+                    batch_size=batch_size,
+                    similarity_threshold=similarity_threshold
+                )
+            )
+
+        # Save state
+        await loop.run_in_executor(
             self._executor,
-            self._generate_chunks_for_documents,
+            self._sync_db._save_next_doc_id
+        )
+
+        await self.save()
+
+        return ids_list
+
+    async def _identify_changed_documents(
+            self,
+            documents: List[str],
+            ids: List[str]
+    ) -> List[int]:
+        """
+        Identify which documents have changed based on content hash comparison
+
+        Parameters
+        ----------
+        documents : List[str]
+            List of document texts
+        ids : List[str]
+            List of document IDs
+
+        Returns
+        -------
+        List[int]
+            Indices of documents that need updating
+        """
+        loop = asyncio.get_event_loop()
+
+        # Calculate hashes for all documents
+        doc_hashes = await loop.run_in_executor(
+            self._executor,
+            lambda: [hashlib.sha256(doc.encode('utf-8')).hexdigest() for doc in documents]
+        )
+
+        # Get existing document hashes from database
+        existing_hashes = {}
+
+        def fetch_existing_hashes():
+            with self._sync_db.connection_pool.get_connection() as conn:
+                placeholders = ','.join(['?'] * len(ids))
+                if placeholders:
+                    cursor = conn.execute(
+                        f'SELECT id, content_hash FROM documents WHERE id IN ({placeholders})',
+                        ids
+                    )
+                    return {row['id']: row['content_hash'] for row in cursor.fetchall()}
+            return {}
+
+        existing_hashes = await loop.run_in_executor(
+            self._executor,
+            fetch_existing_hashes
+        )
+
+        # Identify documents that need updating
+        docs_to_update = []
+        for i, (doc_id, doc_hash) in enumerate(zip(ids, doc_hashes)):
+            if doc_id not in existing_hashes or existing_hashes[doc_id] != doc_hash:
+                docs_to_update.append(i)
+
+        return docs_to_update
+
+    async def _batch_upsert_documents(
+            self,
+            documents: List[str],
+            metadata_list: List[Dict[str, Any]],
+            ids_list: List[str],
+            batch_size: int,
+            similarity_threshold: Optional[float]
+    ) -> List[str]:
+        """
+        Process documents in batches with optimized async operations
+
+        Parameters
+        ----------
+        documents : List[str]
+            List of documents to process
+        metadata_list : List[Dict[str, Any]]
+            List of metadata dicts
+        ids_list : List[str]
+            List of document IDs
+        batch_size : int
+            Batch size for processing
+        similarity_threshold : Optional[float]
+            Similarity threshold for filtering
+
+        Returns
+        -------
+        List[str]
+            List of processed document IDs
+        """
+        loop = asyncio.get_event_loop()
+
+        # Generate chunks for all documents in thread pool (CPU-bound)
+        chunks_data = await loop.run_in_executor(
+            self._executor,
+            self._generate_chunks_with_mapping,
             documents
         )
 
-        all_chunks, chunk_texts, doc_chunk_mapping = chunk_data
+        all_chunks, doc_chunk_mapping = chunks_data
+
+        # Get chunk texts for embedding generation
+        chunk_texts = [chunk.content for chunk in all_chunks]
 
         # Generate embeddings using async (I/O-bound for HTTP providers)
         embeddings = await self._generate_embeddings_async(chunk_texts, batch_size)
@@ -436,17 +536,43 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
         result_ids = await loop.run_in_executor(
             self._executor,
             functools.partial(
-                self._sync_db._process_upsert_with_embeddings,
+                self._sync_db._upsert_with_precomputed_embeddings,
                 documents=documents,
                 metadata_list=metadata_list,
                 ids_list=ids_list,
                 chunks=all_chunks,
                 embeddings=embeddings,
+                doc_chunk_mapping=doc_chunk_mapping,
                 similarity_threshold=similarity_threshold
             )
         )
 
         return result_ids
+
+    def _generate_chunks_with_mapping(self, documents: List[str]) -> Tuple[List["Chunk"], List[int]]:
+        """
+        Generate chunks for documents with mapping information
+
+        Parameters
+        ----------
+        documents : List[str]
+            List of documents to chunk
+
+        Returns
+        -------
+        Tuple[List[Chunk], List[int]]
+            List of all chunks and mapping from chunk to document index
+        """
+        all_chunks = []
+        doc_chunk_mapping = []
+
+        for doc_idx, doc_text in enumerate(documents):
+            chunks = self._sync_db.chunker.chunk(doc_text)
+            for chunk in chunks:
+                all_chunks.append(chunk)
+                doc_chunk_mapping.append(doc_idx)
+
+        return all_chunks, doc_chunk_mapping
 
     def _normalize_upsert_inputs(self, documents, metadata, ids):
         """Helper to normalize inputs (runs in thread pool)"""
@@ -466,6 +592,10 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             ids = [self._sync_db._generate_doc_id() for _ in documents]
         elif len(ids) != len(documents):
             raise ValueError("Number of IDs must match number of documents")
+
+        for i, doc_id in enumerate(ids):
+            if doc_id is None:
+                ids[i] = self._sync_db._generate_doc_id()
 
         return documents, metadata, ids
 
@@ -493,21 +623,189 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise"
     ) -> List[str]:
-        """Async insert new documents"""
+        """
+        Async insert new documents with optimized processing
+
+        Parameters
+        ----------
+        documents : Union[str, List[str]]
+            Document text(s) to add
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents
+        ids : Optional[Union[str, List[str]]]
+            Document IDs (auto-generated if not provided)
+        batch_size : int
+            Batch size for processing
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+        """
         await self._ensure_initialized()
+
+        # Normalize inputs in thread pool
         loop = asyncio.get_event_loop()
+        normalized_data = await loop.run_in_executor(
+            self._executor,
+            self._normalize_upsert_inputs,
+            documents, metadata, ids
+        )
+
+        documents, metadata_list, ids_list = normalized_data
+
+        # Check for existing document IDs before doing any processing
+        existing_ids_indices = await self._check_existing_document_ids(ids_list)
+
+        if existing_ids_indices:
+            if errors == "raise":
+                existing_ids = [ids_list[i] for i in existing_ids_indices]
+                raise DuplicateDocumentIDError(
+                    f"Document IDs already exist: {existing_ids}"
+                )
+            elif errors == "ignore":
+                # Filter out documents with existing IDs
+                valid_indices = [i for i in range(len(documents)) if i not in existing_ids_indices]
+
+                if not valid_indices:
+                    # All documents have existing IDs
+                    return []
+
+                # Keep only documents with non-existing IDs
+                documents = [documents[i] for i in valid_indices]
+                metadata_list = [metadata_list[i] for i in valid_indices]
+                ids_list = [ids_list[i] for i in valid_indices]
+
+        # Process in batches if there are many documents
+        if len(documents) > 10:
+            inserted_ids = await self._batch_insert_documents(
+                documents, metadata_list, ids_list, batch_size, similarity_threshold
+            )
+        else:
+            # For small batches, use the sync method in thread pool
+            inserted_ids = await loop.run_in_executor(
+                self._executor,
+                functools.partial(
+                    self._sync_db.insert,
+                    documents=documents,
+                    metadata=metadata_list,
+                    ids=ids_list,
+                    batch_size=batch_size,
+                    similarity_threshold=similarity_threshold,
+                    errors="raise"  # Already handled duplicates above
+                )
+            )
+
+        # Save state
+        await loop.run_in_executor(
+            self._executor,
+            self._sync_db._save_next_doc_id
+        )
+
+        await self.save()
+
+        return inserted_ids
+
+    async def _check_existing_document_ids(self, ids: List[str]) -> List[int]:
+        """
+        Check which document IDs already exist in the database
+
+        Parameters
+        ----------
+        ids : List[str]
+            List of document IDs to check
+
+        Returns
+        -------
+        List[int]
+            Indices of documents with IDs that already exist
+        """
+        loop = asyncio.get_event_loop()
+
+        def fetch_existing_ids():
+            existing_indices = []
+            with self._sync_db.connection_pool.get_connection() as conn:
+                for i, doc_id in enumerate(ids):
+                    cursor = conn.execute(
+                        'SELECT 1 FROM documents WHERE id = ? LIMIT 1',
+                        (doc_id,)
+                    )
+                    if cursor.fetchone():
+                        existing_indices.append(i)
+            return existing_indices
+
         return await loop.run_in_executor(
             self._executor,
+            fetch_existing_ids
+        )
+
+    async def _batch_insert_documents(
+            self,
+            documents: List[str],
+            metadata_list: List[Dict[str, Any]],
+            ids_list: List[str],
+            batch_size: int,
+            similarity_threshold: Optional[float]
+    ) -> List[str]:
+        """
+        Process document insertion in batches with optimized async operations
+
+        Parameters
+        ----------
+        documents : List[str]
+            List of documents to process
+        metadata_list : List[Dict[str, Any]]
+            List of metadata dicts
+        ids_list : List[str]
+            List of document IDs
+        batch_size : int
+            Batch size for processing
+        similarity_threshold : Optional[float]
+            Similarity threshold for filtering
+
+        Returns
+        -------
+        List[str]
+            List of inserted document IDs
+        """
+        loop = asyncio.get_event_loop()
+
+        # Generate chunks for all documents in thread pool (CPU-bound)
+        chunks_data = await loop.run_in_executor(
+            self._executor,
+            self._generate_chunks_with_mapping,
+            documents
+        )
+
+        all_chunks, doc_chunk_mapping = chunks_data
+
+        # Get chunk texts for embedding generation
+        chunk_texts = [chunk.content for chunk in all_chunks]
+
+        # Generate embeddings using async (I/O-bound for HTTP providers)
+        embeddings = await self._generate_embeddings_async(chunk_texts, batch_size)
+
+        # Use the same mechanism as upsert but ensure we're only inserting new documents
+        # We've already filtered out existing IDs based on the errors parameter
+        result_ids = await loop.run_in_executor(
+            self._executor,
             functools.partial(
-                self._sync_db.insert,
+                self._sync_db._upsert_with_precomputed_embeddings,
                 documents=documents,
-                metadata=metadata,
-                ids=ids,
-                batch_size=batch_size,
-                similarity_threshold=similarity_threshold,
-                errors=errors
+                metadata_list=metadata_list,
+                ids_list=ids_list,
+                chunks=all_chunks,
+                embeddings=embeddings,
+                doc_chunk_mapping=doc_chunk_mapping,
+                similarity_threshold=similarity_threshold
             )
         )
+
+        return result_ids
 
     async def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
         """Async get documents by ID"""
@@ -563,55 +861,74 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7
+            vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: Literal[
+                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
     ) -> List[QueryResult]:
-        """Async unified query interface with optimized vector search"""
-        await self._ensure_initialized()
+        """
+        Async unified query interface with optimized vector search
 
-        # For vector and hybrid search, optimize the query embedding generation
-        if search_type in ['vector', 'hybrid']:
-            return await self._query_optimized(
-                query, search_type, return_type, k, score_threshold, filters, vector_weight
-            )
-        else:
-            # For keyword search, delegate to sync version
-            loop = asyncio.get_event_loop()
+        Parameters
+        ----------
+        query : str
+            Query text
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks', 'context']
+            Whether to return full documents, individual chunks, or chunks with context
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : str
+            Method for aggregating chunk scores into document scores
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with normalized scores
+        """
+        await self._ensure_initialized()
+        loop = asyncio.get_event_loop()
+
+        # For keyword search, no embedding is needed, so use the original method directly
+        if search_type == 'keyword':
             return await loop.run_in_executor(
                 self._executor,
                 functools.partial(
                     self._sync_db.query,
                     query=query,
-                    search_type=search_type,
+                    search_type='keyword',
                     return_type=return_type,
                     k=k,
                     score_threshold=score_threshold,
                     filters=filters,
-                    vector_weight=vector_weight
+                    vector_weight=vector_weight,
+                    context_window=context_window,
+                    semantic_dedup_threshold=semantic_dedup_threshold,
+                    document_scoring_method=document_scoring_method
                 )
             )
 
-    async def _query_optimized(
-            self,
-            query: str,
-            search_type: str,
-            return_type: str,
-            k: int,
-            score_threshold: float,
-            filters: Optional[Dict[str, Any]],
-            vector_weight: float
-    ) -> List[QueryResult]:
-        """Optimized query with async embedding generation"""
-
-        # Generate query embedding using async
+        # For vector and hybrid search, generate query embedding asynchronously
         query_embedding = await self._generate_embeddings_async([query])
 
-        # Perform search in thread pool
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        # Pass the precomputed embedding to the sync database for searching
+        results = await loop.run_in_executor(
             self._executor,
             functools.partial(
                 self._sync_db._search_with_embedding,
@@ -622,9 +939,14 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
                 k=k,
                 score_threshold=score_threshold,
                 filters=filters,
-                vector_weight=vector_weight
+                vector_weight=vector_weight,
+                context_window=context_window,
+                semantic_dedup_threshold=semantic_dedup_threshold,
+                document_scoring_method=document_scoring_method
             )
         )
+
+        return results
 
     async def filter(
             self,
@@ -686,40 +1008,7 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             self._sync_db.get_metadata_schema_info,
         )
 
-    async def _generate_embeddings_async(
-            self,
-            texts: List[str],
-            batch_size: int = 100
-    ) -> np.ndarray:
-        """Generate embeddings asynchronously for semantic filtering in QueryBuilder"""
-        await self._ensure_initialized()
 
-        if not texts:
-            return np.array([]).reshape(0, self._sync_db.embedding_dimension)
-
-        # Use async embedding generation if available
-        if hasattr(self._sync_db.embedding_provider, 'embed_async'):
-            if len(texts) <= batch_size:
-                return await self._sync_db.embedding_provider.embed_async(texts)
-            else:
-                # Process in batches
-                embeddings = []
-                for i in range(0, len(texts), batch_size):
-                    batch = texts[i:i + batch_size]
-                    batch_embeddings = await self._sync_db.embedding_provider.embed_async(batch)
-                    embeddings.append(batch_embeddings)
-                return np.vstack(embeddings)
-        else:
-            # Fall back to sync in thread pool
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                self._executor,
-                self._sync_db._generate_embeddings_chunked,
-                texts,
-                batch_size
-            )
-
-    # 2. Helper methods for QueryBuilder compatibility
     def is_async_database(self) -> bool:
         """Mark this as an async database for QueryBuilder"""
         return True
