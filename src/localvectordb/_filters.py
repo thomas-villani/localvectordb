@@ -8,16 +8,6 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb/filters.py
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-# You may not use this file for commercial purposes without explicit permission.
-#
-# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
-#
-# Contact: thomas.villani@gmail.com
-#
-# src/localvectordb/filters.py
 """Enhanced filtering system for LocalVectorDB with SQL query generation.
 
 This module provides utilities for filtering vector database results based on metadata
@@ -41,6 +31,26 @@ from typing import Any, Dict, List, Tuple, Union, Optional
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DatabaseError
+
+FILTER_OPERATORS = (
+    '$eq',
+    '$ne',
+    '$gt',
+    '$lt',
+    '$gte',
+    '$lte',
+    '$like',
+    '$ilike',
+    '$in',
+    '$nin',
+    '$contains',
+    '$not_contains',
+    '$exists',
+    '$not_exists',
+    '$startswith',
+    '$endswith',
+    '$type',
+)
 
 
 class FilterQueryBuilder:

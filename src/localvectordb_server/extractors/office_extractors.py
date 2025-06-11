@@ -54,8 +54,7 @@ class DocxExtractor(BaseExtractor):
             "paragraph_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "table_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "extraction_library": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False),
+            "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False)
         }
 
     def _check_availability(self) -> bool:
@@ -115,8 +114,7 @@ class DocxExtractor(BaseExtractor):
                     'paragraph_count': paragraph_count,
                     'table_count': table_count,
                     'file_size_bytes': len(file_content),
-                    'character_count': len(full_text),
-                    'extraction_library': 'python-docx'
+                    'character_count': len(full_text)
                 }
 
                 return ExtractionResult(
@@ -235,8 +233,7 @@ class PptxExtractor(BaseExtractor):
                     'slides_with_text': len(slide_texts),
                     'total_shapes': total_shapes,
                     'file_size_bytes': len(file_content),
-                    'character_count': len(full_text),
-                    'extraction_library': 'python-pptx'
+                    'character_count': len(full_text)
                 }
 
                 return ExtractionResult(
@@ -364,8 +361,7 @@ class XlsxExtractor(BaseExtractor):
                     'total_cells': total_cells,
                     'non_empty_cells': non_empty_cells,
                     'file_size_bytes': len(file_content),
-                    'character_count': len(full_text),
-                    'extraction_library': 'openpyxl'
+                    'character_count': len(full_text)
                 }
 
                 return ExtractionResult(

@@ -32,6 +32,15 @@ from localvectordb.core import QueryResult, Document, AnyVectorDB
 logger = logging.getLogger(__name__)
 
 DocumentScoringMethod = Literal["best", "worst" "average", "weighted_average", "frequency_boost"]
+"""
+Methods for aggregating chunk scores into document scores.
+
+- best: Use the highest chunk score
+- worst: Use the lowest chunk score
+- average: Use simple average of all chunk scores
+- weighted_average: Use weighted average based on position and relevance
+- frequency_boost: Boost by frequency of matching chunks (default)
+"""
 
 class SimilarityMetric(Enum):
     """Supported similarity metrics for semantic filtering."""
@@ -44,7 +53,7 @@ class SimilarityMetric(Enum):
 @dataclass
 class SearchClause:
     """Represents a search operation on a specific field."""
-    field: str
+    field: str  # The only possible field right now is 'content'
     query: str
     weight: float = 1.0
     search_type: Literal["vector", "keyword", "hybrid"] = "vector"
@@ -60,7 +69,21 @@ class SemanticFilter:
     embedding_model: Optional[str] = None
 
     async def apply_async(self, documents: List[Document], db: AnyVectorDB) -> List[Document]:
-        """Apply semantic filtering with async embedding generation."""
+        """
+        Apply semantic filtering with async embedding generation.
+
+        Parameters
+        ----------
+        documents : List[Document]
+            Documents to filter
+        db : AnyVectorDB
+            Vector database for embedding generation
+
+        Returns
+        -------
+        List[Document]
+            Documents that meet the similarity threshold
+        """
         if not documents:
             return documents
 
@@ -127,7 +150,21 @@ class SemanticFilter:
         return filtered_docs
 
     def apply(self, documents: List[Document], db: AnyVectorDB) -> List[Document]:
-        """Sync version of semantic filtering - also uses embedding provider directly."""
+        """
+        Apply semantic filtering synchronously.
+
+        Parameters
+        ----------
+        documents : List[Document]
+            Documents to filter
+        db : AnyVectorDB
+            Vector database for embedding generation
+
+        Returns
+        -------
+        List[Document]
+            Documents that meet the similarity threshold
+        """
         if not documents:
             return documents
 
@@ -213,16 +250,36 @@ class AggregationClause:
     function: Literal["count", "sum", "avg", "min", "max", "std", "var"]
     alias: Optional[str] = None
 
+from localvectordb._filters import FILTER_OPERATORS
+# Removes the preceding '$', used in QueryBuilder.filter
+FILTER_OPERATOR_NAMES = tuple(map(lambda x: x[1:], FILTER_OPERATORS))
 
 class QueryBuilder:
-    """Fluent interface for building complex vector database queries with async support."""
+    """
+    Fluent interface for building complex vector database queries with async support.
+
+    This class provides a SQL-like interface for building sophisticated search
+    and filter operations against vector databases, with support for:
+
+    - Vector, keyword, and hybrid search
+    - Exact and semantic filters
+    - Grouping and aggregations
+    - Sorting and pagination
+    - Result reranking
+    - Execution plan generation
+
+    Parameters
+    ----------
+    db : AnyVectorDB
+        Database instance to query
+    """
 
     def __init__(self, db: AnyVectorDB):
         self._db = db
         self._search_clauses: List[SearchClause] = []
         self._exact_filters: List[Dict[str, Any]] = []
         self._semantic_filters: List[SemanticFilter] = []
-        self._search_type: Literal["vector", "keyword", "hybrid"] = "vector"
+        self._search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
         self._vector_weight: float = 0.7
         self._return_type: Literal["documents", "chunks", "context"] = "documents"
         self._limit: int = 10
@@ -244,7 +301,14 @@ class QueryBuilder:
 
 
     def clone(self) -> "QueryBuilder":
-        """Create a copy of this QueryBuilder for chaining."""
+        """
+        Create a copy of this QueryBuilder for chaining.
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with same configuration
+        """
         new_builder = QueryBuilder(self._db)
         new_builder._search_clauses = self._search_clauses.copy()
         new_builder._exact_filters = self._exact_filters.copy()
@@ -272,40 +336,110 @@ class QueryBuilder:
         return new_builder
 
     # Core search methods
-    def search(self, query: str, field: str = "content") -> "QueryBuilder":
-        """Add a search clause for the specified field."""
+    def search(self, query: str, search_type=None, vector_weight=None) -> "QueryBuilder":
+        """
+        Search the content for `query`
+
+        Parameters
+        ----------
+        query : str
+            Query text
+        search_type : str, optional, one of "vector", "hybrid", "keyword"
+            Type of search to conduct.
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with search clause added
+
+        Raises
+        ------
+        ValueError
+            If query or field is empty or not a string
+        """
         if not query or not isinstance(query, str):
             raise ValueError("Query must be a non-empty string")
 
-        if not field or not isinstance(field, str):
-            raise ValueError("Field must be a non-empty string")
+        if search_type and search_type not in ("vector", "hybrid", "keyword"):
+            raise ValueError("`search_type` must be one of 'vector', 'hybrid', 'keyword'.")
+
+        if isinstance(vector_weight, float) and vector_weight >= 0.0 and vector_weight <= 1.0:
+            raise ValueError("`vector_weight` must be a float between 0.0 and 1.0")
 
         builder = self.clone()
-        builder._search_clauses.append(SearchClause(field, query, 1.0, self._search_type))
+        builder._search_clauses.append(SearchClause("content", query, 1.0, search_type or self._search_type))
+
+        if vector_weight:
+            builder._vector_weight = vector_weight
+
         return builder
 
-    def search_field(self, field: str, query: str, weight: float = 1.0) -> "QueryBuilder":
-        """Add a weighted search clause for a specific field."""
-        if not query or not isinstance(query, str):
-            raise ValueError("Query must be a non-empty string")
+    def search_field(self, field: str, query: str) -> "QueryBuilder":
+        """Find records where `field` contains `query`"""
 
         if not field or not isinstance(field, str):
             raise ValueError("Field must be a non-empty string")
 
         builder = self.clone()
-        builder._search_clauses.append(SearchClause(field, query, weight, self._search_type))
+        # Do ilike for str, exact match for others.
+        if isinstance(query, str):
+            filter = {field: {"$ilike": query}}
+        else:
+            filter = {field: query}
+        builder._exact_filters.append(filter)
+
         return builder
 
     def filter(self, field: str = None, value=None, **kwargs) -> "QueryBuilder":
-        """Add exact filter conditions."""
+        """
+        Add exact filter conditions.
+
+        Parameters
+        ----------
+        field : str, optional
+            Field to filter on
+        value : Any, optional
+            Value to filter for
+        kwargs : dict
+            Key-value pairs for filtering multiple fields,
+            or operator suffixes for advanced filtering
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with filter conditions added
+
+        Examples
+        --------
+        Basic filtering::
+
+            # Simple equality filter
+            builder.filter("year", 2023)
+
+            # Multiple fields
+            builder.filter(year=2023, category="AI")
+
+        Advanced filtering::
+
+            # Range conditions
+            builder.filter("year", gt_=2020, lt_=2024)
+
+            # Field exists
+            builder.filter("tags", exists_=True)
+
+        Raises
+        ------
+        ValueError
+            If field is not a string when provided directly
+        """
         if field is not None:
             if not isinstance(field, str) or not field:
                 raise ValueError("Field must be a non-empty string")
 
         # Validate operator suffixes in kwargs
-        # for key in kwargs:
-        #     if key.endswith('_') and key[:-1] not in VALID_OPERATORS:
-        #         raise ValueError(f"Invalid operator suffix in '{key}'")
+        for key in kwargs:
+            if key.endswith('_') and key[:-1] not in FILTER_OPERATOR_NAMES:
+                raise ValueError(f"Invalid operator suffix in '{key}'")
 
         builder = self.clone()
 
@@ -319,7 +453,12 @@ class QueryBuilder:
                     raise ValueError("Field must be specified when using operators")
                 builder._exact_filters.append({field: {f"${operator}": val}})
             else:
-                builder._exact_filters.append({key: val})
+                if key in FILTER_OPERATOR_NAMES:
+                    if field is None:
+                        raise ValueError("Field must be specified when using operators")
+                    builder._exact_filters.append({field: {f"${key}": val}})
+                else:
+                    builder._exact_filters.append({key: val})
 
         return builder
 
@@ -330,7 +469,34 @@ class QueryBuilder:
             threshold: float = 0.8,
             metric: SimilarityMetric = SimilarityMetric.COSINE
     ) -> "QueryBuilder":
-        """Add semantic filtering based on conceptual similarity."""
+        """
+        Add semantic filtering based on conceptual similarity.
+
+        This allows you to further refine a set of documents after an initial search by
+        using semantic searching across any fields. Calculates embeddings of field data and
+        compares to `concept`
+
+        Parameters
+        ----------
+        field : str
+            Field to apply semantic filtering to
+        concept : str
+            Concept to measure similarity against
+        threshold : float, default 0.8
+            Minimum similarity threshold (0-1, higher = more similar)
+        metric : SimilarityMetric, default SimilarityMetric.COSINE
+            Similarity metric to use
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with semantic filter added
+
+        Raises
+        ------
+        ValueError
+            If field or concept is empty, or threshold is not in [0,1]
+        """
         if not field or not isinstance(field, str):
             raise ValueError("Field must be a non-empty string")
 
@@ -346,7 +512,24 @@ class QueryBuilder:
         return builder
 
     def limit(self, n: int) -> "QueryBuilder":
-        """Limit the number of results."""
+        """
+        Limit the number of results.
+
+        Parameters
+        ----------
+        n : int
+            Maximum number of results to return
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with limit applied
+
+        Raises
+        ------
+        ValueError
+            If n is not positive
+        """
         if n <= 0:
             raise ValueError("Limit must be positive")
         builder = self.clone()
@@ -354,7 +537,24 @@ class QueryBuilder:
         return builder
 
     def offset(self, n: int) -> "QueryBuilder":
-        """Skip the first n results."""
+        """
+        Skip the first n results.
+
+        Parameters
+        ----------
+        n : int
+            Number of results to skip
+
+        Returns
+        -------
+        QueryBuilder
+            New QueryBuilder instance with offset applied
+
+        Raises
+        ------
+        ValueError
+            If n is negative
+        """
         if n < 0:
             raise ValueError("Offset must be non-negative")
         builder = self.clone()
@@ -362,25 +562,18 @@ class QueryBuilder:
         return builder
 
     # TODO: do it like this? Or as part of "search"
-    def vector(self) -> "QueryBuilder":
+    def vector(self, query) -> "QueryBuilder":
         """Use vector search."""
-        builder = self.clone()
-        builder._search_type = "vector"
-        return builder
+        return self.search(query, search_type="vector")
 
-    def keyword(self) -> "QueryBuilder":
+    def keyword(self, query) -> "QueryBuilder":
         """Use keyword search."""
-        builder = self.clone()
-        builder._search_type = "keyword"
-        return builder
+        return self.search(query, search_type="keyword")
 
-    def context_window(self, window_size: int) -> "QueryBuilder":
-        """Set context window size for context return type."""
-        if window_size < 0:
-            raise ValueError("Context window size must be non-negative")
-        builder = self.clone()
-        builder._context_window = window_size
-        return builder
+
+    def hybrid(self, query, vector_weight: float = 0.7) -> "QueryBuilder":
+        """Use hybrid search with specified vector weight."""
+        return self.search(query, search_type="hybrid", vector_weight=vector_weight)
 
     def semantic_dedup(self, threshold: float) -> "QueryBuilder":
         """Enable semantic deduplication with similarity threshold."""
@@ -418,12 +611,6 @@ class QueryBuilder:
         builder._context_window = window_size
         return builder
 
-    def hybrid(self, vector_weight: float = 0.7) -> "QueryBuilder":
-        """Use hybrid search with specified vector weight."""
-        builder = self.clone()
-        builder._search_type = "hybrid"
-        builder._vector_weight = vector_weight
-        return builder
 
     def order_by(self, field: str, direction: str = "desc") -> "QueryBuilder":
         """
@@ -1063,14 +1250,42 @@ class QueryBuilder:
 
 # Keep the original QueryExecutor for sync databases
 class QueryExecutor:
-    """Original sync query executor."""
+    """Executor for QueryBuilder queries.
+
+    This class handles the actual execution of queries built by QueryBuilder,
+    including result processing, aggregation, and optimization.
+
+    Parameters
+    ----------
+    query_builder : QueryBuilder
+        QueryBuilder instance to execute
+
+    Attributes
+    ----------
+    builder : QueryBuilder
+        Reference to the QueryBuilder
+    db : AnyVectorDB
+        Reference to the database
+    """
 
     def __init__(self, query_builder: "QueryBuilder"):
         self.builder = query_builder
         self.db = query_builder._db
 
     def execute(self) -> List[QueryResult]:
-        """Execute the query synchronously with full feature support."""
+        """
+        Execute the query synchronously with full feature support.
+
+        Returns
+        -------
+        List[QueryResult]
+            Query results
+
+        Raises
+        ------
+        Exception
+            If query execution fails
+        """
         start_time = time.time()
 
         try:
@@ -1431,6 +1646,7 @@ class QueryExecutor:
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method
         )
+        # TODO: add weight?
 
         if self.builder._semantic_filters:
             results = self._apply_semantic_filters(results)
