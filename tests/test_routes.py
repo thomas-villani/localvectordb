@@ -22,6 +22,7 @@ from datetime import datetime
 from flask import Flask
 from werkzeug.exceptions import BadRequest, Unauthorized
 
+import localvectordb_server.cli._basic
 from localvectordb.core import MetadataField, MetadataFieldType, Document, QueryResult, ChunkPosition
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError
@@ -758,7 +759,7 @@ class TestGlobalSearchRoutes:
         mock_db1.query.return_value = []
         mock_db2.query.return_value = []
 
-        app.db_manager.list_databases.return_value = ['db1', 'db2']
+        localvectordb_server.cli._basic.list_databases.return_value = ['db1', 'db2']
         app.db_manager.get_db.side_effect = lambda name: mock_db1 if name == 'db1' else mock_db2
         app.db_manager.search_databases.return_value = {
             "db1": [sample_query_result],

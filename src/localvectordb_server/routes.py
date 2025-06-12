@@ -25,6 +25,7 @@ from typing import Dict, Any
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
+import localvectordb_server.cli._basic
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key
@@ -148,7 +149,7 @@ def create_database():
         name = data["name"]
 
         # Check if database already exists
-        existing_dbs = current_app.db_manager.list_databases()
+        existing_dbs = localvectordb_server.cli._basic.list_databases()
         if name in existing_dbs:
             raise APIError(
                 message=f"Database '{name}' already exists",
@@ -234,7 +235,7 @@ def list_databases():
 
     with request_context("list_databases"):
         try:
-            databases = current_app.db_manager.list_databases()
+            databases = localvectordb_server.cli._basic.list_databases()
             return jsonify({
                 "databases": databases,
                 "count": len(databases)
