@@ -103,6 +103,7 @@ cli.add_command(db_group)
 cli.add_command(config_group)
 cli.add_command(auth)
 
+__all__ = ["cli"]
 
 if __name__ == '__main__':
     cli()

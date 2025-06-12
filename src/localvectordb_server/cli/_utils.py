@@ -306,3 +306,48 @@ def _format_value_for_display(value: Any) -> str:
         }, indent=2)
     else:
         return str(value)
+
+
+def format_table(headers, rows):
+    """Create a simple ASCII table without external dependencies"""
+    if not rows:
+        return "No data to display"
+
+    # Calculate column widths
+    col_widths = []
+    for i, header in enumerate(headers):
+        max_width = len(header)
+        for row in rows:
+            if i < len(row):
+                max_width = max(max_width, len(str(row[i])))
+        col_widths.append(max_width + 2)  # Add padding
+
+    # Create table
+    output = []
+
+    # Top border
+    border = "+" + "+".join("-" * width for width in col_widths) + "+"
+    output.append(border)
+
+    # Header row
+    header_row = "|"
+    for i, header in enumerate(headers):
+        header_row += f" {header:<{col_widths[i] - 1}}|"
+    output.append(header_row)
+
+    # Header separator
+    output.append(border)
+
+    # Data rows
+    for row in rows:
+        row_str = "|"
+        for i, cell in enumerate(row):
+            if i < len(col_widths):
+                cell_str = str(cell) if cell is not None else ""
+                row_str += f" {cell_str:<{col_widths[i] - 1}}|"
+        output.append(row_str)
+
+    # Bottom border
+    output.append(border)
+
+    return "\n".join(output)

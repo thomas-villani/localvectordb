@@ -479,7 +479,8 @@ class BaseVectorDB(ABC):
     def update_metadata_schema(
             self,
             new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
     ) -> Dict[str, Any]:
         """Update the metadata schema."""
         pass
@@ -668,7 +669,8 @@ class AsyncBaseVectorDB(BaseVectorDB):
     async def update_metadata_schema(
             self,
             new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
     ) -> Dict[str, Any]:
         """Update the metadata schema asynchronously."""
         pass
@@ -988,13 +990,21 @@ class DatabaseSchema:
             self.metadata_fields = schema
             return schema
 
-    def update_metadata_schema(self,
-                               new_schema: Dict[str, MetadataField],
-                               db_connection=None,
-                               drop_columns: bool = False
-                               ) -> Dict[str, Any]:
+    def update_metadata_schema(
+            self,
+            new_schema: Dict[str, MetadataField],
+            db_connection=None,
+            drop_columns: bool = False,
+            column_mapping: Optional[Dict[str, str]] = None
+            ) -> Dict[str, Any]:
         """
         Update the metadata schema, adding new fields and updating existing ones
+
+        This enhanced version supports column remapping to rename existing columns
+        and transfer their data. The processing order is:
+        1. Create new columns (including remapping targets)
+        2. Transfer data from old columns to new columns
+        3. Remove old columns that are no longer needed
 
         Parameters
         ----------
@@ -1005,11 +1015,16 @@ class DatabaseSchema:
         drop_columns : bool, default=False
             Whether to actually drop columns that are no longer in the schema.
             If False, columns are kept but removed from schema for safety.
+        column_mapping : Dict[str, str], optional
+            Optional mapping of old column names to new column names.
+            Format: {'old_column_name': 'new_column_name'}
+            Data will be transferred from old columns to new columns.
 
         Returns
         -------
         Dict[str, Any]
-            Summary of changes made including added, removed, and modified fields
+            Summary of changes made including added, removed, modified fields,
+            and column remapping operations
         """
         with self._lock:
             if db_connection is None:
@@ -1021,6 +1036,7 @@ class DatabaseSchema:
                 'modified_fields': [],
                 'populated_defaults': [],
                 'dropped_columns': [],
+                'remapped_columns': [],
                 'warnings': [],
                 'errors': []
             }
@@ -1032,6 +1048,10 @@ class DatabaseSchema:
             RESERVED_COLUMNS = {
                 "id", "content", "content_hash", "created_at", "updated_at"
             }
+
+            # Validate column mapping if provided
+            if column_mapping:
+                self._validate_column_mapping(column_mapping, current_schema, new_schema, RESERVED_COLUMNS)
 
             with db_connection as conn:
                 try:
@@ -1047,12 +1067,15 @@ class DatabaseSchema:
                         if (field_def.required and
                                 field_name not in current_schema and
                                 field_def.default_value is None):
-                            raise ValueError(
-                                f"Required field '{field_name}' must have a default_value when added to "
-                                f"existing database with documents"
-                            )
+                            # Check if we have documents that would need this field
+                            doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                            if doc_count > 0:
+                                raise ValueError(
+                                    f"Required field '{field_name}' must have a default_value when added to "
+                                    f"existing database with documents"
+                                )
 
-                    # Handle new and modified fields
+                    # STEP 1: Handle new and modified fields (CREATE new columns first)
                     for field_name, field_def in new_schema.items():
                         # Normalize field definition
                         if isinstance(field_def, str):
@@ -1091,49 +1114,20 @@ class DatabaseSchema:
 
                                 # Add column to documents table
                                 self._add_metadata_column(conn, field_name, field_def)
+
                                 changes['added_fields'].append(field_name)
 
-                                # Populate default values for existing rows if required or if default provided
+                                # Populate default values if specified and we have existing documents
                                 if field_def.default_value is not None:
-                                    try:
-                                        # Check if there are existing documents
-                                        cursor = conn.execute("SELECT COUNT(*) FROM documents")
-                                        doc_count = cursor.fetchone()[0]
+                                    populated_info = self._populate_field_defaults(conn, field_name, field_def)
+                                    if populated_info['rows_updated'] > 0:
+                                        changes['populated_defaults'].append(populated_info)
 
-                                        if doc_count > 0:
-                                            # Format the value for SQL based on type
-                                            if field_def.type == MetadataFieldType.JSON:
-                                                sql_value = json.dumps(field_def.default_value)
-                                            elif field_def.type == MetadataFieldType.DATE:
-                                                if isinstance(field_def.default_value, datetime):
-                                                    sql_value = field_def.default_value.isoformat()
-                                                else:
-                                                    sql_value = str(field_def.default_value)
-                                            else:
-                                                sql_value = field_def.default_value
-
-                                            # Update existing rows with default value
-                                            conn.execute(
-                                                f"UPDATE documents SET {field_name} = ? WHERE {field_name} IS NULL",
-                                                (sql_value,)
-                                            )
-
-                                            rows_updated = conn.execute("SELECT changes()").fetchone()[0]
-                                            if rows_updated > 0:
-                                                changes['populated_defaults'].append({
-                                                    'field_name': field_name,
-                                                    'rows_updated': rows_updated,
-                                                    'default_value': field_def.default_value
-                                                })
-
-                                    except Exception as e:
-                                        changes['warnings'].append(
-                                            f"Failed to populate default values for '{field_name}': {str(e)}"
-                                        )
-
-                                elif field_def.required:
+                                # Add warning for nullable new fields on existing documents
+                                doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                                if doc_count > 0 and field_def.default_value is None:
                                     changes['warnings'].append(
-                                        f"Required field '{field_name}' added without default value. "
+                                        f"New field '{field_name}' added to database with existing documents. "
                                         f"Existing documents will have NULL values."
                                     )
 
@@ -1211,9 +1205,22 @@ class DatabaseSchema:
                                 except Exception as e:
                                     changes['errors'].append(f"Failed to modify field '{field_name}': {str(e)}")
 
-                    # Handle removed fields
+                    # STEP 2: Perform column remapping (AFTER new columns are created)
+                    if column_mapping:
+                        remapping_changes = self._perform_column_remapping(
+                            conn, column_mapping, current_schema, new_schema
+                        )
+                        changes['remapped_columns'] = remapping_changes['remapped_columns']
+                        changes['warnings'].extend(remapping_changes['warnings'])
+                        changes['errors'].extend(remapping_changes['errors'])
+
+                    # STEP 3: Handle removed fields (after remapping)
                     for field_name in current_schema:
                         if field_name not in new_schema:
+                            # Skip fields that were remapped (they're not really being removed)
+                            if column_mapping and field_name in column_mapping:
+                                continue
+
                             try:
                                 # Remove from schema table
                                 conn.execute("DELETE FROM metadata_schema WHERE field_name = ?", (field_name,))
@@ -1251,6 +1258,200 @@ class DatabaseSchema:
                     raise
 
             return changes
+
+    def _validate_column_mapping(
+            self,
+            column_mapping: Dict[str, str],
+            current_schema: Dict[str, MetadataField],
+            new_schema: Dict[str, MetadataField],
+            reserved_columns: set
+            ) -> None:
+        """Validate the column mapping configuration"""
+        for old_col, new_col in column_mapping.items():
+            # Check that old column exists
+            if old_col not in current_schema:
+                raise ValueError(f"Cannot remap column '{old_col}': column does not exist in current schema")
+
+            # Check that new column name is not reserved
+            if new_col.lower() in reserved_columns:
+                raise ValueError(f"Cannot remap to '{new_col}': it conflicts with reserved column names")
+
+            # Check that new column is defined in new schema
+            if new_col not in new_schema:
+                raise ValueError(f"Column mapping specifies '{new_col}' but it's not defined in new_schema")
+
+            # Validate that the types are compatible
+            old_field = current_schema[old_col]
+            new_field = new_schema[new_col]
+            if not self._are_types_compatible(old_field.type, new_field.type):
+                raise ValueError(
+                    f"Cannot remap '{old_col}' (type: {old_field.type.value}) to "
+                    f"'{new_col}' (type: {new_field.type.value}): incompatible types"
+                )
+
+    def _are_types_compatible(self, old_type: MetadataFieldType, new_type: MetadataFieldType) -> bool:
+        """Check if two metadata field types are compatible for data transfer"""
+        # Same types are always compatible
+        if old_type == new_type:
+            return True
+
+        # TEXT is compatible with most types (can convert)
+        if old_type == MetadataFieldType.TEXT:
+            return True
+
+        # Some numeric conversions are safe
+        if old_type == MetadataFieldType.INTEGER and new_type == MetadataFieldType.REAL:
+            return True
+
+        # Boolean to integer/real is safe
+        if old_type == MetadataFieldType.BOOLEAN and new_type in (MetadataFieldType.INTEGER,
+                                                                  MetadataFieldType.REAL):
+            return True
+
+        # JSON can be converted to TEXT
+        if old_type == MetadataFieldType.JSON and new_type == MetadataFieldType.TEXT:
+            return True
+
+        return False
+
+    def _perform_column_remapping(
+            self,
+            conn: sqlite3.Connection,
+            column_mapping: Dict[str, str],
+            current_schema: Dict[str, MetadataField],
+            new_schema: Dict[str, MetadataField]
+            ) -> Dict[str, Any]:
+        """Perform the actual column remapping operations"""
+        remap_changes = {
+            'remapped_columns': [],
+            'warnings': [],
+            'errors': []
+        }
+
+        for old_col, new_col in column_mapping.items():
+            try:
+                # The new column should already exist (created in Step 1)
+                # Just verify it exists
+                cursor = conn.execute("PRAGMA table_info(documents)")
+                existing_columns = {row[1] for row in cursor.fetchall()}
+
+                if new_col not in existing_columns:
+                    raise ValueError(
+                        f"Target column '{new_col}' does not exist. It should have been created in the new schema.")
+
+                # Transfer data from old column to new column
+                old_field_def = current_schema[old_col]
+                new_field_def = new_schema[new_col]
+
+                rows_transferred = self._transfer_column_data(conn, old_col, new_col,
+                                                              old_field_def, new_field_def)
+
+                remap_changes['remapped_columns'].append({
+                    'old_column': old_col,
+                    'new_column': new_col,
+                    'rows_transferred': rows_transferred
+                })
+
+            except Exception as e:
+                remap_changes['errors'].append(
+                    f"Failed to remap column '{old_col}' to '{new_col}': {str(e)}"
+                )
+
+        return remap_changes
+
+    def _transfer_column_data(
+            self,
+            conn: sqlite3.Connection,
+            old_col: str,
+            new_col: str,
+            old_field: MetadataField,
+            new_field: MetadataField
+            ) -> int:
+        """Transfer data from old column to new column with type conversion"""
+
+        # Check if both columns exist in the documents table
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        if old_col not in existing_columns:
+            raise ValueError(f"Source column '{old_col}' does not exist in documents table")
+
+        if new_col not in existing_columns:
+            raise ValueError(f"Target column '{new_col}' does not exist in documents table")
+
+        # Get the data transfer SQL based on type compatibility
+        transfer_sql = self._get_transfer_sql(old_col, new_col, old_field.type, new_field.type)
+
+        # Execute the transfer
+        cursor = conn.execute(transfer_sql)
+        return cursor.rowcount
+
+    def _get_transfer_sql(
+            self,
+            old_col: str,
+            new_col: str,
+            old_type: MetadataFieldType,
+            new_type: MetadataFieldType
+            ) -> str:
+        """Generate SQL for transferring data between columns with type conversion"""
+
+        if old_type == new_type:
+            # Direct copy for same types
+            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+
+        elif old_type == MetadataFieldType.TEXT:
+            # TEXT to other types - direct copy (SQLite will handle conversion)
+            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+
+        elif old_type == MetadataFieldType.INTEGER and new_type == MetadataFieldType.REAL:
+            # Integer to real - direct copy
+            return f"UPDATE documents SET {new_col} = CAST({old_col} AS REAL) WHERE {old_col} IS NOT NULL"
+
+        elif old_type == MetadataFieldType.BOOLEAN and new_type == MetadataFieldType.INTEGER:
+            # Boolean to integer
+            return f"UPDATE documents SET {new_col} = CAST({old_col} AS INTEGER) WHERE {old_col} IS NOT NULL"
+
+        elif old_type == MetadataFieldType.BOOLEAN and new_type == MetadataFieldType.REAL:
+            # Boolean to real
+            return f"UPDATE documents SET {new_col} = CAST({old_col} AS REAL) WHERE {old_col} IS NOT NULL"
+
+        elif old_type == MetadataFieldType.JSON and new_type == MetadataFieldType.TEXT:
+            # JSON to text - direct copy (it's already stored as text in SQLite)
+            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+
+        else:
+            # Default case - try direct copy and let SQLite handle it
+            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+
+    def _populate_field_defaults(
+            self,
+            conn: sqlite3.Connection,
+            field_name: str,
+            field_def: MetadataField
+            ) -> Dict[str, Any]:
+        """Populate default values for a new field in existing documents"""
+        if field_def.default_value is None:
+            return {'field_name': field_name, 'rows_updated': 0}
+
+        # Prepare the default value based on field type
+        if field_def.type == MetadataFieldType.JSON:
+            default_value = json.dumps(field_def.default_value)
+        elif field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
+            default_value = str(field_def.default_value)
+        else:
+            default_value = field_def.default_value
+
+        # Update existing documents with the default value
+        cursor = conn.execute(
+            f"UPDATE documents SET {field_name} = ? WHERE {field_name} IS NULL",
+            (default_value,)
+        )
+
+        return {
+            'field_name': field_name,
+            'rows_updated': cursor.rowcount,
+            'default_value': field_def.default_value
+        }
 
 
 

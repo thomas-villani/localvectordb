@@ -2933,7 +2933,7 @@ class LocalVectorDB(BaseVectorDB):
             self,
             new_schema: Union[str, Dict[str, MetadataField]],
             drop_columns: bool = False,
-            column_mapping: dict = None
+            column_mapping: Optional[dict] = None
     ) -> Dict[str, Any]:
         """
         Update the metadata schema for the database
@@ -2952,6 +2952,8 @@ class LocalVectorDB(BaseVectorDB):
         drop_columns : bool, default=False
             Whether to actually drop columns that are no longer in the schema.
             If False, columns are kept but removed from schema for safety.
+        column_mapping : dict, optional
+            Optionally provide a mapping dict with old-column (key) -> new-column (value)
 
         Returns
         -------
@@ -3044,7 +3046,7 @@ class LocalVectorDB(BaseVectorDB):
             try:
                 # Apply schema changes
                 with self.connection_pool.get_connection() as conn:
-                    changes = self.schema.update_metadata_schema(new_schema, conn, drop_columns)
+                    changes = self.schema.update_metadata_schema(new_schema, conn, drop_columns, column_mapping)
 
                 # Update in-memory schema
                 self._metadata_schema = new_schema.copy()

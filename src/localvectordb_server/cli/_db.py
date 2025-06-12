@@ -16,7 +16,8 @@ from pathlib import Path
 
 import click
 
-from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_ERROR, print_db_stats, get_stdin_input
+from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_ERROR, print_db_stats, get_stdin_input, \
+    format_table
 
 
 @click.group('db')
@@ -605,278 +606,496 @@ def delete_document(ctx, doc_id):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@db_group.command('shell')
+@db_group.group('schema')
 @click.pass_context
-def shell(ctx):
+def schema_group(ctx):
     """
-    Start an interactive shell for database operations.
+    Manage database metadata schema.
 
-    Launches an interactive shell for performing database operations such as search, add, get,
-    delete, list, stats, and more. Type 'help' for available commands.
+    Commands for viewing and updating the metadata schema of the database, including
+    support for column remapping to rename existing columns while preserving data.
 
+    \b
+    Examples:
+        \b
+        lvdb db mydb schema show
+        lvdb db mydb schema update --schema schema.json
+        lvdb db mydb schema update --schema '{"title": "text", "author": "text"}' --mapping '{"old_author": "author"}'
     """
-    import glob
+    pass
 
+
+@schema_group.command('show')
+@click.option('--format', '-f', type=click.Choice(['pretty', 'json', 'table']), default='pretty',
+              help='Output format')
+@click.option('--output', '-o', type=click.Path(file_okay=True, dir_okay=False),
+              help='Output to file instead of stdout')
+@click.pass_context
+def show_schema(ctx, format, output):
+    """
+    Display current metadata schema.
+
+    Shows the current metadata schema with field definitions, types, and properties.
+    Supports multiple output formats for different use cases.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb schema show
+        lvdb db mydb schema show --format json
+        lvdb db mydb schema show --format table --output schema.json
+    """
     db = ctx.obj['db']
 
     try:
-        click.echo(click.style(f"Connected to database: ", fg="green")
-                   + click.style(db.name, fg="green", underline=True))
+        schema_info = db.get_metadata_schema_info()
+        schema_fields = schema_info.get('fields', {})
 
-        stats = db.get_stats()
-        click.secho(f"Documents: {stats['documents']}, Chunks: {stats['chunks']}", fg="blue")
-        click.echo(f"Type 'help' for available commands, 'exit' to quit")
+        if not schema_fields:
+            click.echo("No metadata schema defined for this database.")
+            return
 
-        # Simple REPL
-        while True:
-            try:
-                command = click.prompt(f"{db.name}> ", type=str)
+        output_str = ""
 
-                if command.lower() in ('exit', 'quit', 'q'):
-                    break
+        if format == 'json':
+            # JSON format - suitable for programmatic use
+            schema_data = {}
+            for field_name, field_def in schema_fields.items():
+                schema_data[field_name] = {
+                    'type': field_def.type.value,
+                    'indexed': field_def.indexed,
+                    'required': field_def.required,
+                    'default_value': field_def.default_value
+                }
+            output_str = json.dumps(schema_data, indent=2)
 
-                if command.lower() in ('help', '?'):
-                    click.echo("Available commands:")
-                    click.echo("  search \"<query>\" [limit] [type] - Search for documents")
-                    click.echo("    Types: vector (default), keyword, hybrid")
-                    click.echo("  get <id>                       - Get document by ID")
-                    click.echo("  add <file or glob>             - Add file(s) to database")
-                    click.echo("  delete <id>                    - Delete document by ID")
-                    click.echo("  list [limit] [offset]          - List document IDs")
-                    click.echo("  count                          - Show document count")
-                    click.echo("  stats                          - Show database statistics")
-                    click.echo("  info                           - Show database information")
-                    click.echo("  clear                          - Clear the console")
-                    click.echo("  exit/quit                      - Exit shell")
-                    continue
+        elif format == 'table':
+            # Table format - good for overview
+            headers = ['Field Name', 'Type', 'Indexed', 'Required', 'Default Value']
+            rows = []
+            for field_name, field_def in schema_fields.items():
+                default_val = str(field_def.default_value) if field_def.default_value is not None else 'None'
+                if len(default_val) > 30:
+                    default_val = default_val[:27] + "..."
+                rows.append([
+                    field_name,
+                    field_def.type.value.upper(),
+                    "✓" if field_def.indexed else "✗",
+                    "✓" if field_def.required else "✗",
+                    default_val
+                ])
+            output_str = format_table(headers, rows)
 
-                if command.lower().startswith('search'):
-                    parts = command.split(' ', 1)
-                    if len(parts) < 2:
-                        click.secho("Usage: search <query> [limit] [type]", fg="magenta")
-                        continue
+        else:  # pretty format
+            # Pretty format - human readable
+            output_str += click.style("Database Metadata Schema", fg="cyan", bold=True) + "\n"
+            output_str += "=" * 25 + "\n\n"
 
-                    args = parts[1]
-                    limit = 5
-                    search_type = "vector"
-
-                    # Parse query in quotes
-                    if args.count('"') >= 2:
-                        start_quote = args.index('"')
-                        end_quote = args.index('"', start_quote + 1)
-                        query_str = args[start_quote + 1:end_quote]
-                        leftover = args[end_quote + 1:].strip()
-
-                        # Parse remaining args
-                        remaining_parts = leftover.split()
-                        if len(remaining_parts) >= 1 and remaining_parts[0].isdigit():
-                            limit = int(remaining_parts[0])
-                        if len(remaining_parts) >= 2 and remaining_parts[1] in ['vector', 'keyword', 'hybrid']:
-                            search_type = remaining_parts[1]
+            for field_name, field_def in schema_fields.items():
+                output_str += click.style(f"Field: {field_name}", fg="green", bold=True) + "\n"
+                output_str += f"  Type: {field_def.type.value.upper()}\n"
+                output_str += f"  Indexed: {'Yes' if field_def.indexed else 'No'}\n"
+                output_str += f"  Required: {'Yes' if field_def.required else 'No'}\n"
+                if field_def.default_value is not None:
+                    if isinstance(field_def.default_value, (dict, list)):
+                        default_display = json.dumps(field_def.default_value, indent=4)
+                        output_str += f"  Default Value:\n    {default_display.replace(chr(10), chr(10) + '    ')}\n"
                     else:
-                        query_str = args
-                        arg_split = args.rsplit(" ", 2)
-                        if len(arg_split) >= 2 and arg_split[-1] in ['vector', 'keyword', 'hybrid']:
-                            search_type = arg_split[-1]
-                            query_str = " ".join(arg_split[:-1])
-                        if len(arg_split) >= 2 and arg_split[-2].isdigit():
-                            limit = int(arg_split[-2])
-                            query_str = " ".join(arg_split[:-2])
+                        output_str += f"  Default Value: {field_def.default_value}\n"
+                else:
+                    output_str += f"  Default Value: None\n"
+                output_str += "\n"
 
-                    click.secho(f"{search_type.title()} search for `{query_str[:100]}`...", fg="blue")
-
-                    try:
-                        results = db.query(
-                            query=query_str,
-                            search_type=search_type,
-                            k=limit
-                        )
-
-                        click.echo("Results:\n========\n")
-                        if not results:
-                            click.secho("No results found.", fg="yellow")
-                        else:
-                            for i, result in enumerate(results, 1):
-                                click.echo(f"{i}. {result.id} (Score: {result.score:.4f}):")
-                                content_preview = result.content[:200]
-                                click.echo(f"   {content_preview}")
-                                if len(result.content) > 200:
-                                    click.echo("   ...")
-                                click.secho("\n-----\n", fg="cyan")
-                    except Exception as e:
-                        click.secho(f"Search error: {str(e)}", fg="bright_red")
-                    continue
-
-                if command.lower().startswith('get'):
-                    parts = command.split(' ', 1)
-                    if len(parts) < 2:
-                        click.secho("Usage: get <id>", fg="magenta")
-                        continue
-                    doc_id = parts[1].strip()
-
-                    try:
-                        doc = db.get(doc_id)
-                        if doc:
-                            click.secho(f"Document: {doc_id}\n------------------", fg="cyan")
-                            click.echo(doc.content)
-                            if doc.metadata:
-                                click.secho("\nMetadata:", fg="cyan")
-                                click.echo(json.dumps(doc.metadata, indent=2))
-                        else:
-                            click.secho(f"Document `{doc_id}` not found.", fg="bright_red")
-                    except Exception as e:
-                        click.secho(f"Error: {str(e)}", fg="bright_red")
-                    continue
-
-                if command.lower().startswith('delete'):
-                    parts = command.split(' ', 1)
-                    if len(parts) < 2:
-                        click.secho("Usage: delete <id>", fg="magenta")
-                        continue
-                    doc_id = parts[1].strip()
-
-                    try:
-                        if db.exists(doc_id):
-                            confirm = click.confirm(f"Are you sure you want to delete document '{doc_id}'?")
-                            if confirm:
-                                db.delete(doc_id)
-                                click.secho(f"Document '{doc_id}' deleted.", fg="green")
-                            else:
-                                click.secho("Deletion canceled.", fg="yellow")
-                        else:
-                            click.secho(f"Document '{doc_id}' does not exist.", fg="bright_red")
-                    except Exception as e:
-                        click.secho(f"Error: {str(e)}", fg="bright_red")
-                    continue
-
-                if command.lower().startswith('list'):
-                    parts = command.split()
-                    limit = 10
-                    offset = 0
-
-                    if len(parts) > 1 and parts[1].isdigit():
-                        limit = int(parts[1])
-                    if len(parts) > 2 and parts[2].isdigit():
-                        offset = int(parts[2])
-
-                    try:
-                        docs = db.filter(limit=limit, offset=offset)
-                        total = len(db.filter())  # Get total count
-
-                        if not docs:
-                            click.secho("No documents found.", fg="yellow")
-                        else:
-                            click.secho(f"Document IDs (showing {len(docs)} of {total}):", fg="blue")
-                            for i, doc in enumerate(docs, offset + 1):
-                                click.echo(f"{i}. {doc.id}")
-
-                            if offset + limit < total:
-                                click.secho(f"\nUse 'list {limit} {offset + limit}' to see the next page", fg="yellow")
-                    except Exception as e:
-                        click.secho(f"Error: {str(e)}", fg="bright_red")
-                    continue
-
-                if command.lower() == 'count':
-                    try:
-                        stats = db.get_stats()
-                        click.secho(f"Document count: {stats['documents']}, Chunk count: {stats['chunks']}", fg="blue")
-                    except Exception as e:
-                        click.secho(f"Error: {str(e)}", fg="bright_red")
-                    continue
-
-                if command.lower() == 'stats':
-                    print_db_stats(db)
-                    continue
-
-                if command.lower() == 'info':
-                    try:
-                        stats = db.get_stats()
-                        click.secho("Database Information:", fg="blue")
-                        click.echo(f"  Name: {db.name}")
-                        click.echo(f"  Embedding model: {stats['embedding_model']}")
-                        click.echo(f"  Embedding provider: {stats['embedding_provider']}")
-                        click.echo(f"  Vector dimension: {stats['embedding_dimension']}")
-                        click.echo(f"  Chunking method: {stats['chunking_method']}")
-                        click.echo(f"  Chunk size: {stats['chunk_size']}")
-                        click.echo(f"  Chunk overlap: {stats['chunk_overlap']}")
-                        click.echo(f"  FTS search: {'enabled' if stats['fts_enabled'] else 'disabled'}")
-                    except Exception as e:
-                        click.secho(f"Error: {str(e)}", fg="bright_red")
-                    continue
-
-                if command.lower() == 'clear':
-                    click.clear()
-                    continue
-
-                if command.lower().startswith('add '):
-                    parts = command.split(' ', 1)
-                    if len(parts) < 2:
-                        click.secho("Usage: add <file or glob>", fg="magenta")
-                        continue
-
-                    file_pattern = parts[1].strip()
-                    matching_files = glob.glob(file_pattern, recursive=True)
-
-                    if not matching_files:
-                        click.secho(f"No files found matching '{file_pattern}'", fg="bright_red")
-                        continue
-
-                    click.secho(f"Found {len(matching_files)} files. Adding to database...", fg="blue")
-
-                    documents = []
-                    metadata = []
-
-                    for file_path in matching_files:
-                        try:
-                            path = Path(file_path)
-                            if not path.is_file():
-                                click.secho(f"Skipping {file_path} (not a file)", fg="yellow")
-                                continue
-
-                            try:
-                                with open(file_path, 'r', encoding='utf-8') as f:
-                                    content = f.read()
-                            except UnicodeError:
-                                click.secho(f"Cannot decode {file_path} as unicode, skipping!", fg="yellow")
-                                continue
-
-                            documents.append(content)
-                            metadata.append({
-                                "source": file_path,
-                                "filename": path.name,
-                                "extension": path.suffix,
-                                "added_at": datetime.now().isoformat()
-                            })
-
-                        except Exception as e:
-                            click.secho(f"Error processing {file_path}: {str(e)}", fg="bright_red")
-
-                    if documents:
-                        try:
-                            doc_ids = db.upsert(documents=documents, metadata=metadata)
-                            click.secho(f"Successfully added {len(documents)} documents", fg="green")
-                            click.echo(f"Created IDs: {', '.join(doc_ids)}")
-                        except Exception as e:
-                            click.secho(f"Error adding documents: {str(e)}", fg="bright_red")
-                    continue
-
-                # Unknown command
-                click.secho(f"Unknown command: {command}", fg="bright_red")
-                click.echo("Type 'help' for available commands")
-
-            except click.exceptions.Abort:
-                click.secho("\nCtrl+C detected, Exiting!", fg="red")
-                break
-            except Exception as e:
-                click.secho(f"Error: {str(e)}", fg="bright_red")
-                continue
-
-        click.secho("Database connection closed.", fg="green")
+        if output:
+            with open(output, 'w') as f:
+                f.write(output_str)
+            click.echo(f"Schema information saved to {output}")
+        else:
+            click.echo(output_str)
 
     except Exception as e:
-        click.secho(f"Fatal error: {str(e)}", fg="bright_red")
-        raise click.Abort()
-    finally:
-        db.close()
+        click.secho(f"Error retrieving schema: {str(e)}", fg='bright_red')
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
+@schema_group.command('update')
+@click.option('--schema', '-s', type=str,
+              help='Path to JSON file or JSON string containing new schema definition')
+@click.option('--mapping', '-m', type=str,
+              help='Column mapping as JSON string or or path to JSON file (old_name: new_name)')
+@click.option('--drop-columns', '--drop', is_flag=True, default=False,
+              help='Actually drop removed columns (WARNING: data loss)')
+@click.option('--dry-run', '--dry', is_flag=True, default=False,
+              help='Show what would be changed without making changes')
+@click.option('--force', '-f', is_flag=True, default=False,
+              help='Skip confirmation prompts')
+@click.option('--verbose', '-v', is_flag=True, default=False,
+              help='Show detailed output')
+@click.pass_context
+def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
+    """
+    Update database metadata schema with optional column remapping.
+
+    Updates the metadata schema and optionally renames existing columns by transferring
+    their data. Supports both file-based and command-line input for schema and mappings.
+
+    \b
+    The new schema can be provided as:
+    - JSON file or JSON string with --schema
+
+    \b
+    Column mappings can be provided as:
+    - JSON file or JSON string with --mapping
+
+    \b
+    Schema Format:
+        {
+            "field_name": {
+                "type": "text|integer|real|boolean|date|json",
+                "indexed": true|false,
+                "required": true|false,
+                "default_value": value
+            }
+        }
+
+    \b
+    Mapping Format:
+        {
+            "old_column_name": "new_column_name",
+            "another_old": "another_new"
+        }
+
+    \b
+    Examples:
+        \b
+        # Update schema from file
+        lvdb db mydb schema update --schema new_schema.json
+
+        # Update with column remapping
+        lvdb db mydb schema update --schema new_schema.json --mapping '{"old_author": "author"}'
+
+        # Dry run to see changes
+        lvdb db mydb schema update --schema new_schema.json --dry-run
+
+        # Update with file-based mapping
+        lvdb db mydb schema update --schema new_schema.json --mapping mappings.json
+
+        # Shorthand schema with string input
+        lvdb db mydb schema update --schema '{"title": "text", "author": "text"}' --mapping '{"old_author": "author"}'
+    """
+    db = ctx.obj['db']
+
+    # Validate input combinations
+    if not schema:
+        click.secho("Error: --schema must be provided", fg='bright_red')
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    try:
+        # Parse new schema
+        if os.path.exists(schema):
+
+            if verbose:
+                click.echo(f"Loading schema from file: {schema}")
+            with open(schema, 'r') as f:
+                schema_data = json.load(f)
+        else:
+            if verbose:
+                click.echo("Parsing schema from command line")
+            schema_data = json.loads(schema)
+
+        # Parse column mapping if provided
+        column_mapping = None
+        if mapping and os.path.exists(mapping):
+            if verbose:
+                click.echo(f"Loading column mapping from file: {mapping}")
+            with open(mapping, 'r') as f:
+                column_mapping = json.load(f)
+        elif mapping:
+            if verbose:
+                click.echo("Parsing column mapping from command line")
+            column_mapping = json.loads(mapping)
+
+        # Convert schema data to MetadataField objects
+        from localvectordb.core import MetadataField, MetadataFieldType
+
+        new_schema = {}
+        for field_name, field_config in schema_data.items():
+            if isinstance(field_config, str):
+                # Simple string type
+                new_schema[field_name] = MetadataField(type=MetadataFieldType(field_config))
+            elif isinstance(field_config, dict):
+                # Full configuration
+                field_type = MetadataFieldType(field_config['type'])
+                indexed = field_config.get('indexed', False)
+                required = field_config.get('required', False)
+                default_value = field_config.get('default_value', None)
+
+                new_schema[field_name] = MetadataField(
+                    type=field_type,
+                    indexed=indexed,
+                    required=required,
+                    default_value=default_value
+                )
+            else:
+                click.secho(f"Error: Invalid field configuration for '{field_name}'", fg='bright_red')
+                raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+        # Show current schema for comparison
+        if verbose:
+            click.echo("\n" + click.style("Current Schema:", fg="yellow"))
+            current_schema = db.metadata_schema
+            if current_schema:
+                for field_name, field_def in current_schema.items():
+                    click.echo(f"  {field_name}: {field_def.type.value}")
+            else:
+                click.echo("  (No schema defined)")
+
+        # Show planned changes
+        click.echo("\n" + click.style("Planned Changes:", fg="cyan", bold=True))
+
+        current_schema = db.metadata_schema
+
+        # Show new fields
+        new_fields = [name for name in new_schema.keys() if name not in current_schema]
+        if new_fields:
+            click.echo(f"  {click.style('New fields:', fg='green')} {', '.join(new_fields)}")
+
+        # Show removed fields (accounting for remapping)
+        removed_fields = []
+        for name in current_schema.keys():
+            if name not in new_schema:
+                # Check if it's being remapped
+                if not column_mapping or name not in column_mapping:
+                    removed_fields.append(name)
+        if removed_fields:
+            click.echo(f"  {click.style('Removed fields:', fg='red')} {', '.join(removed_fields)}")
+
+        # Show column remapping
+        if column_mapping:
+            click.echo(f"  {click.style('Column remapping:', fg='blue')}")
+            for old_col, new_col in column_mapping.items():
+                click.echo(f"    {old_col} → {new_col}")
+
+        # Show warnings
+        if drop_columns and removed_fields:
+            click.echo(f"  {click.style('WARNING:', fg='bright_red', bold=True)} "
+                       f"--drop-columns specified. Data in removed columns will be permanently lost!")
+
+        if not new_fields and not removed_fields and not column_mapping:
+            click.echo("  No changes detected.")
+            return
+
+        # Confirm changes unless forced or dry-run
+        if not dry_run and not force:
+            click.echo()
+            if not click.confirm(click.style("Proceed with schema update?", fg="yellow")):
+                click.echo("Schema update cancelled.")
+                return
+
+        if dry_run:
+            click.echo(f"\n{click.style('DRY RUN:', fg='blue', bold=True)} No changes were made.")
+            return
+
+        # Apply the schema update
+        click.echo(f"\n{click.style('Applying schema update...', fg='blue')}")
+
+        changes = db.update_metadata_schema(
+            new_schema=new_schema,
+            column_mapping=column_mapping,
+            drop_columns=drop_columns
+        )
+
+        # Report results
+        click.echo(f"\n{click.style('Schema Update Complete!', fg='green', bold=True)}")
+
+        if changes['added_fields']:
+            click.echo(f"  {click.style('Added fields:', fg='green')} {', '.join(changes['added_fields'])}")
+
+        if changes['removed_fields']:
+            click.echo(f"  {click.style('Removed fields:', fg='red')} {', '.join(changes['removed_fields'])}")
+
+        if changes['modified_fields']:
+            modified_names = [f['field_name'] for f in changes['modified_fields']]
+            click.echo(f"  {click.style('Modified fields:', fg='blue')} {', '.join(modified_names)}")
+
+        if changes['remapped_columns']:
+            click.echo(f"  {click.style('Remapped columns:', fg='cyan')}")
+            for remap in changes['remapped_columns']:
+                click.echo(f"    {remap['old_column']} → {remap['new_column']} "
+                           f"({remap['rows_transferred']} rows transferred)")
+
+        if changes['populated_defaults']:
+            click.echo(f"  {click.style('Populated defaults:', fg='yellow')}")
+            for default_info in changes['populated_defaults']:
+                click.echo(f"    {default_info['field_name']}: {default_info['rows_updated']} rows updated")
+
+        # Show warnings and errors
+        if changes['warnings']:
+            click.echo(f"\n{click.style('Warnings:', fg='yellow')}")
+            for warning in changes['warnings']:
+                click.echo(f"  ⚠ {warning}")
+
+        if changes['errors']:
+            click.echo(f"\n{click.style('Errors:', fg='red')}")
+            for error in changes['errors']:
+                click.echo(f"  ✗ {error}")
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+        if verbose:
+            click.echo(f"\n{click.style('Updated Schema:', fg='green')}")
+            updated_schema = db.metadata_schema
+            for field_name, field_def in updated_schema.items():
+                indexed_str = " (indexed)" if field_def.indexed else ""
+                required_str = " (required)" if field_def.required else ""
+                default_str = f" (default: {field_def.default_value})" if field_def.default_value is not None else ""
+                click.echo(f"  {field_name}: {field_def.type.value}{indexed_str}{required_str}{default_str}")
+
+    except json.JSONDecodeError as e:
+        click.secho(f"Error: Invalid JSON format: {str(e)}", fg='bright_red')
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    except KeyError as e:
+        click.secho(f"Error: Missing required field in schema: {str(e)}", fg='bright_red')
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    except ValueError as e:
+        click.secho(f"Error: {str(e)}", fg='bright_red')
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    except Exception as e:
+        click.secho(f"Error: Unexpected error during schema update: {str(e)}", fg='bright_red')
+        if verbose:
+            import traceback
+            click.echo(traceback.format_exc())
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+
+@schema_group.command('export')
+@click.option('--output', '-o', type=click.Path(file_okay=True, dir_okay=False), required=True,
+              help='Output file path')
+@click.option('--format', '-f', type=click.Choice(['json', 'toml']), default='json',
+              help='Output format')
+@click.option('--include-data', '--with-data', is_flag=True, default=False,
+              help='Include sample data for each field type')
+@click.pass_context
+def export_schema(ctx, output, format, include_data):
+    """
+    Export current schema to a file.
+
+    Exports the current metadata schema to a JSON or TOML file that can be used
+    with the 'update' command or modified for schema changes.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb schema export --output current_schema.json
+        lvdb db mydb schema export --output schema.toml --format toml
+        lvdb db mydb schema export --output schema_with_samples.json --include-data
+    """
+    db = ctx.obj['db']
+
+    try:
+        schema_info = db.get_metadata_schema_info()
+        schema_fields = schema_info.get('fields', {})
+
+        if not schema_fields:
+            click.echo("No metadata schema to export.")
+            return
+
+        # Convert to exportable format
+        export_data = {}
+        for field_name, field_def in schema_fields.items():
+            field_data = {
+                'type': field_def.type.value,
+                'indexed': field_def.indexed,
+                'required': field_def.required
+            }
+
+            if field_def.default_value is not None:
+                field_data['default_value'] = field_def.default_value
+
+            # Add sample data if requested
+            if include_data:
+                sample_values = {
+                    'text': 'Sample text value',
+                    'integer': 42,
+                    'real': 3.14159,
+                    'boolean': True,
+                    'date': '2024-01-01',
+                    'json': {'key': 'value', 'array': [1, 2, 3]}
+                }
+                field_data['_sample_value'] = sample_values.get(field_def.type.value, 'Sample value')
+
+            export_data[field_name] = field_data
+
+        # Write to file
+        if format == 'toml':
+            try:
+                import toml
+                with open(output, 'w') as f:
+                    toml.dump({'metadata_schema': export_data}, f)
+            except ImportError:
+                click.secho("Error: TOML format requires the 'toml' package. Install with: pip install toml",
+                            fg='bright_red')
+                click.secho("Falling back to JSON format...", fg='yellow')
+                format = 'json'  # Fall back to JSON
+
+        if format == 'json':  # Handle both explicit JSON and fallback case
+            with open(output, 'w') as f:
+                json.dump(export_data, f, indent=2)
+
+        click.echo(f"Schema exported to {output}")
+        click.echo(f"Fields exported: {len(export_data)}")
+
+    except Exception as e:
+        click.secho(f"Error exporting schema: {str(e)}", fg='bright_red')
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+
+# Helper function to add to the existing CLI utilities section
+def _validate_schema_format(schema_data):
+    """Validate that schema data has the correct format"""
+    if not isinstance(schema_data, dict):
+        raise ValueError("Schema must be a dictionary")
+
+    valid_types = {'text', 'integer', 'real', 'boolean', 'date', 'json'}
+
+    for field_name, field_config in schema_data.items():
+        if not isinstance(field_name, str) or not field_name.strip():
+            raise ValueError(f"Field name must be a non-empty string: '{field_name}'")
+
+        if isinstance(field_config, str):
+            # Simple string type
+            if field_config not in valid_types:
+                raise ValueError(f"Invalid field type '{field_config}' for field '{field_name}'. "
+                                 f"Valid types: {', '.join(valid_types)}")
+        elif isinstance(field_config, dict):
+            # Full configuration
+            if 'type' not in field_config:
+                raise ValueError(f"Field '{field_name}' missing required 'type' property")
+
+            if field_config['type'] not in valid_types:
+                raise ValueError(f"Invalid field type '{field_config['type']}' for field '{field_name}'. "
+                                 f"Valid types: {', '.join(valid_types)}")
+
+            # Validate boolean properties
+            for bool_prop in ['indexed', 'required']:
+                if bool_prop in field_config and not isinstance(field_config[bool_prop], bool):
+                    raise ValueError(f"Property '{bool_prop}' for field '{field_name}' must be boolean")
+        else:
+            raise ValueError(f"Invalid field configuration for '{field_name}'. "
+                             f"Must be string type or configuration object")
+
+
+def _validate_mapping_format(mapping_data):
+    """Validate that mapping data has the correct format"""
+    if not isinstance(mapping_data, dict):
+        raise ValueError("Column mapping must be a dictionary")
+
+    for old_col, new_col in mapping_data.items():
+        if not isinstance(old_col, str) or not old_col.strip():
+            raise ValueError(f"Old column name must be a non-empty string: '{old_col}'")
+        if not isinstance(new_col, str) or not new_col.strip():
+            raise ValueError(f"New column name must be a non-empty string: '{new_col}'")
+
+
+# Add the shell command!
+from localvectordb_server.cli._shell import shell
+db_group.add_command(shell)

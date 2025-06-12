@@ -863,7 +863,8 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
     async def update_metadata_schema(
             self,
             new_schema: Union[str, Dict[str, Any]],
-            drop_columns: bool = False
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
     ) -> Dict[str, Any]:
         """
         Update the metadata schema for the remote database
@@ -874,6 +875,8 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
             The new metadata schema to apply
         drop_columns : bool, default=False
             Whether to actually drop columns that are no longer in the schema
+        column_mapping : dict, optional
+            Optionally provide a mapping dict with old-column (key) -> new-column (value)
 
         Returns
         -------

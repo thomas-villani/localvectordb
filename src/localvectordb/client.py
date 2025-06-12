@@ -1246,7 +1246,8 @@ class RemoteVectorDB(BaseVectorDB):
     def update_metadata_schema(
             self,
             new_schema: Union[str, Dict[str, Any]],
-            drop_columns: bool = False
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
     ) -> Dict[str, Any]:
         """
         Update the metadata schema for the remote database
@@ -1266,6 +1267,8 @@ class RemoteVectorDB(BaseVectorDB):
         drop_columns : bool, default=False
             Whether to actually drop columns that are no longer in the schema.
             If False, columns are kept but removed from schema for safety.
+        column_mapping : dict, optional
+            Optionally provide a mapping dict with old-column (key) -> new-column (value)
 
         Returns
         -------
@@ -1359,10 +1362,14 @@ class RemoteVectorDB(BaseVectorDB):
         else:
             raise ValueError("new_schema must be a string, dictionary, or MetadataField mapping")
 
+        if column_mapping is not None and not isinstance(column_mapping, dict):
+            raise ValueError(f"column_mapping must be None or a dict, found: {type(column_mapping)}")
+
         # Prepare request payload
         payload = {
             'metadata_schema': schema_data,
-            'drop_columns': drop_columns
+            'drop_columns': drop_columns,
+            'column_mapping': column_mapping
         }
 
         url = self._build_url(f"/api/v1/{self.name}/schema")

@@ -1532,16 +1532,22 @@ def update_metadata_schema(db_name):
         if not isinstance(drop_columns, bool):
             raise ValidationError("drop_columns must be a boolean", field="drop_columns", value=drop_columns)
 
+        column_mapping = data.get('column_mapping', None)
+        if column_mapping is not None and not isinstance(column_mapping, dict):
+            raise ValidationError("column_mapping must be a dictionary", field="column_mapping", value=column_mapping)
+
         try:
             db = current_app.db_manager.get_db(db_name)
 
             db_logger.log_query("update_metadata_schema",
                                 database_name=db_name,
                                 field_count=len(new_schema),
-                                drop_columns=drop_columns)
+                                drop_columns=drop_columns,
+                                column_mapping=column_mapping
+                                )
 
             # Apply schema update
-            changes = db.update_metadata_schema(new_schema, drop_columns=drop_columns)
+            changes = db.update_metadata_schema(new_schema, drop_columns=drop_columns, column_mapping=column_mapping)
 
             db_logger.log_query("update_metadata_schema_success",
                                 database_name=db_name,

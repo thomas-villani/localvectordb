@@ -977,7 +977,8 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
     async def update_metadata_schema(
             self,
             new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
     ) -> Dict[str, Any]:
         await self._ensure_initialized()
         loop = asyncio.get_event_loop()
@@ -986,7 +987,8 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             functools.partial(
                 self._sync_db.update_metadata_schema,
                 new_schema=new_schema,
-                drop_columns=drop_columns
+                drop_columns=drop_columns,
+                column_mapping=column_mapping
             )
         )
 
