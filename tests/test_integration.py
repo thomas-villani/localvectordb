@@ -96,7 +96,7 @@ class TestLocalVectorDBIntegration:
                 )
 
                 db.index = mock_index
-                db.embedding_provider = mock_provider
+                db._embedding_provider = mock_provider
 
                 yield db
             finally:
@@ -186,7 +186,7 @@ class TestLocalVectorDBIntegration:
 
             # Verify chunking happened (through embedding calls)
             # The document should have been chunked into multiple pieces
-            assert integration_db.embedding_provider.number_of_calls > 0
+            assert integration_db._embedding_provider.number_of_calls > 0
 
     def test_metadata_filtering_integration(self, integration_db):
         """Test metadata filtering with database operations."""
@@ -558,7 +558,7 @@ class TestLocalVectorDBIntegration:
                         enable_fts=False  # Disable FTS to avoid SQLite conflicts
                     )
                     db.index = mock_index
-                    db.embedding_provider = mock_provider
+                    db._embedding_provider = mock_provider
 
                     # Create large document (smaller for better test performance)
                     large_doc = " ".join([
@@ -864,7 +864,7 @@ class TestLocalVectorDBIntegration:
                     chunk_size=150
                 )
                 db.index = mock_index
-                db.embedding_provider = mock_provider
+                db._embedding_provider = mock_provider
 
                 # Mix of different content types and lengths
                 mixed_documents = [

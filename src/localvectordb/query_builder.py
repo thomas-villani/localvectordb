@@ -57,6 +57,7 @@ class SearchClause:
     query: str
     weight: float = 1.0
     search_type: Literal["vector", "keyword", "hybrid"] = "vector"
+    score_threshold: float = None
 
 
 @dataclass
@@ -291,7 +292,6 @@ class QueryBuilder:
         self._rerank_config: Optional[Dict[str, Any]] = None
         self._explain: bool = False
         self._hints: Dict[str, Any] = {}
-        self._score_threshold: float = 0.0
         self._context_window: int = 2
         self._semantic_dedup_threshold: Optional[float] = None
         self._document_scoring_method: DocumentScoringMethod = "frequency_boost"
@@ -325,7 +325,6 @@ class QueryBuilder:
         new_builder._rerank_config = self._rerank_config
         new_builder._explain = self._explain
         new_builder._hints = self._hints.copy()
-        new_builder._score_threshold = self._score_threshold
         new_builder._batch_size = self._batch_size
         # new_builder._use_cache = self._use_cache
         # new_builder._parallel_semantic_filtering = self._parallel_semantic_filtering
@@ -336,7 +335,7 @@ class QueryBuilder:
         return new_builder
 
     # Core search methods
-    def search(self, query: str, search_type=None, vector_weight=None) -> "QueryBuilder":
+    def search(self, query: str, search_type=None, vector_weight=None, score_threshold=None) -> "QueryBuilder":
         """
         Search the content for `query`
 
@@ -346,6 +345,10 @@ class QueryBuilder:
             Query text
         search_type : str, optional, one of "vector", "hybrid", "keyword"
             Type of search to conduct.
+        vector_weight : float, optional, between 0.0-1.0 (inclusive)
+            Ignored unless `search_type="hybrid"`, controls balance of vector vs. keyword search on rank.
+        score_threshold : float, optional, between 0.0-1.0
+            Optionally filter results with similarity score lower than `score_threshold`
 
         Returns
         -------
@@ -363,11 +366,13 @@ class QueryBuilder:
         if search_type and search_type not in ("vector", "hybrid", "keyword"):
             raise ValueError("`search_type` must be one of 'vector', 'hybrid', 'keyword'.")
 
-        if isinstance(vector_weight, float) and vector_weight >= 0.0 and vector_weight <= 1.0:
+        if isinstance(vector_weight, float) and (vector_weight < 0.0 or vector_weight > 1.0):
             raise ValueError("`vector_weight` must be a float between 0.0 and 1.0")
 
         builder = self.clone()
-        builder._search_clauses.append(SearchClause("content", query, 1.0, search_type or self._search_type))
+        builder._search_clauses.append(
+            SearchClause("content", query, 1.0, search_type or self._search_type, score_threshold)
+        )
 
         if vector_weight:
             builder._vector_weight = vector_weight
@@ -561,19 +566,17 @@ class QueryBuilder:
         builder._offset = n
         return builder
 
-    # TODO: do it like this? Or as part of "search"
-    def vector(self, query) -> "QueryBuilder":
+    def vector(self, query, score_threshold=None) -> "QueryBuilder":
         """Use vector search."""
-        return self.search(query, search_type="vector")
+        return self.search(query, search_type="vector", score_threshold=score_threshold)
 
-    def keyword(self, query) -> "QueryBuilder":
+    def keyword(self, query, score_threshold=None) -> "QueryBuilder":
         """Use keyword search."""
-        return self.search(query, search_type="keyword")
+        return self.search(query, search_type="keyword", score_threshold=score_threshold)
 
-
-    def hybrid(self, query, vector_weight: float = 0.7) -> "QueryBuilder":
+    def hybrid(self, query, vector_weight: float = 0.7, score_threshold=None) -> "QueryBuilder":
         """Use hybrid search with specified vector weight."""
-        return self.search(query, search_type="hybrid", vector_weight=vector_weight)
+        return self.search(query, search_type="hybrid", vector_weight=vector_weight, score_threshold=score_threshold)
 
     def semantic_dedup(self, threshold: float) -> "QueryBuilder":
         """Enable semantic deduplication with similarity threshold."""
@@ -599,7 +602,7 @@ class QueryBuilder:
     def return_type(self, return_type: Literal["documents", "chunks", "context"]) -> "QueryBuilder":
         """Set the return type explicitly."""
         if return_type not in ["documents", "chunks", "context"]:
-            raise ValueError("return_type must be 'documents' or 'chunks'")
+            raise ValueError("`return_type` must be 'documents' or 'chunks'")
         builder = self.clone()
         builder._return_type = return_type
         return builder
@@ -647,7 +650,9 @@ class QueryBuilder:
                         .execute())
         """
         if direction.lower() not in ["asc", "desc"]:
-            raise ValueError("direction must be 'asc' or 'desc'")
+            raise ValueError("`direction` must be 'asc' or 'desc'")
+        if not field:
+            raise ValueError("`field` must be a non-empty string")
 
         builder = self.clone()
         builder._order_by.append((field, direction.lower()))
@@ -711,7 +716,7 @@ class QueryBuilder:
 
         for field in fields:
             if not isinstance(field, str) or not field.strip():
-                raise ValueError("All group by fields must be non-empty strings")
+                raise ValueError("All group_by fields must be non-empty strings")
 
         builder = self.clone()
         builder._group_by.extend(fields)
@@ -1113,7 +1118,7 @@ class QueryBuilder:
                 parts.append(f"USING KEYWORD SEARCH {' AND '.join(search_terms)}")
             else:  # hybrid
                 parts.append(
-                    f"USING HYBRID SEARCH (VECTOR {self._vector_weight}, KEYWORD {1 - self._vector_weight}) {' AND '.join(search_terms)}")
+                    f"USING HYBRID SEARCH (VECTOR {self._vector_weight:.3f}, KEYWORD {1 - self._vector_weight:.3f}) {' AND '.join(search_terms)}")
 
         # Where clause for filters
         if self._exact_filters:
@@ -1161,7 +1166,7 @@ class QueryBuilder:
             parts.append(f"ORDER BY {', '.join(order_terms)}")
 
         # Limit and offset
-        if self._limit != 10:  # Only show if not default
+        if self._limit:
             parts.append(f"LIMIT {self._limit}")
 
         if self._offset > 0:
@@ -1639,7 +1644,7 @@ class QueryExecutor:
             search_type=clause.search_type,
             return_type=self.builder._return_type,
             k=self.builder._limit + self.builder._offset,
-            score_threshold=self.builder._score_threshold,
+            score_threshold=clause.score_threshold,
             filters=filters,
             vector_weight=self.builder._vector_weight,
             context_window=self.builder._context_window,
@@ -1664,7 +1669,7 @@ class QueryExecutor:
                 search_type=clause.search_type,
                 return_type=self.builder._return_type,
                 k=self.builder._limit * 2,
-                score_threshold=self.builder._score_threshold,
+                score_threshold=clause.score_threshold,
                 filters=filters,
                 vector_weight=self.builder._vector_weight,
                 context_window=self.builder._context_window,
@@ -1952,7 +1957,7 @@ class AsyncQueryExecutor:
                 search_type=clause.search_type,
                 return_type=self.builder._return_type,
                 k=self.builder._limit + self.builder._offset,
-                score_threshold=self.builder._score_threshold,
+                score_threshold=clause.score_threshold,
                 filters=filters,
                 vector_weight=self.builder._vector_weight,
                 context_window=self.builder._context_window,

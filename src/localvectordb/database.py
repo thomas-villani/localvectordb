@@ -2931,7 +2931,8 @@ class LocalVectorDB(BaseVectorDB):
     def update_metadata_schema(
             self,
             new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False
+            drop_columns: bool = False,
+            column_mapping: dict = None
     ) -> Dict[str, Any]:
         """
         Update the metadata schema for the database

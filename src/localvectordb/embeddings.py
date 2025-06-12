@@ -40,8 +40,12 @@ class EmbeddingProvider(ABC):
         texts: List[str],
         batch_size: Optional[int] = None
     ) -> np.ndarray:
-        """Generate embeddings for a batch of texts"""
+        """Generate embeddings for a list of texts batchwise."""
         pass
+
+    async def embed_async(self, texts: List[str], batch_size: Optional[int] = None):
+        """Generate embeddings for a list of texts."""
+        return await self.embed_batch(texts, batch_size)
 
     @abstractmethod
     def get_dimension(self) -> int:

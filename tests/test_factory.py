@@ -109,7 +109,7 @@ class TestVectorDBFactory:
                 name="test_db",
                 base_path="./local",
                 api_key="should-be-filtered",  # Remote-only
-                request_timeout=30,  # Remote-only
+                timeout=30,  # Remote-only
                 enable_gpu=True,  # Local-only
                 connection_pool_size=5  # Local-only
             )
@@ -117,7 +117,7 @@ class TestVectorDBFactory:
             # Check that remote-only params were filtered out
             call_kwargs = mock_local.call_args[1]
             assert "api_key" not in call_kwargs
-            assert "request_timeout" not in call_kwargs
+            assert "timeout" not in call_kwargs
             assert call_kwargs["enable_gpu"] is True
             assert call_kwargs["connection_pool_size"] == 5
 

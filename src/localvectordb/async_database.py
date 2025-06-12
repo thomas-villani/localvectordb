@@ -314,6 +314,7 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
         if not texts:
             return np.array([]).reshape(0, self._sync_db.embedding_dimension)
 
+
         # Check if embedding provider supports async
         if hasattr(self._sync_db.embedding_provider, 'embed_async'):
             logger.debug(f"Using async embeddings for {len(texts)} texts")
@@ -322,21 +323,7 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
             if len(texts) <= batch_size:
                 return await self._sync_db.embedding_provider.embed_async(texts)
             else:
-                # Batch processing with async
-                embeddings = []
-                for i in range(0, len(texts), batch_size):
-                    batch = texts[i:i + batch_size]
-                    batch_embeddings = await self._sync_db.embedding_provider.embed_async(batch)
-                    embeddings.append(batch_embeddings)
-
-                    # Log progress for large batches
-                    if len(texts) > 500:
-                        batch_num = (i // batch_size) + 1
-                        total_batches = (len(texts) + batch_size - 1) // batch_size
-                        logger.info(f"Generated embeddings for batch {batch_num}/{total_batches}")
-
-                return np.vstack(embeddings) if embeddings else np.array([]).reshape(0,
-                                                                                     self._sync_db.embedding_dimension)
+                return await self._sync_db.embedding_provider.embed_batch(texts, batch_size=batch_size)
         else:
             # Fall back to sync version in thread pool
             logger.debug(f"Using sync embeddings in thread pool for {len(texts)} texts")
@@ -576,6 +563,8 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
 
     def _normalize_upsert_inputs(self, documents, metadata, ids):
         """Helper to normalize inputs (runs in thread pool)"""
+        if isinstance(documents, str):
+            documents = [documents]
         if isinstance(metadata, dict):
             metadata = [metadata]
         if isinstance(ids, str):
@@ -593,6 +582,7 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
         elif len(ids) != len(documents):
             raise ValueError("Number of IDs must match number of documents")
 
+        # If the user provided a list with some ids but None for others, generate for the Nones!
         for i, doc_id in enumerate(ids):
             if doc_id is None:
                 ids[i] = self._sync_db._generate_doc_id()

@@ -183,8 +183,9 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
             model: str = "remote",  # Required by base class
             **kwargs
     ):
-        # Initialize base class with dummy model name
-        super().__init__(model, **kwargs)
+        # Skip the super call since it tries to set the `model` attribute which we set manually.
+        # super().__init__(model, **kwargs)
+        self.config = kwargs
 
         self.db_name = db_name
         self.base_url = base_url.rstrip('/')
@@ -225,7 +226,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
             error_msg = f"HTTP {response.status_code}: {response.text}"
 
         if response.status_code == 404:
-            raise RuntimeError(f"Database '{self.db_name}' not found on server")
+            raise DatabaseNotFoundError(f"Database '{self.db_name}' not found on server")
         elif response.status_code == 401:
             raise RuntimeError("Authentication failed. Check your API key.")
         else:
@@ -247,7 +248,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
             logger.error(f"Failed to load database info for {self.db_name}: {e}")
             if not self._db_info_cache:
                 # If we have no cached info at all, re-raise the error
-                raise RuntimeError(f"Cannot connect to database '{self.db_name}': {e}")
+                raise e
             # Otherwise, use stale cache and log warning
             logger.warning(f"Using stale cache for database {self.db_name} due to error: {e}")
 
@@ -262,6 +263,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
                 timeout=self.request_timeout
             )
 
+        print("response", response.json(), response.status_code)
         db_info = self._handle_response(response)
         self._db_info_cache = db_info
 
@@ -630,6 +632,7 @@ class RemoteVectorDB(BaseVectorDB):
             error_type = error_data.get("type", "unknown")
             error_msg = error_data.get("error", str(response.status_code))
 
+            print("error_type", error_type, "error_msg", error_msg)
             # Map error type to appropriate exception
             error_map = {
                 "database_not_found": DatabaseNotFoundError,

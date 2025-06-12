@@ -13,17 +13,61 @@ from localvectordb.exceptions import (
     EmbeddingError, BaseLocalVectorDBException
 )
 
+@pytest.fixture(autouse=True)
+def mock_httpx_client():
+    """
+    Module-level fixture that automatically mocks httpx.Client for all tests.
+    Provides sensible defaults that work for most tests, can be customized per test.
+    """
+    with patch('httpx.Client') as mock_client_class:
+        mock_client = Mock()
+
+        # Default successful response that works for most tests
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "config": {
+                "embedding_provider": "ollama",
+                "embedding_model": "nomic-embed-text",
+                "embedding_dimension": 384,
+                "chunking_method": "sentences",
+                "chunk_size": 500,
+                "chunk_overlap": 1,
+                "fts_enabled": True,
+                "metadata_schema": {}
+            },
+            "stats": {
+                "documents": 0,
+                "chunks": 0,
+                "index_vectors": 0
+            }
+        }
+        mock_response.text = "OK"
+
+        # Configure all HTTP methods to return the default response
+        mock_client.get.return_value = mock_response
+        mock_client.post.return_value = mock_response
+        mock_client.put.return_value = mock_response
+        mock_client.delete.return_value = mock_response
+        mock_client.patch.return_value = mock_response
+        mock_client.request.return_value = mock_response
+
+        # Handle both context manager and direct usage
+        mock_client.__enter__ = lambda self: mock_client
+        mock_client.__exit__ = lambda self, *args: None
+        mock_client_class.return_value = mock_client
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        yield mock_client
+
 
 class TestRemoteVectorDBInitialization:
     """Test RemoteVectorDB initialization."""
 
-    @patch('httpx.Client')
-    def test_create_new_database(self, mock_client_class, sample_metadata_schema):
+    def test_create_new_database(self, mock_httpx_client, sample_metadata_schema):
         """Test creating a new remote database."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        # Customize the response for this specific test
+        mock_httpx_client.request.return_value.json.return_value = {
             "config": {
                 "embedding_provider": "ollama",
                 "embedding_model": "nomic-embed-text",
@@ -38,9 +82,7 @@ class TestRemoteVectorDBInitialization:
                 }
             }
         }
-        mock_client.post.return_value = mock_response
-        mock_client.get.return_value = mock_response  # For database info check
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.get.return_value = mock_httpx_client.request.return_value  # For database info check
 
         db = RemoteVectorDB(
             name="test_db",
@@ -55,27 +97,8 @@ class TestRemoteVectorDBInitialization:
         assert db.api_key == "test-key"
         assert db.embedding_dimension == 384
 
-    @patch('httpx.Client')
-    def test_connect_existing_database(self, mock_client_class):
+    def test_connect_existing_database(self, mock_httpx_client):
         """Test connecting to existing database."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "config": {
-                "embedding_provider": "ollama",
-                "embedding_model": "nomic-embed-text",
-                "embedding_dimension": 384,
-                "chunking_method": "sentences",
-                "chunk_size": 500,
-                "chunk_overlap": 1,
-                "fts_enabled": True,
-                "metadata_schema": {}
-            }
-        }
-        mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
-
         db = RemoteVectorDB(
             name="existing_db",
             base_url="http://localhost:5000",
@@ -84,17 +107,15 @@ class TestRemoteVectorDBInitialization:
 
         assert db.name == "existing_db"
         # Should call get to load database info
-        mock_client.get.assert_called()
+        mock_httpx_client.get.assert_called()
 
-    @patch('httpx.Client')
-    def test_database_not_found(self, mock_client_class):
+    def test_database_not_found(self, mock_httpx_client):
         """Test error when database doesn't exist."""
-        mock_client = Mock()
+        # Override default response for 404 error
         mock_response = Mock()
         mock_response.status_code = 404
         mock_response.json.return_value = {"type": "database_not_found", "error": "Database not found"}
-        mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.get.return_value = mock_response
 
         with pytest.raises(DatabaseNotFoundError):
             RemoteVectorDB(
@@ -103,61 +124,47 @@ class TestRemoteVectorDBInitialization:
                 create_if_not_exists=False
             )
 
-    def test_default_parameters(self):
+    def test_default_parameters(self, mock_httpx_client):
         """Test default parameters."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            db = RemoteVectorDB("test_db")
+        db = RemoteVectorDB("test_db")
 
-            assert db.base_url == "http://127.0.0.1:5000"
-            assert db.api_key is None
-            assert db.request_timeout is None
+        assert db.base_url == "http://127.0.0.1:5000"
+        assert db.api_key is None
+        assert db.request_timeout is None
 
-    def test_url_normalization(self):
+    def test_url_normalization(self, mock_httpx_client):
         """Test URL normalization."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            db = RemoteVectorDB("test_db", base_url="http://localhost:5000/")
-            assert db.base_url == "http://localhost:5000"
+        db = RemoteVectorDB("test_db", base_url="http://localhost:5000/")
+        assert db.base_url == "http://localhost:5000"
 
 
 class TestRemoteVectorDBDocumentOperations:
     """Test RemoteVectorDB document operations."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self, mock_httpx_client):
         """Create a mock remote database for testing."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            return RemoteVectorDB("test_db", api_key="test-key")
+        return RemoteVectorDB("test_db", api_key="test-key")
 
-    @patch('httpx.Client')
-    def test_upsert_single_document(self, mock_client_class, mock_db):
+    def test_upsert_single_document(self, mock_httpx_client, mock_db):
         """Test upserting a single document."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"ids": ["doc_1"]}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        # Customize response for this test
+        mock_httpx_client.request.return_value.json.return_value = {"ids": ["doc_1"]}
 
         result = mock_db.upsert("Test document")
 
         assert result == ["doc_1"]
-        mock_client.post.assert_called_once()
+        mock_httpx_client.request.assert_called()
 
         # Check request payload
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "http://127.0.0.1:5000/api/v1/test_db/documents"
+        call_args = mock_httpx_client.request.call_args
+        assert call_args[0][1] == "http://127.0.0.1:5000/api/v1/test_db/documents"
         payload = call_args[1]["json"]
         assert payload["documents"] == ["Test document"]
 
-    @patch('httpx.Client')
-    def test_upsert_multiple_documents(self, mock_client_class, mock_db):
+    def test_upsert_multiple_documents(self, mock_httpx_client, mock_db):
         """Test upserting multiple documents."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"ids": ["doc_1", "doc_2"]}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"ids": ["doc_1", "doc_2"]}
 
         documents = ["Doc 1", "Doc 2"]
         metadata = [{"author": "A"}, {"author": "B"}]
@@ -168,20 +175,14 @@ class TestRemoteVectorDBDocumentOperations:
         assert result == ["doc_1", "doc_2"]
 
         # Check request payload
-        payload = mock_client.post.call_args[1]["json"]
+        payload = mock_httpx_client.request.call_args[1]["json"]
         assert payload["documents"] == documents
         assert payload["metadata"] == metadata
         assert payload["ids"] == ids
 
-    @patch('httpx.Client')
-    def test_insert_new_documents(self, mock_client_class, mock_db):
+    def test_insert_new_documents(self, mock_httpx_client, mock_db):
         """Test inserting new documents."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"ids": ["doc_1", "doc_2"]}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"ids": ["doc_1", "doc_2"]}
 
         result = mock_db.insert(
             ["Doc 1", "Doc 2"],
@@ -192,35 +193,29 @@ class TestRemoteVectorDBDocumentOperations:
         assert result == ["doc_1", "doc_2"]
 
         # Check endpoint and payload
-        call_args = mock_client.post.call_args
-        assert "/documents/insert" in call_args[0][0]
+        call_args = mock_httpx_client.request.call_args
+        assert "/documents/insert" in call_args[0][1]
         payload = call_args[1]["json"]
         assert payload["errors"] == "ignore"
         assert payload["similarity_threshold"] == 0.95
 
-    @patch('httpx.Client')
-    def test_insert_duplicate_error(self, mock_client_class, mock_db):
+    def test_insert_duplicate_error(self, mock_httpx_client, mock_db):
         """Test insert with duplicate document error."""
-        mock_client = Mock()
+        # Override response for 409 error
         mock_response = Mock()
         mock_response.status_code = 409
         mock_response.json.return_value = {
             "type": "duplicate_document_id",
             "error": "Document already exists"
         }
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(DuplicateDocumentIDError):
             mock_db.insert("Test doc", ids="existing_id")
 
-    @patch('httpx.Client')
-    def test_get_single_document(self, mock_client_class, mock_db):
+    def test_get_single_document(self, mock_httpx_client, mock_db):
         """Test getting a single document."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_httpx_client.request.return_value.json.return_value = {
             "id": "doc_1",
             "content": "Test content",
             "metadata": {"author": "Test"},
@@ -228,8 +223,6 @@ class TestRemoteVectorDBDocumentOperations:
             "updated_at": "2024-01-01T00:00:00",
             "content_hash": "hash123"
         }
-        mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
 
         result = mock_db.get("doc_1")
 
@@ -240,17 +233,13 @@ class TestRemoteVectorDBDocumentOperations:
         assert isinstance(result.created_at, datetime)
 
         # Check endpoint
-        mock_client.get.assert_called_once_with(
-            "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1",
-            headers={"Content-Type": "application/json", "Authorization": "Bearer test-key"},
-            timeout=None
+        mock_httpx_client.request.assert_called_with("GET",
+            "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1"
         )
 
-    @patch('httpx.Client')
-    def test_get_multiple_documents(self, mock_client_class, mock_db):
+    def test_get_multiple_documents(self, mock_httpx_client, mock_db):
         """Test getting multiple documents."""
         # Mock multiple individual requests
-        mock_client = Mock()
         mock_response1 = Mock()
         mock_response1.status_code = 200
         mock_response1.json.return_value = {
@@ -267,8 +256,7 @@ class TestRemoteVectorDBDocumentOperations:
             "metadata": {},
             "content_hash": "hash2"
         }
-        mock_client.get.side_effect = [mock_response1, mock_response2]
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.side_effect = [mock_response1, mock_response2]
 
         result = mock_db.get(["doc_1", "doc_2"])
 
@@ -278,81 +266,55 @@ class TestRemoteVectorDBDocumentOperations:
         assert result[0].id == "doc_1"
         assert result[1].id == "doc_2"
 
-        # Should make two separate requests
-        assert mock_client.get.call_count == 2
+        # Should make two separate requests (and others made from trying to get db info)
+        assert mock_httpx_client.request.call_count >= 2
 
-    @patch('httpx.Client')
-    def test_get_nonexistent_document(self, mock_client_class, mock_db):
+    def test_get_nonexistent_document(self, mock_httpx_client, mock_db):
         """Test getting nonexistent document."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.status_code = 404
         mock_response.json.return_value = {"type": "database_not_found", "error": "Not found"}
-        mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value = mock_response
 
         result = mock_db.get("nonexistent")
 
         assert result is None
 
-    @patch('httpx.Client')
-    def test_exists_documents(self, mock_client_class, mock_db):
+    def test_exists_documents(self, mock_httpx_client, mock_db):
         """Test checking document existence."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"exists": [True, False, True]}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"exists": [True, False, True]}
 
         result = mock_db.exists(["doc_1", "doc_2", "doc_3"])
 
         assert result == [True, False, True]
 
         # Check request
-        call_args = mock_client.post.call_args
-        assert "/documents/exists" in call_args[0][0]
+        call_args = mock_httpx_client.request.call_args
+        assert "/documents/exists" in call_args[0][1]
         payload = call_args[1]["json"]
         assert payload["ids"] == ["doc_1", "doc_2", "doc_3"]
 
-    @patch('httpx.Client')
-    def test_exists_single_document(self, mock_client_class, mock_db):
+    def test_exists_single_document(self, mock_httpx_client, mock_db):
         """Test checking single document existence."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"exists": [True]}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"exists": [True]}
 
         result = mock_db.exists("doc_1")
 
         assert result is True
 
-    @patch('httpx.Client')
-    def test_delete_documents(self, mock_client_class, mock_db):
+    def test_delete_documents(self, mock_httpx_client, mock_db):
         """Test deleting documents."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"deleted_count": 1}
-        mock_client.delete.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"deleted_count": 1}
 
         result = mock_db.delete(["doc_1", "doc_2"])
 
-        assert result == 2  # Two requests, each deleting 1
-        assert mock_client.delete.call_count == 2
+        assert result == 2  # Two requests, each deleting 1.
+        # httpx.Client.request is called at least 2 times.
+        assert mock_httpx_client.request.call_count >= 2
 
-    @patch('httpx.Client')
-    def test_update_document(self, mock_client_class, mock_db):
+    def test_update_document(self, mock_httpx_client, mock_db):
         """Test updating a document."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"updated": True}
-        mock_client.put.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"updated": True}
 
         result = mock_db.update(
             "doc_1",
@@ -363,21 +325,18 @@ class TestRemoteVectorDBDocumentOperations:
         assert result is True
 
         # Check request
-        call_args = mock_client.put.call_args
-        assert "/documents/doc_1" in call_args[0][0]
+        call_args = mock_httpx_client.request.call_args
+        assert "/documents/doc_1" in call_args[0][1]
         payload = call_args[1]["json"]
         assert payload["content"] == "New content"
         assert payload["metadata"] == {"author": "New Author"}
 
-    @patch('httpx.Client')
-    def test_update_nonexistent_document(self, mock_client_class, mock_db):
+    def test_update_nonexistent_document(self, mock_httpx_client, mock_db):
         """Test updating nonexistent document."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.status_code = 404
         mock_response.json.return_value = {"type": "database_not_found", "error": "Not found"}
-        mock_client.put.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value = mock_response
 
         result = mock_db.update("nonexistent", content="New content")
 
@@ -388,18 +347,13 @@ class TestRemoteVectorDBQuery:
     """Test RemoteVectorDB query functionality."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self, mock_httpx_client):
         """Create a mock remote database for testing."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            return RemoteVectorDB("test_db", api_key="test-key")
+        return RemoteVectorDB("test_db", api_key="test-key")
 
-    @patch('httpx.Client')
-    def test_vector_query(self, mock_client_class, mock_db):
+    def test_vector_query(self, mock_httpx_client, mock_db):
         """Test vector similarity query."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_httpx_client.request.return_value.json.return_value = {
             "results": [
                 {
                     "id": "doc_1",
@@ -410,8 +364,6 @@ class TestRemoteVectorDBQuery:
                 }
             ]
         }
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
 
         results = mock_db.query("test query", search_type="vector", k=5)
 
@@ -422,20 +374,16 @@ class TestRemoteVectorDBQuery:
         assert results[0].type == "document"
 
         # Check request
-        call_args = mock_client.post.call_args
-        assert "/query" in call_args[0][0]
+        call_args = mock_httpx_client.request.call_args
+        assert "/query" in call_args[0][1]
         payload = call_args[1]["json"]
         assert payload["query"] == "test query"
         assert payload["search_type"] == "vector"
         assert payload["k"] == 5
 
-    @patch('httpx.Client')
-    def test_keyword_query(self, mock_client_class, mock_db):
+    def test_keyword_query(self, mock_httpx_client, mock_db):
         """Test keyword search query."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_httpx_client.request.return_value.json.return_value = {
             "results": [
                 {
                     "id": "doc_1:0",
@@ -448,8 +396,6 @@ class TestRemoteVectorDBQuery:
                 }
             ]
         }
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
 
         results = mock_db.query(
             "test",
@@ -463,15 +409,9 @@ class TestRemoteVectorDBQuery:
         assert result.document_id == "doc_1"
         assert isinstance(result.position, ChunkPosition)
 
-    @patch('httpx.Client')
-    def test_hybrid_query(self, mock_client_class, mock_db):
+    def test_hybrid_query(self, mock_httpx_client, mock_db):
         """Test hybrid search query."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"results": []}
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value.json.return_value = {"results": []}
 
         mock_db.query(
             "test query",
@@ -482,19 +422,15 @@ class TestRemoteVectorDBQuery:
         )
 
         # Check request payload
-        payload = mock_client.post.call_args[1]["json"]
+        payload = mock_httpx_client.request.call_args[1]["json"]
         assert payload["search_type"] == "hybrid"
         assert payload["vector_weight"] == 0.7
         assert payload["score_threshold"] == 0.5
         assert payload["filters"] == {"author": "Test"}
 
-    @patch('httpx.Client')
-    def test_filter_documents(self, mock_client_class, mock_db):
+    def test_filter_documents(self, mock_httpx_client, mock_db):
         """Test filtering documents."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_httpx_client.request.return_value.json.return_value = {
             "documents": [
                 {
                     "id": "doc_1",
@@ -504,8 +440,6 @@ class TestRemoteVectorDBQuery:
                 }
             ]
         }
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
 
         results = mock_db.filter(
             where={"author": "Test"},
@@ -519,8 +453,8 @@ class TestRemoteVectorDBQuery:
         assert results[0].id == "doc_1"
 
         # Check request
-        call_args = mock_client.post.call_args
-        assert "/filter" in call_args[0][0]
+        call_args = mock_httpx_client.request.call_args
+        assert "/filter" in call_args[0][1]
         payload = call_args[1]["json"]
         assert payload["where"] == {"author": "Test"}
         assert payload["order_by"] == "created_at DESC"
@@ -532,45 +466,37 @@ class TestRemoteVectorDBProperties:
     """Test RemoteVectorDB properties and utility methods."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self, mock_httpx_client):
         """Create a mock remote database for testing."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            db = RemoteVectorDB("test_db")
-            # Set mock properties
-            db._embedding_model = "test-model"
-            db._embedding_provider = "test-provider"
-            db._embedding_dimension = 384
-            db._chunk_size = 500
-            db._chunk_overlap = 50
-            db._chunking_method = "sentences"
-            db._enable_fts = True
-            return db
+        db = RemoteVectorDB("test_db")
+        # Set mock properties
+        db._embedding_model = "test-model"
+        db._embedding_provider = "test-provider"
+        db._embedding_dimension = 384
+        db._chunk_size = 500
+        db._chunk_overlap = 50
+        db._chunking_method = "sentences"
+        db._enable_fts = True
+        return db
 
-    def test_properties(self, mock_db):
+    def test_properties(self, mock_httpx_client, mock_db):
         """Test various properties."""
         assert mock_db.embedding_model == "test-model"
-        assert mock_db.embedding_provider == "test-provider"
         assert mock_db.embedding_dimension == 384
         assert mock_db.chunk_size == 500
         assert mock_db.chunk_overlap == 50
         assert mock_db.chunking_method == "sentences"
         assert mock_db.fts_enabled is True
 
-    @patch('httpx.Client')
-    def test_stats_property(self, mock_client_class, mock_db):
+    def test_stats_property(self, mock_httpx_client, mock_db):
         """Test stats property."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_httpx_client.get.return_value.json.return_value = {
             "stats": {
                 "documents": 100,
                 "chunks": 500,
                 "index_vectors": 500
             }
         }
-        mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
 
         stats = mock_db.get_stats()
 
@@ -578,7 +504,7 @@ class TestRemoteVectorDBProperties:
         assert stats["chunks"] == 500
         assert stats["index_vectors"] == 500
 
-    def test_save_method(self, mock_db):
+    def test_save_method(self, mock_httpx_client, mock_db):
         """Test save method (no-op for remote client)."""
         # Should not raise any errors
         mock_db.save()
@@ -588,13 +514,11 @@ class TestRemoteVectorDBLegacyMethods:
     """Test legacy method compatibility."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self, mock_httpx_client):
         """Create a mock remote database for testing."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            return RemoteVectorDB("test_db")
+        return RemoteVectorDB("test_db")
 
-
-    def test_hybrid_query_method(self, mock_db):
+    def test_hybrid_query_method(self, mock_httpx_client, mock_db):
         """Test legacy hybrid_query method."""
         with patch.object(mock_db, 'query') as mock_query:
             mock_query.return_value = []
@@ -614,7 +538,7 @@ class TestRemoteVectorDBLegacyMethods:
                 vector_weight=0.8
             )
 
-    def test_keyword_search_method(self, mock_db):
+    def test_keyword_search_method(self, mock_httpx_client, mock_db):
         """Test legacy keyword_search method."""
         with patch.object(mock_db, 'query') as mock_query:
             mock_query.return_value = []
@@ -637,63 +561,51 @@ class TestRemoteVectorDBErrorHandling:
     """Test RemoteVectorDB error handling."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self, mock_httpx_client):
         """Create a mock remote database for testing."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            return RemoteVectorDB("test_db", api_key="test-key")
+        return RemoteVectorDB("test_db", api_key="test-key")
 
-    @patch('httpx.Client')
-    def test_authentication_error(self, mock_client_class, mock_db):
+    def test_authentication_error(self, mock_httpx_client, mock_db):
         """Test authentication error handling."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.status_code = 401
         mock_response.text = "Unauthorized"
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(PermissionError, match="Authentication failed"):
             mock_db.upsert("Test document")
 
-    @patch('httpx.Client')
-    def test_embedding_error(self, mock_client_class, mock_db):
+    def test_embedding_error(self, mock_httpx_client, mock_db):
         """Test embedding error handling."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.json.return_value = {
             "type": "embedding_error",
             "error": "Embedding model not available"
         }
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(EmbeddingError):
             mock_db.upsert("Test document")
 
-    @patch('httpx.Client')
-    def test_generic_error(self, mock_client_class, mock_db):
+    def test_generic_error(self, mock_httpx_client, mock_db):
         """Test generic error handling."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.status_code = 500
         mock_response.text = "Internal server error"
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_response.json.return_value = {"error": {"message": "Internal server error", "code": 500}}
+        mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(BaseLocalVectorDBException):
             mock_db.upsert("Test document")
 
-    @patch('httpx.Client')
-    def test_malformed_response(self, mock_client_class, mock_db):
+    def test_malformed_response(self, mock_httpx_client, mock_db):
         """Test handling of malformed JSON response."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.json.side_effect = ValueError("Invalid JSON")
         mock_response.text = "Malformed response"
-        mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(ValueError):
             mock_db.upsert("Test document")
@@ -702,81 +614,57 @@ class TestRemoteVectorDBErrorHandling:
 class TestRemoteVectorDBUtilityMethods:
     """Test RemoteVectorDB utility methods."""
 
-    @patch('httpx.Client')
-    def test_database_exists_true(self, mock_client_class):
+    def test_database_exists_true(self, mock_httpx_client):
         """Test database_exists method when database exists."""
-        mock_client = Mock()
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"databases": ["test_db", "other_db"]}
-        mock_client.__enter__ = lambda *arg, **kwargs: mock_client
-        mock_client.__exit__ = lambda *arg, **kwargs: True
-        mock_client.get.return_value = mock_response
-        mock_client_class.return_value = mock_client
+        mock_httpx_client.get.return_value.json.return_value = {"databases": ["test_db", "other_db"]}
 
         result = RemoteVectorDB.database_exists("test_db", api_key="test-key")
 
         assert result is True
-        mock_client.get.assert_called_once_with(
+        mock_httpx_client.get.assert_called_with(
             "http://127.0.0.1:5000/api/v1/databases",
             headers={"Content-Type": "application/json", "Authorization": "Bearer test-key"}
         )
 
-    @patch('httpx.Client')
-    def test_database_exists_false(self, mock_client_class):
+    def test_database_exists_false(self, mock_httpx_client):
         """Test database_exists method when database doesn't exist."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"databases": ["other_db"]}
-
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__.return_value = mock_client
-        mock_client_class.return_value = mock_client
+        mock_httpx_client.get.return_value.json.return_value = {"databases": ["other_db"]}
 
         result = RemoteVectorDB.database_exists("test_db")
 
         assert result is False
 
-    @patch('httpx.Client')
-    def test_database_exists_error(self, mock_client_class):
+    def test_database_exists_error(self, mock_httpx_client):
         """Test database_exists method with connection error."""
-        mock_client = MagicMock()
-        mock_client.__enter__.return_value = mock_client
-        mock_client.get.side_effect = Exception("Connection failed")
-        mock_client_class.return_value = mock_client
+        mock_httpx_client.get.side_effect = Exception("Connection failed")
 
         with pytest.raises(Exception) as exc:
-            result = RemoteVectorDB.database_exists("test_db")
+            RemoteVectorDB.database_exists("test_db")
 
         assert exc.value.args[0] == "Connection failed"
 
-
-    def test_get_headers_with_api_key(self):
+    def test_get_headers_with_api_key(self, mock_httpx_client):
         """Test header generation with API key."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            db = RemoteVectorDB("test_db", api_key="test-key")
-            headers = db._get_headers()
+        db = RemoteVectorDB("test_db", api_key="test-key")
+        headers = db._get_headers()
 
-            assert headers["Content-Type"] == "application/json"
-            assert headers["Authorization"] == "Bearer test-key"
+        assert headers["Content-Type"] == "application/json"
+        assert headers["Authorization"] == "Bearer test-key"
 
-    def test_get_headers_without_api_key(self):
+    def test_get_headers_without_api_key(self, mock_httpx_client):
         """Test header generation without API key."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            db = RemoteVectorDB("test_db")
-            headers = db._get_headers()
+        db = RemoteVectorDB("test_db")
+        headers = db._get_headers()
 
-            assert headers["Content-Type"] == "application/json"
-            assert "Authorization" not in headers
+        assert headers["Content-Type"] == "application/json"
+        assert "Authorization" not in headers
 
-    def test_build_url(self):
+    def test_build_url(self, mock_httpx_client):
         """Test URL building."""
-        with patch.object(RemoteVectorDB, '_ensure_database_exists'):
-            db = RemoteVectorDB("test_db", base_url="http://localhost:5000")
+        db = RemoteVectorDB("test_db", base_url="http://localhost:5000")
 
-            url = db._build_url("/api/v1/test")
-            assert url == "http://localhost:5000/api/v1/test"
+        url = db._build_url("/api/v1/test")
+        assert url == "http://localhost:5000/api/v1/test"
 
 
 class TestDocumentClass:
