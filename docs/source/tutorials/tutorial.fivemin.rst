@@ -89,7 +89,8 @@ Create a new Python file called ``quick_start.py`` and copy this code:
        print(f"   Content: {result.content}")
 
    # Check database stats
-   print(f"\nDatabase stats: {db.stats}")
+   import json
+   print(f"\nDatabase stats:\n{json.dumps(db.get_stats(), indent=2)}")
 
    # Clean up
    db.close()

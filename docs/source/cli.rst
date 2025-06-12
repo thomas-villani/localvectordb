@@ -50,7 +50,7 @@ Starting the Server
 
 Configuration Management
 ------------------------
-For a complete overview of the configuration settings, see the :doc:`Configuration Parameters Documentation <config.params>`.
+For a complete overview of the configuration settings, see the :doc:`Configuration Parameters Documentation <server/config.params>`.
 
 Initialize Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -275,6 +275,7 @@ The ``set`` command automatically converts string inputs to the appropriate type
 Configuration values can be accessed using dot notation:
 
 **Database Settings** (``database.*``):
+
 - ``database.root_dir`` - Database storage directory
 - ``database.chunk_size`` - Maximum tokens per chunk
 - ``database.chunk_overlap`` - Overlap between chunks
@@ -285,6 +286,7 @@ Configuration values can be accessed using dot notation:
 - ``database.timeout`` - Database timeout
 
 **Embedding Settings** (``embedding.*``):
+
 - ``embedding.provider`` - Provider (ollama, openai)
 - ``embedding.model`` - Model name
 - ``embedding.base_url`` - Provider base URL
@@ -294,6 +296,7 @@ Configuration values can be accessed using dot notation:
 - ``embedding.max_retries`` - Maximum retry attempts
 
 **Server Settings** (``server.*``):
+
 - ``server.host`` - Server host address
 - ``server.port`` - Server port
 - ``server.log_level`` - Logging level
@@ -302,6 +305,7 @@ Configuration values can be accessed using dot notation:
 - ``server.request_timeout`` - Request timeout
 
 **Security Settings** (``server.security.*``):
+
 - ``server.security.require_api_key`` - Enable API key auth
 - ``server.security.api_key_header`` - Auth header name
 - ``server.security.key_database_path`` - API key database path
@@ -313,6 +317,7 @@ Configuration values can be accessed using dot notation:
 - ``server.security.cors_allowed_headers`` - Allowed headers
 
 **Metadata Schema** (``database.metadata_schema.*``):
+
 - ``database.metadata_schema.<field_name>`` - Individual schema fields
 
 **Example Metadata Schema Configuration**:

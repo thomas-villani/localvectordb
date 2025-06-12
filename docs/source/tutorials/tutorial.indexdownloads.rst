@@ -45,7 +45,7 @@ Create ``index_downloads.py``:
        except Exception as e:
            print(f"Skipped {file_path.name}: {e}")
 
-   print(f"\nDone! Indexed {db.stats['documents']} files")
+   print(f"\nDone! Indexed {db.get_stats()['documents']} files")
    print("Try: python search_downloads.py")
 
 Create ``search_downloads.py``:
@@ -210,7 +210,7 @@ Here's a full-featured version that handles multiple file types:
            print(f"\nIndexing complete!")
            print(f"Successfully indexed: {indexed_count} files")
            print(f"Skipped: {skipped_count} files")
-           print(f"Total in database: {self.db.stats['documents']} documents")
+           print(f"Total in database: {self.db.get_stats()['documents']} documents")
        
        def search(self, query, max_results=10):
            """Search indexed files."""
@@ -265,7 +265,7 @@ Here's a full-featured version that handles multiple file types:
                'total_files': len(all_docs),
                'total_size_mb': total_size / (1024 * 1024),
                'by_file_type': by_extension,
-               'database_stats': self.db.stats
+               'database_stats': self.db.get_stats()
            }
 
    def main():

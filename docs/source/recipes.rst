@@ -702,7 +702,7 @@ Document Analytics and Statistics
        def get_overview_stats(self) -> Dict[str, Any]:
            """Get comprehensive database statistics."""
 
-           base_stats = self.db.stats
+           base_stats = self.db.get_stats()
 
            # Get sample of documents for analysis
            sample_docs = self.db.filter(limit=500)
@@ -1012,7 +1012,7 @@ Database Health Checks
 
        # Check 1: Basic connectivity
        try:
-           stats = db.stats
+           stats = db.get_stats()
            health_report['checks']['connectivity'] = {'status': 'pass', 'details': 'Database accessible'}
            checks_passed += 1
        except Exception as e:
@@ -1210,7 +1210,7 @@ Database Backup and Recovery
        backup_info = {
            'database_name': db.name,
            'backup_timestamp': timestamp,
-           'stats': db.stats,
+           'stats': db.get_stats(),
            'embedding_provider': db.embedding_provider.provider_name,
            'embedding_model': db.embedding_provider.model
        }
@@ -1274,7 +1274,7 @@ Database Backup and Recovery
            create_if_not_exists=False
        )
 
-       print(f"Database restored as '{db_name}' with {restored_db.stats['documents']} documents")
+       print(f"Database restored as '{db_name}' with {restored_db.get_stats()['documents']} documents")
        return restored_db
 
 Conclusion

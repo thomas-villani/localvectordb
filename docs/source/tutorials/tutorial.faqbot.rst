@@ -39,7 +39,7 @@ Create a file called ``faq_bot.py``:
    ]
 
    # Add FAQs to database (only do this once)
-   if db.stats['documents'] == 0:
+   if db.get_stats()['documents'] == 0:
        print(f"Adding {len(faqs)} FAQ entries...")
        db.upsert(faqs)
 
@@ -153,7 +153,7 @@ Want a slightly more sophisticated bot? Here's an enhanced version:
            self.load_faqs(faq_data)
        
        def load_faqs(self, faqs):
-           if self.db.stats['documents'] == 0:
+           if self.db.get_stats()['documents'] == 0:
                print(f"Loading {len(faqs)} FAQ entries...")
                # Add with metadata for better organization
                documents = []

@@ -32,13 +32,10 @@ scale to distributed deployments without changing your code.
    embeddings
    chunking
    metadata.filtering
+   querybuilder
    async
-   server
+   server/index
    cli
-   routes
-   config
-   config.params
-   server.advanced
-   modules
+   modules/index
    recipes
-   tutorials
+   tutorials/index

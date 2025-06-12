@@ -771,4 +771,4 @@ Query logs for specific patterns:
    jq 'select(.level == "ERROR")' /app/logs/localvectordb.log | head -10
 
 This comprehensive guide covers the advanced configuration and deployment options for LocalVectorDB Server.
-For basic setup and API usage, refer to the :doc:`Quick Start <quickstart>` and :doc:`API Documentation <modules>` sections.
+For basic setup and API usage, refer to the :doc:`Quick Start <../quickstart>` and :doc:`API Documentation <../modules/index>` sections.

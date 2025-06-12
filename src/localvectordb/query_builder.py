@@ -8,7 +8,233 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb/query_builder.py
+"""
+LocalVectorDB Query Builder - SQL-like interface for vector database queries.
 
+This module provides a sophisticated, fluent interface for building complex queries against
+vector databases. It combines the power of vector similarity search with traditional database
+operations like filtering, grouping, aggregation, and sorting, all through a SQL-like API.
+
+The QueryBuilder supports multiple search modes (vector, keyword, hybrid), semantic filtering,
+result reranking, and both synchronous and asynchronous execution.
+
+Core Features
+-------------
+- **Multi-modal Search**: Vector similarity, keyword (FTS), and hybrid search
+- **Advanced Filtering**: Exact filters with operators, semantic similarity filters
+- **SQL-like Operations**: GROUP BY, aggregations (COUNT, SUM, AVG, etc.), HAVING, ORDER BY
+- **Result Processing**: Pagination, deduplication, reranking, context windows
+- **Async Support**: Native async execution with optimized semantic filtering
+- **Performance**: Query planning, execution hints, batch processing
+- **Debugging**: Query explanation, execution statistics, SQL-like previews
+
+Classes
+-------
+QueryBuilder : Main query builder with fluent interface
+SearchClause : Represents a search operation on a field
+SemanticFilter : Semantic filtering based on conceptual similarity
+AggregationClause : Represents aggregation operations
+QueryExecutor : Synchronous query execution engine
+AsyncQueryExecutor : Asynchronous query execution engine
+SimilarityMetric : Enum for semantic similarity metrics
+
+Examples
+--------
+
+**Basic Vector Search**::
+
+    # Simple semantic search
+    results = (db.query_builder()
+        .search("machine learning algorithms")
+        .limit(10)
+        .execute())
+
+    # Vector search with score threshold
+    results = (db.query_builder()
+        .vector("neural networks", score_threshold=0.8)
+        .limit(5)
+        .execute())
+
+**Hybrid and Keyword Search**::
+
+    # Balanced hybrid search (default 70% vector, 30% keyword)
+    results = (db.query_builder()
+        .hybrid("artificial intelligence", vector_weight=0.6)
+        .limit(20)
+        .execute())
+
+    # Pure keyword search with FTS
+    results = (db.query_builder()
+        .keyword("machine learning")
+        .filter("category", "research")
+        .execute())
+
+**Advanced Filtering and Search Combinations**::
+
+    # Complex multi-field query with exact and semantic filters
+    results = (db.query_builder()
+        .search("deep learning frameworks")
+        .filter("year", gte_=2020, lt_=2024)          # Year range
+        .filter("category", "AI")                     # Exact match
+        .filter("tags", contains_="pytorch")          # Tag filtering
+        .semantic_filter("methodology", "supervised learning", threshold=0.75)
+        .order_by("year", "desc")
+        .limit(50)
+        .execute())
+
+    # Multi-term search with weights
+    results = (db.query_builder()
+        .search("neural networks", weight=0.7)
+        .search("computer vision", weight=0.3)
+        .filter("published", exists_=True)
+        .semantic_dedup(threshold=0.9)               # Remove near-duplicates
+        .execute())
+
+**Document Analysis and Aggregation**::
+
+    # Research paper analysis by category and year
+    stats = (db.query_builder()
+        .search("machine learning")
+        .filter("type", "research_paper")
+        .group_by("category", "year")
+        .count_by("*", "paper_count")
+        .avg_by("citation_count", "avg_citations")
+        .having_count("gt", 5)                       # Groups with >5 papers
+        .order_by("avg_citations", "desc")
+        .execute())
+
+    # Author productivity analysis
+    top_authors = (db.query_builder()
+        .filter("year", gte_=2020)
+        .group_by("author")
+        .count_by("*", "publication_count")
+        .sum_by("citation_count", "total_citations")
+        .having("publication_count", "gte", 10)
+        .order_by("total_citations", "desc")
+        .limit(25)
+        .execute())
+
+**Advanced Result Processing**::
+
+    # Diverse results with recency boost and context
+    results = (db.query_builder()
+        .search("artificial intelligence trends")
+        .filter("status", "published")
+        .semantic_filter("topic", "emerging technology", threshold=0.7)
+        .context(window_size=3)                      # Include surrounding chunks
+        .rerank_by_recency("published_date", weight=0.4)
+        .rerank_by_diversity("source", weight=0.2)
+        .semantic_dedup(0.85)
+        .order_by_score()
+        .limit(30)
+        .execute())
+
+    # Return individual chunks instead of full documents
+    chunks = (db.query_builder()
+        .search("implementation details")
+        .filter("document_type", "tutorial")
+        .chunks()                                    # Return chunks, not documents
+        .order_by("score", "desc")
+        .limit(100)
+        .execute())
+
+**Asynchronous Execution**::
+
+    # Async query with semantic filtering
+    async def search_research_papers():
+        results = await (db.query_builder()
+            .search("quantum computing algorithms")
+            .filter("year", gte_=2022)
+            .semantic_filter("approach", "quantum machine learning", threshold=0.8)
+            .order_by("citation_count", "desc")
+            .limit(25)
+            .execute_async())
+        return results
+
+    # Async streaming for large result sets
+    async def process_large_dataset():
+        async for batch in (db.query_builder()
+            .search("climate change")
+            .filter("source", "scientific_journals")
+            .stream_async(batch_size=50)):
+
+            # Process each batch
+            await process_batch(batch)
+
+**Performance and Debugging**::
+
+    # Query with performance explanation
+    results = (db.query_builder()
+        .search("machine learning optimization")
+        .filter("complexity", lt_=100)
+        .explain(detailed=True)                      # Include execution stats
+        .execute())
+
+    # Validation before execution
+    builder = (db.query_builder()
+        .search("data science")
+        .group_by("department")
+        .avg_by("performance_score"))
+
+    validation = builder.validate()
+    if validation["valid"]:
+        results = builder.execute()
+    else:
+        print("Query issues:", validation["issues"])
+
+    # Debug query structure
+    debug_info = builder.debug_info()
+    print("SQL Preview:", debug_info["sql_preview"])
+    print("Complexity:", debug_info["query_complexity"])
+
+**Specialized Search Patterns**::
+
+    # Research literature review workflow
+    papers = (db.query_builder()
+        .search("transformer architecture")
+        .filter("venue", in_=["ICML", "NeurIPS", "ICLR"])
+        .filter("year", gte_=2017)
+        .semantic_filter("contribution", "attention mechanism", threshold=0.8)
+        .rerank_by_recency("published_date", weight=0.3)
+        .semantic_dedup(0.9)
+        .documents(scoring_method="frequency_boost")
+        .order_by("citation_count", "desc")
+        .limit(100)
+        .execute())
+
+    # Content recommendation system
+    recommendations = (db.query_builder()
+        .semantic_filter("content", user_interests, threshold=0.7)
+        .filter("age_rating", lte_=user_age)
+        .filter("language", user_language)
+        .rerank_by_diversity("genre", weight=0.4)
+        .order_by("popularity_score", "desc")
+        .limit(20)
+        .execute())
+
+    # Duplicate detection and analysis
+    potential_duplicates = (db.query_builder()
+        .filter("status", "new")
+        .semantic_dedup(threshold=0.95)
+        .group_by("semantic_cluster")               # Hypothetical clustering
+        .count_by("*", "cluster_size")
+        .having_count("gt", 1)                      # Multiple items per cluster
+        .order_by("cluster_size", "desc")
+        .execute())
+
+Notes
+-----
+- The QueryBuilder uses a fluent interface where each method returns a new builder instance
+- Semantic filtering requires embedding generation and can be computationally expensive
+- Async execution is recommended for I/O bound operations and large datasets
+- Query validation helps catch configuration errors before expensive operations
+- The explain() method provides insights into query execution and performance
+
+See Also
+--------
+localvectordb.core : Core database classes and data structures
+localvectordb._filters : Filter operators and implementations
+"""
 from __future__ import annotations
 
 import asyncio

@@ -166,6 +166,31 @@ Searching Documents
        print(f"Metadata: {result.metadata}")
        print("---")
 
+Due to increasing context windows in modern LLMs, by default, the results of a search return the entire document
+where there is a match. It is also possible to retrieve the matched chunks, or a context window surrounding the
+matched chunks to include `N` chunks before and after the relevant chunk. Use ``return_type="chunks"`` or ``return_type="context"``
+when calling the ``.query(...)`` method. Adjust the context window with the ``context_window`` keyword-argument.
+
+.. code-block:: python
+
+   # Return only the relevant chunks
+   results = db.query(
+       "machine learning algorithms",
+       search_type="vector",
+       return_type="chunks",
+       k=5
+   )
+
+   # Return a context-window surrounding the relevant chunks
+   results = db.query(
+       "machine learning algorithms",
+       search_type="vector",
+       return_type="context",
+       k=5,
+       context_window=2  # 2 chunks before and after the relevant chunk
+   )
+
+
 Retrieving Documents
 ^^^^^^^^^^^^^^^^^^^^
 
@@ -225,6 +250,8 @@ Filtering and Querying Metadata
        offset=40  # Page 3 of 20 items per page
    )
 
+.. todo: add query builder examples
+
 Advanced Usage
 --------------
 
@@ -260,6 +287,8 @@ Multiple Embedding Providers
        embedding_model="text-embedding-3-small",
        embedding_config={"api_key": "your_key"}
    )
+
+.. important:: Don't leave your API keys in code committed to version control. Make sure to use environment variables or other more secure techniques.
 
 Batch Operations
 ^^^^^^^^^^^^^^^^
@@ -348,7 +377,7 @@ Database Statistics and Management
 .. code-block:: python
 
    # Get database statistics
-   stats = db.stats
+   stats = db.get_stats()
    print(f"Documents: {stats['documents']}")
    print(f"Chunks: {stats['chunks']}")
    print(f"Embedding model: {stats['embedding_model']}")

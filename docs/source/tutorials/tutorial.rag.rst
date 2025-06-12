@@ -400,7 +400,7 @@ Let's create a simple command-line interface for our RAG chatbot:
                    continue
 
                elif user_input.lower() == 'stats':
-                   stats = db.stats
+                   stats = db.get_stats()
                    print(f"""
    Database Statistics:
    - Documents: {stats['documents']}
@@ -631,13 +631,13 @@ Here's how to tie everything together:
            print("Initializing knowledge base...")
 
            # Add more sample documents if database is empty
-           if db.stats['documents'] == 0:
+           if db.get_stats()['documents'] == 0:
                print("Adding sample documents...")
                ingested_ids = ingest_documents(db, sample_documents)
                print(f"Added {len(ingested_ids)} documents to knowledge base")
 
            # Show database stats
-           stats = db.stats
+           stats = db.get_stats()
            print(f"Knowledge base ready: {stats['documents']} documents, {stats['chunks']} chunks")
 
            # Start chat interface

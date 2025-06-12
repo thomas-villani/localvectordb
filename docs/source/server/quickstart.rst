@@ -1,25 +1,9 @@
-Server
-======
-
-LocalVectorDB Server provides a production-ready HTTP API for managing multiple vector databases. It features comprehensive authentication, configuration management, and a powerful CLI for administration.
-
-Overview
---------
-
-The LocalVectorDB Server is built on Flask and provides:
-
-- *RESTful API*: Complete HTTP API for all database operations
-- *Multi-Database Management*: Handle multiple databases simultaneously
-- *Authentication & Security*: API key authentication with CORS support
-- *Configuration Management*: Flexible TOML/YAML/JSON configuration
-- *CLI Administration*: Comprehensive command-line tools
-- *Production Features*: Logging, metrics, rate limiting
-
-Quick Start
------------
+Server Quick Start
+------------------
 
 Starting the Server
 ^^^^^^^^^^^^^^^^^^^
+The easiest way to get started with the server is through the CLI.
 
 .. code-block:: bash
 
@@ -68,9 +52,10 @@ Basic API Usage
 
 
 Learn More
-----------
-- :doc:`Server Routes API <routes>`
-- :doc:`Server Configuration <config>`
-- :doc:`Command Line Interface (CLI) Overview <cli>`
-- :doc:`Advanced Server Usage <server.advanced>`
+^^^^^^^^^^
 
+- :doc:`Command Line Interface (CLI) Documentation <../cli>`
+- :doc:`routes`
+- :doc:`config`
+- :doc:`config.params`
+- :doc:`advanced`
