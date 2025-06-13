@@ -943,52 +943,789 @@ Search Operations
    The application of machine learning techniques to real-world problems requires
    careful consideration of data quality, model selection, and evaluation metrics...
 
+Schema Management
+^^^^^^^^^^^^^^^^^
+
+The LocalVectorDB CLI provides comprehensive metadata schema management capabilities, allowing you to view, update, and
+evolve database schemas with optional column remapping to rename existing columns while preserving data.
+
+View Current Schema
+"""""""""""""""""""
+
+.. code-block:: bash
+
+   # Display current schema (pretty format)
+   lvdb db my_database schema show
+
+   # Table format for overview
+   lvdb db my_database schema show --format table
+
+   # JSON format for programmatic use
+   lvdb db my_database schema show --format json
+
+   # Save schema to file
+   lvdb db my_database schema show --format json --output current_schema.json
+
+**Options**:
+
+- ``--format, -f``: Output format (pretty, json, table)
+- ``--output, -o``: Output to file instead of stdout
+
+**Example Output (Table Format)**:
+
+.. code-block:: text
+
+   +------------------+----------+---------+----------+---------------+
+   | Field Name       | Type     | Indexed | Required | Default Value |
+   +------------------+----------+---------+----------+---------------+
+   | title            | TEXT     | ✓       | ✓        | None          |
+   | author           | TEXT     | ✓       | ✗        | Unknown       |
+   | publication_year | INTEGER  | ✓       | ✗        | None          |
+   | tags             | JSON     | ✗       | ✗        | []            |
+   +------------------+----------+---------+----------+---------------+
+
+Update Schema
+"""""""""""""
+
+Update database metadata schema from files or JSON strings, with optional column remapping for renaming existing columns:
+
+.. code-block:: bash
+
+   # Update schema from JSON file
+   lvdb db my_database schema update --schema new_schema.json
+
+   # Update with column remapping
+   lvdb db my_database schema update \
+     --schema new_schema.json \
+     --mapping '{"old_author": "author", "pub_year": "publication_year"}'
+
+   # Update from JSON string
+   lvdb db my_database schema update \
+     --schema-string '{"title": "text", "author": "text", "year": "integer"}'
+
+   # Dry run to preview changes
+   lvdb db my_database schema update --schema new_schema.json --dry-run
+
+   # Skip confirmation prompts
+   lvdb db my_database schema update --schema new_schema.json --force
+
+   # Verbose output with detailed progress
+   lvdb db my_database schema update --schema new_schema.json --verbose
+
+   # Column mapping from file
+   lvdb db my_database schema update \
+     --schema new_schema.json \
+     --mapping-file column_mappings.json
+
+**Options**:
+
+- ``--schema, -s``: JSON string or path to JSON file containing new schema definition
+- ``--mapping, -m``: Column mapping as JSON string or path to JSON file (old_name: new_name)
+- ``--drop-columns, --drop``: Actually drop removed columns (WARNING: data loss)
+- ``--dry-run, --dry``: Show what would be changed without making changes
+- ``--force, -f``: Skip confirmation prompts
+- ``--verbose, -v``: Show detailed output
+
+**Schema File Format**:
+
+.. code-block:: json
+
+   {
+     "title": {
+       "type": "text",
+       "indexed": true,
+       "required": true
+     },
+     "author": {
+       "type": "text",
+       "indexed": true,
+       "required": false,
+       "default_value": "Unknown"
+     },
+     "tags": {
+       "type": "json",
+       "indexed": false,
+       "required": false,
+       "default_value": []
+     },
+     "rating": {
+       "type": "real",
+       "indexed": true,
+       "required": false,
+       "default_value": 0.0
+     }
+   }
+
+**Column Mapping Format**:
+
+.. code-block:: json
+
+   {
+     "old_column_name": "new_column_name",
+     "author_name": "author",
+     "pub_year": "publication_year",
+     "rating_text": "rating"
+   }
+
+**Example Update Session**:
+
+.. code-block:: console
+
+   $ lvdb db papers schema update --schema new_schema.json --mapping '{"old_author": "author"}'
+
+   Planned Changes:
+     New fields: author, genre, rating
+     Removed fields: category
+     Column remapping:
+       old_author → author
+
+   Proceed with schema update? [y/N]: y
+
+   Applying schema update...
+
+   Schema Update Complete!
+     Added fields: author, genre, rating
+     Remapped columns:
+       old_author → author (150 rows transferred)
+     Populated defaults:
+       genre: 150 rows updated
+       rating: 150 rows updated
+
+**Supported Field Types**:
+
+- ``text``: String values
+- ``integer``: Whole numbers
+- ``real``: Floating-point numbers
+- ``boolean``: True/false values
+- ``date``: Date strings (ISO format)
+- ``json``: JSON objects and arrays
+
+**Type Conversion During Remapping**:
+
+The system supports safe type conversions during column remapping:
+
+- ``TEXT`` → Any type (SQLite handles conversion)
+- ``INTEGER`` → ``REAL`` (safe numeric widening)
+- ``BOOLEAN`` → ``INTEGER/REAL`` (True=1, False=0)
+- ``JSON`` → ``TEXT`` (already stored as text)
+
+Export Schema
+"""""""""""""
+
+Export current metadata schema to a file for backup or editing:
+
+.. code-block:: bash
+
+   # Export to JSON file
+   lvdb db my_database schema export --output current_schema.json
+
+   # Export with sample data for reference
+   lvdb db my_database schema export --output schema_with_samples.json --include-data
+
+   # Export to TOML format (requires: pip install toml)
+   lvdb db my_database schema export --output schema.toml --format toml
+
+**Options**:
+
+- ``--output, -o``: Output file path (required)
+- ``--format, -f``: Output format (json, toml)
+- ``--include-data, --with-data``: Include sample data for each field type
+
+**Example Output**:
+
+.. code-block:: console
+
+   $ lvdb db papers schema export --output backup_schema.json
+   Schema exported to backup_schema.json
+   Fields exported: 4
+
+
+
+Common Schema Evolution Patterns
+""""""""""""""""""""""""""""""""
+
+**Simple Column Renaming**:
+
+.. code-block:: bash
+
+   # Rename columns while preserving data
+   lvdb db my_database schema update \
+     --schema-string '{"title": "text", "author": "text", "year": "integer"}' \
+     --mapping '{"doc_title": "title", "author_name": "author", "pub_year": "year"}'
+
+**Adding New Fields with Defaults**:
+
+.. code-block:: bash
+
+   # Add new fields with default values
+   lvdb db my_database schema update \
+     --schema new_schema.json
+
+   # Where new_schema.json contains:
+   # {
+   #   "title": "text",
+   #   "author": "text",
+   #   "category": {"type": "text", "default_value": "general"},
+   #   "tags": {"type": "json", "default_value": []},
+   #   "rating": {"type": "real", "default_value": 0.0}
+   # }
+
+**Type Conversion During Migration**:
+
+.. code-block:: bash
+
+   # Convert text fields to appropriate types
+   lvdb db my_database schema update \
+     --schema converted_schema.json \
+     --mapping '{"rating_text": "rating", "is_published": "published_flag"}'
+
+   # This converts:
+   # rating_text (TEXT) → rating (REAL)
+   # is_published (TEXT) → published_flag (BOOLEAN)
+
+**Safe Schema Evolution Workflow**:
+
+.. code-block:: bash
+
+   # 1. Backup current schema
+   lvdb db my_database schema export --output backup_$(date +%Y%m%d).json
+
+   # 2. Test changes with dry run
+   lvdb db my_database schema update --schema new_schema.json --mapping-file mappings.json --dry-run
+
+   # 3. Apply changes if satisfied
+   lvdb db my_database schema update --schema new_schema.json --mapping-file mappings.json --verbose
+
+   # 4. Verify results
+   lvdb db my_database schema show table
+   lvdb db my_database search "test query" 3
+
+Best Practices
+""""""""""""""
+
+**Planning Schema Changes**:
+
+.. code-block:: bash
+
+   # Always export current schema before major changes
+   lvdb db my_database schema export --output backup_schema.json
+
+   # Use dry-run to preview all changes
+   lvdb db my_database schema update --schema new_schema.json --dry-run
+
+   # Test on a copy of your database first
+   cp -r my_database my_database_test
+   lvdb db my_database_test schema update --schema new_schema.json
+
+**Column Mapping Guidelines**:
+
+- Plan mappings carefully and test with sample data
+- Use descriptive column names that follow consistent conventions
+- Consider type compatibility when mapping between different field types
+- Document schema changes for team collaboration
+
+**Error Recovery**:
+
+.. code-block:: bash
+
+   # If something goes wrong, restore from backup
+   lvdb db my_database schema update --schema backup_schema.json --force
+
+   # Check for data integrity after major changes
+   lvdb db my_database stats
+   lvdb db my_database search "test query"
+
+**Production Considerations**:
+
+- Always backup schema before production changes
+- Use staged deployments (dev → staging → production)
+- Monitor application logs after schema updates
+- Have rollback procedures ready
+- Test with representative data volumes
+
+**Example Production Workflow**:
+
+.. code-block:: bash
+
+   #!/bin/bash
+   # Production schema update script
+
+   DB_NAME="production_database"
+   SCHEMA_FILE="new_schema_v2.json"
+   MAPPING_FILE="v1_to_v2_mappings.json"
+
+   # 1. Backup current schema
+   echo "Creating backup..."
+   lvdb db $DB_NAME schema export --output "backup_$(date +%Y%m%d_%H%M%S).json"
+
+   # 2. Validate changes on test database
+   echo "Testing on copy..."
+   cp -r $DB_NAME "${DB_NAME}_test"
+   lvdb db "${DB_NAME}_test" schema update --schema $SCHEMA_FILE --mapping $MAPPING_FILE
+
+   if [ $? -ne 0 ]; then
+       echo "Schema update failed on test database. Aborting."
+       rm -rf "${DB_NAME}_test"
+       exit 1
+   fi
+
+   # 3. Test search functionality on copy
+   echo "Testing search functionality..."
+   lvdb db "${DB_NAME}_test" search "test query" 5 > /dev/null
+
+   if [ $? -ne 0 ]; then
+       echo "Search test failed. Aborting."
+       rm -rf "${DB_NAME}_test"
+       exit 1
+   fi
+
+   # 4. Apply to production
+   echo "Applying to production..."
+   lvdb db $DB_NAME schema update --schema $SCHEMA_FILE --mapping-file $MAPPING_FILE --force
+
+   # 5. Verify production update
+   echo "Verifying production update..."
+   lvdb db $DB_NAME schema show table
+   lvdb db $DB_NAME stats
+
+   # 6. Cleanup
+   rm -rf "${DB_NAME}_test"
+   echo "Schema update completed successfully!"
+
+This schema management system provides a safe, powerful way to evolve your database structure while preserving data integrity and maintaining application compatibility.
+
 Interactive Shell
 ^^^^^^^^^^^^^^^^^
 
-Start an interactive shell for database operations:
+Start an interactive shell for comprehensive database operations, including document management and schema evolution:
 
 .. code-block:: bash
 
    lvdb db my_database shell
 
-**Shell Commands**:
+The interactive shell provides a REPL (Read-Eval-Print Loop) environment for performing multiple operations without repeatedly connecting to the database. It includes full schema management capabilities alongside traditional document operations.
+
+**Shell Startup**:
 
 .. code-block:: console
 
-   my_database> help
-   Available commands:
-     search "<query>" [limit] [type] - Search for documents
-     get <id>                       - Get document by ID
-     add <file or glob>             - Add file(s) to database
-     delete <id>                    - Delete document by ID
-     list [limit] [offset]          - List document IDs
-     count                          - Show document count
-     stats                          - Show database statistics
-     info                           - Show database information
-     clear                          - Clear the console
-     exit/quit                      - Exit shell
+   $ lvdb db research_papers shell
+   Connected to database: research_papers
+   Documents: 1250, Chunks: 8500
+   Type 'help' for available commands, 'exit' to quit
 
-   my_database> search "neural networks" 5 vector
-   Vector search for `neural networks`...
+   research_papers>
 
-   Results:
-   ========
+Available Commands
+""""""""""""""""""
 
-   1. doc_789 (Score: 0.9123):
-      Neural networks are computational models inspired by biological neural networks...
-      -----
+**Document Operations**:
 
-   my_database> add *.txt
-   Found 5 files. Adding to database...
+.. code-block:: console
+
+   search "<query>" [limit] [type]    - Search for documents
+   get <id>                          - Get document by ID
+   add <file or glob>                - Add file(s) to database
+   delete <id>                       - Delete document by ID
+   list [limit] [offset]             - List document IDs
+   count                             - Show document count
+   stats                             - Show database statistics
+   info                              - Show database information
+
+**Schema Management**:
+
+.. code-block:: console
+
+   schema show [format]              - Show current schema (pretty|json|table)
+   schema update <file>              - Update schema from JSON file
+   schema update-str <json>          - Update schema from JSON string
+   schema export <file>              - Export current schema to file
+   schema map <old> <new>            - Add column mapping for next update
+   schema map-clear                  - Clear column mappings
+   schema map-show                   - Show current column mappings
+
+**General Commands**:
+
+.. code-block:: console
+
+   clear                             - Clear the console
+   help                              - Show this help
+   exit/quit                         - Exit shell
+
+Document Operations Examples
+""""""""""""""""""""""""""""
+
+**Search Operations**:
+
+.. code-block:: console
+
+   research_papers> search "neural networks" 3 vector
+   Found 3 results:
+   ========================================
+
+   1. Document: paper_001 (Score: 0.8745)
+   ----------------------------------------
+   Neural networks are computational models inspired by biological neural networks...
+
+   2. Document: paper_127 (Score: 0.8234)
+   ----------------------------------------
+   Deep learning approaches to natural language processing...
+
+   3. Document: paper_089 (Score: 0.7892)
+   ----------------------------------------
+   Reinforcement learning in autonomous systems...
+
+   research_papers> search "machine learning" 5 hybrid
+   Hybrid search for `machine learning`...
+   Found 5 results combining vector and keyword search...
+
+**Document Management**:
+
+.. code-block:: console
+
+   research_papers> add new_papers/*.md
+   Found 3 files. Adding to database...
+   Successfully added 3 documents
+   Created IDs: paper_1251, paper_1252, paper_1253
+
+   research_papers> get paper_001
+   Document: paper_001
+   ----------------------------------------
+   Neural networks are computational models inspired by biological neural networks...
+
+   research_papers> delete paper_old_001
+   Delete document 'paper_old_001'? [y/N]: y
+   Successfully deleted document: paper_old_001
+
+   research_papers> list 5 10
+   paper_011
+   paper_012
+   paper_013
+   paper_014
+   paper_015
+
+   research_papers> count
+   Total documents: 1253
+
+**Database Information**:
+
+.. code-block:: console
+
+   research_papers> stats
+   Database Statistics:
+   Documents: 1253, Chunks: 8521, Avg chunks/doc: 6.80
+   Embedding model: nomic-embed-text
+   Provider: ollama
+   Chunk size: 500, Overlap: 50
+   FTS enabled: True
+
+   research_papers> info
+   Database Info
+   -------------
+     Database: research_papers
+     Embedding model: nomic-embed-text
+     Total Documents: 1253
+     Total Chunks: 8521
+     Schema fields: 6
+
+Schema Management Examples
+""""""""""""""""""""""""""
+
+**View Current Schema**:
+
+.. code-block:: console
+
+   research_papers> schema show table
+   +------------------+----------+---------+----------+---------------+
+   | Field Name       | Type     | Indexed | Required | Default Value |
+   +------------------+----------+---------+----------+---------------+
+   | title            | TEXT     | ✓       | ✓        | None          |
+   | authors          | JSON     | ✗       | ✗        | []            |
+   | journal          | TEXT     | ✓       | ✗        | None          |
+   | publication_year | INTEGER  | ✓       | ✗        | None          |
+   | keywords         | JSON     | ✗       | ✗        | []            |
+   | citation_count   | INTEGER  | ✓       | ✗        | 0             |
+   +------------------+----------+---------+----------+---------------+
+
+   research_papers> schema show json
+   {
+     "title": {
+       "type": "text",
+       "indexed": true,
+       "required": true,
+       "default_value": null
+     },
+     "authors": {
+       "type": "json",
+       "indexed": false,
+       "required": false,
+       "default_value": []
+     }
+   }
+
+**Schema Export and Backup**:
+
+.. code-block:: console
+
+   research_papers> schema export backup_schema.json
+   Schema exported to backup_schema.json
+   Fields exported: 6
+
+   research_papers> schema export schema_$(date +%Y%m%d).json
+   Schema exported to schema_20241201.json
+   Fields exported: 6
+
+**Column Mapping and Schema Updates**:
+
+.. code-block:: console
+
+   research_papers> schema map paper_title title
+   Added column mapping: paper_title → title
+
+   research_papers> schema map author_list authors
+   Added column mapping: author_list → authors
+
+   research_papers> schema map pub_year publication_year
+   Added column mapping: pub_year → publication_year
+
+   research_papers> schema map-show
+   Current column mappings:
+     paper_title → title
+     author_list → authors
+     pub_year → publication_year
+
+   research_papers> schema update new_research_schema.json
+
+   Planned Changes:
+     New fields: keywords, citation_count, impact_factor
+     Removed fields: old_category
+     Column remapping:
+       paper_title → title
+       author_list → authors
+       pub_year → publication_year
+
+   Proceed with schema update? [y/N]: y
+
+   Applying schema update...
+
+   Schema Update Complete!
+     Added fields: keywords, citation_count, impact_factor
+     Remapped columns:
+       paper_title → title (1253 rows transferred)
+       author_list → authors (1253 rows transferred)
+       pub_year → publication_year (1253 rows transferred)
+     Populated defaults:
+       keywords: 1253 rows updated
+       citation_count: 1253 rows updated
+
+**Quick Schema Updates**:
+
+.. code-block:: console
+
+   research_papers> schema update-str '{"title": "text", "author": "text", "tags": {"type": "json", "default_value": []}}'
+   Apply schema update? [y/N]: y
+   Schema updated successfully!
+
+   research_papers> schema map-clear
+   Column mappings cleared
+
+Complete Workflow Examples
+""""""""""""""""""""""""""
+
+**Research Paper Database Migration**:
+
+.. code-block:: console
+
+   papers> # Starting with legacy schema
+   papers> schema show table
+   +---------------+----------+---------+----------+---------------+
+   | Field Name    | Type     | Indexed | Required | Default Value |
+   +---------------+----------+---------+----------+---------------+
+   | paper_title   | TEXT     | ✓       | ✓        | None          |
+   | author_names  | TEXT     | ✗       | ✗        | None          |
+   | journal_name  | TEXT     | ✓       | ✗        | None          |
+   | year_pub      | INTEGER  | ✓       | ✗        | None          |
+   +---------------+----------+---------+----------+---------------+
+
+   papers> # Export backup before changes
+   papers> schema export legacy_backup.json
+   Schema exported to legacy_backup.json
+   Fields exported: 4
+
+   papers> # Set up column mappings for modernization
+   papers> schema map paper_title title
+   Added column mapping: paper_title → title
+
+   papers> schema map author_names authors
+   Added column mapping: author_names → authors
+
+   papers> schema map journal_name journal
+   Added column mapping: journal_name → journal
+
+   papers> schema map year_pub publication_year
+   Added column mapping: year_pub → publication_year
+
+   papers> # Review planned mappings
+   papers> schema map-show
+   Current column mappings:
+     paper_title → title
+     author_names → authors
+     journal_name → journal
+     year_pub → publication_year
+
+   papers> # Apply modern research schema
+   papers> schema update modern_research_schema.json
+
+   Planned Changes:
+     New fields: title, authors, journal, publication_year, keywords, doi, abstract
+     Removed fields: (none - all mapped)
+     Column remapping:
+       paper_title → title
+       author_names → authors
+       journal_name → journal
+       year_pub → publication_year
+
+   Proceed with schema update? [y/N]: y
+
+   Applying schema update...
+
+   Schema Update Complete!
+     Added fields: title, authors, journal, publication_year, keywords, doi, abstract
+     Remapped columns:
+       paper_title → title (892 rows transferred)
+       author_names → authors (892 rows transferred)
+       journal_name → journal (856 rows transferred)
+       year_pub → publication_year (892 rows transferred)
+     Populated defaults:
+       keywords: 892 rows updated
+       doi: 892 rows updated
+       abstract: 892 rows updated
+
+   papers> # Verify the migration worked
+   papers> schema show table
+   +------------------+----------+---------+----------+---------------+
+   | Field Name       | Type     | Indexed | Required | Default Value |
+   +------------------+----------+---------+----------+---------------+
+   | title            | TEXT     | ✓       | ✓        | None          |
+   | authors          | JSON     | ✗       | ✗        | []            |
+   | journal          | TEXT     | ✓       | ✗        | None          |
+   | publication_year | INTEGER  | ✓       | ✗        | None          |
+   | keywords         | JSON     | ✗       | ✗        | []            |
+   | doi              | TEXT     | ✓       | ✗        | None          |
+   | abstract         | TEXT     | ✓       | ✗        | None          |
+   +------------------+----------+---------+----------+---------------+
+
+   papers> # Test search with new schema
+   papers> search "machine learning" 3
+   Found 3 results:
+   ========================================
+
+   1. Document: paper_045 (Score: 0.9123)
+   ----------------------------------------
+   Machine learning techniques for automated research discovery...
+
+   papers> # Test document retrieval
+   papers> get paper_045
+   Document: paper_045
+   ----------------------------------------
+   Machine learning techniques for automated research discovery...
+
+   Metadata:
+   {
+     "title": "ML for Research Discovery",
+     "authors": ["Chen, L.", "Rodriguez, M."],
+     "journal": "Nature Machine Intelligence",
+     "publication_year": 2023,
+     "keywords": ["machine learning", "research", "automation"],
+     "doi": "10.1038/s42256-023-00123-4",
+     "abstract": null
+   }
+
+   papers> # Schema migration successful!
+   papers> count
+   Total documents: 892
+
+**Development and Testing Workflow**:
+
+.. code-block:: console
+
+   dev_db> # Quick schema prototyping
+   dev_db> schema update-str '{"name": "text", "category": "text", "priority": {"type": "integer", "default_value": 1}}'
+   Apply schema update? [y/N]: y
+   Schema updated successfully!
+
+   dev_db> # Add test data
+   dev_db> add test_documents/*.txt
    Successfully added 5 documents
-   Created IDs: doc_890, doc_891, doc_892, doc_893, doc_894
 
-   my_database> count
-   Document count: 1255, Chunk count: 8505
+   dev_db> # Test search functionality
+   dev_db> search "test query" 3
+   Found 3 results...
 
-   my_database> exit
-   Database connection closed.
+   dev_db> # Export schema for production use
+   dev_db> schema export production_ready_schema.json
+   Schema exported to production_ready_schema.json
+   Fields exported: 3
+
+   dev_db> # Clear screen and continue working
+   dev_db> clear
+
+   dev_db> # Final verification
+   dev_db> stats
+   Database Statistics:
+   Documents: 5, Chunks: 23, Avg chunks/doc: 4.60
+
+
+Shell vs CLI Command Comparison
+"""""""""""""""""""""""""""""""
+
+**Interactive Shell Advantages**:
+
+- **Persistent Connection**: No reconnection overhead between commands
+- **Command History**: Easy to repeat and modify previous commands
+- **Context Awareness**: Schema mappings persist across commands
+- **Real-time Feedback**: Immediate results and error handling
+- **Workflow Continuity**: Schema updates → test search → verify data
+
+**When to Use Shell vs CLI**:
+
+**Use Interactive Shell for**:
+
+.. code-block:: bash
+
+   # Data exploration and analysis
+   lvdb db research shell
+   # > search "topic A" 10
+   # > search "topic B" 10
+   # > search "topic C" 10
+
+   # Schema development and testing
+   # > schema show
+   # > schema update-str '{"test": "text"}'
+   # > add test.txt
+   # > search "test"
+
+   # Complex migrations
+   # > schema export backup.json
+   # > schema map old new
+   # > schema update new.json
+   # > search "verify"
+
+**Use CLI Commands for**:
+
+.. code-block:: bash
+
+   # Scripting and automation
+   lvdb db prod search "query" --json > results.json
+
+   # One-time operations
+   lvdb db prod add important_doc.txt
+
+   # Production deployments
+   lvdb db prod schema update --schema prod_schema.json --force
+
+This enhanced interactive shell provides a powerful environment for both day-to-day database operations and complex
+schema evolution tasks, making it easy to iterate, test, and deploy changes safely.
 
 
 Advanced Usage Examples

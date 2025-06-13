@@ -83,7 +83,7 @@ Remote Database Connection
    db = VectorDB(
        name="my_database",
        base_path="http://localhost:5000",
-       api_key="your_api_key",
+       api_key="your_api_key",   # Or set LVDB_API_KEY environment variable
        create_if_not_exists=True,
        metadata_schema=schema
    )
@@ -285,7 +285,7 @@ Multiple Embedding Providers
        "db2",
        embedding_provider="openai",
        embedding_model="text-embedding-3-small",
-       embedding_config={"api_key": "your_key"}
+       embedding_config={"api_key": "your_key"}  # Or set OPENAI_API_KEY environment variable
    )
 
 .. important:: Don't leave your API keys in code committed to version control. Make sure to use environment variables or other more secure techniques.

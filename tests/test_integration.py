@@ -97,6 +97,7 @@ class TestLocalVectorDBIntegration:
 
                 db.index = mock_index
                 db._embedding_provider = mock_provider
+                db._embedding_dimension = mock_provider.get_dimension()
 
                 yield db
             finally:
@@ -559,6 +560,7 @@ class TestLocalVectorDBIntegration:
                     )
                     db.index = mock_index
                     db._embedding_provider = mock_provider
+                    db._embedding_dimension = mock_provider.get_dimension()
 
                     # Create large document (smaller for better test performance)
                     large_doc = " ".join([
@@ -865,6 +867,7 @@ class TestLocalVectorDBIntegration:
                 )
                 db.index = mock_index
                 db._embedding_provider = mock_provider
+                db._embedding_dimension = mock_provider.get_dimension()
 
                 # Mix of different content types and lengths
                 mixed_documents = [

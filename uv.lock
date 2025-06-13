@@ -291,6 +291,15 @@ wheels = [
 ]
 
 [[package]]
+name = "execnet"
+version = "2.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/ff/b4c0dc78fbe20c3e59c0c7334de0c27eb4001a2b2017999af398bf730817/execnet-2.1.1.tar.gz", hash = "sha256:5189b52c6121c24feae288166ab41b32549c7e2348652736540b9e6e7d4e72e3", size = 166524 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/09/2aea36ff60d16dd8879bdb2f5b3ee0ba8d08cbbdcdfe870e695ce3784385/execnet-2.1.1-py3-none-any.whl", hash = "sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc", size = 40612 },
+]
+
+[[package]]
 name = "faiss-cpu"
 version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -497,9 +506,39 @@ dev = [
     { name = "freezegun" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-xdist" },
     { name = "sphinx" },
     { name = "sphinx-autodoc-typehints" },
+    { name = "sphinx-copybutton" },
     { name = "sphinx-rtd-theme" },
+]
+file-extraction = [
+    { name = "beautifulsoup4" },
+    { name = "ebooklib" },
+    { name = "lxml" },
+    { name = "openpyxl" },
+    { name = "pdfplumber" },
+    { name = "pypdf2" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "striprtf" },
+]
+file-extraction-office = [
+    { name = "openpyxl" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+]
+file-extraction-pdf = [
+    { name = "pdfplumber" },
+    { name = "pypdf2" },
+]
+file-extraction-rtf-epub = [
+    { name = "ebooklib" },
+    { name = "striprtf" },
+]
+file-extraction-web = [
+    { name = "beautifulsoup4" },
+    { name = "lxml" },
 ]
 server = [
     { name = "bcrypt" },
@@ -507,23 +546,6 @@ server = [
     { name = "flask-caching" },
     { name = "flask-cors" },
     { name = "flask-limiter" },
-]
-server-extractors-office = [
-    { name = "openpyxl" },
-    { name = "python-docx" },
-    { name = "python-pptx" },
-]
-server-extractors-pdf = [
-    { name = "pdfplumber" },
-    { name = "pypdf2" },
-]
-server-extractors-rtf-epub = [
-    { name = "ebooklib" },
-    { name = "striprtf" },
-]
-server-extractors-web = [
-    { name = "beautifulsoup4" },
-    { name = "lxml" },
 ]
 
 [package.metadata]
@@ -539,9 +561,39 @@ dev = [
     { name = "freezegun", specifier = ">=1.5.2" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-xdist", specifier = ">=3.7.0" },
     { name = "sphinx", specifier = ">=8.2.3" },
     { name = "sphinx-autodoc-typehints", specifier = ">=3.2.0" },
+    { name = "sphinx-copybutton", specifier = ">=0.5.2" },
     { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
+]
+file-extraction = [
+    { name = "beautifulsoup4", specifier = ">=4.13.4" },
+    { name = "ebooklib", specifier = ">=0.19" },
+    { name = "lxml", specifier = ">=5.4.0" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "pdfplumber", specifier = ">=0.11.6" },
+    { name = "pypdf2", specifier = ">=3.0.1" },
+    { name = "python-docx", specifier = ">=1.1.2" },
+    { name = "python-pptx", specifier = ">=1.0.2" },
+    { name = "striprtf", specifier = ">=0.0.29" },
+]
+file-extraction-office = [
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "python-docx", specifier = ">=1.1.2" },
+    { name = "python-pptx", specifier = ">=1.0.2" },
+]
+file-extraction-pdf = [
+    { name = "pdfplumber", specifier = ">=0.11.6" },
+    { name = "pypdf2", specifier = ">=3.0.1" },
+]
+file-extraction-rtf-epub = [
+    { name = "ebooklib", specifier = ">=0.19" },
+    { name = "striprtf", specifier = ">=0.0.29" },
+]
+file-extraction-web = [
+    { name = "beautifulsoup4", specifier = ">=4.13.4" },
+    { name = "lxml", specifier = ">=5.4.0" },
 ]
 server = [
     { name = "bcrypt", specifier = ">=4.3.0" },
@@ -549,23 +601,6 @@ server = [
     { name = "flask-caching", specifier = ">=2.3.1" },
     { name = "flask-cors", specifier = ">=6.0.0" },
     { name = "flask-limiter", specifier = ">=3.12" },
-]
-server-extractors-office = [
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "python-docx", specifier = ">=1.1.2" },
-    { name = "python-pptx", specifier = ">=1.0.2" },
-]
-server-extractors-pdf = [
-    { name = "pdfplumber", specifier = ">=0.11.6" },
-    { name = "pypdf2", specifier = ">=3.0.1" },
-]
-server-extractors-rtf-epub = [
-    { name = "ebooklib", specifier = ">=0.19" },
-    { name = "striprtf", specifier = ">=0.0.29" },
-]
-server-extractors-web = [
-    { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "lxml", specifier = ">=5.4.0" },
 ]
 
 [[package]]
@@ -889,6 +924,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-xdist"
+version = "3.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/dc/865845cfe987b21658e871d16e0a24e871e00884c545f246dd8f6f69edda/pytest_xdist-3.7.0.tar.gz", hash = "sha256:f9248c99a7c15b7d2f90715df93610353a485827bc06eefb6566d23f6400f126", size = 87550 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/b2/0e802fde6f1c5b2f7ae7e9ad42b83fd4ecebac18a8a8c2f2f14e39dce6e1/pytest_xdist-3.7.0-py3-none-any.whl", hash = "sha256:7d3fbd255998265052435eb9daa4e99b62e6fb9cfb6efd1f858d4d8c0c7f0ca0", size = 46142 },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -1077,6 +1125,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/93/68/a388a9b8f066cd865d9daa65af589d097efbfab9a8c302d2cb2daa43b52e/sphinx_autodoc_typehints-3.2.0.tar.gz", hash = "sha256:107ac98bc8b4837202c88c0736d59d6da44076e65a0d7d7d543a78631f662a9b", size = 36724 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/c7/8aab362e86cbf887e58be749a78d20ad743e1eb2c73c2b13d4761f39a104/sphinx_autodoc_typehints-3.2.0-py3-none-any.whl", hash = "sha256:884b39be23b1d884dcc825d4680c9c6357a476936e3b381a67ae80091984eb49", size = 20563 },
+]
+
+[[package]]
+name = "sphinx-copybutton"
+version = "0.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/2b/a964715e7f5295f77509e59309959f4125122d648f86b4fe7d70ca1d882c/sphinx-copybutton-0.5.2.tar.gz", hash = "sha256:4cf17c82fb9646d1bc9ca92ac280813a3b605d8c421225fd9913154103ee1fbd", size = 23039 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/48/1ea60e74949eecb12cdd6ac43987f9fd331156388dcc2319b45e2ebb81bf/sphinx_copybutton-0.5.2-py3-none-any.whl", hash = "sha256:fb543fd386d917746c9a2c50360c7905b605726b9355cd26e9974857afeae06e", size = 13343 },
 ]
 
 [[package]]

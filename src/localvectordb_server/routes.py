@@ -25,7 +25,6 @@ from typing import Dict, Any
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
-import localvectordb_server.cli._basic
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key
@@ -149,7 +148,7 @@ def create_database():
         name = data["name"]
 
         # Check if database already exists
-        existing_dbs = localvectordb_server.cli._basic.list_databases()
+        existing_dbs = current_app.db_manager.list_databases()
         if name in existing_dbs:
             raise APIError(
                 message=f"Database '{name}' already exists",
@@ -235,7 +234,7 @@ def list_databases():
 
     with request_context("list_databases"):
         try:
-            databases = localvectordb_server.cli._basic.list_databases()
+            databases = current_app.db_manager.list_databases()
             return jsonify({
                 "databases": databases,
                 "count": len(databases)
@@ -493,6 +492,8 @@ def insert_documents(db_name):
             raise
 
 
+
+
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["GET"])
 @require_api_key
 @handle_errors
@@ -659,9 +660,25 @@ def check_documents_exist(db_name):
 @log_performance("list_documents")
 def list_documents(db_name):
     """List documents with pagination and filtering"""
+    ids = request.args.get("ids")
 
-    with request_context("list_documents"):
+    with request_context("list_documents" if not ids else "get_documents"):
         try:
+
+            db = current_app.db_manager.get_db(db_name)
+            if ids:
+                ids = [i.strip() for i in ids.split(",") if i.strip()]
+                documents = db.get(ids)
+                serialized_docs = [serialize_document(doc) for doc in documents]
+                returned_ids = [doc.document_id for doc in documents]
+                missing_ids = [i for i in ids if i not in returned_ids]
+
+                return jsonify({
+                    "documents": serialized_docs,
+                    "returned_ids": returned_ids,
+                    "missing_ids": missing_ids
+                })
+
             # Validate pagination parameters
             page, limit = validate_pagination_params(
                 request.args.get('page'),
@@ -674,7 +691,7 @@ def list_documents(db_name):
                 if key not in ['page', 'limit']:
                     filters[key] = value
 
-            db = current_app.db_manager.get_db(db_name)
+
 
             # Calculate offset
             offset = (page - 1) * limit

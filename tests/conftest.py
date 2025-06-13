@@ -27,7 +27,7 @@ from localvectordb.core import MetadataField, MetadataFieldType, Document, Chunk
 from localvectordb.embeddings import MockEmbeddings
 
 
-@pytest.fixture(scope="function", autouse=True)
+@pytest.fixture(scope="function", autouse=False)
 def cleanup_resources():
     """Automatically cleanup resources after each test."""
     # Before test
@@ -144,6 +144,9 @@ def mock_httpx_client():
         def get(self, url, **kwargs):
             return MockResponse({"models": [{"name": "test-model"}]})
 
+        def request(self, method, url, **kwargs):
+            return MockResponse()
+
         def close(self):
             self.closed = True
 
@@ -183,7 +186,7 @@ def mock_faiss_index():
     mock_index.reset()
 
 
-@pytest.fixture(scope="function", autouse=True)
+@pytest.fixture(scope="function", autouse=False)
 def patch_asyncio():
     """Patch asyncio to prevent event loop conflicts."""
     original_get_event_loop = asyncio.get_event_loop

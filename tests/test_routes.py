@@ -20,9 +20,7 @@ from unittest.mock import Mock, patch
 from datetime import datetime
 
 from flask import Flask
-from werkzeug.exceptions import BadRequest, Unauthorized
 
-import localvectordb_server.cli._basic
 from localvectordb.core import MetadataField, MetadataFieldType, Document, QueryResult, ChunkPosition
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError
@@ -31,16 +29,17 @@ from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server.routes import (
     api, serialize_document, serialize_query_result, parse_metadata_schema
 )
+from localvectordb_server._cache import cache
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def app():
     """Create Flask app for testing."""
     app = Flask(__name__)
     app.config['TESTING'] = True
     app.config["CACHE_TYPE"] = "NullCache"
     app.config['DB_ROOT_DIR'] = '/tmp/test_dbs'
-    from localvectordb_server._cache import cache
+
     cache.init_app(app)
 
     # Mock database manager
@@ -55,13 +54,13 @@ def app():
     return app
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def client(app):
     """Create test client."""
     return app.test_client()
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def mock_db():
     """Create mock database instance."""
     db = Mock()
@@ -86,7 +85,7 @@ def mock_db():
     return db
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def sample_document():
     """Create sample document for testing."""
     return Document(
@@ -99,7 +98,7 @@ def sample_document():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def sample_query_result():
     """Create sample query result for testing."""
     position = ChunkPosition(start=0, end=24, line=1, column=1, end_line=1, end_column=24)
@@ -114,7 +113,7 @@ def sample_query_result():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def auth_headers():
     """Create authorization headers for testing."""
     return {'Authorization': 'Bearer test_api_key'}
@@ -599,6 +598,7 @@ class TestDocumentManagementRoutes:
 
         response = client.get('/api/v1/test_db/documents?page=1&limit=10')
 
+        print(response.text)
         assert response.status_code == 200
         result = json.loads(response.data)
         assert "documents" in result
@@ -759,7 +759,7 @@ class TestGlobalSearchRoutes:
         mock_db1.query.return_value = []
         mock_db2.query.return_value = []
 
-        localvectordb_server.cli._basic.list_databases.return_value = ['db1', 'db2']
+        app.db_manager.list_databases.return_value = ['db1', 'db2']
         app.db_manager.get_db.side_effect = lambda name: mock_db1 if name == 'db1' else mock_db2
         app.db_manager.search_databases.return_value = {
             "db1": [sample_query_result],

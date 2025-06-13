@@ -15,7 +15,7 @@ standardized error responses, validation, and recovery strategies.
 
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, UTC
 from functools import wraps
 from typing import Dict, Any, Optional, Tuple
 
@@ -47,7 +47,7 @@ class APIError(Exception):
         self.status_code = status_code
         self.details = details or {}
         self.recoverable = recoverable
-        self.timestamp = datetime.utcnow().isoformat() + 'Z'
+        self.timestamp = datetime.now(UTC).isoformat() + 'Z'
         self.request_id = getattr(g, 'request_id', None)
         super().__init__(message)
 
@@ -94,7 +94,7 @@ def standardize_error_response(
     Convert any exception to a standardized error response
     """
     logger = logging.getLogger('localvectordb.errors')
-    print(str(repr(error)))
+    # print(str(repr(error)))
     # Handle our custom API errors
     if isinstance(error, APIError):
         logger.error(

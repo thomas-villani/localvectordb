@@ -1386,14 +1386,17 @@ class DatabaseSchema:
         cursor = conn.execute(transfer_sql)
         return cursor.rowcount
 
+    @staticmethod
     def _get_transfer_sql(
-            self,
             old_col: str,
             new_col: str,
             old_type: MetadataFieldType,
             new_type: MetadataFieldType
             ) -> str:
-        """Generate SQL for transferring data between columns with type conversion"""
+        """Generate SQL for transferring data between columns with type conversion.
+
+        **Warning:** input must be pre-validated before using this function.
+        """
 
         if old_type == new_type:
             # Direct copy for same types
@@ -1423,8 +1426,8 @@ class DatabaseSchema:
             # Default case - try direct copy and let SQLite handle it
             return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
 
+    @staticmethod
     def _populate_field_defaults(
-            self,
             conn: sqlite3.Connection,
             field_name: str,
             field_def: MetadataField

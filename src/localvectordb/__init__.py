@@ -201,8 +201,9 @@ from localvectordb.core import MetadataField
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.factory import VectorDB
+from localvectordb.query_builder import QueryBuilder
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions",
            "AsyncLocalVectorDB", "create_async_vectordb", "async_database", "async_client", "AsyncRemoteVectorDB",
-           "create_async_remote_vectordb"]
+           "create_async_remote_vectordb", "QueryBuilder", "query_builder"]

@@ -122,6 +122,7 @@ MongoDB-like filtering::
 """
 import asyncio
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Union, Literal, List, Optional, Dict, Any
@@ -263,7 +264,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
                 timeout=self.request_timeout
             )
 
-        print("response", response.json(), response.status_code)
+        # logger.debug(f"Raw response: {response.text}")
         db_info = self._handle_response(response)
         self._db_info_cache = db_info
 
@@ -444,10 +445,9 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
 
 
 class RemoteVectorDB(BaseVectorDB):
-    """Client for interacting with a LocalVectorDB v1.0 server.
+    """Client for interacting with a LocalVectorDB server.
 
-    This client provides the same document-focused interface as LocalVectorDB v1.0
-    but connects to a remote server via HTTP.
+    This client provides the same interface as LocalVectorDB but connects to a remote server via HTTP.
 
     Parameters
     ----------
@@ -456,7 +456,8 @@ class RemoteVectorDB(BaseVectorDB):
     base_url : str
         URL of the LocalVectorDB server (e.g., "http://localhost:5000")
     api_key : str, optional
-        API key for authentication
+        API key for authentication. If not provided, checks `LVDB_API_KEY` environment variable.
+        Specify a custom environment variable by passing "$CUSTOM_ENV_VARIABLE" for this parameter.
     create_if_not_exists : bool, default=True
         Whether to create the database if it doesn't exist
     metadata_schema : Dict[str, MetadataField], optional
@@ -508,7 +509,14 @@ class RemoteVectorDB(BaseVectorDB):
     ):
         self.name = name
         self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
+
+        api_key_env_var = "LVDB_API_KEY"
+        # Allow the user to specify an environment variable by prefixing $
+        if api_key and api_key.startswith("$"):
+            api_key_env_var = api_key[1:]
+            api_key = None
+
+        self.api_key = api_key or os.getenv(api_key_env_var)
         self.request_timeout = request_timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -632,7 +640,7 @@ class RemoteVectorDB(BaseVectorDB):
             error_type = error_data.get("type", "unknown")
             error_msg = error_data.get("error", str(response.status_code))
 
-            print("error_type", error_type, "error_msg", error_msg)
+            logger.debug(f"Client error: {error_type} - {error_msg}")
             # Map error type to appropriate exception
             error_map = {
                 "database_not_found": DatabaseNotFoundError,
@@ -923,14 +931,16 @@ class RemoteVectorDB(BaseVectorDB):
             except DatabaseNotFoundError:
                 return None
         else:
-            # Handle multiple IDs - make individual requests for each ID
-            # TODO: make server handle multiple!
-            docs = []
-            for doc_id in ids:
-                doc = self.get(doc_id)
-                if doc is not None:
-                    docs.append(doc)
-            return docs
+            url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(ids)}")
+
+            response = self._make_request_with_retry("GET", url)
+
+            try:
+                result = self._handle_response(response)
+                documents = [Document.from_dict(d) for d in result["documents"]]
+                return documents
+            except DatabaseNotFoundError:
+                return None
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """

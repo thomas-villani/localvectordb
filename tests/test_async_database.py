@@ -14,17 +14,14 @@ Tests for localvectordb.async_database module.
 
 import pytest
 import asyncio
-import tempfile
 import numpy as np
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import Mock, patch, AsyncMock
 from concurrent.futures import ThreadPoolExecutor
 
 from localvectordb.async_database import AsyncLocalVectorDB, create_async_vectordb
 from localvectordb.core import Document, QueryResult, MetadataField, MetadataFieldType, ChunkPosition
 from localvectordb.database import LocalVectorDB
-from localvectordb.exceptions import DatabaseError, DuplicateDocumentIDError
+from localvectordb.exceptions import DatabaseError
 
 
 class TestAsyncLocalVectorDBInitialization:
@@ -712,12 +709,13 @@ class TestAsyncLocalVectorDBUtilityMethods:
 
         initialized_db._sync_db.update_metadata_schema = Mock(return_value={"updated": True})
 
-        result = await initialized_db.update_metadata_schema(new_schema, drop_columns=False)
+        result = await initialized_db.update_metadata_schema(new_schema, drop_columns=False, column_mapping=None)
 
         assert result == {"updated": True}
         initialized_db._sync_db.update_metadata_schema.assert_called_once_with(
             new_schema=new_schema,
-            drop_columns=False
+            drop_columns=False,
+            column_mapping=None
         )
 
     @pytest.mark.asyncio

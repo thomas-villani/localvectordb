@@ -13,16 +13,12 @@ Tests for localvectordb.query_builder module.
 """
 
 import pytest
-import asyncio
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from unittest.mock import Mock, patch, AsyncMock
 
 from localvectordb.query_builder import (
-    QueryBuilder, SearchClause, SemanticFilter, AggregationClause,
-    QueryExecutor, AsyncQueryExecutor, SimilarityMetric
+    QueryBuilder, SearchClause, SemanticFilter, AggregationClause, SimilarityMetric, QueryExecutor
 )
 from localvectordb.core import QueryResult, Document
-from localvectordb.exceptions import BaseLocalVectorDBException
 
 
 class TestSearchClause:
@@ -109,7 +105,7 @@ class TestAggregationClause:
 class TestQueryBuilderInitialization:
     """Test QueryBuilder initialization and basic properties."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
@@ -174,14 +170,14 @@ class TestQueryBuilderInitialization:
 class TestQueryBuilderSearchMethods:
     """Test QueryBuilder search-related methods."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -272,14 +268,14 @@ class TestQueryBuilderSearchMethods:
 class TestQueryBuilderFilterMethods:
     """Test QueryBuilder filtering methods."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -352,14 +348,14 @@ class TestQueryBuilderFilterMethods:
 class TestQueryBuilderPaginationAndSorting:
     """Test QueryBuilder pagination and sorting methods."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -422,14 +418,14 @@ class TestQueryBuilderPaginationAndSorting:
 class TestQueryBuilderAggregationMethods:
     """Test QueryBuilder aggregation and grouping methods."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -522,14 +518,14 @@ class TestQueryBuilderAggregationMethods:
 class TestQueryBuilderChaining:
     """Test QueryBuilder method chaining."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -573,14 +569,14 @@ class TestQueryBuilderChaining:
 class TestQueryBuilderUtilityMethods:
     """Test QueryBuilder utility and configuration methods."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -681,7 +677,7 @@ class TestQueryBuilderAsyncDetection:
 class TestQueryExecutor:
     """Test QueryExecutor functionality."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
@@ -700,7 +696,7 @@ class TestQueryExecutor:
 
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
@@ -765,7 +761,7 @@ class TestQueryExecutor:
 class TestAsyncQueryExecutor:
     """Test AsyncQueryExecutor functionality."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_async_db(self):
         """Create a mock async database for testing."""
         db = Mock()
@@ -777,7 +773,7 @@ class TestAsyncQueryExecutor:
         db.query = mock_query
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_async_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_async_db)
@@ -788,7 +784,7 @@ class TestAsyncQueryExecutor:
         query = builder.search("machine learning")
 
         with patch('localvectordb.query_builder.AsyncQueryExecutor') as mock_executor_class:
-            mock_executor = Mock()
+            mock_executor = AsyncMock()
 
             async def mock_execute():
                 return []
@@ -841,7 +837,7 @@ class TestAsyncQueryExecutor:
 class TestQueryBuilderIntegration:
     """Integration tests for QueryBuilder with mock database."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_documents(self):
         """Create mock documents for testing."""
         return [
@@ -862,7 +858,7 @@ class TestQueryBuilderIntegration:
             )
         ]
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self, mock_documents):
         """Create a comprehensive mock database."""
         db = Mock()
@@ -959,28 +955,29 @@ class TestQueryBuilderIntegration:
 class TestQueryBuilderErrorHandling:
     """Test QueryBuilder error handling and edge cases."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def mock_db(self):
         """Create a mock database for testing."""
         db = Mock()
         db.is_async_database.return_value = False
         return db
 
-    @pytest.fixture
+    @pytest.fixture(scope="function")
     def builder(self, mock_db):
         """Create a QueryBuilder instance for testing."""
         return QueryBuilder(mock_db)
 
-    def test_empty_query_execution(self, builder):
+    @patch('localvectordb.query_builder.QueryExecutor')
+    def test_empty_query_execution(self, mock_executor_class, builder):
         """Test executing empty query."""
         # Empty query should still work (filter-only)
-        with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
-            mock_executor = Mock()
-            mock_executor.execute.return_value = []
-            mock_executor_class.return_value = mock_executor
+        # with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
+        mock_executor = Mock()
+        mock_executor.execute.return_value = []
+        mock_executor_class.return_value = mock_executor
 
-            results = builder.execute()
-            assert results == []
+        results = builder.execute()
+        assert results == []
 
     def test_multiple_search_clauses(self, builder):
         """Test multiple search clauses."""

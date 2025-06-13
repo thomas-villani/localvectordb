@@ -544,53 +544,68 @@ Check if documents exist by their IDs.
 List Documents
 ^^^^^^^^^^^^^^
 
-List documents with pagination and filtering.
+List documents with pagination, filtering, or bulk-get by ID.
 
 **Endpoint**: ``GET /api/v1/{db_name}/documents``
 
 **Query Parameters**:
 
-- ``page``: Page number (default: 1)
-- ``limit``: Items per page (default: 100, max: 1000)
-- ``{field_name}``: Filter by metadata field value
+- ``ids``
+  Comma-separated list of document IDs to retrieve.
+  If **ids** is provided:
 
-**curl Example**:
+  - Only the listed IDs are returned (in the order given).
+  - Pagination (``page``/``limit``) and metadata filters are **ignored**.
+  - If any ID does not exist, a ``404`` is returned with a JSON error listing the missing IDs.
+
+- ``page``
+  Page number (default: 1). Used **only** when **ids** is *not* provided.
+
+- ``limit``
+  Items per page (default: 100, max: 1000). Used **only** when **ids** is *not* provided.
+
+- ``{field_name}``
+  Any metadata field may be passed to filter (e.g. ``author=Alice``). Used **only** when **ids** is *not* provided.
+
+**curl Examples**:
 
 .. code-block:: bash
 
-   # List first 20 documents
+   # 1) Bulk-get three docs by ID
    curl -H "Authorization: Bearer your_api_key" \
-        "http://localhost:5000/api/v1/research_papers/documents?limit=20&page=1"
+        "http://localhost:5000/api/v1/research_papers/documents?ids=doc_1,doc_42,doc_xyz"
 
-   # Filter by journal
+   # 2) Paginate through all docs (no ids)
+   curl -H "Authorization: Bearer your_api_key" \
+        "http://localhost:5000/api/v1/research_papers/documents?page=2&limit=50"
+
+   # 3) Filter by metadata field
    curl -H "Authorization: Bearer your_api_key" \
         "http://localhost:5000/api/v1/research_papers/documents?journal=Science&limit=10"
 
-**Python Example**:
+**Python Examples**:
 
 .. code-block:: python
 
-   # Get second page of documents
-   response = requests.get(
-       "http://localhost:5000/api/v1/research_papers/documents",
-       headers={"Authorization": "Bearer your_api_key"},
-       params={"page": 2, "limit": 50}
-   )
+   import requests
 
-   docs = response.json()["documents"]
-   pagination = response.json()["pagination"]
+   base = "http://localhost:5000/api/v1/research_papers/documents"
+   headers = {"Authorization": "Bearer your_api_key"}
 
-   print(f"Page {pagination['current_page']} of {pagination['total_pages']}")
-   print(f"Total documents: {pagination['total_count']}")
+   # Bulk-get by IDs
+   resp = requests.get(base, headers=headers, params={"ids": "doc_1,doc_42,doc_xyz"})
+   docs = resp.json()["documents"]
+   print(f"Retrieved {len(docs)} docs")
 
-   # Filter documents
-   response = requests.get(
-       "http://localhost:5000/api/v1/research_papers/documents",
-       headers={"Authorization": "Bearer your_api_key"},
-       params={"journal": "AI Research Quarterly", "limit": 20}
-   )
+   # Paginated listing
+   resp = requests.get(base, headers=headers, params={"page": 3, "limit": 25})
+   data = resp.json()
+   print(f"Page {data['pagination']['current_page']} of {data['pagination']['total_pages']}")
 
-   filtered_docs = response.json()["documents"]
+   # Filter by metadata
+   resp = requests.get(base, headers=headers, params={"author": "Alice", "limit": 5})
+   print(resp.json()["documents"])
+
 
 File Upload Operations
 ----------------------
@@ -602,7 +617,7 @@ This feature allows you to upload documents directly to your vector database wit
 
 
 Supported File Formats
-^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
 
 **Always Supported (Basic Text)**:
 
@@ -1256,7 +1271,10 @@ Update the metadata schema for an existing database. This allows you to add new 
        "tags": {"type": "json", "default_value": []},
        "rating": {"type": "real", "indexed": true}
      },
-     "drop_columns": false
+     "drop_columns": false,
+     "column_mapping": {
+         "old_column": "new_column"   // Optionally map the previous metadata columns to new columns
+     }
    }
 
 **Parameters**:

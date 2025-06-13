@@ -55,6 +55,8 @@ Includes:
 - Code quality tools
 - All optional dependencies
 
+.. todo: update github link
+
 From Source
 ^^^^^^^^^^^
 .. code-block:: bash

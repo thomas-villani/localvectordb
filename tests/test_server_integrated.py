@@ -29,16 +29,17 @@ from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb_server import Config
 from localvectordb_server.routes import api
 from localvectordb_server.keymanager import KeyManager
+from localvectordb_server._cache import cache
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def temp_dir():
     """Create temporary directory for test data."""
     with tempfile.TemporaryDirectory() as temp_dir:
         yield temp_dir
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def test_key_manager(temp_dir):
     """Create a KeyManager instance with test API keys."""
     key_db_path = Path(temp_dir) / "test_api_keys.db"
@@ -64,7 +65,7 @@ def test_key_manager(temp_dir):
     return key_manager
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def integration_app(temp_dir, test_key_manager):
     """Create Flask app for integration testing with real-like configuration."""
     app = Flask(__name__)
@@ -78,7 +79,6 @@ def integration_app(temp_dir, test_key_manager):
     app.config['REQUIRE_API_KEY'] = True
     app.config['CACHE_TYPE'] = 'NullCache'
 
-    from localvectordb_server._cache import cache
     cache.init_app(app)
 
     # app.config['API_KEY_DB_PATH'] = test_key_manager.db_path
@@ -98,19 +98,19 @@ def integration_app(temp_dir, test_key_manager):
     yield app
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def integration_client(integration_app):
     """Create test client for integration testing."""
     return integration_app.test_client()
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def valid_auth_headers(integration_app):
     """Get headers with valid API key for authenticated requests."""
     return {'Authorization': f'Bearer {integration_app.key_manager._test_valid_key}'}
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def expired_auth_headers(integration_app):
     """Get headers with expired API key for testing expired key handling."""
     return {'Authorization': f'Bearer {integration_app.key_manager._test_expired_key}'}
@@ -499,6 +499,7 @@ class TestErrorHandlingIntegration:
         # Try to access non-existent database
         response = integration_client.get('/api/v1/nonexistent_db/info', headers=valid_auth_headers)
 
+        print(response.text)
         assert response.status_code == 404
         result = json.loads(response.data)
         assert result["error"]["code"] == "DATABASE_NOT_FOUND"
@@ -827,4 +828,5 @@ class TestCompleteWorkflow:
         # New key should work
         new_auth_headers = {'Authorization': f'Bearer {new_key_record.plain_key}'}
         response = integration_client.get('/api/v1/databases', headers=new_auth_headers)
+        print(response.text)
         assert response.status_code == 200

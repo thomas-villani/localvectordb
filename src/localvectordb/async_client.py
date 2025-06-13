@@ -72,6 +72,7 @@ Batch operations with retry::
 
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Union, Literal, Any
 
 import httpx
@@ -157,7 +158,15 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
     ):
         self.name = name
         self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
+
+        api_key_env_var = "LVDB_API_KEY"
+        # Allow the user to specify an environment variable by prefixing $
+        if api_key and api_key.startswith("$"):
+            api_key_env_var = api_key[1:]
+            api_key = None
+
+        self.api_key = api_key or os.getenv(api_key_env_var)
+
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay

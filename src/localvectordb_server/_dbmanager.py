@@ -676,7 +676,10 @@ class DatabaseManager:
                         enable_gpu=db_config.enable_gpu,
                         enable_fts=db_config.enable_fts,
                         connection_pool_size=db_config.connection_pool_size,
-                        create_if_not_exists=True
+                        create_if_not_exists=True,
+                        faiss_index_type=db_config.faiss_index_type,
+                        faiss_index_hnsw_flat_neighbors=db_config.faiss_index_hnsw_flat_neighbors,
+                        faiss_index_lsh_bits=db_config.faiss_index_lsh_bits
                     )
 
                     # Register in shared registry

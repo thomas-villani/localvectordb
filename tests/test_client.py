@@ -243,20 +243,31 @@ class TestRemoteVectorDBDocumentOperations:
         mock_response1 = Mock()
         mock_response1.status_code = 200
         mock_response1.json.return_value = {
-            "id": "doc_1",
-            "content": "Content 1",
-            "metadata": {},
-            "content_hash": "hash1"
+            "documents": [
+                {
+                    "id": "doc_1",
+                    "content": "Content 1",
+                    "metadata": {},
+                    "content_hash": "hash1"
+                },
+                {
+                    "id": "doc_2",
+                    "content": "Content 2",
+                    "metadata": {},
+                    "content_hash": "hash2"
+                }
+            ]
         }
-        mock_response2 = Mock()
-        mock_response2.status_code = 200
-        mock_response2.json.return_value = {
-            "id": "doc_2",
-            "content": "Content 2",
-            "metadata": {},
-            "content_hash": "hash2"
-        }
-        mock_httpx_client.request.side_effect = [mock_response1, mock_response2]
+        # mock_response2 = Mock()
+        # mock_response2.status_code = 200
+        # mock_response2.json.return_value = {
+        #     "id": "doc_2",
+        #     "content": "Content 2",
+        #     "metadata": {},
+        #     "content_hash": "hash2"
+        # }
+        # mock_httpx_client.request.side_effect = [mock_response1, mock_response2]
+        mock_httpx_client.request.return_value = mock_response1
 
         result = mock_db.get(["doc_1", "doc_2"])
 

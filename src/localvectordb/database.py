@@ -35,7 +35,6 @@ from typing import Dict, List, Optional, Union, Literal, Any, Tuple
 import faiss
 import numpy as np
 
-import localvectordb_server.cli._db
 from localvectordb._filters import FilterQueryBuilder, matches_metadata_filter
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import (
@@ -809,7 +808,7 @@ class LocalVectorDB(BaseVectorDB):
         distance_threshold = (1.0 / max(similarity_threshold, 0.001)) - 1.0
 
         # Single batch FAISS search - much faster than individual searches
-        distances, indices = localvectordb_server.cli._db.search(filtered_embeddings, k=1)
+        distances, indices = self.index.search(filtered_embeddings, k=1)
 
         # Vectorized numpy operations for filtering
         valid_matches = indices[:, 0] != -1
@@ -1586,6 +1585,7 @@ class LocalVectorDB(BaseVectorDB):
                 cursor = conn.execute(sql, ids)
                 rows = cursor.fetchall()
 
+                # TODO: we don't check to see if any are missing
                 documents = []
                 for row in rows:
                     # Extract metadata
@@ -1848,7 +1848,7 @@ class LocalVectorDB(BaseVectorDB):
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
 
         # Search FAISS index
-        distances, indices = localvectordb_server.cli._db.search(query_embedding, initial_k)
+        distances, indices = self.index.search(query_embedding, initial_k)
 
         # Get chunk information - ALWAYS get chunks first
         chunk_results = []
@@ -2169,7 +2169,7 @@ class LocalVectorDB(BaseVectorDB):
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
 
         # Search FAISS index
-        distances, indices = localvectordb_server.cli._db.search(query_embedding, initial_k)
+        distances, indices = self.index.search(query_embedding, initial_k)
 
         # Get chunk information - ALWAYS get chunks first
         chunk_results = []
