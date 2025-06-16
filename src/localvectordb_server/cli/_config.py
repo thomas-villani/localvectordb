@@ -307,13 +307,16 @@ def set_config_value(ctx, key, value, dry_run, force):
 # Server options
 @click.option('--host', help='Server host (default: 127.0.0.1)')
 @click.option('--port', type=int, help='Server port (default: 5000)')
+@click.option('--enable-file-upload', is_flag=True, help='Enable file upload routes on the server')
+@click.option('--max-request-size-mb', type=int, help='Set the maximum request size in MB', default=100)
 # Interactive mode
-@click.option('--interactive', '-i', is_flag=True, help='Interactive guided configuration')
+@click.option('--interactive', '-I', is_flag=True, help='Interactive guided configuration')
 @click.pass_context
 def init_config(
         ctx, format, output, schema, multi_worker, redis_registry,
         enable_cache, cache_type, cache_redis_url, enable_rate_limiting,
-        rate_limit, enable_cors, cors_origins, enable_auth, host, port, interactive
+        rate_limit, enable_cors, cors_origins, enable_auth, host, port, enable_file_upload, max_request_size_mb,
+        interactive
         ):
     """
     Initialize a new configuration file with default settings.
@@ -393,6 +396,14 @@ def init_config(
     # Configure authentication
     if enable_auth:
         _configure_auth(config)
+
+    if enable_file_upload:
+        config.server.file_upload_enabled = True
+        if max_request_size_mb <= 0:
+            click.secho("Error: --max-request-size-mb must be a positive integer", err=True, fg="bright_red")
+            raise click.Abort()
+
+        config.server.max_request_size = max_request_size_mb * 1024 * 1024
 
     # Generate and save configuration
     _save_config(config, output, format)
@@ -537,8 +548,9 @@ def _interactive_config_init(format, output):
 
     # Embedding settings
     click.echo()
-    click.secho("8. Embedding Provider", fg="cyan", bold=True)
+    click.secho("8. Default Embedding Provider", fg="cyan", bold=True)
 
+    # TODO: this should be dynamic from the registry
     provider = click.prompt(
         "Embedding provider",
         type=click.Choice(['ollama', 'openai'], case_sensitive=False),
@@ -559,9 +571,18 @@ def _interactive_config_init(format, output):
         else:
             click.echo("Note: Set OPENAI_API_KEY environment variable before starting the server")
 
+    click.echo()
+    click.secho("9. File upload", fg="cyan", bold=True)
+
+    enable_upload = click.confirm("Enable file upload?")
+    if enable_upload:
+        config.server.file_upload_enabled = True
+        max_file_size_mb = click.prompt("Maximum file size (in MB)", type=int, default=100)
+        config.server.max_request_size = max_file_size_mb * 1024 * 1024
+
     # Generate and save configuration
     click.echo()
-    click.secho("9. Generating Configuration", fg="cyan", bold=True)
+    click.secho("10. Generating Configuration", fg="cyan", bold=True)
 
     _save_config(config, output, format)
 
@@ -739,6 +760,8 @@ def _print_config_summary(config, output, is_multi_worker):
 
     if config.server.require_api_key:
         click.echo("Authentication: API keys required")
+
+    click.echo(f"File upload: {'Enabled' if config.server.file_upload_enabled else 'Disabled'}")
 
 
 def _print_setup_recommendations(config, deployment_type, output):

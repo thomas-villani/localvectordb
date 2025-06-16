@@ -18,7 +18,7 @@ All dependencies are optional and gracefully degrade if not available.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Type
 
 from localvectordb import MetadataField
 
@@ -62,8 +62,12 @@ class BaseExtractor(ABC):
     """
 
     def __init__(self):
+        self._is_available = self._check_availability()
         self.name = self.__class__.__name__
-        self.available = self._check_availability()
+
+    @property
+    def available(self) -> bool:
+        return self._is_available
 
     @property
     @abstractmethod
@@ -221,10 +225,11 @@ class ExtractorRegistry:
     _extractors: Dict[str, BaseExtractor] = {}
 
     @classmethod
-    def register(cls, extractor: BaseExtractor) -> None:
+    def register(cls, extractor: Type[BaseExtractor]) -> None:
         """Register a new extractor."""
-        cls._extractors[extractor.name] = extractor
-        logger.debug(f"Registered extractor: {extractor.name} (available: {extractor.available})")
+        extractor_obj = extractor()
+        cls._extractors[extractor_obj.name] = extractor_obj
+        logger.debug(f"Registered extractor: {extractor_obj.name} (available: {extractor_obj.available})")
 
     @classmethod
     def get_extractor(cls, name: str) -> Optional[BaseExtractor]:
@@ -247,45 +252,22 @@ class ExtractorRegistry:
 
     @classmethod
     def _discover_plugins(cls):
-        """Discover embedding provider plugins using entry points"""
+        """Discover file extractor plugins using entry points"""
         if cls._plugins_discovered:
             return
-        cls._load_builtin_extractors()
+        from importlib.metadata import entry_points
 
-        try:
-            # Python 3.10+ importlib.metadata
-            from importlib.metadata import entry_points
+        # Look for entry points in the 'localvectordb.embedding_providers' group
+        extractor_eps = entry_points(group='localvectordb_server.file_extractors')
 
-            # Look for entry points in the 'localvectordb.embedding_providers' group
-            eps = entry_points()
-            if hasattr(eps, 'select'):
-                # Python 3.10+ API
-                provider_eps = eps.select(group='localvectordb_server.file_extractors')
-            else:
-                # Python 3.8-3.9 API
-                provider_eps = eps.get('localvectordb_server.file_extractors', [])
-
-            for ep in provider_eps:
-                try:
-                    provider_class = ep.load()
-                    cls.register(provider_class)
-                    logger.info(f"Discovered embedding provider plugin: {ep.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to load embedding provider plugin {ep.name}: {e}")
-
-        except ImportError:
-            # Fallback for older Python versions
+        for ep in extractor_eps:
             try:
-                import pkg_resources
-                for ep in pkg_resources.iter_entry_points('localvectordb_server.file_extractors'):
-                    try:
-                        provider_class = ep.load()
-                        cls.register(provider_class)
-                        logger.info(f"Discovered embedding provider plugin: {ep.name}")
-                    except Exception as e:
-                        logger.warning(f"Failed to load embedding provider plugin {ep.name}: {e}")
-            except ImportError:
-                logger.warning("Entry point discovery not available (importlib.metadata and pkg_resources not found)")
+                provider_class = ep.load()
+                cls.register(provider_class)
+                logger.info(f"Discovered file extractor plugin: {ep.name}")
+            except Exception as e:
+                logger.warning(f"Failed to load file extractor plugin {ep.name}: {e}")
+
 
         cls._plugins_discovered = True
 
@@ -318,7 +300,8 @@ class ExtractorRegistry:
         suitable.sort(key=lambda x: x.priority, reverse=True)
         return suitable
 
-    def extract_text(self, file_content: bytes, filename: str, mimetype: Optional[str] = None) -> ExtractionResult:
+    @classmethod
+    def extract_text(cls, file_content: bytes, filename: str, mimetype: Optional[str] = None) -> ExtractionResult:
         """
         Extract text using the best available extractor.
 
@@ -336,11 +319,11 @@ class ExtractorRegistry:
         ExtractionResult
             Extraction result from the best available extractor
         """
-        extractors = self.get_extractors_for_file(filename, mimetype)
+        extractors = cls.get_extractors_for_file(filename, mimetype)
 
         if not extractors:
             # No specific extractor found, try fallback
-            fallback = self._extractors.get('TextFallbackExtractor')
+            fallback = cls._extractors.get('TextFallbackExtractor')
             if fallback and fallback.available:
                 return fallback.extract_text(file_content, filename, mimetype)
 
@@ -415,7 +398,7 @@ class ExtractorRegistry:
         )
         from localvectordb_server.extractors.pdf_extractors import (
             PDFPlumberExtractor,
-            PyPDF2Extractor
+            PyPDFExtractor
         )
         from localvectordb_server.extractors.office_extractors import (
             DocxExtractor,
@@ -429,23 +412,23 @@ class ExtractorRegistry:
         # Register in order of preference
         extractors = [
             # Text files (highest priority for text files)
-            TextFileExtractor(),
+            TextFileExtractor,
 
             # PDF extractors (pdfplumber preferred over PyPDF2)
-            PDFPlumberExtractor(),
-            PyPDF2Extractor(),
+            PDFPlumberExtractor,
+            PyPDFExtractor,
 
             # Office formats
-            DocxExtractor(),
-            PptxExtractor(),
-            XlsxExtractor(),
+            DocxExtractor,
+            PptxExtractor,
+            XlsxExtractor,
 
             # Other formats
-            RTFExtractor(),
-            EPubExtractor(),
+            RTFExtractor,
+            EPubExtractor,
 
             # Fallback (lowest priority)
-            TextFallbackExtractor(),
+            TextFallbackExtractor,
         ]
 
         for extractor in extractors:

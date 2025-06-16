@@ -257,7 +257,7 @@ from localvectordb.core import QueryResult, Document, AnyVectorDB
 
 logger = logging.getLogger(__name__)
 
-DocumentScoringMethod = Literal["best", "worst" "average", "weighted_average", "frequency_boost"]
+DocumentScoringMethod = Literal["best", "worst", "average", "weighted_average", "frequency_boost"]
 """
 Methods for aggregating chunk scores into document scores.
 

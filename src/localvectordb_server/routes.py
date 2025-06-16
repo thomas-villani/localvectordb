@@ -1217,17 +1217,26 @@ def upload_files(db_name):
                 )
 
         # Get form parameters
-        extract_text = request.form.get('extract_text', 'true').lower() == 'true'
+        extract_text = True # request.form.get('extract_text', 'true').lower() == 'true'
         batch_size = int(request.form.get('batch_size', '100'))
 
         # Parse metadata if provided
         metadata_json = request.form.get('metadata')
-        base_metadata = {}
+        base_metadata = [{}] * len(files)
         if metadata_json:
             try:
                 base_metadata = json.loads(metadata_json)
             except json.JSONDecodeError:
                 raise ValidationError("Invalid JSON in metadata field", field="metadata")
+
+            if isinstance(base_metadata, list):
+                if len(base_metadata) == 1:
+                    base_metadata = base_metadata * len(files)
+            elif isinstance(base_metadata, dict):
+                base_metadata = [base_metadata] * len(files)
+
+            if len(base_metadata) != len(files):
+                raise ValidationError("Number of items in metadata array must match number of files", field="metadata")
 
         # Validate batch size
         if batch_size < 1 or batch_size > 1000:
@@ -1274,8 +1283,7 @@ def upload_files(db_name):
                 mimetype = file.content_type or mimetypes.guess_type(filename)[0]
 
                 # Prepare file metadata - only include fields that exist in the database schema
-                file_metadata = base_metadata.copy()
-
+                file_metadata = base_metadata[file_idx].copy()
                 # Standard file upload metadata (only add if in schema)
                 standard_metadata = {
                     'source': 'file_upload',

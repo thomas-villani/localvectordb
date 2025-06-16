@@ -56,7 +56,6 @@ class HTMLExtractor(BaseExtractor):
             "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "html_elements": MetadataField(type=MetadataFieldType.JSON, indexed=False, required=False),
-            "extraction_library": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False)
         }
     
     def _check_availability(self) -> bool:
@@ -150,7 +149,6 @@ class HTMLExtractor(BaseExtractor):
                 'file_size_bytes': len(file_content),
                 'character_count': len(full_text),
                 'html_elements': element_counts,
-                'extraction_library': 'beautifulsoup4'
             }
 
             return ExtractionResult(
@@ -279,7 +277,6 @@ class XMLExtractor(BaseExtractor):
             "xml_type": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False),
             "item_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "extraction_library": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False)
         }
 
     def _check_availability(self) -> bool:
@@ -410,7 +407,6 @@ class XMLExtractor(BaseExtractor):
             'xml_type': 'rss',
             'item_count': len(items),
             'character_count': len(full_text),
-            'extraction_library': 'beautifulsoup4'
         }
 
         return ExtractionResult(
@@ -459,7 +455,6 @@ class XMLExtractor(BaseExtractor):
             'xml_type': 'atom',
             'entry_count': len(entries),
             'character_count': len(full_text),
-            'extraction_library': 'beautifulsoup4'
         }
 
         return ExtractionResult(
@@ -506,7 +501,6 @@ class XMLExtractor(BaseExtractor):
             'xml_type': 'svg',
             'text_elements': len(text_elements),
             'character_count': len(full_text),
-            'extraction_library': 'beautifulsoup4'
         }
 
         return ExtractionResult(
@@ -578,7 +572,6 @@ class XMLExtractor(BaseExtractor):
             'element_types': len(element_counts),
             'element_counts': element_counts,
             'character_count': len(full_text),
-            'extraction_library': 'beautifulsoup4'
         }
 
         return ExtractionResult(

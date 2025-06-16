@@ -8,7 +8,6 @@
 # Contact: thomas.villani@gmail.com
 # 
 # src/localvectordb_server/extractors/other_extractors.py
-# src/localvectordb_server/extractors/other_extractors.py
 """
 Extractors for miscellaneous file formats.
 """
@@ -52,7 +51,6 @@ class RTFExtractor(BaseExtractor):
             "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "rtf_size": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "compression_ratio": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "extraction_library": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False),
         }
 
     def _check_availability(self) -> bool:

@@ -23,6 +23,15 @@ from localvectordb_server.extractors import BaseExtractor, ExtractionResult
 logger = logging.getLogger(__name__)
 
 
+_PDF_METADATA_SCHEMA = {
+    "total_pages": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
+    "pages_with_text": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
+    "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
+    "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
+    "page_details": MetadataField(type=MetadataFieldType.JSON, indexed=False, required=False),
+}
+
+
 class PDFPlumberExtractor(BaseExtractor):
     """
     PDF extractor using pdfplumber library (preferred for better text extraction).
@@ -42,18 +51,11 @@ class PDFPlumberExtractor(BaseExtractor):
 
     @property
     def priority(self) -> int:
-        return 15  # Higher priority than PyPDF2
+        return 15  # Higher priority than pypdf
 
     @property
     def metadata_schema(self) -> dict[str, MetadataField]:
-        return {
-            "total_pages": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "pages_with_text": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "page_details": MetadataField(type=MetadataFieldType.JSON, indexed=False, required=False),
-            "extraction_library": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False)
-        }
+        return _PDF_METADATA_SCHEMA
 
     def _check_availability(self) -> bool:
         try:
@@ -113,7 +115,6 @@ class PDFPlumberExtractor(BaseExtractor):
                         'file_size_bytes': len(file_content),
                         'character_count': len(full_text),
                         'page_details': page_info,
-                        'extraction_library': 'pdfplumber'
                     }
 
                     return ExtractionResult(
@@ -132,7 +133,7 @@ class PDFPlumberExtractor(BaseExtractor):
             )
 
 
-class PyPDF2Extractor(BaseExtractor):
+class PyPDFExtractor(BaseExtractor):
     """
     PDF extractor using PyPDF2 library (fallback option).
     """
@@ -147,7 +148,7 @@ class PyPDF2Extractor(BaseExtractor):
 
     @property
     def required_packages(self) -> List[str]:
-        return ['PyPDF2']
+        return ['pypdf']
 
     @property
     def priority(self) -> int:
@@ -155,18 +156,11 @@ class PyPDF2Extractor(BaseExtractor):
 
     @property
     def metadata_schema(self) -> dict[str, MetadataField]:
-        return {
-            "total_pages": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "pages_with_text": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "page_details": MetadataField(type=MetadataFieldType.JSON, indexed=False, required=False),
-            "extraction_library": MetadataField(type=MetadataFieldType.TEXT, indexed=False, required=False)
-        }
+        return _PDF_METADATA_SCHEMA
 
     def _check_availability(self) -> bool:
         try:
-            import PyPDF2
+            import pypdf
             return True
         except ImportError:
             return False
@@ -174,16 +168,16 @@ class PyPDF2Extractor(BaseExtractor):
     def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
         """Extract text from PDF using PyPDF2."""
         try:
-            import PyPDF2
+            import pypdf
 
             with io.BytesIO(file_content) as file_buffer:
-                pdf_reader = PyPDF2.PdfReader(file_buffer)
+                pdf_reader = pypdf.PdfReader(file_buffer)
                 text_parts = []
                 page_info = []
 
                 for page_num, page in enumerate(pdf_reader.pages, 1):
                     try:
-                        page_text = page.extract_text()
+                        page_text = page.extract_text(extraction_mode="layout")
                         if page_text and page_text.strip():
                             text_parts.append(page_text)
                             page_info.append({
@@ -209,7 +203,7 @@ class PyPDF2Extractor(BaseExtractor):
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='PyPDF2Extractor',
+                        method='PyPDFExtractor',
                         error="No text content found in PDF (may be image-based)"
                     )
 
@@ -233,7 +227,7 @@ class PyPDF2Extractor(BaseExtractor):
                 return ExtractionResult(
                     text=full_text,
                     success=True,
-                    method='PyPDF2Extractor',
+                    method='PyPDFExtractor',
                     metadata=metadata
                 )
 
@@ -241,6 +235,6 @@ class PyPDF2Extractor(BaseExtractor):
             return ExtractionResult(
                 text="",
                 success=False,
-                method='PyPDF2Extractor',
+                method='PyPDFExtractor',
                 error=f"PyPDF2 extraction failed: {str(e)}"
             )

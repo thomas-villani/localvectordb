@@ -1649,27 +1649,41 @@ def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, Metad
 
 class ReadWriteLock:
     """
-    ReadWriteLock that supports re-entrant write locks from the same thread
+    Optimized ReadWriteLock that supports re-entrant write locks from the same thread
+
+    This implementation fixes the thundering herd problem by using separate condition
+    variables for readers and writers, reducing unnecessary wake-ups and context switches
+    in high-contention scenarios.
+
+    Features:
+    - Re-entrant write locks (same thread can acquire multiple write locks)
+    - Writer preference (thread holding write lock can also acquire read locks)
+    - Separate condition variables to minimize spurious wake-ups
+    - Efficient notification targeting only threads that can proceed
     """
 
     def __init__(self):
-        self._read_ready = threading.Condition(threading.RLock())
+        self._lock = threading.RLock()  # Main coordination lock
         self._readers = 0
         self._writer_thread: Optional[threading.Thread] = None
-        self._writer_count = 0  # Track nested write locks
+        self._writer_count = 0  # Track nested write locks from same thread
+
+        # Separate condition variables for better wake-up targeting
+        self._read_ready = threading.Condition(self._lock)  # Readers wait here
+        self._write_ready = threading.Condition(self._lock)  # Writers wait here
 
     @contextmanager
     def read_lock(self):
         """Acquire read lock (multiple readers allowed, unless writer active)"""
         current_thread = threading.current_thread()
 
-        with self._read_ready:
-            # If current thread already holds write lock, allow read
+        with self._lock:
+            # If current thread already holds write lock, allow read (writer preference)
             if self._writer_thread == current_thread:
                 yield
                 return
 
-            # Otherwise wait for any writer to finish
+            # Wait for any writer to finish
             while self._writer_thread is not None:
                 self._read_ready.wait()
 
@@ -1678,18 +1692,19 @@ class ReadWriteLock:
         try:
             yield
         finally:
-            with self._read_ready:
+            with self._lock:
                 self._readers -= 1
+                # If last reader finished, notify waiting writers
                 if self._readers == 0:
-                    self._read_ready.notify_all()
+                    self._write_ready.notify()
 
     @contextmanager
     def write_lock(self):
         """Acquire write lock (exclusive, but re-entrant for same thread)"""
         current_thread = threading.current_thread()
 
-        with self._read_ready:
-            # If same thread already holds write lock, just increment counter
+        with self._lock:
+            # If same thread already holds write lock, just increment counter (re-entrant)
             if self._writer_thread == current_thread:
                 self._writer_count += 1
                 try:
@@ -1698,18 +1713,22 @@ class ReadWriteLock:
                     self._writer_count -= 1
                 return
 
-            # Otherwise wait for readers to finish and acquire write lock
+            # Wait for readers to finish AND for any other writer to finish
             while self._readers > 0 or self._writer_thread is not None:
-                self._read_ready.wait()
+                self._write_ready.wait()
 
+            # Acquire write lock
             self._writer_thread = current_thread
             self._writer_count = 1
 
         try:
             yield
         finally:
-            with self._read_ready:
+            with self._lock:
                 self._writer_count -= 1
                 if self._writer_count == 0:
+                    # Release write lock
                     self._writer_thread = None
+
+                    self._write_ready.notify()
                     self._read_ready.notify_all()

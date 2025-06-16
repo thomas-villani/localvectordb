@@ -642,7 +642,7 @@ class Config:
                 lines.append(f'{key} = "{value}"\n')
             elif isinstance(value, bool):
                 lines.append(f'{key} = {str(value).lower()}\n')
-            else:
+            elif value is not None:
                 lines.append(f'{key} = {value}\n')
 
         # Add metadata schema subsection

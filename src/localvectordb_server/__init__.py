@@ -182,6 +182,9 @@ def create_app(
         logger.error(f"Failed to initialize database manager: {e}", exc_info=True)
         raise ConfigurationError(f"Database manager initialization failed: {e}")
 
+    from localvectordb_server.keymanager import KeyManager
+    app.key_manager = KeyManager(config.server.key_database_path or os.path.join(config.database.root_dir, "api_keys.db"))
+
     # Register blueprints
     from localvectordb_server.routes import api
     app.register_blueprint(api)

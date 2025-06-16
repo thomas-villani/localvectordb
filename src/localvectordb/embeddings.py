@@ -89,8 +89,9 @@ class EmbeddingProvider(ABC):
 class OllamaEmbeddings(EmbeddingProvider):
     """Ollama embedding provider"""
 
-    def __init__(self, model: str, base_url: str = "http://localhost:11434", **kwargs):
+    def __init__(self, model: str, base_url: str = None, **kwargs):
         super().__init__(model, **kwargs)
+        base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.base_url = base_url.rstrip('/')
         self._dimension = None
         self._validated = False
@@ -358,40 +359,18 @@ class EmbeddingRegistry:
         if cls._plugins_discovered:
             return
 
-        try:
-            # Python 3.10+ importlib.metadata
-            from importlib.metadata import entry_points
+        # Python 3.10+ importlib.metadata
+        from importlib.metadata import entry_points
 
-            # Look for entry points in the 'localvectordb.embedding_providers' group
-            eps = entry_points()
-            if hasattr(eps, 'select'):
-                # Python 3.10+ API
-                provider_eps = eps.select(group='localvectordb.embedding_providers')
-            else:
-                # Python 3.8-3.9 API
-                provider_eps = eps.get('localvectordb.embedding_providers', [])
 
-            for ep in provider_eps:
-                try:
-                    provider_class = ep.load()
-                    cls.register(ep.name, provider_class)
-                    logger.info(f"Discovered embedding provider plugin: {ep.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to load embedding provider plugin {ep.name}: {e}")
-
-        except ImportError:
-            # Fallback for older Python versions
+        provider_eps = entry_points(group='localvectordb.embedding_providers')
+        for ep in provider_eps:
             try:
-                import pkg_resources
-                for ep in pkg_resources.iter_entry_points('localvectordb.embedding_providers'):
-                    try:
-                        provider_class = ep.load()
-                        cls.register(ep.name, provider_class)
-                        logger.info(f"Discovered embedding provider plugin: {ep.name}")
-                    except Exception as e:
-                        logger.warning(f"Failed to load embedding provider plugin {ep.name}: {e}")
-            except ImportError:
-                logger.warning("Entry point discovery not available (importlib.metadata and pkg_resources not found)")
+                provider_class = ep.load()
+                cls.register(ep.name, provider_class)
+                logger.info(f"Discovered embedding provider plugin: {ep.name}")
+            except Exception as e:
+                logger.warning(f"Failed to load embedding provider plugin {ep.name}: {e}")
 
         cls._plugins_discovered = True
 

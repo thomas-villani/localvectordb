@@ -692,8 +692,7 @@ class LocalVectorDB(BaseVectorDB):
         for field_name, value in metadata.items():
             if field_name in self.metadata_schema:
                 field_def = self.metadata_schema[field_name]
-                # Type validation would go here
-                # For now, we'll trust the user
+                # TODO: add proper validation!
                 pass
 
         # Check required fields

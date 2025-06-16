@@ -1101,7 +1101,7 @@ Error Handling and Recovery
 ===========================
 
 Robust Error Handling
-----------------------
+---------------------
 
 .. code-block:: python
 
@@ -1176,7 +1176,7 @@ Robust Error Handling
                return None
 
 Database Backup and Recovery
------------------------------
+----------------------------
 
 .. code-block:: python
 
