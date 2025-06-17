@@ -26,6 +26,7 @@ import logging
 import math
 import re
 import sqlite3
+import statistics
 import threading
 from collections import defaultdict
 from datetime import datetime
@@ -47,6 +48,9 @@ from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
 
+DocumentScoreAggregationMethod = Literal["best", "average", "worst", "weighted_average", "frequency_boost",
+                                         "harmonic_mean", "diminishing_returns", "statistical", "robust_mean",
+                                         "percentile", "geometric_mean"]
 
 class LocalVectorDB(BaseVectorDB):
     """
@@ -169,6 +173,7 @@ class LocalVectorDB(BaseVectorDB):
 
         # Database setup
         self.schema = DatabaseSchema(self.db_path)
+
         self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
 
         # Initialize schema
@@ -692,8 +697,9 @@ class LocalVectorDB(BaseVectorDB):
         for field_name, value in metadata.items():
             if field_name in self.metadata_schema:
                 field_def = self.metadata_schema[field_name]
-                # TODO: add proper validation!
-                pass
+                if value and not isinstance(value, field_def.type.valid_types()):
+                    raise ValueError(f"Metadata field '{field_name}' is type {field_def.type.name}. "
+                                     f"Found: {type(value)}")
 
         # Check required fields
         for field_name, field_def in self.metadata_schema.items():
@@ -1780,8 +1786,8 @@ class LocalVectorDB(BaseVectorDB):
             # NEW PARAMETERS:
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: Literal[
-                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost",
+            document_scoring_options: dict = None
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -1806,7 +1812,7 @@ class LocalVectorDB(BaseVectorDB):
             Number of chunks before and after to include when return_type='context'
         semantic_dedup_threshold : Optional[float]
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
-        document_scoring_method : str
+        document_scoring_method : DocumentScoreAggregationMethod
             Method for aggregating chunk scores into document scores
 
         Returns
@@ -1817,13 +1823,16 @@ class LocalVectorDB(BaseVectorDB):
         with self._read_write_lock.read_lock():
             if search_type == 'vector':
                 return self._vector_search(query, return_type, k, score_threshold, filters,
-                                           context_window, semantic_dedup_threshold, document_scoring_method)
+                                           context_window, semantic_dedup_threshold, document_scoring_method,
+                                           document_scoring_options)
             elif search_type == 'keyword':
                 return self._keyword_search(query, return_type, k, score_threshold, filters,
-                                            context_window, semantic_dedup_threshold, document_scoring_method)
+                                            context_window, semantic_dedup_threshold, document_scoring_method,
+                                            document_scoring_options)
             elif search_type == 'hybrid':
                 return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight,
-                                           context_window, semantic_dedup_threshold, document_scoring_method)
+                                           context_window, semantic_dedup_threshold, document_scoring_method,
+                                           document_scoring_options)
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
 
@@ -1836,7 +1845,8 @@ class LocalVectorDB(BaseVectorDB):
             filters: Optional[Dict[str, Any]],
             context_window: int,
             semantic_dedup_threshold: Optional[float],
-            document_scoring_method: str
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost",
+            document_scoring_options: dict = None
     ) -> List[QueryResult]:
         """Perform vector similarity search with enhanced processing"""
 
@@ -1917,7 +1927,7 @@ class LocalVectorDB(BaseVectorDB):
         elif return_type == 'documents':
             # Aggregate to document level
             document_results = self._aggregate_document_scores_with_method(
-                chunk_results, document_scoring_method
+                chunk_results, document_scoring_method, document_scoring_options
             )
             return document_results[:k]
 
@@ -1935,7 +1945,7 @@ class LocalVectorDB(BaseVectorDB):
             filters: Optional[Dict[str, Any]],
             context_window: int,
             semantic_dedup_threshold: Optional[float],
-            document_scoring_method: str
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
     ) -> List[QueryResult]:
         """Perform keyword search using FTS5 with enhanced processing"""
         if not self.fts_enabled:
@@ -2026,7 +2036,7 @@ class LocalVectorDB(BaseVectorDB):
             vector_weight: float,
             context_window: int,
             semantic_dedup_threshold: Optional[float],
-            document_scoring_method: str
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
     ) -> List[QueryResult]:
         """Perform hybrid search combining vector and keyword with enhanced processing"""
         if not self.fts_enabled:
@@ -2039,15 +2049,18 @@ class LocalVectorDB(BaseVectorDB):
 
         # Perform both searches - always get chunks
         vector_results = self._vector_search(query, 'chunks', search_k, 0.0, filters,
-                                             0, None, "best")  # No processing yet
+                                             0, None)  # No processing yet
         keyword_results = self._keyword_search(query, 'chunks', search_k, 0.0, filters,
-                                               0, None, "best")  # No processing yet
+                                               0, None)  # No processing yet
 
+        # TODO: this would result in chunks being returned when we don't want just chunks
         # If either returns no results, return the other
-        if not vector_results:
-            return keyword_results[:k]
-        if not keyword_results:
-            return vector_results[:k]
+        # if not vector_results:
+        #     print("returning keyword only")
+        #     return keyword_results[:k]
+        # if not keyword_results:
+        #     print("returning vector only")
+        #     return vector_results[:k]
 
         # Combine results with weighted scoring
         combined_results = self._combine_search_results(
@@ -2091,8 +2104,7 @@ class LocalVectorDB(BaseVectorDB):
             vector_weight: float = 0.7,
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: Literal[
-                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
     ) -> List[QueryResult]:
         """
         Execute search with a precomputed query embedding
@@ -2122,7 +2134,7 @@ class LocalVectorDB(BaseVectorDB):
             Number of chunks before and after to include when return_type='context'
         semantic_dedup_threshold : Optional[float]
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
-        document_scoring_method : str
+        document_scoring_method : DocumentScoreAggregationMethod
             Method for aggregating chunk scores into document scores
 
         Returns
@@ -2161,7 +2173,7 @@ class LocalVectorDB(BaseVectorDB):
             filters: Optional[Dict[str, Any]],
             context_window: int,
             semantic_dedup_threshold: Optional[float],
-            document_scoring_method: str
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
     ) -> List[QueryResult]:
         """Perform vector similarity search with a precomputed embedding"""
         # Search more chunks initially since we might deduplicate and need enough for final k
@@ -2256,7 +2268,7 @@ class LocalVectorDB(BaseVectorDB):
             vector_weight: float,
             context_window: int,
             semantic_dedup_threshold: Optional[float],
-            document_scoring_method: str
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
     ) -> List[QueryResult]:
         """Perform hybrid search with a precomputed embedding"""
         if not self.fts_enabled:
@@ -2278,12 +2290,6 @@ class LocalVectorDB(BaseVectorDB):
         keyword_results = self._keyword_search(
             query, 'chunks', search_k, 0.0, filters, 0, None, "best"
         )
-
-        # If either returns no results, return the other
-        if not vector_results:
-            return keyword_results[:k]
-        if not keyword_results:
-            return vector_results[:k]
 
         # Combine results with weighted scoring
         combined_results = self._combine_search_results(
@@ -2443,6 +2449,7 @@ class LocalVectorDB(BaseVectorDB):
 
         context_results = []
 
+        # TODO: intelligently check the chunks and join context fragments that are edge to edge.
         with self.connection_pool.get_connection() as conn:
             for result in results:
                 if result.type != 'chunk':
@@ -2518,7 +2525,7 @@ class LocalVectorDB(BaseVectorDB):
                 context_result = QueryResult(
                     id=f"{doc_id}:context:{chunk_index}",
                     score=result.score,  # Keep original score
-                    type='chunk',  # Still a chunk type, but with context
+                    type="context",
                     content=combined_text,
                     metadata=result.metadata.copy(),
                     document_id=doc_id,
@@ -2539,7 +2546,8 @@ class LocalVectorDB(BaseVectorDB):
     def _aggregate_document_scores_with_method(
             self,
             chunk_results: List[QueryResult],
-            method: Literal["best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
+            method: DocumentScoreAggregationMethod = "frequency_boost",
+            method_options: dict = None
     ) -> List[QueryResult]:
         """
         Aggregate chunk results into document results with enhanced scoring.
@@ -2548,8 +2556,8 @@ class LocalVectorDB(BaseVectorDB):
         ----------
         chunk_results : List[QueryResult]
             Chunk-level search results to aggregate by document
-        method : str
-            Scoring method: "best", "average", "worst", "weighted_average", or "frequency_boost"
+        method : DocumentScoreAggregationMethod
+            Scoring method to aggregate score at the document-level.
 
         Returns
         -------
@@ -2558,6 +2566,7 @@ class LocalVectorDB(BaseVectorDB):
         """
         if not chunk_results:
             return []
+        method_options = method_options or {}
 
         # Group chunks by document
         doc_groups = defaultdict(list)
@@ -2571,6 +2580,7 @@ class LocalVectorDB(BaseVectorDB):
             for doc_id, chunks in doc_groups.items():
                 # Calculate aggregated score based on method
                 scores = [chunk.score for chunk in chunks]
+                method_metadata = {}
 
                 if method == "best":
                     final_score = max(scores)
@@ -2582,13 +2592,147 @@ class LocalVectorDB(BaseVectorDB):
                     # Weight by normalized scores
                     weights = np.array(scores)
                     weights = weights / weights.sum() if weights.sum() > 0 else weights
+                    method_metadata["weights"] = weights.tolist()
                     final_score = np.average(scores, weights=weights)
                 elif method == "frequency_boost":
                     best_score = max(scores)
-                    chunk_count = len(chunks)
-                    # Frequency boost: best_score × log(1 + chunk_count)
-                    frequency_multiplier = math.log(1 + chunk_count)
-                    final_score = min(1.0, best_score * frequency_multiplier)  # Cap at 1.0
+
+                    quality_weights = [score / best_score for score in scores]
+                    effective_chunk_count = sum(quality_weights)
+                    frequency_multiplier = (1.0 + (math.log2(2 + effective_chunk_count) - 1)
+                                                   * method_options.get("frequency_bias", 0.3))
+
+                    method_metadata["effective_chunk_count"] = effective_chunk_count
+                    method_metadata["frequency_multiplier"] = frequency_multiplier
+                    final_score = min(1.0, best_score * frequency_multiplier)
+                elif method == "harmonic_mean":
+                    max_chunks_for_harmonic = method_options.get("max_chunks", 5)
+                    coverage_threshold = method_options.get("coverage_threshold", 0.7)
+                    sorted_scores = sorted(scores, reverse=True)
+                    # Use top chunk scores for harmonic mean
+                    top_scores = sorted_scores[:max_chunks_for_harmonic]
+                    harmonic_mean = len(top_scores) / sum(1 / max(score, 0.001) for score in top_scores)
+
+                    # Coverage bonus: percentage of chunks above threshold
+                    high_quality_chunks = sum(1 for score in scores if score >= coverage_threshold)
+                    coverage_ratio = high_quality_chunks / len(scores)
+                    coverage_bonus = 1.0 + (coverage_ratio * 0.2)  # Max 20% bonus
+
+                    method_metadata["harmonic_mean"] = harmonic_mean
+                    method_metadata["coverage_ratio"] = coverage_ratio
+
+                    final_score = min(1.0, harmonic_mean * coverage_bonus)
+                elif method == "diminishing_returns":
+                    sorted_scores = sorted(scores, reverse=True)
+                    decay_factor = method_options.get("decay_factor", 0.8)
+                    total_score = 0.0
+                    weight = 1.0
+
+                    for score in sorted_scores:
+                        total_score += score * weight
+                        weight *= decay_factor  # Each subsequent chunk has less impact
+
+                    # Normalize by the theoretical maximum to keep scores in [0,1] range
+                    max_possible = sum(decay_factor ** i for i in range(len(scores)))
+                    method_metadata["max_possible"] = max_possible
+
+                    final_score = min(1.0, total_score / max_possible)
+                elif method == "statistical":
+                    if len(scores) == 1:
+                        final_score = scores[0]
+                    else:
+                        best_weight = method_options.get("best_weight", 0.6)
+                        mean_weight = method_options.get("mean_weight", 0.2)
+                        consistency_weight = method_options.get("consistency_weight", 0.1)
+                        coverage_weight = method_options.get("coverage_weight", 0.1)
+                        best_score = max(scores)
+                        mean_score = statistics.mean(scores)
+
+                        # Calculate consistency (inverse of coefficient of variation)
+                        std_dev = statistics.stdev(scores)
+                        consistency = 1.0 - min(1.0, std_dev / mean_score) if mean_score > 0 else 0.0
+
+                        # Percentage of chunks above median
+                        median_score = statistics.median(scores)
+                        above_median_ratio = sum(1 for score in scores if score >= median_score) / len(scores)
+
+                        method_metadata["standard_deviation"] = std_dev
+                        method_metadata["median"] = median_score
+                        method_metadata["above_median_ratio"] = above_median_ratio
+
+                        # Combine metrics with specified weights
+                        final_score = (
+                                best_score * best_weight +
+                                mean_score * mean_weight +
+                                consistency * consistency_weight +
+                                above_median_ratio * coverage_weight
+                        )
+
+                        final_score = min(1.0, final_score)
+                elif method == "robust_mean":
+                    if len(scores) == 1:
+                        final_score = scores[0]
+                    else:
+                        outlier_threshold = method_options.get("outlier_threshold", 2.0)
+                        position_decay = method_options.get("position_decay", 0.9)
+                        # Remove outliers using z-score
+                        mean_score = statistics.mean(scores)
+                        std_score = statistics.stdev(scores) if len(scores) > 1 else 0
+
+                        if std_score > 0:
+                            filtered_scores = [
+                                score for score in scores
+                                if abs(score - mean_score) <= outlier_threshold * std_score
+                            ]
+                        else:
+                            filtered_scores = scores
+
+                        if not filtered_scores:
+                            filtered_scores = scores  # Fallback if all scores were outliers
+
+                        # Sort and apply position-based weighting
+                        sorted_scores = sorted(filtered_scores, reverse=True)
+                        weights = [position_decay ** i for i in range(len(sorted_scores))]
+
+
+                        weighted_sum = sum(score * weight for score, weight in zip(sorted_scores, weights))
+                        weight_sum = sum(weights)
+
+                        method_metadata["standard_deviation"] = std_score
+                        method_metadata["weighted_sum"] = weighted_sum
+                        method_metadata["weights"] = weights
+
+                        final_score = weighted_sum / weight_sum if weight_sum > 0 else 0.0
+                elif method == "percentile":
+                    if len(scores) == 1:
+                        final_score = scores[0]
+                    else:
+                        primary_percentile = method_options.get("primary_percentile", 0.9)
+                        secondary_percentile = method_options.get("secondary_percentile", 0.7)
+                        primary_weight = method_options.get("primary_weight", 0.7)
+                        # Calculate percentiles
+                        primary_score = np.percentile(scores, primary_percentile * 100)
+                        secondary_score = np.percentile(scores, secondary_percentile * 100)
+                        method_metadata["primary_score"] = primary_score
+                        method_metadata["secondary_score"] = secondary_score
+                        method_metadata["primary_percentile"] = primary_percentile
+                        method_metadata["secondary_percentile"] = secondary_percentile
+                        method_metadata["primary_wieght"] = primary_weight
+                        # Weighted combination
+                        final_score =  primary_score * primary_weight + secondary_score * (1 - primary_weight)
+                elif method == "geometric_mean":
+                    stabilization_factor = 0.1
+                    stabilized_scores = [score + stabilization_factor for score in scores]
+
+                    # Calculate geometric mean
+                    product = 1.0
+                    for score in stabilized_scores:
+                        product *= score
+
+                    geometric_mean = product ** (1.0 / len(stabilized_scores))
+
+                    # Remove stabilization factor
+                    final_score = max(0.0, geometric_mean - stabilization_factor)
                 else:
                     final_score = max(scores)  # Default to best
 
@@ -2605,14 +2749,11 @@ class LocalVectorDB(BaseVectorDB):
                 doc_metadata = self._get_document_metadata(conn, doc_id)
 
                 # Add aggregation metadata
-                doc_metadata['_aggregation_method'] = method
-                doc_metadata['_chunk_count'] = len(chunks)
-                doc_metadata['_best_chunk_score'] = max(scores)
-                doc_metadata['_average_chunk_score'] = sum(scores) / len(scores)
-
-                if method == "frequency_boost":
-                    doc_metadata['_frequency_multiplier'] = math.log(1 + len(chunks))
-                    doc_metadata['_original_best_score'] = max(scores)
+                method_metadata['_aggregation_method'] = method
+                method_metadata['_chunk_count'] = len(chunks)
+                method_metadata['_best_chunk_score'] = max(scores)
+                method_metadata['_average_chunk_score'] = sum(scores) / len(scores)
+                doc_metadata["_scoring"] = method_metadata
 
                 # Create document result
                 doc_result = QueryResult(

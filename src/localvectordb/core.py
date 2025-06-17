@@ -21,11 +21,12 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Literal, Type, Generator
-
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Union, Any, Literal, Type, Generator, Tuple
+from datetime import datetime
+from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import ConnectionPoolError
 
 
@@ -37,6 +38,20 @@ class MetadataFieldType(str, Enum):
     DATE = "date"
     JSON = "json"
 
+    def valid_types(self) -> Tuple[type, ...]:
+        if self.value == "text":
+            return (str, )
+        elif self.value == "integer":
+            return (int, )
+        elif self.value == "real":
+            return (int, float)
+        elif self.value == "boolean":
+            return (bool, int)
+        elif self.value == "date":
+            return (datetime, str)
+        elif self.value == "json":
+            return (dict, list)
+        return ()
 
 @dataclass
 class MetadataField:
@@ -269,7 +284,7 @@ class QueryResult:
     """Result from a search query"""
     id: str
     score: float  # Normalized 0-1, higher=better
-    type: Literal['document', 'chunk']
+    type: Literal['document', 'chunk', 'context']
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -314,13 +329,6 @@ class QueryResult:
             position=position,
         )
 
-
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union, Any, Literal
-from datetime import datetime
-
-from localvectordb.core import Document, QueryResult, MetadataField
-from localvectordb.embeddings import EmbeddingProvider
 
 
 class BaseVectorDB(ABC):

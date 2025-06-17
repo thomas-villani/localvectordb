@@ -730,6 +730,7 @@ def list_documents(db_name):
 def search_handler(db_name, search_params):
     """Unified query interface for all search types with enhanced validation"""
 
+    # TODO: add document scoring options to validate_search_params
     # Validate search parameters
     search_params = validate_search_params(search_params)
 
@@ -741,10 +742,11 @@ def search_handler(db_name, search_params):
     filters = search_params.get("filters", search_params.get("metadata_filters"))
     vector_weight = search_params.get("vector_weight", 0.7)
 
-    # NEW PARAMETERS:
     context_window = search_params.get("context_window", 2)
     semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
     document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
+    document_scoring_options = search_params.get("document_scoring_options", None)
+
 
     try:
         db = current_app.db_manager.get_db(db_name)
@@ -766,7 +768,8 @@ def search_handler(db_name, search_params):
             vector_weight=vector_weight,
             context_window=context_window,
             semantic_dedup_threshold=semantic_dedup_threshold,
-            document_scoring_method=document_scoring_method
+            document_scoring_method=document_scoring_method,
+            document_scoring_options=document_scoring_options
         )
 
         # Serialize results
