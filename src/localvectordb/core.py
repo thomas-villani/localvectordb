@@ -1243,7 +1243,7 @@ class DatabaseSchema:
                                             f"Column dropping requested for '{field_name}' but not implemented for safety. "
                                             f"Column data is preserved."
                                         )
-                                        # TODO: Implement table recreation for column dropping if needed
+                                        # TODO: Implement dropping columns, only old sqlite doesn't support
 
                                     except Exception as e:
                                         changes['errors'].append(f"Failed to drop column '{field_name}': {str(e)}")

@@ -77,9 +77,9 @@ class EmbeddingSettings(BaseSettings):
     model: str = "nomic-embed-text"
     base_url: Optional[str] = None  # Provider-specific base URL
     api_key: Optional[str] = None  # API key for providers that need it
-    batch_size: int = 64
-    timeout: int = 30  # Request timeout in seconds - TODO: implement this
-    max_retries: int = 3  # TODO: implement this.
+    batch_size: int = 64     # TODO: is this implemented?
+    timeout: int = 30  # Request timeout in seconds : TODO: not actually used by server
+    max_retries: int = 3  # TODO: implement this, currently EmbeddingProviders don't retry.
 
     # Provider-specific configurations
     config: Dict[str, Any] = field(default_factory=dict)

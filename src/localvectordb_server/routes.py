@@ -369,6 +369,7 @@ def upsert_documents(db_name):
                     field="ids"
                 )
 
+        # TODO: use batch size from config if not specified in payload
         # Validate batch size
         batch_size = data.get("batch_size", 100)
         validate_field_type(data, "batch_size", int)
@@ -447,6 +448,7 @@ def insert_documents(db_name):
         if isinstance(ids, str):
             ids = [ids]
 
+        # TODO: load batch size from config settings
         batch_size = data.get("batch_size", 100)
         errors = data.get("errors", "raise")  # "raise" or "ignore"
         similarity_threshold = data.get("similarity_threshold")
@@ -490,8 +492,6 @@ def insert_documents(db_name):
         except Exception as e:
             db_logger.log_error("insert_documents", e, database_name=db_name)
             raise
-
-
 
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["GET"])

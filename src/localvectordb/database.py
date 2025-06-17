@@ -609,6 +609,7 @@ class LocalVectorDB(BaseVectorDB):
         self._next_doc_id += 1
         return doc_id
 
+    # TODO: add optional parameter to control metadata validation strictness
     def upsert(
             self,
             documents: Union[str, List[str]],
@@ -1590,7 +1591,7 @@ class LocalVectorDB(BaseVectorDB):
                 cursor = conn.execute(sql, ids)
                 rows = cursor.fetchall()
 
-                # TODO: we don't check to see if any are missing
+                # TODO: we don't check to see if any docs are missing, how to handle?
                 documents = []
                 for row in rows:
                     # Extract metadata
@@ -2053,15 +2054,6 @@ class LocalVectorDB(BaseVectorDB):
         keyword_results = self._keyword_search(query, 'chunks', search_k, 0.0, filters,
                                                0, None)  # No processing yet
 
-        # TODO: this would result in chunks being returned when we don't want just chunks
-        # If either returns no results, return the other
-        # if not vector_results:
-        #     print("returning keyword only")
-        #     return keyword_results[:k]
-        # if not keyword_results:
-        #     print("returning vector only")
-        #     return vector_results[:k]
-
         # Combine results with weighted scoring
         combined_results = self._combine_search_results(
             vector_results=vector_results,
@@ -2348,7 +2340,7 @@ class LocalVectorDB(BaseVectorDB):
         faiss_ids = []
         valid_results = []
 
-        # TODO: can we get all the rows at once? This is silly to get them one at a time.
+        # TODO: Optimize this by getting all rows at once
         for result in results:
             if result.type == 'chunk':
                 # For chunk results, we need to get the FAISS ID from the database
@@ -2374,6 +2366,8 @@ class LocalVectorDB(BaseVectorDB):
                 self.index.reconstruct(int(faiss_id)) for faiss_id in faiss_ids
             ])
 
+            # TODO: the following is a silly way to do this, we should be able to do a single numpy operation
+            #  across all the chunks to identify duplicates.
             # Calculate pairwise cosine similarities
             # Normalize embeddings for cosine similarity
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)

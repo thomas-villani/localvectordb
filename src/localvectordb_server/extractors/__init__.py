@@ -215,7 +215,6 @@ class BaseExtractor(ABC):
             'priority': self.priority
         }
 
-# TODO: add discover plugins method.
 class ExtractorRegistry:
     """
     Registry for file content extractors.

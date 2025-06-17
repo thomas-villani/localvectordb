@@ -662,10 +662,12 @@ class DatabaseManager:
                         chunk_size=db_config.chunk_size
                     )
 
+                    # TODO: the embedding config has a timeout parameter that's not being passed,
+                    #  it should probably go in the `embedding_config.config`
                     # Create new database instance
                     db = LocalVectorDB(
                         name=new_db_name,
-                        base_path=Path(self.config.get("DB_ROOT_DIR", ".lvdb")),
+                        base_path=self.config.get("DB_ROOT_DIR", ".lvdb"),
                         metadata_schema=metadata_schema,
                         embedding_provider=embedding_config.provider,
                         embedding_model=embedding_config.model,

@@ -200,6 +200,9 @@ class OpenAIEmbeddings(EmbeddingProvider):
         self._dimension = None
         self._validated = False
 
+        self.timeout = kwargs.get("timeout", 300)
+
+
         # Model dimension mapping
         self._model_dimensions = {
             "text-embedding-ada-002": 1536,

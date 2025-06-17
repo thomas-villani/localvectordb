@@ -124,7 +124,7 @@ Directory Synchronization
 =========================
 
 Sync Code Directory Recursively
---------------------------------
+-------------------------------
 
 Keep a directory of code files synchronized with your database, using filenames as document IDs for easy updates.
 
@@ -310,6 +310,7 @@ The LocalVectorDB server includes built-in extractors for many file types. Here'
    import mimetypes
    from pathlib import Path
    from typing import Optional, Dict, Any
+   from localvectordb_server.extractors import ExtractorRegistry
 
    def add_file_with_extraction(db, file_path: str, metadata: Optional[Dict[str, Any]] = None):
        """
@@ -326,7 +327,9 @@ The LocalVectorDB server includes built-in extractors for many file types. Here'
        mime_type, _ = mimetypes.guess_type(str(path))
 
        try:
-           content = extract_content_by_type(path, mime_type)
+           with open(path, "rb") as file_obj:
+               content_bytes = file_obj.read()
+               content = ExtractorRegistry.extract_text(content_bytes, path, mime_type)
 
            if not content or len(content.strip()) < 10:
                print(f"Warning: No meaningful content extracted from {file_path}")
@@ -359,126 +362,6 @@ The LocalVectorDB server includes built-in extractors for many file types. Here'
            print(f"Failed to process {file_path}: {e}")
            return None
 
-   def extract_content_by_type(path: Path, mime_type: Optional[str]) -> str:
-       """Extract content based on file type."""
-
-       # Text files (direct reading)
-       text_extensions = {'.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.csv'}
-       if path.suffix.lower() in text_extensions:
-           with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-               return f.read()
-
-       # PDF files
-       elif path.suffix.lower() == '.pdf':
-           return extract_pdf_content(path)
-
-       # Word documents
-       elif path.suffix.lower() in {'.docx', '.doc'}:
-           return extract_docx_content(path)
-
-       # Excel files
-       elif path.suffix.lower() in {'.xlsx', '.xls'}:
-           return extract_excel_content(path)
-
-       # PowerPoint files
-       elif path.suffix.lower() in {'.pptx', '.ppt'}:
-           return extract_pptx_content(path)
-
-       # RTF files
-       elif path.suffix.lower() == '.rtf':
-           return extract_rtf_content(path)
-
-       else:
-           # Fallback: try reading as text
-           try:
-               with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                   return f.read()
-           except:
-               return ""
-
-   def extract_pdf_content(path: Path) -> str:
-       """Extract text from PDF files."""
-       try:
-           import pdfplumber
-           with pdfplumber.open(path) as pdf:
-               text = ""
-               for page in pdf.pages:
-                   page_text = page.extract_text()
-                   if page_text:
-                       text += page_text + "\n\n"
-               return text.strip()
-       except ImportError:
-           try:
-               import PyPDF2
-               with open(path, 'rb') as file:
-                   reader = PyPDF2.PdfReader(file)
-                   text = ""
-                   for page in reader.pages:
-                       text += page.extract_text() + "\n\n"
-                   return text.strip()
-           except ImportError:
-               print("PDF extraction requires: pip install pdfplumber (or PyPDF2)")
-               return ""
-
-   def extract_docx_content(path: Path) -> str:
-       """Extract text from Word documents."""
-       try:
-           from docx import Document
-           doc = Document(path)
-           text = ""
-           for paragraph in doc.paragraphs:
-               text += paragraph.text + "\n"
-           return text.strip()
-       except ImportError:
-           print("DOCX extraction requires: pip install python-docx")
-           return ""
-
-   def extract_excel_content(path: Path) -> str:
-       """Extract text from Excel files."""
-       try:
-           import openpyxl
-           workbook = openpyxl.load_workbook(path, data_only=True)
-           text = ""
-           for sheet_name in workbook.sheetnames:
-               sheet = workbook[sheet_name]
-               text += f"Sheet: {sheet_name}\n"
-               for row in sheet.iter_rows(values_only=True):
-                   row_text = "\t".join([str(cell) if cell is not None else "" for cell in row])
-                   if row_text.strip():
-                       text += row_text + "\n"
-               text += "\n"
-           return text.strip()
-       except ImportError:
-           print("Excel extraction requires: pip install openpyxl")
-           return ""
-
-   def extract_pptx_content(path: Path) -> str:
-       """Extract text from PowerPoint files."""
-       try:
-           from pptx import Presentation
-           prs = Presentation(path)
-           text = ""
-           for slide_num, slide in enumerate(prs.slides, 1):
-               text += f"Slide {slide_num}:\n"
-               for shape in slide.shapes:
-                   if hasattr(shape, "text") and shape.text:
-                       text += shape.text + "\n"
-               text += "\n"
-           return text.strip()
-       except ImportError:
-           print("PPTX extraction requires: pip install python-pptx")
-           return ""
-
-   def extract_rtf_content(path: Path) -> str:
-       """Extract text from RTF files."""
-       try:
-           from striprtf.striprtf import rtf_to_text
-           with open(path, 'r', encoding='utf-8') as file:
-               rtf_content = file.read()
-               return rtf_to_text(rtf_content)
-       except ImportError:
-           print("RTF extraction requires: pip install striprtf")
-           return ""
 
    # Usage examples
    db = create_code_db()  # Or any database
