@@ -1860,34 +1860,57 @@ class LocalVectorDB(BaseVectorDB):
         # Search FAISS index
         distances, indices = self.index.search(query_embedding, initial_k)
 
-        # Get chunk information - ALWAYS get chunks first
+        # Filter valid indices and calculate scores first
+        valid_results = []
+        valid_faiss_ids = []
+
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx == -1:  # Invalid index
+                continue
+
+            # Convert distance to normalized score (0-1, higher=better)
+            score = max(0.0, 1.0 / (1.0 + float(dist)))
+
+            if score < score_threshold:
+                continue
+
+            valid_results.append((int(idx), score))
+            valid_faiss_ids.append(int(idx))
+
+        if not valid_faiss_ids:
+            return []
+
+        # Batch fetch ALL chunk and document info in a single query
         chunk_results = []
 
         with self.connection_pool.get_connection() as conn:
-            for dist, idx in zip(distances[0], indices[0]):
-                if idx == -1:  # Invalid index
-                    continue
+            # Single query to get all chunk and document info
+            placeholders = ','.join(['?'] * len(valid_faiss_ids))
+            cursor = conn.execute(f'''
+                SELECT c.*, d.id as doc_id, d.content as doc_content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id  
+                WHERE c.faiss_id IN ({placeholders})
+            ''', valid_faiss_ids)
 
-                # Get chunk info
-                cursor = conn.execute('''
-                    SELECT c.*, d.id as doc_id, d.content as doc_content
-                    FROM chunks c
-                    JOIN documents d ON c.document_id = d.id  
-                    WHERE c.faiss_id = ?
-                ''', (int(idx),))
+            # Create a mapping from faiss_id to row data
+            faiss_id_to_row = {}
+            doc_ids_to_fetch = set()
 
-                row = cursor.fetchone()
+            for row in cursor.fetchall():
+                faiss_id_to_row[row['faiss_id']] = row
+                doc_ids_to_fetch.add(row['doc_id'])
+
+            # Batch fetch all metadata at once
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+
+            # Create results using the batched data
+            for faiss_id, score in valid_results:
+                row = faiss_id_to_row.get(faiss_id)
                 if not row:
-                    continue
+                    continue  # Skip if chunk not found
 
-                # Convert distance to normalized score (0-1, higher=better)
-                score = max(0.0, 1.0 / (1.0 + float(dist)))
-
-                if score < score_threshold:
-                    continue
-
-                # Get document metadata
-                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
+                doc_metadata = doc_metadata_batch.get(row['doc_id'], {})
 
                 # Apply metadata filters early
                 if filters and not self._matches_filters(doc_metadata, filters):
@@ -1916,6 +1939,8 @@ class LocalVectorDB(BaseVectorDB):
 
         # Apply semantic deduplication if requested
         if semantic_dedup_threshold is not None:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            # Semantic deduplication needs sorted
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
 
         # Process based on return type
@@ -1937,6 +1962,43 @@ class LocalVectorDB(BaseVectorDB):
             chunk_results.sort(key=lambda x: x.score, reverse=True)
             return chunk_results[:k]
 
+    def _get_documents_metadata_batch(self, conn: sqlite3.Connection, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Get metadata for multiple documents in a single query"""
+        if not doc_ids or not self.metadata_schema:
+            return {doc_id: {} for doc_id in doc_ids}
+
+        metadata_columns = list(self.metadata_schema.keys())
+        placeholders = ','.join(['?'] * len(doc_ids))
+
+        cursor = conn.execute(
+            f"SELECT id, {', '.join(metadata_columns)} FROM documents WHERE id IN ({placeholders})",
+            doc_ids
+        )
+
+        result = {}
+        for row in cursor.fetchall():
+            doc_id = row['id']
+            metadata = {}
+            for col_name in metadata_columns:
+                if col_name in row.keys():
+                    value = row[col_name]
+                    if value is not None and col_name in self.metadata_schema:
+                        field_def = self.metadata_schema[col_name]
+                        if field_def.type == MetadataFieldType.JSON:
+                            try:
+                                value = json.loads(value)
+                            except (json.JSONDecodeError, TypeError):
+                                pass  # Keep as string if not valid JSON
+                    metadata[col_name] = value
+            result[doc_id] = metadata
+
+        # Ensure all requested doc_ids have entries (even if empty)
+        for doc_id in doc_ids:
+            if doc_id not in result:
+                result[doc_id] = {}
+
+        return result
+
     def _keyword_search(
             self,
             query: str,
@@ -1946,7 +2008,8 @@ class LocalVectorDB(BaseVectorDB):
             filters: Optional[Dict[str, Any]],
             context_window: int,
             semantic_dedup_threshold: Optional[float],
-            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
+            document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost",
+            document_scoring_options: dict = None
     ) -> List[QueryResult]:
         """Perform keyword search using FTS5 with enhanced processing"""
         if not self.fts_enabled:
@@ -1964,22 +2027,63 @@ class LocalVectorDB(BaseVectorDB):
         chunk_results = []
 
         with self.connection_pool.get_connection() as conn:
-            # Search chunks - get extra for potential deduplication if needed
+            # First pass: Get all matching chunk IDs and scores from FTS
             cursor = conn.execute('''
-                SELECT c.*, d.id as doc_id, d.content as doc_content, rank
-                FROM chunks_fts, chunks c, documents d
-                WHERE chunks_fts.rowid = c.id
-                AND c.document_id = d.id
-                AND chunks_fts MATCH ?
+                SELECT rowid, rank
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
                 ORDER BY rank
                 LIMIT ?
             ''', (sanitized_query, initial_k))
+
+            # Collect valid chunk IDs and scores
+            valid_chunk_data = []
+            valid_chunk_ids = []
 
             for row in cursor.fetchall():
                 # Convert FTS5 rank to normalized score
                 score = 1.0 - min(1.0, math.exp(float(row['rank'])))
 
                 if score < score_threshold:
+                    continue
+
+                chunk_id = row['rowid']
+                valid_chunk_data.append((chunk_id, score))
+                valid_chunk_ids.append(chunk_id)
+
+            if not valid_chunk_ids:
+                return []
+
+            # Batch fetch all chunk and document info in a single query
+            placeholders = ','.join(['?'] * len(valid_chunk_ids))
+            cursor = conn.execute(f'''
+                SELECT c.*, d.id as doc_id, d.content as doc_content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE c.id IN ({placeholders})
+            ''', valid_chunk_ids)
+
+            # Create mappings
+            chunk_id_to_row = {}
+            doc_ids_to_fetch = set()
+
+            for row in cursor.fetchall():
+                chunk_id_to_row[row['id']] = row
+                doc_ids_to_fetch.add(row['doc_id'])
+
+            # Batch fetch all metadata at once
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+
+            # Create results using the batched data
+            for chunk_id, score in valid_chunk_data:
+                row = chunk_id_to_row.get(chunk_id)
+                if not row:
+                    continue  # Skip if chunk not found
+
+                doc_metadata = doc_metadata_batch.get(row['doc_id'], {})
+
+                # Apply metadata filters early
+                if filters and not self._matches_filters(doc_metadata, filters):
                     continue
 
                 # Create chunk position
@@ -1991,13 +2095,6 @@ class LocalVectorDB(BaseVectorDB):
                     end_line=row['end_line'],
                     end_column=row['end_col']
                 )
-
-                # Get document metadata
-                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
-
-                # Apply metadata filters
-                if filters and not self._matches_filters(doc_metadata, filters):
-                    continue
 
                 result = QueryResult(
                     id=f"{row['document_id']}:{row['chunk_index']}",
@@ -2012,6 +2109,7 @@ class LocalVectorDB(BaseVectorDB):
 
         # Apply same processing pipeline as vector search
         if semantic_dedup_threshold is not None:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
 
         if return_type == 'context':
@@ -2020,7 +2118,7 @@ class LocalVectorDB(BaseVectorDB):
             return final_results[:k]
         elif return_type == 'documents':
             document_results = self._aggregate_document_scores_with_method(
-                chunk_results, document_scoring_method
+                chunk_results, document_scoring_method, document_scoring_options
             )
             return document_results[:k]
         else:  # chunks
@@ -2313,6 +2411,61 @@ class LocalVectorDB(BaseVectorDB):
             combined_results.sort(key=lambda x: x.score, reverse=True)
             return combined_results[:k]
 
+    def get_chunk_embeddings(self, chunk_ids: str | List[str]):
+        """Returns embeddings for chunks given by `chunk_ids`"""
+        single_id = isinstance(chunk_ids, str)
+        if single_id:
+            chunk_ids = [chunk_ids]
+
+        chunk_list = []
+        for cid in chunk_ids:
+            doc_id, chunk_idx = self._split_chunk_id(cid)
+            if chunk_idx == -1:
+                raise ValueError(f"Expected chunk ids (e.g. doc_1:1), found: {cid}")
+            chunk_list.append((doc_id, chunk_idx))
+
+        placeholders = ",".join(["(?,?)"] * len(chunk_list))
+        query_str = f"""SELECT faiss_id, document_id, chunk_index FROM chunks WHERE (document_id, chunk_index) IN ({placeholders})"""
+        params = [item for pair in chunk_list for item in pair]
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute(query_str, params)
+            rows = cursor.fetchall()
+            faiss_ids = [row["faiss_id"] for row in rows]
+            # chunk_to_faiss_map = {(row["document_id"], row["chunk_id"]): row["faiss_id"] for row in rows}
+
+        return self._reconstruct_embeddings_batch(faiss_ids)
+
+    def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
+        """Batch reconstruct embeddings handling IndexIDMap"""
+        if not faiss_ids:
+            return np.array([]).reshape(0, self.embedding_dimension)
+
+        # Convert FAISS IDs to underlying index positions
+        faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
+
+        # Get the mapping from FAISS IDs to internal indices
+        # IndexIDMap stores id_map which maps external IDs to internal positions
+        internal_indices = []
+        for fid in faiss_ids_array:
+            # Find the internal index for this FAISS ID
+            # The id_map contains the mapping
+            internal_idx = -1
+            for i in range(self.index.ntotal):
+                if self.index.id_map.at(i) == fid:
+                    internal_idx = i
+                    break
+            if internal_idx != -1:
+                internal_indices.append(internal_idx)
+
+        if not internal_indices:
+            return np.array([]).reshape(0, self.embedding_dimension)
+
+        # Use the underlying index for batch reconstruction
+        internal_indices_array = np.array(internal_indices, dtype=np.int64)
+        embeddings = self.index.index.reconstruct_batch(internal_indices_array)
+
+        return embeddings
+
     def _apply_semantic_deduplication(
             self,
             results: List[QueryResult],
@@ -2321,10 +2474,12 @@ class LocalVectorDB(BaseVectorDB):
         """
         Apply semantic deduplication to search results using FAISS index embeddings.
 
+        Optimized version that minimizes database calls and uses batch FAISS operations.
+
         Parameters
         ----------
         results : List[QueryResult]
-            Initial search results to deduplicate
+            Initial search results to deduplicate - MUST BE SORTED with highest score first
         threshold : float
             Similarity threshold (0-1, higher=more similar). Chunks above this threshold are considered duplicates.
 
@@ -2336,87 +2491,99 @@ class LocalVectorDB(BaseVectorDB):
         if not results or threshold is None or threshold <= 0:
             return results
 
-        # Extract FAISS IDs from chunk results
+        # Separate chunk results from other types (only chunks have embeddings)
+        chunk_results = [r for r in results if r.type == 'chunk']
+
+        if len(chunk_results) <= 1:
+            return results  # No deduplication needed
+
+        # Step 1: Batch retrieve all FAISS IDs in a single SQL query
+        chunk_identifiers = [(r.document_id, self._extract_chunk_index_from_id(r.id)) for r in chunk_results]
+
+        with self.connection_pool.get_connection() as conn:
+            # Create parameterized query for all chunks at once
+            placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
+            query = f'''
+                SELECT document_id, chunk_index, faiss_id 
+                FROM chunks 
+                WHERE (document_id, chunk_index) IN ({placeholders})
+            '''
+
+            # Flatten the list of tuples for query parameters
+            params = [item for pair in chunk_identifiers for item in pair]
+            cursor = conn.execute(query, params)
+            faiss_id_mapping = {
+                (row['document_id'], row['chunk_index']): row['faiss_id']
+                for row in cursor.fetchall()
+            }
+
+        # Step 2: Extract FAISS IDs and create mapping to results
         faiss_ids = []
-        valid_results = []
+        result_mapping = {}  # faiss_id -> QueryResult
 
-        # TODO: Optimize this by getting all rows at once
-        for result in results:
-            if result.type == 'chunk':
-                # For chunk results, we need to get the FAISS ID from the database
-                with self.connection_pool.get_connection() as conn:
-                    cursor = conn.execute(
-                        'SELECT faiss_id FROM chunks WHERE document_id = ? AND chunk_index = ?',
-                        (result.document_id, self._extract_chunk_index_from_id(result.id))
-                    )
-                    row = cursor.fetchone()
-                    if row and row['faiss_id'] is not None:
-                        faiss_ids.append(row['faiss_id'])
-                        valid_results.append(result)
-            else:
-                # For document results, we can't easily deduplicate without chunk info
-                valid_results.append(result)
+        for result in chunk_results:
+            doc_id, chunk_idx = self._split_chunk_id(result.id)
+            faiss_id = faiss_id_mapping.get((doc_id, chunk_idx))
 
-        if len(faiss_ids) < 2:
-            return results  # Not enough chunks to deduplicate
+            if faiss_id is not None:
+                faiss_ids.append(faiss_id)
+                result_mapping[faiss_id] = result
 
+        # Step 3: Batch retrieve embeddings from FAISS index
+        embeddings_matrix = self._reconstruct_embeddings_batch(faiss_ids)
+
+        # Step 4: Compute pairwise similarities using vectorized operations
+        # Normalize embeddings for cosine similarity
+        norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
+        normalized_embeddings = embeddings_matrix / np.maximum(norms, 1e-8)
+
+        # Compute similarity matrix (upper triangular to avoid duplicates)
+        similarity_matrix = np.dot(normalized_embeddings, normalized_embeddings.T)
+
+        # Step 5: Identify duplicates using pure numpy operations
+        # Since results are sorted by score (descending), score[i] >= score[j] when i < j
+        # Create boolean mask for similarities above threshold (excluding diagonal)
+        similar_pairs = similarity_matrix >= threshold
+        np.fill_diagonal(similar_pairs, False)  # Exclude self-similarity
+
+        # Step 6: Vectorized duplicate identification
+        # Since we're sorted by score, we only need the upper triangular part
+        # A chunk j should be removed if it's similar to any earlier (higher-scoring) chunk i where i < j
+        upper_triangular_similarities = np.triu(similar_pairs, k=1)
+
+        # For each chunk j, check if any earlier chunk i is similar (column-wise check)
+        should_remove = np.any(upper_triangular_similarities, axis=0)
+
+        # Step 7: Build final results using boolean indexing
+        keep_mask = ~should_remove
+        final_chunk_results = [result_mapping[faiss_ids[i]] for i in range(len(faiss_ids)) if keep_mask[i]]
+
+        # Log deduplication statistics
+        original_count = len(chunk_results)
+        final_count = len(final_chunk_results)
+        removed_count = original_count - final_count
+
+        logger.debug(f"Semantic deduplication: {original_count} → {final_count} chunks "
+                     f"({removed_count} removed)")
+
+        # Combine deduplicated chunks with non-chunk results
+        return final_chunk_results
+
+    @staticmethod
+    def _split_chunk_id(chunk_id: str) -> tuple[str, int]:
         try:
-            # Reconstruct embeddings from FAISS index
-            embeddings = np.array([
-                self.index.reconstruct(int(faiss_id)) for faiss_id in faiss_ids
-            ])
-
-            # TODO: the following is a silly way to do this, we should be able to do a single numpy operation
-            #  across all the chunks to identify duplicates.
-            # Calculate pairwise cosine similarities
-            # Normalize embeddings for cosine similarity
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            normalized_embeddings = embeddings / norms
-            similarity_matrix = np.dot(normalized_embeddings, normalized_embeddings.T)
-
-            # Find groups of similar chunks
-            processed = set()
-            keep_indices = []
-
-            for i in range(len(valid_results)):
-                if i in processed:
-                    continue
-
-                # Find all chunks similar to this one
-                similar_indices = np.where(similarity_matrix[i] >= threshold)[0]
-
-                # Among similar chunks, keep the one with highest score
-                best_idx = i
-                best_score = valid_results[i].score
-
-                for j in similar_indices:
-                    if j != i and valid_results[j].score > best_score:
-                        best_idx = j
-                        best_score = valid_results[j].score
-                    processed.add(j)
-
-                keep_indices.append(best_idx)
-                processed.add(i)
-
-            # Return deduplicated results
-            deduplicated = [valid_results[i] for i in sorted(set(keep_indices))]
-
-            logger.debug(f"Semantic deduplication: {len(results)} → {len(deduplicated)} results "
-                         f"(removed {len(results) - len(deduplicated)} similar chunks)")
-
-            return deduplicated
-
-        except Exception as e:
-            logger.warning(f"Semantic deduplication failed: {e}")
-            return results
+            parts = chunk_id.rsplit(':', maxsplit=1)
+            chunk_idx = int(parts[-1])
+            doc_id = parts[0]
+            return doc_id, chunk_idx
+        except (ValueError, IndexError, TypeError):
+            return chunk_id, -1
 
     @staticmethod
     def _extract_chunk_index_from_id(chunk_id: str) -> int:
         """Extract chunk index from chunk ID format 'doc_id:chunk_index'"""
-        try:
-            return int(chunk_id.split(':')[-1])
-        except (ValueError, IndexError, TypeError):
-            return 0
+        _, chunk_idx = LocalVectorDB._split_chunk_id(chunk_id)
+        return chunk_idx
 
     def _add_context_window(
             self,
@@ -2425,117 +2592,172 @@ class LocalVectorDB(BaseVectorDB):
     ) -> List[QueryResult]:
         """
         Add context window around found chunks by including surrounding chunks.
-
-        Parameters
-        ----------
-        results : List[QueryResult]
-            Chunk-level search results to add context to
-        context_window : int
-            Number of chunks to include before and after each found chunk
-
-        Returns
-        -------
-        List[QueryResult]
-            Results with expanded content including context chunks
+        Optimized to batch database queries by document and merge overlapping ranges.
         """
         if context_window <= 0 or not results:
             return results
 
         context_results = []
 
-        # TODO: intelligently check the chunks and join context fragments that are edge to edge.
+        # Group results by document and collect chunk indices
+        doc_chunk_requests = defaultdict(list)
+
+        for result in results:
+            if result.type != 'chunk':
+                # For document results, just pass through
+                context_results.append(result)
+                continue
+
+            doc_id = result.document_id
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunk_requests[doc_id].append((chunk_index, result))
+
+        # Process each document
         with self.connection_pool.get_connection() as conn:
-            for result in results:
-                if result.type != 'chunk':
-                    # For document results, just pass through
-                    context_results.append(result)
+            for doc_id, chunk_requests in doc_chunk_requests.items():
+                # Calculate ranges needed for all chunks in this document
+                ranges_needed = []
+                for chunk_index, result in chunk_requests:
+                    start_index = max(0, chunk_index - context_window)
+                    end_index = chunk_index + context_window
+                    ranges_needed.append((start_index, end_index, chunk_index, result))
+
+                # Merge overlapping ranges to minimize data fetched
+                merged_ranges = self._merge_overlapping_ranges(ranges_needed)
+
+                # Fetch all needed chunks for this document in a single query
+                all_chunk_indices = set()
+                for start, end, _, _ in merged_ranges:
+                    all_chunk_indices.update(range(start, end + 1))
+
+                if not all_chunk_indices:
                     continue
 
-                doc_id = result.document_id
-                chunk_index = self._extract_chunk_index_from_id(result.id)
-
-                # Get surrounding chunks
-                start_index = max(0, chunk_index - context_window)
-                end_index = chunk_index + context_window + 1  # +1 because range is exclusive
-
-                cursor = conn.execute('''
+                # Single query to get all chunks we need for this document
+                placeholders = ','.join(['?'] * len(all_chunk_indices))
+                cursor = conn.execute(f'''
                     SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col
                     FROM chunks 
-                    WHERE document_id = ? AND chunk_index >= ? AND chunk_index < ?
+                    WHERE document_id = ? AND chunk_index IN ({placeholders})
                     ORDER BY chunk_index
-                ''', (doc_id, start_index, end_index))
+                ''', [doc_id] + list(all_chunk_indices))
 
-                context_chunks = cursor.fetchall()
+                # Create lookup map
+                chunks_by_index = {row['chunk_index']: row for row in cursor.fetchall()}
 
-                if not context_chunks:
-                    # No context found, use original result
-                    context_results.append(result)
-                    continue
+                # Process each original result for this document
+                for chunk_index, result in chunk_requests:
+                    # Get context chunks for this specific result
+                    context_chunks = []
+                    start_context = max(0, chunk_index - context_window)
+                    end_context = chunk_index + context_window
 
-                # Combine chunks into single content
-                combined_content = []
-                min_start_pos = float('inf')
-                max_end_pos = 0
-                min_start_line = float('inf')
-                min_start_col = float('inf')
-                max_end_line = 0
-                max_end_col = 0
+                    for i in range(start_context, end_context + 1):
+                        if i in chunks_by_index:
+                            context_chunks.append(chunks_by_index[i])
 
-                found_original = False
+                    if not context_chunks:
+                        # No context found, use original result
+                        context_results.append(result)
+                        continue
 
-                for chunk_row in context_chunks:
-                    combined_content.append(chunk_row['content'])
+                    # Combine chunks into single content (same logic as original)
+                    combined_content = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
 
-                    # Track if we found our original chunk
-                    if chunk_row['chunk_index'] == chunk_index:
-                        found_original = True
+                    for chunk_row in context_chunks:
+                        combined_content.append(chunk_row['content'])
 
-                    # Update position boundaries
-                    min_start_pos = min(min_start_pos, chunk_row['start_pos'])
-                    max_end_pos = max(max_end_pos, chunk_row['end_pos'])
-                    min_start_line = min(min_start_line, chunk_row['start_line'])
-                    max_end_line = max(max_end_line, chunk_row['end_line'])
+                        # Update position boundaries
+                        min_start_pos = min(min_start_pos, chunk_row['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_row['end_pos'])
+                        min_start_line = min(min_start_line, chunk_row['start_line'])
+                        max_end_line = max(max_end_line, chunk_row['end_line'])
 
-                    if chunk_row['start_line'] == min_start_line:
-                        min_start_col = min(min_start_col, chunk_row['start_col'])
-                    if chunk_row['end_line'] == max_end_line:
-                        max_end_col = max(max_end_col, chunk_row['end_col'])
+                        if chunk_row['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_row['start_col'])
+                        if chunk_row['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_row['end_col'])
 
-                # Create new position spanning the entire context
-                context_position = ChunkPosition(
-                    start=int(min_start_pos),
-                    end=int(max_end_pos),
-                    line=int(min_start_line),
-                    column=int(min_start_col),
-                    end_line=int(max_end_line),
-                    end_column=int(max_end_col)
-                )
+                    # Create new position spanning the entire context
+                    context_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col)
+                    )
 
-                # Create new result with combined content
-                # Use a separator to distinguish chunks (could be configurable)
-                separator = "\n\n---\n\n"
-                combined_text = separator.join(combined_content)
+                    # Create new result with combined content
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
 
-                context_result = QueryResult(
-                    id=f"{doc_id}:context:{chunk_index}",
-                    score=result.score,  # Keep original score
-                    type="context",
-                    content=combined_text,
-                    metadata=result.metadata.copy(),
-                    document_id=doc_id,
-                    position=context_position
-                )
+                    context_result = QueryResult(
+                        id=f"{doc_id}:context:{chunk_index}",
+                        score=result.score,  # Keep original score
+                        type="context",
+                        content=combined_text,
+                        metadata=result.metadata.copy(),
+                        document_id=doc_id,
+                        position=context_position
+                    )
 
-                # Add metadata about context
-                context_result.metadata['_context_window'] = context_window
-                context_result.metadata['_original_chunk_index'] = chunk_index
-                context_result.metadata['_context_chunk_count'] = len(context_chunks)
-                context_result.metadata['_context_start_index'] = start_index
-                context_result.metadata['_context_end_index'] = end_index - 1
+                    # Add metadata about context
+                    context_result.metadata['_context_window'] = context_window
+                    context_result.metadata['_original_chunk_index'] = chunk_index
+                    context_result.metadata['_context_chunk_count'] = len(context_chunks)
+                    context_result.metadata['_context_start_index'] = start_context
+                    context_result.metadata['_context_end_index'] = end_context
 
-                context_results.append(context_result)
+                    context_results.append(context_result)
 
         return context_results
+
+    def _merge_overlapping_ranges(self, ranges_needed: List[Tuple[int, int, int, Any]]) -> List[Tuple[int, int, int, Any]]:
+        """
+        Merge overlapping ranges to minimize database queries.
+
+        For example, if we need chunks [5-10] and [8-15], we can fetch [5-15] once
+        instead of making separate queries.
+
+        Parameters
+        ----------
+        ranges_needed : List[Tuple[int, int, int, Any]]
+            List of (start_index, end_index, original_chunk_index, result_object)
+
+        Returns
+        -------
+        List[Tuple[int, int, int, Any]]
+            Merged ranges - note that multiple original requests might map to one merged range
+        """
+        if not ranges_needed:
+            return []
+
+        # Sort by start index
+        sorted_ranges = sorted(ranges_needed, key=lambda x: x[0])
+
+        merged = []
+        current_start, current_end, first_chunk, first_result = sorted_ranges[0]
+
+        for start, end, chunk_idx, result in sorted_ranges[1:]:
+            if start <= current_end + 1:  # +1 to merge adjacent ranges
+                # Overlapping or adjacent, extend current range
+                current_end = max(current_end, end)
+            else:
+                # No overlap, save current range and start new one
+                merged.append((current_start, current_end, first_chunk, first_result))
+                current_start, current_end, first_chunk, first_result = start, end, chunk_idx, result
+
+        # Add the last range
+        merged.append((current_start, current_end, first_chunk, first_result))
+
+        return merged
 
     def _aggregate_document_scores_with_method(
             self,
