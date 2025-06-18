@@ -133,7 +133,8 @@ import numpy as np
 from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import (
-    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError
+    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError,
+    DocumentNotFoundError
 )
 
 logger = logging.getLogger(__name__)
@@ -904,7 +905,7 @@ class RemoteVectorDB(BaseVectorDB):
 
         return result.get("ids", [])
 
-    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """
         Retrieve documents by ID
 
@@ -915,32 +916,43 @@ class RemoteVectorDB(BaseVectorDB):
 
         Returns
         -------
-        Union[Document, List[Document], None]
-            Retrieved document(s) or None if not found
+        Union[Document, List[Document]]
+            Retrieved document(s)
+
+        Raises
+        ------
+        DocumentNotFoundError
+            If any requested documents are not found
         """
         single_id = isinstance(ids, str)
+        requested_ids = [ids] if single_id else ids
+
         if single_id:
             url = self._build_url(f"/api/v1/{self.name}/documents/{ids}")
-
             response = self._make_request_with_retry("GET", url)
 
-            try:
-                result = self._handle_response(response)
-                doc = Document.from_dict(result)
-                return doc
-            except DatabaseNotFoundError:
-                return None
+            result = self._handle_response(response)
+            doc = Document.from_dict(result)
+            return doc
         else:
-            url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(ids)}")
-
+            url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(requested_ids)}")
             response = self._make_request_with_retry("GET", url)
 
-            try:
-                result = self._handle_response(response)
-                documents = [Document.from_dict(d) for d in result["documents"]]
-                return documents
-            except DatabaseNotFoundError:
-                return None
+            result = self._handle_response(response)
+            missing_ids = result["missing_ids"]
+            if missing_ids:
+                raise DocumentNotFoundError(
+                    f"Documents not found: {', '.join(missing_ids)}",
+                    missing_ids
+                )
+
+            documents = [Document.from_dict(d) for d in result["documents"]]
+
+            # Ensure documents are returned in the same order as requested
+            id_to_doc = {doc.id: doc for doc in documents}
+            ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
+
+            return ordered_documents
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """

@@ -28,6 +28,9 @@ from typing import Dict, List, Optional, Union, Any, Literal, Type, Generator, T
 from datetime import datetime
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import ConnectionPoolError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MetadataFieldType(str, Enum):
@@ -851,14 +854,14 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)"
     ]
 
-    def __init__(self, db_path: Union[str, Path]):
+    def __init__(self, db_path: Union[str, Path], read_write_lock):
         self.db_path = Path(db_path)
         self.metadata_fields: Dict[str, MetadataField] = {}
-        self._lock = threading.RLock()
+        self._read_write_lock: ReadWriteLock = read_write_lock
 
     def initialize(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None):
         """Initialize database schema"""
-        with self._lock:
+        with self._read_write_lock.write_lock():
             if db_connection is None:
                 db_connection = sqlite3.connect(self.db_path)
             with db_connection as conn:
@@ -931,7 +934,8 @@ class DatabaseSchema:
 
         self.metadata_fields = schema
 
-    def _add_metadata_column(self, conn: sqlite3.Connection, field_name: str, field_def: MetadataField):
+    @staticmethod
+    def _add_metadata_column(conn: sqlite3.Connection, field_name: str, field_def: MetadataField):
         """Add a metadata column to the documents table"""
         # Map field types to SQLite types
         sqlite_type_map = {
@@ -963,6 +967,7 @@ class DatabaseSchema:
             ddl = f'ALTER TABLE documents ADD COLUMN {field_name} {sqlite_type}{default_clause}'
             conn.execute(ddl)
 
+            logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
@@ -1024,7 +1029,7 @@ class DatabaseSchema:
             Whether to actually drop columns that are no longer in the schema.
             If False, columns are kept but removed from schema for safety.
         column_mapping : Dict[str, str], optional
-            Optional mapping of old column names to new column names.
+            Optionally provide a mapping of old column names to new column names.
             Format: {'old_column_name': 'new_column_name'}
             Data will be transferred from old columns to new columns.
 
@@ -1034,7 +1039,7 @@ class DatabaseSchema:
             Summary of changes made including added, removed, modified fields,
             and column remapping operations
         """
-        with self._lock:
+        with self._read_write_lock.write_lock():
             if db_connection is None:
                 db_connection = sqlite3.connect(self.db_path)
 
@@ -1119,6 +1124,7 @@ class DatabaseSchema:
                                     field_def.required,
                                     json.dumps(field_def.default_value) if field_def.default_value is not None else None
                                 ))
+                                # Why are we dumping in json?
 
                                 # Add column to documents table
                                 self._add_metadata_column(conn, field_name, field_def)
@@ -1202,8 +1208,35 @@ class DatabaseSchema:
                                                 changes['errors'].append(
                                                     f"Failed to drop index on '{field_name}': {str(e)}")
 
-                                    # Note: We don't change column types in SQLite as it's complex and risky
-                                    # The schema update is mainly for validation and indexing purposes
+                                    if 'type' in change_details:
+                                        old_type_str = change_details['type']['old']
+                                        new_type_str = change_details['type']['new']
+
+                                        try:
+                                            # Map MetadataFieldType to SQLite types
+                                            sqlite_type_map = {
+                                                'text': 'TEXT',
+                                                'integer': 'INTEGER',
+                                                'real': 'REAL',
+                                                'boolean': 'BOOLEAN',
+                                                'date': 'TEXT',
+                                                'json': 'TEXT'
+                                            }
+
+                                            new_sqlite_type = sqlite_type_map.get(new_type_str, 'TEXT')
+
+                                            # Perform the type change
+                                            conn.execute(f'ALTER TABLE documents ALTER COLUMN {field_name} '
+                                                         f'SET DATA TYPE {new_sqlite_type}')
+
+                                            logger.info(f"Changed column '{field_name}' data  type from {old_type_str} "
+                                                        f"to {new_type_str}")
+
+                                        except Exception as e:
+                                            changes['errors'].append(
+                                                f"Failed to change column type for '{field_name}': {str(e)}")
+                                            changes['warnings'].append(
+                                                f"Type change failed for '{field_name}', schema updated but column type unchanged")
 
                                     changes['modified_fields'].append({
                                         'field_name': field_name,
@@ -1234,24 +1267,30 @@ class DatabaseSchema:
                                 conn.execute("DELETE FROM metadata_schema WHERE field_name = ?", (field_name,))
                                 changes['removed_fields'].append(field_name)
 
+                                logger.info(f"Removed {field_name} from metadata_schema")
+
                                 # Optionally drop the actual column
                                 if drop_columns:
                                     try:
-                                        # SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
-                                        # For safety, we'll warn but not actually drop columns by default
-                                        changes['warnings'].append(
-                                            f"Column dropping requested for '{field_name}' but not implemented for safety. "
-                                            f"Column data is preserved."
-                                        )
-                                        # TODO: Implement dropping columns, only old sqlite doesn't support
+                                        # First check if column actually exists
+                                        cursor = conn.execute("PRAGMA table_info(documents)")
+                                        existing_columns = {row[1] for row in cursor.fetchall()}
+
+                                        if field_name in existing_columns:
+                                            # Drop the column
+                                            conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
+                                            changes['dropped_columns'].append(field_name)
+                                            logger.info(f"Dropped column '{field_name}' from documents table")
+                                        else:
+                                            changes['warnings'].append(
+                                                f"Column '{field_name}' not found in table, skipping drop")
 
                                     except Exception as e:
                                         changes['errors'].append(f"Failed to drop column '{field_name}': {str(e)}")
-                                else:
-                                    changes['warnings'].append(
-                                        f"Field '{field_name}' removed from schema but column data preserved. "
-                                        f"Use drop_columns=True to actually remove column data."
-                                    )
+                                        changes['warnings'].append(
+                                            f"Column '{field_name}' could not be dropped but was removed from schema. "
+                                            f"Column data may still exist in the table."
+                                        )
                             except Exception as e:
                                 changes['errors'].append(f"Failed to remove field '{field_name}' from schema: {str(e)}")
 
@@ -1353,6 +1392,8 @@ class DatabaseSchema:
 
                 rows_transferred = self._transfer_column_data(conn, old_col, new_col,
                                                               old_field_def, new_field_def)
+
+                logger.info(f"Remapped column {old_col} to {new_col}")
 
                 remap_changes['remapped_columns'].append({
                     'old_column': old_col,

@@ -43,7 +43,8 @@ from localvectordb.core import (
     MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas, ReadWriteLock, BaseVectorDB
 )
 from localvectordb.embeddings import EmbeddingRegistry, EmbeddingProvider
-from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError, MetadataFilterError
+from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError, \
+    MetadataFilterError, DocumentNotFoundError
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
@@ -171,8 +172,11 @@ class LocalVectorDB(BaseVectorDB):
 
         self._embedding_dimension = self._embedding_provider.get_dimension()
 
+        # Threading
+        self._read_write_lock = ReadWriteLock()
+
         # Database setup
-        self.schema = DatabaseSchema(self.db_path)
+        self.schema = DatabaseSchema(self.db_path, self._read_write_lock)
 
         self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
 
@@ -192,12 +196,7 @@ class LocalVectorDB(BaseVectorDB):
         # FAISS index setup
         self._init_faiss_index(enable_gpu, faiss_index_type, faiss_index_hnsw_flat_neighbors, faiss_index_lsh_bits)
 
-        # Threading
-        self._lock = threading.RLock()
-        self._read_write_lock = ReadWriteLock()
-
         # State
-        # self._closed = False
         self._next_doc_id = self._load_next_doc_id()
 
         # Save configuration
@@ -1558,7 +1557,7 @@ class LocalVectorDB(BaseVectorDB):
 
             return result_ids
 
-    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """
         Retrieve documents by ID
 
@@ -1569,12 +1568,16 @@ class LocalVectorDB(BaseVectorDB):
 
         Returns
         -------
-        Union[Document, List[Document], None]
-            Retrieved document(s) or None if not found
+        Union[Document, List[Document]]
+            Retrieved document(s)
+
+        Raises
+        ------
+        DocumentNotFoundError
+            If any requested documents are not found
         """
         single_id = isinstance(ids, str)
-        if single_id:
-            ids = [ids]
+        requested_ids = [ids] if single_id else ids
 
         with self._read_write_lock.read_lock():
             with self.connection_pool.get_connection() as conn:
@@ -1585,13 +1588,26 @@ class LocalVectorDB(BaseVectorDB):
                 else:
                     columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
 
-                placeholders = ','.join(['?'] * len(ids))
+                placeholders = ','.join(['?'] * len(requested_ids))
                 sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
 
-                cursor = conn.execute(sql, ids)
+                cursor = conn.execute(sql, requested_ids)
                 rows = cursor.fetchall()
 
-                # TODO: we don't check to see if any docs are missing, how to handle?
+                # Check for missing documents
+                found_ids = {row['id'] for row in rows}
+                missing_ids = [doc_id for doc_id in requested_ids if doc_id not in found_ids]
+
+                if missing_ids:
+                    if single_id:
+                        raise DocumentNotFoundError(f"Document not found: {missing_ids[0]}", missing_ids[0])
+                    else:
+                        raise DocumentNotFoundError(
+                            f"Documents not found: {', '.join(missing_ids)}",
+                            missing_ids
+                        )
+
+                # Build document objects
                 documents = []
                 for row in rows:
                     # Extract metadata
@@ -1615,9 +1631,14 @@ class LocalVectorDB(BaseVectorDB):
                     )
                     documents.append(doc)
 
+            # Ensure documents are returned in the same order as requested
+            id_to_doc = {doc.id: doc for doc in documents}
+            ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
+
             if single_id:
-                return documents[0] if documents else None
-            return documents
+                return ordered_documents[0]
+            return ordered_documents
+
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """
@@ -2427,13 +2448,13 @@ class LocalVectorDB(BaseVectorDB):
         placeholders = ",".join(["(?,?)"] * len(chunk_list))
         query_str = f"""SELECT faiss_id, document_id, chunk_index FROM chunks WHERE (document_id, chunk_index) IN ({placeholders})"""
         params = [item for pair in chunk_list for item in pair]
-        with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute(query_str, params)
-            rows = cursor.fetchall()
-            faiss_ids = [row["faiss_id"] for row in rows]
-            # chunk_to_faiss_map = {(row["document_id"], row["chunk_id"]): row["faiss_id"] for row in rows}
+        with self._read_write_lock.read_lock():
+            with self.connection_pool.get_connection() as conn:
+                cursor = conn.execute(query_str, params)
+                rows = cursor.fetchall()
+                faiss_ids = [row["faiss_id"] for row in rows]
 
-        return self._reconstruct_embeddings_batch(faiss_ids)
+            return self._reconstruct_embeddings_batch(faiss_ids)
 
     def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
         """Batch reconstruct embeddings handling IndexIDMap"""
@@ -3358,7 +3379,7 @@ class LocalVectorDB(BaseVectorDB):
         - Index changes are applied immediately
         - Changes are applied in a transaction and rolled back on error
         """
-        with self._lock:
+        with self._read_write_lock.write_lock():
             # Handle special cases
             if isinstance(new_schema, str):
                 # Load from common schemas

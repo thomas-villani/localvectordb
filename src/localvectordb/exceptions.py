@@ -8,6 +8,8 @@
 # Contact: thomas.villani@gmail.com
 #
 # src/localvectordb/exceptions.py
+from typing import Union, List
+
 
 class BaseLocalVectorDBException(Exception):
     pass
@@ -23,15 +25,22 @@ class MetadataFilterError(DatabaseError, ValueError):
     """Raised when there's an error in metadata filter specification or processing"""
     pass
 
-class DuplicateDocumentIDError(BaseLocalVectorDBException, ValueError):
+class DuplicateDocumentIDError(DatabaseError, ValueError):
     """Raised when inserting document(s) and the id(s) already exist"""
     pass
 
-class OllamaNotFoundError(BaseLocalVectorDBException, RuntimeError):
-    """Raised when Ollama is not installed or not running."""
-    pass
+class DocumentNotFoundError(DatabaseError, KeyError):
+    """Raised when one or more requested documents cannot be found"""
+
+    def __init__(self, message: str, missing_ids: Union[str, List[str]] = None):
+        super().__init__(message)
+        self.missing_ids = missing_ids if isinstance(missing_ids, list) else [missing_ids] if missing_ids else []
 
 class EmbeddingError(BaseLocalVectorDBException, RuntimeError):
+    pass
+
+class OllamaNotFoundError(EmbeddingError):
+    """Raised when Ollama is not installed or not running."""
     pass
 
 class ConfigurationError(BaseLocalVectorDBException, RuntimeError):

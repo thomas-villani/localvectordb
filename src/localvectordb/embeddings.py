@@ -24,6 +24,8 @@ from typing import List, Optional, Dict, Type
 import httpx
 import numpy as np
 
+from localvectordb.exceptions import OllamaNotFoundError
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,6 +91,8 @@ class EmbeddingProvider(ABC):
 class OllamaEmbeddings(EmbeddingProvider):
     """Ollama embedding provider"""
 
+    _model_info_cache = {}
+
     def __init__(self, model: str, base_url: str = None, **kwargs):
         super().__init__(model, **kwargs)
         base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -104,14 +108,8 @@ class OllamaEmbeddings(EmbeddingProvider):
     def max_batch_size(self) -> int:
         return 64  # Ollama's typical batch size
 
-    def validate_model(self) -> bool:
-        """Check if the model is available in Ollama"""
-        if self._validated:
-            return True
-
-        # TODO: cache the models somewhere.
-        # TODO: better error handling here, need to raise an error if service is not available
-        try:
+    def _get_model_info(self, force=False):
+        if not self._model_info_cache or not self._model_info_cache.get(self.base_url) or force:
             with httpx.Client() as client:
                 response = client.get(f"{self.base_url}/api/tags", timeout=10.0)
                 response.raise_for_status()
@@ -119,15 +117,34 @@ class OllamaEmbeddings(EmbeddingProvider):
                 data = response.json()
                 models = data.get("models", [])
 
-                for model_info in models:
-                    if model_info["name"].startswith(self.model):
-                        self._validated = True
-                        return True
+                self._model_info_cache[self.base_url] = models
 
-                return False
+        return self._model_info_cache.get(self.base_url, {})
 
-        except Exception:
+    def validate_model(self) -> bool:
+        """Check if the model is available in Ollama"""
+        if self._validated:
+            return True
+
+        def _check_it(_models):
+            for model_info in _models:
+                if model_info["name"].startswith(self.model):
+                    return True
             return False
+
+        try:
+            models = self._get_model_info()
+            if _check_it(models):
+                self._validated = True
+                return True
+            models = self._get_model_info(force=True)
+            if _check_it(models):
+                self._validated = True
+                return True
+            return False
+        except httpx.ConnectError as e:
+            logger.error(f"Could not connect to Ollama service: {str(e)}")
+            raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}")
 
     def get_dimension(self) -> int:
         """Get embedding dimension by making a test call"""
