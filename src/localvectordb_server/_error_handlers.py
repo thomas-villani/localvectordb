@@ -341,8 +341,6 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
             value=vector_weight
         )
 
-    # NEW VALIDATIONS:
-
     # Validate context_window
     context_window = data.get("context_window", 2)
     validate_field_type(data, "context_window", int)
@@ -366,13 +364,22 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Validate document_scoring_method
     document_scoring_method = data.get("document_scoring_method", "frequency_boost")
-    valid_methods = ["best", "average", "weighted_average", "frequency_boost"]
+    valid_methods = ["best", "average", "worst", "weighted_average", "frequency_boost",
+                     "harmonic_mean", "diminishing_returns", "statistical", "robust_mean",
+                     "percentile", "geometric_mean"]
+
     if document_scoring_method not in valid_methods:
         raise ValidationError(
             f"document_scoring_method must be one of: {', '.join(valid_methods)}",
             field="document_scoring_method",
             value=document_scoring_method
         )
+
+    document_scoring_options = data.get("document_scoring_options")
+    if document_scoring_options and not isinstance(document_scoring_options, dict):
+        raise ValidationError(f"document_scoring_options must be a dictionary object",
+                              field="document_scoring_options",
+                              value=document_scoring_options)
 
     return data
 

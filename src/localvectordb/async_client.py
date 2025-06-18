@@ -200,7 +200,7 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
             db_name=self.name,
             base_url=self.base_url,
             api_key=self.api_key,
-            request_timeout=self.timeout,
+            timeout=self.timeout,
             authorization_header=self.authorization_header
         )
 
@@ -435,10 +435,6 @@ class AsyncRemoteVectorDB(AsyncBaseVectorDB):
         """Return the embedding model name"""
         return self._embedding_model
 
-    @property
-    def embedding_provider(self) -> str:
-        """Return the provider name"""
-        return self._embedding_provider
 
     @property
     def embedding_dimension(self) -> int:

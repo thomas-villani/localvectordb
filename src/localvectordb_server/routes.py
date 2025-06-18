@@ -369,9 +369,9 @@ def upsert_documents(db_name):
                     field="ids"
                 )
 
-        # TODO: use batch size from config if not specified in payload
         # Validate batch size
-        batch_size = data.get("batch_size", 100)
+        batch_size = int(data.get("batch_size", current_app.config_obj.embedding.batch_size))
+
         validate_field_type(data, "batch_size", int)
         if batch_size < 1 or batch_size > 1000:
             raise ValidationError("Batch size must be between 1 and 1000", field="batch_size", value=batch_size)
@@ -448,8 +448,7 @@ def insert_documents(db_name):
         if isinstance(ids, str):
             ids = [ids]
 
-        # TODO: load batch size from config settings
-        batch_size = data.get("batch_size", 100)
+        batch_size = int(data.get("batch_size", current_app.config_obj.embedding.batch_size))
         errors = data.get("errors", "raise")  # "raise" or "ignore"
         similarity_threshold = data.get("similarity_threshold")
 
@@ -730,7 +729,6 @@ def list_documents(db_name):
 def search_handler(db_name, search_params):
     """Unified query interface for all search types with enhanced validation"""
 
-    # TODO: add document scoring options to validate_search_params
     # Validate search parameters
     search_params = validate_search_params(search_params)
 
@@ -885,8 +883,7 @@ def filter_documents(db_name):
     """Filter documents by metadata with enhanced filtering capabilities
 
     This endpoint now supports advanced MongoDB-style filtering with operators
-    like $gt, $lt, $contains, $exists, etc. Raw SQL support has been removed
-    to prevent injection attacks.
+    like $gt, $lt, $contains, $exists, etc.
 
     Request body supports::
 
@@ -1005,7 +1002,32 @@ def filter_documents(db_name):
 @handle_errors
 @log_performance("global_search")
 def global_search():
-    """Search across multiple databases"""
+    """Search across multiple databases.
+
+    Request body supports::
+
+        {
+            "query": "The search query",        // required
+            "databases": ["db_one", "db_two"]   // Optionally provide a list of databases to search (defaults to all)
+            "search_type": "hybrid",            // or "vector" or "keyword", default is hybrid.
+            "return_type": "documents"          // or "chunks", or "context"
+            "k": 10,                            // number of documents to return from each database
+            "score_threshold": 0.4,             // Optionally limit results by similarity score
+            "filters": { ... },                 // Provide mongoDB-style filters like $gt, $lt, $contains, $exists, etc.
+            "vector_weight": 0.7,               // Set the balance of vector:keyword search for search_type="hybrid"
+            "context_window": 2                 // For return_type="context", the window of chunks to return
+        }
+
+    Returns::
+
+        {
+            "db_one": [ ... ], // serialized results for each database searched
+            "db_two": [ ... ],
+            // ... etc.
+        }
+
+
+    """
 
     with request_context("global_search"):
         if not request.is_json:
@@ -1019,13 +1041,14 @@ def global_search():
         data = validate_search_params(data)
 
         query = data["query"]
-        search_type = data.get("search_type", "vector")
+        search_type = data.get("search_type", "hybrid")
         return_type = data.get("return_type", "documents")
         k = data.get("k", 10)
         score_threshold = data.get("score_threshold", 0.0)
         filters = data.get("filters")
         databases = data.get("databases")  # Optional list of databases to search
         vector_weight = data.get("vector_weight", 0.7)
+        context_window = data.get("context_window", 2)
 
         try:
 
@@ -1037,7 +1060,8 @@ def global_search():
                 k=k,
                 score_threshold=score_threshold,
                 filters=filters,
-                vector_weight=vector_weight
+                vector_weight=vector_weight,
+                context_window=context_window
             )
             for db_name, db_results in results.items():
                 results[db_name] = [serialize_query_result(result) for result in db_results]
@@ -1080,7 +1104,29 @@ def health_check():
 @handle_errors
 @log_performance("get_embeddings_for_db")
 def get_embeddings_for_db(db_name):
-    """Get embeddings using the database's embedding provider"""
+    """Get embeddings using the database's embedding provider, or for existing chunks by id.
+
+    Request body to get embeddings for existing chunks from the database::
+
+        {
+           "ids": ["doc_1:0", "doc_1:1", ...]
+        }
+
+    Request body to get embeddings for custom texts::
+
+        {
+            "texts": ["The first text", "The second text", ...]
+        }
+
+    Returns::
+
+        {
+            "embeddings": [[0.1234, 0.5678, ...], ...],
+            "provider": "embedding-provider",  // uses the database's embedding provider and model
+            "model": "embedding-model"
+        }
+
+    """
 
     with request_context("get_embeddings_for_db"):
         if not request.is_json:
@@ -1090,17 +1136,26 @@ def get_embeddings_for_db(db_name):
         if not data:
             raise ValidationError("Request body cannot be empty")
 
-        validate_required_fields(data, ['texts'])
-
-        texts = data["texts"]
-        if isinstance(texts, str):
-            texts = [texts]
-        elif not isinstance(texts, list):
-            raise ValidationError("`texts` must be a string or array of strings", field="texts")
+        id_list = data.get("ids")
+        if id_list:
+            if isinstance(id_list, str):
+                id_list = [id_list]
+            elif not isinstance(id_list, list):
+                raise ValidationError("`ids` must be a string or array of strings", field="ids")
+        else:
+            validate_required_fields(data, ['texts'])
+            texts = data["texts"]
+            if isinstance(texts, str):
+                texts = [texts]
+            elif not isinstance(texts, list):
+                raise ValidationError("`texts` must be a string or array of strings", field="texts")
 
         try:
             db = current_app.db_manager.get_db(db_name)
-            embeddings = db.embedding_provider.embed_sync(texts).tolist()
+            if id_list:
+                embeddings = db.get_chunk_embeddings(id_list)
+            else:
+                embeddings = db.embedding_provider.embed_sync(texts).tolist()
 
             return jsonify({"embeddings": embeddings,
                             "provider": db.embedding_provider.provider_name,
@@ -1117,7 +1172,24 @@ def get_embeddings_for_db(db_name):
 @handle_errors
 @log_performance("get_embeddings")
 def get_embeddings():
-    """Get embeddings from specified provider and model"""
+    """Get embeddings from specified provider and model.
+
+    Request body::
+
+        {
+            "provider": "ollama",   // any valid provider in the EmbeddingRegistry,
+            "model": "nomic-embed-text",
+            "texts": ["The first text", "The second text", ...],
+        }
+
+
+    Returns::
+
+        {
+            "embeddings": [[0.1234, 0.5678, ...], ...]
+        }
+
+    """
 
     with request_context("get_embeddings"):
         if not request.is_json:
@@ -1221,7 +1293,7 @@ def upload_files(db_name):
 
         # Get form parameters
         extract_text = True # request.form.get('extract_text', 'true').lower() == 'true'
-        batch_size = int(request.form.get('batch_size', '100'))
+        batch_size = int(request.form.get('batch_size', current_app.config_obj.embedding.batch_size))
 
         # Parse metadata if provided
         metadata_json = request.form.get('metadata')
@@ -1629,3 +1701,4 @@ def get_metadata_schema_info(db_name):
         except Exception as e:
             db_logger.log_error("get_metadata_schema_info", e, database_name=db_name)
             raise
+

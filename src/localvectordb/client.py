@@ -156,7 +156,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
         Base URL of the LocalVectorDB server
     api_key : Optional[str]
         API key for authentication
-    request_timeout : Optional[int]
+    timeout : Optional[int]
         Timeout for HTTP requests in seconds
     authorization_header : str
         Authorization header name, by default "Authorization"
@@ -180,7 +180,9 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
             db_name: str,
             base_url: str,
             api_key: Optional[str] = None,
-            request_timeout: Optional[int] = None,
+            timeout: Optional[int] = None,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
             authorization_header: str = "Authorization",
             model: str = "remote",  # Required by base class
             **kwargs
@@ -192,7 +194,9 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
         self.db_name = db_name
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
-        self.request_timeout = request_timeout or 300
+        self.timeout = timeout or 300
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self.authorization_header = authorization_header
 
         # Cache for database info to avoid repeated requests
@@ -262,7 +266,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
             response = client.get(
                 url,
                 headers=self._get_headers(),
-                timeout=self.request_timeout
+                timeout=self.timeout
             )
 
         # logger.debug(f"Raw response: {response.text}")
@@ -314,7 +318,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
         self._ensure_db_info()
         return self._dimension
 
-    async def embed_batch(
+    async def _embed_batch_impl(
             self,
             texts: List[str],
             batch_size: Optional[int] = None
@@ -354,7 +358,7 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
             url,
             json=payload,
             headers=self._get_headers(),
-            timeout=self.request_timeout
+            timeout=self.timeout
         )
 
         result = self._handle_response(response)
@@ -549,7 +553,7 @@ class RemoteVectorDB(BaseVectorDB):
             db_name=self.name,
             base_url=self.base_url,
             api_key=self.api_key,
-            request_timeout=self.request_timeout,
+            timeout=self.request_timeout,
             authorization_header=self._authorization_header
         )
 
@@ -953,6 +957,29 @@ class RemoteVectorDB(BaseVectorDB):
             ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
 
             return ordered_documents
+
+    def get_chunk_embeddings(self, chunk_ids: str | List[str]) -> np.ndarray:
+        """Get embeddings for existing chunks in the database
+
+        Parameters
+        ----------
+        chunk_ids : str | List[str]
+            The chunks for which to retrieve the embeddings
+
+        Returns
+        -------
+        numpy.ndarray
+
+        """
+        single_id = isinstance(chunk_ids, str)
+        payload = {"ids": ([chunk_ids] if single_id else chunk_ids)}
+
+        url = self._build_url(f"/api/v1/{self.name}/embeddings")
+        response = self._make_request_with_retry("POST", url, json=payload)
+        results = self._handle_response(response)
+
+        embeddings = results.get("embeddings")[0] if single_id else results.get("embeddings")
+        return np.array(embeddings)
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """

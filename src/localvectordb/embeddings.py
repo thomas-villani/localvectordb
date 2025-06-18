@@ -30,19 +30,57 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingProvider(ABC):
-    """Abstract base class for embedding providers"""
+    """Abstract base class for embedding providers."""
 
-    def __init__(self, model: str, **kwargs):
+    def __init__(self, model: str, timeout=90, max_retries=3, retry_delay=1.0, **kwargs):
         self.model = model
         self.config = kwargs
 
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
+    async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+        """Generate embeddings with automatic retry handling."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await self._embed_batch_impl(texts, batch_size)
+            except Exception as e:
+                if not self._should_retry(e, attempt):
+                    raise e
+
+                if attempt < self.max_retries:
+                    delay = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"Embedding failed (attempt {attempt + 1}), retrying in {delay}s: {e}")
+                    await asyncio.sleep(delay)
+
+        # Should never reach here, but safety net
+        raise RuntimeError(f"All {self.max_retries + 1} embedding attempts failed")
+
+    def _should_retry(self, error: Exception, attempt: int) -> bool:
+        """Determine if an error should trigger a retry."""
+        # Don't retry on last attempt
+        if attempt >= self.max_retries:
+            return False
+
+        # Retry on network/timeout errors
+        if isinstance(error, (httpx.RequestError, httpx.TimeoutException)):
+            return True
+
+        # Retry on HTTP errors that indicate temporary issues
+        if isinstance(error, httpx.HTTPStatusError):
+            # Retry on 429 (rate limit) and 5xx (server errors)
+            return error.response.status_code == 429 or 500 <= error.response.status_code < 600
+
+        # Retry on general connection/timeout issues
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            return True
+
+        return False
+
     @abstractmethod
-    async def embed_batch(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
-    ) -> np.ndarray:
-        """Generate embeddings for a list of texts batchwise."""
+    async def _embed_batch_impl(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+        """Actual embedding implementation - child classes implement this."""
         pass
 
     async def embed_async(self, texts: List[str], batch_size: Optional[int] = None):
@@ -93,8 +131,8 @@ class OllamaEmbeddings(EmbeddingProvider):
 
     _model_info_cache = {}
 
-    def __init__(self, model: str, base_url: str = None, **kwargs):
-        super().__init__(model, **kwargs)
+    def __init__(self, model: str, base_url: str = None, timeout=300, max_retries=3, retry_delay=1.0, **kwargs):
+        super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
         base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.base_url = base_url.rstrip('/')
         self._dimension = None
@@ -111,7 +149,7 @@ class OllamaEmbeddings(EmbeddingProvider):
     def _get_model_info(self, force=False):
         if not self._model_info_cache or not self._model_info_cache.get(self.base_url) or force:
             with httpx.Client() as client:
-                response = client.get(f"{self.base_url}/api/tags", timeout=10.0)
+                response = client.get(f"{self.base_url}/api/tags", timeout=self.timeout)
                 response.raise_for_status()
 
                 data = response.json()
@@ -142,7 +180,7 @@ class OllamaEmbeddings(EmbeddingProvider):
                 self._validated = True
                 return True
             return False
-        except httpx.ConnectError as e:
+        except (httpx.ConnectError, TimeoutError, ConnectionError) as e:
             logger.error(f"Could not connect to Ollama service: {str(e)}")
             raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}")
 
@@ -159,7 +197,7 @@ class OllamaEmbeddings(EmbeddingProvider):
         except Exception as e:
             raise RuntimeError(f"Failed to determine embedding dimension: {e}")
 
-    async def embed_batch(
+    async def _embed_batch_impl(
         self,
         texts: List[str],
         batch_size: Optional[int] = None
@@ -183,7 +221,7 @@ class OllamaEmbeddings(EmbeddingProvider):
                             "input": batch,
                             "truncate": True
                         },
-                        timeout=300.0
+                        timeout=self.timeout
                     )
                     response.raise_for_status()
 
@@ -206,19 +244,37 @@ class OllamaEmbeddings(EmbeddingProvider):
 
 
 class OpenAIEmbeddings(EmbeddingProvider):
-    """OpenAI embedding provider"""
+    """OpenAI embedding provider.
 
-    def __init__(self, model: str, api_key: Optional[str] = None, **kwargs):
-        super().__init__(model, **kwargs)
+    Parameters
+    ----------
+    model : str
+        The OpenAI model to use for embeddding
+    api_key : str, optional
+        Optionally provide the api key as a str. If not provided, tries to use "OPENAI_API_KEY" environment variable.
+        You can specify a custom environment variable to use by prefixing with a "$", for example using:
+        apikey="$CUSTOM_ENV_VAR" would try to load the api key from the `CUSTOM_ENV_VAR` environment variable.
+    timeout : int, default = 90
+        Timeout in sceonds for the http request
+    max_retries : int, default = 3
+        How many times to retry on a failed request.
+    retry_delay : float, default = 1.0
+        How long to delay after a failed request (the backoff is exponential)
+    """
+
+    def __init__(self, model: str, api_key: Optional[str] = None, timeout=90, max_retries=3, retry_delay=1.0, **kwargs):
+        super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
+
+        if api_key is not None and api_key.startswith("$"):
+            api_key = os.getenv(api_key[1:])
+
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
         self._dimension = None
         self._validated = False
-
-        self.timeout = kwargs.get("timeout", 300)
-
 
         # Model dimension mapping
         self._model_dimensions = {
@@ -268,11 +324,7 @@ class OpenAIEmbeddings(EmbeddingProvider):
         except Exception as e:
             raise RuntimeError(f"Failed to determine embedding dimension: {e}")
 
-    async def embed_batch(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
-    ) -> np.ndarray:
+    async def _embed_batch_impl(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
         """Generate embeddings using OpenAI"""
         if not texts:
             return np.array([]).reshape(0, self.get_dimension())
@@ -297,7 +349,7 @@ class OpenAIEmbeddings(EmbeddingProvider):
                             "model": self.model,
                             "input": batch
                         },
-                        timeout=300.0
+                        timeout=self.timeout
                     )
                     response.raise_for_status()
 
@@ -320,8 +372,8 @@ class OpenAIEmbeddings(EmbeddingProvider):
 class MockEmbeddings(EmbeddingProvider):
     """Mock embedding provider for testing"""
 
-    def __init__(self, model: str, dimension: int = 384, **kwargs):
-        super().__init__(model, **kwargs)
+    def __init__(self, model: str, dimension: int = 384, timeout=90, max_retries=3, retry_delay=1.0, **kwargs):
+        super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
         self._dimension = dimension
         self.number_of_calls = 0
 
@@ -339,7 +391,7 @@ class MockEmbeddings(EmbeddingProvider):
     def get_dimension(self) -> int:
         return self._dimension
 
-    async def embed_batch(
+    async def _embed_batch_impl(
         self,
         texts: List[str],
         batch_size: Optional[int] = None

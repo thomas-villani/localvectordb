@@ -27,7 +27,6 @@ import math
 import re
 import sqlite3
 import statistics
-import threading
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -208,9 +207,8 @@ class LocalVectorDB(BaseVectorDB):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-
     @property
-    def embedding_provider(self) -> Union[str, EmbeddingProvider]:
+    def embedding_provider(self) -> EmbeddingProvider:
         return self._embedding_provider
 
     @property
@@ -609,6 +607,7 @@ class LocalVectorDB(BaseVectorDB):
         return doc_id
 
     # TODO: add optional parameter to control metadata validation strictness
+    # TODO: add a global batch size parameter for the database so it doesn't need to be included in each call
     def upsert(
             self,
             documents: Union[str, List[str]],
@@ -709,6 +708,7 @@ class LocalVectorDB(BaseVectorDB):
                 else:
                     raise ValueError(f"Required metadata field '{field_name}' is missing")
 
+    # TODO: remove this, the embeddings manager can already generate in batches.
     def _generate_embeddings_chunked(
             self,
             texts: List[str],
@@ -816,7 +816,7 @@ class LocalVectorDB(BaseVectorDB):
         distances, indices = self.index.search(filtered_embeddings, k=1)
 
         # Vectorized numpy operations for filtering
-        valid_matches = indices[:, 0] != -1
+        valid_matches = (indices[:, 0] != -1)
         too_similar = (distances[:, 0] < distance_threshold) & valid_matches
 
         # Boolean indexing to keep non-similar chunks
@@ -2286,41 +2286,66 @@ class LocalVectorDB(BaseVectorDB):
             semantic_dedup_threshold: Optional[float],
             document_scoring_method: DocumentScoreAggregationMethod = "frequency_boost"
     ) -> List[QueryResult]:
-        """Perform vector similarity search with a precomputed embedding"""
+        """Perform vector similarity search with a precomputed embedding.
+
+        Note: Used by asynchronous db implementation.
+        """
         # Search more chunks initially since we might deduplicate and need enough for final k
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
 
         # Search FAISS index
         distances, indices = self.index.search(query_embedding, initial_k)
 
-        # Get chunk information - ALWAYS get chunks first
+        # Filter valid indices and calculate scores first
+        valid_results = []
+        valid_faiss_ids = []
+
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx == -1:  # Invalid index
+                continue
+
+            # Convert distance to normalized score (0-1, higher=better)
+            score = max(0.0, 1.0 / (1.0 + float(dist)))
+
+            if score < score_threshold:
+                continue
+
+            valid_results.append((int(idx), score))
+            valid_faiss_ids.append(int(idx))
+
+        if not valid_faiss_ids:
+            return []
+
         chunk_results = []
 
         with self.connection_pool.get_connection() as conn:
-            for dist, idx in zip(distances[0], indices[0]):
-                if idx == -1:  # Invalid index
-                    continue
+            # Single query to get all chunk and document info
+            placeholders = ','.join(['?'] * len(valid_faiss_ids))
+            cursor = conn.execute(f'''
+                SELECT c.*, d.id as doc_id, d.content as doc_content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id  
+                WHERE c.faiss_id IN ({placeholders})
+            ''', valid_faiss_ids)
 
-                # Get chunk info
-                cursor = conn.execute('''
-                    SELECT c.*, d.id as doc_id, d.content as doc_content
-                    FROM chunks c
-                    JOIN documents d ON c.document_id = d.id  
-                    WHERE c.faiss_id = ?
-                ''', (int(idx),))
+            # Create a mapping from faiss_id to row data
+            faiss_id_to_row = {}
+            doc_ids_to_fetch = set()
 
-                row = cursor.fetchone()
+            for row in cursor.fetchall():
+                faiss_id_to_row[row['faiss_id']] = row
+                doc_ids_to_fetch.add(row['doc_id'])
+
+            # Batch fetch all metadata at once
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+
+            # Create results using the batched data
+            for faiss_id, score in valid_results:
+                row = faiss_id_to_row.get(faiss_id)
                 if not row:
-                    continue
+                    continue  # Skip if chunk not found
 
-                # Convert distance to normalized score (0-1, higher=better)
-                score = max(0.0, 1.0 / (1.0 + float(dist)))
-
-                if score < score_threshold:
-                    continue
-
-                # Get document metadata
-                doc_metadata = self._get_document_metadata(conn, row['doc_id'])
+                doc_metadata = doc_metadata_batch.get(row['doc_id'], {})
 
                 # Apply metadata filters early
                 if filters and not self._matches_filters(doc_metadata, filters):
@@ -2349,6 +2374,7 @@ class LocalVectorDB(BaseVectorDB):
 
         # Apply semantic deduplication if requested
         if semantic_dedup_threshold is not None:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
 
         # Process based on return type
@@ -2432,7 +2458,7 @@ class LocalVectorDB(BaseVectorDB):
             combined_results.sort(key=lambda x: x.score, reverse=True)
             return combined_results[:k]
 
-    def get_chunk_embeddings(self, chunk_ids: str | List[str]):
+    def get_chunk_embeddings(self, chunk_ids: str | List[str]) -> np.ndarray:
         """Returns embeddings for chunks given by `chunk_ids`"""
         single_id = isinstance(chunk_ids, str)
         if single_id:
@@ -2740,7 +2766,8 @@ class LocalVectorDB(BaseVectorDB):
 
         return context_results
 
-    def _merge_overlapping_ranges(self, ranges_needed: List[Tuple[int, int, int, Any]]) -> List[Tuple[int, int, int, Any]]:
+    @staticmethod
+    def _merge_overlapping_ranges(ranges_needed: List[Tuple[int, int, int, Any]]) -> List[Tuple[int, int, int, Any]]:
         """
         Merge overlapping ranges to minimize database queries.
 
@@ -2811,197 +2838,212 @@ class LocalVectorDB(BaseVectorDB):
             doc_id = result.document_id if result.type == 'chunk' else result.id
             doc_groups[doc_id].append(result)
 
+        # Get all unique document IDs
+        all_doc_ids = list(doc_groups.keys())
+
+        if not all_doc_ids:
+            return []
+
+        # Batch fetch all document content and metadata in single queries
+        with self.connection_pool.get_connection() as conn:
+            # Batch fetch document content
+            placeholders = ','.join(['?'] * len(all_doc_ids))
+            cursor = conn.execute(f'''
+                SELECT id, content 
+                FROM documents 
+                WHERE id IN ({placeholders})
+            ''', all_doc_ids)
+
+            doc_content_map = {row['id']: row['content'] for row in cursor.fetchall()}
+
+            # Batch fetch all metadata at once
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, all_doc_ids)
+
         document_results = []
 
-        with self.connection_pool.get_connection() as conn:
-            for doc_id, chunks in doc_groups.items():
-                # Calculate aggregated score based on method
-                scores = [chunk.score for chunk in chunks]
-                method_metadata = {}
+        for doc_id, chunks in doc_groups.items():
+            # Check if we have the document content
+            doc_content = doc_content_map.get(doc_id)
+            if not doc_content:
+                continue  # Skip if document not found
 
-                if method == "best":
-                    final_score = max(scores)
-                elif method == "worst":
-                    final_score = min(scores)
-                elif method == "average":
-                    final_score = sum(scores) / len(scores)
-                elif method == "weighted_average":
-                    # Weight by normalized scores
-                    weights = np.array(scores)
-                    weights = weights / weights.sum() if weights.sum() > 0 else weights
-                    method_metadata["weights"] = weights.tolist()
-                    final_score = np.average(scores, weights=weights)
-                elif method == "frequency_boost":
-                    best_score = max(scores)
+            # Calculate aggregated score based on method
+            scores = [chunk.score for chunk in chunks]
+            method_metadata = {}
 
-                    quality_weights = [score / best_score for score in scores]
-                    effective_chunk_count = sum(quality_weights)
-                    frequency_multiplier = (1.0 + (math.log2(2 + effective_chunk_count) - 1)
-                                                   * method_options.get("frequency_bias", 0.3))
+            if method == "best":
+                final_score = max(scores)
+            elif method == "worst":
+                final_score = min(scores)
+            elif method == "average":
+                final_score = sum(scores) / len(scores)
+            elif method == "weighted_average":
+                # Weight by normalized scores
+                weights = np.array(scores)
+                weights = weights / weights.sum() if weights.sum() > 0 else weights
+                method_metadata["weights"] = weights.tolist()
+                final_score = np.average(scores, weights=weights)
+            elif method == "frequency_boost":
+                best_score = max(scores)
 
-                    method_metadata["effective_chunk_count"] = effective_chunk_count
-                    method_metadata["frequency_multiplier"] = frequency_multiplier
-                    final_score = min(1.0, best_score * frequency_multiplier)
-                elif method == "harmonic_mean":
-                    max_chunks_for_harmonic = method_options.get("max_chunks", 5)
-                    coverage_threshold = method_options.get("coverage_threshold", 0.7)
-                    sorted_scores = sorted(scores, reverse=True)
-                    # Use top chunk scores for harmonic mean
-                    top_scores = sorted_scores[:max_chunks_for_harmonic]
-                    harmonic_mean = len(top_scores) / sum(1 / max(score, 0.001) for score in top_scores)
+                quality_weights = [score / best_score for score in scores]
+                effective_chunk_count = sum(quality_weights)
+                frequency_multiplier = (1.0 + (math.log2(2 + effective_chunk_count) - 1)
+                                        * method_options.get("frequency_bias", 0.3))
 
-                    # Coverage bonus: percentage of chunks above threshold
-                    high_quality_chunks = sum(1 for score in scores if score >= coverage_threshold)
-                    coverage_ratio = high_quality_chunks / len(scores)
-                    coverage_bonus = 1.0 + (coverage_ratio * 0.2)  # Max 20% bonus
+                method_metadata["effective_chunk_count"] = effective_chunk_count
+                method_metadata["frequency_multiplier"] = frequency_multiplier
+                final_score = min(1.0, best_score * frequency_multiplier)
+            elif method == "harmonic_mean":
+                max_chunks_for_harmonic = method_options.get("max_chunks", 5)
+                coverage_threshold = method_options.get("coverage_threshold", 0.7)
+                sorted_scores = sorted(scores, reverse=True)
+                # Use top chunk scores for harmonic mean
+                top_scores = sorted_scores[:max_chunks_for_harmonic]
+                harmonic_mean = len(top_scores) / sum(1 / max(score, 0.001) for score in top_scores)
 
-                    method_metadata["harmonic_mean"] = harmonic_mean
-                    method_metadata["coverage_ratio"] = coverage_ratio
+                # Coverage bonus: percentage of chunks above threshold
+                high_quality_chunks = sum(1 for score in scores if score >= coverage_threshold)
+                coverage_ratio = high_quality_chunks / len(scores)
+                coverage_bonus = 1.0 + (coverage_ratio * 0.2)  # Max 20% bonus
 
-                    final_score = min(1.0, harmonic_mean * coverage_bonus)
-                elif method == "diminishing_returns":
-                    sorted_scores = sorted(scores, reverse=True)
-                    decay_factor = method_options.get("decay_factor", 0.8)
-                    total_score = 0.0
-                    weight = 1.0
+                method_metadata["harmonic_mean"] = harmonic_mean
+                method_metadata["coverage_ratio"] = coverage_ratio
 
-                    for score in sorted_scores:
-                        total_score += score * weight
-                        weight *= decay_factor  # Each subsequent chunk has less impact
+                final_score = min(1.0, harmonic_mean * coverage_bonus)
+            elif method == "diminishing_returns":
+                sorted_scores = sorted(scores, reverse=True)
+                decay_factor = method_options.get("decay_factor", 0.8)
+                total_score = 0.0
+                weight = 1.0
 
-                    # Normalize by the theoretical maximum to keep scores in [0,1] range
-                    max_possible = sum(decay_factor ** i for i in range(len(scores)))
-                    method_metadata["max_possible"] = max_possible
+                for score in sorted_scores:
+                    total_score += score * weight
+                    weight *= decay_factor  # Each subsequent chunk has less impact
 
-                    final_score = min(1.0, total_score / max_possible)
-                elif method == "statistical":
-                    if len(scores) == 1:
-                        final_score = scores[0]
-                    else:
-                        best_weight = method_options.get("best_weight", 0.6)
-                        mean_weight = method_options.get("mean_weight", 0.2)
-                        consistency_weight = method_options.get("consistency_weight", 0.1)
-                        coverage_weight = method_options.get("coverage_weight", 0.1)
-                        best_score = max(scores)
-                        mean_score = statistics.mean(scores)
+                # Normalize by the theoretical maximum to keep scores in [0,1] range
+                max_possible = sum(decay_factor ** i for i in range(len(scores)))
+                method_metadata["max_possible"] = max_possible
 
-                        # Calculate consistency (inverse of coefficient of variation)
-                        std_dev = statistics.stdev(scores)
-                        consistency = 1.0 - min(1.0, std_dev / mean_score) if mean_score > 0 else 0.0
-
-                        # Percentage of chunks above median
-                        median_score = statistics.median(scores)
-                        above_median_ratio = sum(1 for score in scores if score >= median_score) / len(scores)
-
-                        method_metadata["standard_deviation"] = std_dev
-                        method_metadata["median"] = median_score
-                        method_metadata["above_median_ratio"] = above_median_ratio
-
-                        # Combine metrics with specified weights
-                        final_score = (
-                                best_score * best_weight +
-                                mean_score * mean_weight +
-                                consistency * consistency_weight +
-                                above_median_ratio * coverage_weight
-                        )
-
-                        final_score = min(1.0, final_score)
-                elif method == "robust_mean":
-                    if len(scores) == 1:
-                        final_score = scores[0]
-                    else:
-                        outlier_threshold = method_options.get("outlier_threshold", 2.0)
-                        position_decay = method_options.get("position_decay", 0.9)
-                        # Remove outliers using z-score
-                        mean_score = statistics.mean(scores)
-                        std_score = statistics.stdev(scores) if len(scores) > 1 else 0
-
-                        if std_score > 0:
-                            filtered_scores = [
-                                score for score in scores
-                                if abs(score - mean_score) <= outlier_threshold * std_score
-                            ]
-                        else:
-                            filtered_scores = scores
-
-                        if not filtered_scores:
-                            filtered_scores = scores  # Fallback if all scores were outliers
-
-                        # Sort and apply position-based weighting
-                        sorted_scores = sorted(filtered_scores, reverse=True)
-                        weights = [position_decay ** i for i in range(len(sorted_scores))]
-
-
-                        weighted_sum = sum(score * weight for score, weight in zip(sorted_scores, weights))
-                        weight_sum = sum(weights)
-
-                        method_metadata["standard_deviation"] = std_score
-                        method_metadata["weighted_sum"] = weighted_sum
-                        method_metadata["weights"] = weights
-
-                        final_score = weighted_sum / weight_sum if weight_sum > 0 else 0.0
-                elif method == "percentile":
-                    if len(scores) == 1:
-                        final_score = scores[0]
-                    else:
-                        primary_percentile = method_options.get("primary_percentile", 0.9)
-                        secondary_percentile = method_options.get("secondary_percentile", 0.7)
-                        primary_weight = method_options.get("primary_weight", 0.7)
-                        # Calculate percentiles
-                        primary_score = np.percentile(scores, primary_percentile * 100)
-                        secondary_score = np.percentile(scores, secondary_percentile * 100)
-                        method_metadata["primary_score"] = primary_score
-                        method_metadata["secondary_score"] = secondary_score
-                        method_metadata["primary_percentile"] = primary_percentile
-                        method_metadata["secondary_percentile"] = secondary_percentile
-                        method_metadata["primary_wieght"] = primary_weight
-                        # Weighted combination
-                        final_score =  primary_score * primary_weight + secondary_score * (1 - primary_weight)
-                elif method == "geometric_mean":
-                    stabilization_factor = 0.1
-                    stabilized_scores = [score + stabilization_factor for score in scores]
-
-                    # Calculate geometric mean
-                    product = 1.0
-                    for score in stabilized_scores:
-                        product *= score
-
-                    geometric_mean = product ** (1.0 / len(stabilized_scores))
-
-                    # Remove stabilization factor
-                    final_score = max(0.0, geometric_mean - stabilization_factor)
+                final_score = min(1.0, total_score / max_possible)
+            elif method == "statistical":
+                if len(scores) == 1:
+                    final_score = scores[0]
                 else:
-                    final_score = max(scores)  # Default to best
+                    best_weight = method_options.get("best_weight", 0.6)
+                    mean_weight = method_options.get("mean_weight", 0.2)
+                    consistency_weight = method_options.get("consistency_weight", 0.1)
+                    coverage_weight = method_options.get("coverage_weight", 0.1)
+                    best_score = max(scores)
+                    mean_score = statistics.mean(scores)
 
-                # Get document content and metadata
-                cursor = conn.execute(
-                    'SELECT content FROM documents WHERE id = ?', (doc_id,)
-                )
-                doc_row = cursor.fetchone()
+                    # Calculate consistency (inverse of coefficient of variation)
+                    std_dev = statistics.stdev(scores)
+                    consistency = 1.0 - min(1.0, std_dev / mean_score) if mean_score > 0 else 0.0
 
-                if not doc_row:
-                    continue
+                    # Percentage of chunks above median
+                    median_score = statistics.median(scores)
+                    above_median_ratio = sum(1 for score in scores if score >= median_score) / len(scores)
 
-                # Get document metadata
-                doc_metadata = self._get_document_metadata(conn, doc_id)
+                    method_metadata["standard_deviation"] = std_dev
+                    method_metadata["median"] = median_score
+                    method_metadata["above_median_ratio"] = above_median_ratio
 
-                # Add aggregation metadata
-                method_metadata['_aggregation_method'] = method
-                method_metadata['_chunk_count'] = len(chunks)
-                method_metadata['_best_chunk_score'] = max(scores)
-                method_metadata['_average_chunk_score'] = sum(scores) / len(scores)
-                doc_metadata["_scoring"] = method_metadata
+                    # Combine metrics with specified weights
+                    final_score = (
+                            best_score * best_weight +
+                            mean_score * mean_weight +
+                            consistency * consistency_weight +
+                            above_median_ratio * coverage_weight
+                    )
 
-                # Create document result
-                doc_result = QueryResult(
-                    id=doc_id,
-                    score=final_score,
-                    type='document',
-                    content=doc_row['content'],
-                    metadata=doc_metadata
-                )
+                    final_score = min(1.0, final_score)
+            elif method == "robust_mean":
+                if len(scores) == 1:
+                    final_score = scores[0]
+                else:
+                    outlier_threshold = method_options.get("outlier_threshold", 2.0)
+                    position_decay = method_options.get("position_decay", 0.9)
+                    # Remove outliers using z-score
+                    mean_score = statistics.mean(scores)
+                    std_score = statistics.stdev(scores) if len(scores) > 1 else 0
 
-                document_results.append(doc_result)
+                    if std_score > 0:
+                        filtered_scores = [
+                            score for score in scores
+                            if abs(score - mean_score) <= outlier_threshold * std_score
+                        ]
+                    else:
+                        filtered_scores = scores
+
+                    if not filtered_scores:
+                        filtered_scores = scores  # Fallback if all scores were outliers
+
+                    # Sort and apply position-based weighting
+                    sorted_scores = sorted(filtered_scores, reverse=True)
+                    weights = [position_decay ** i for i in range(len(sorted_scores))]
+
+                    weighted_sum = sum(score * weight for score, weight in zip(sorted_scores, weights))
+                    weight_sum = sum(weights)
+
+                    method_metadata["standard_deviation"] = std_score
+                    method_metadata["weighted_sum"] = weighted_sum
+                    method_metadata["weights"] = weights
+
+                    final_score = weighted_sum / weight_sum if weight_sum > 0 else 0.0
+            elif method == "percentile":
+                if len(scores) == 1:
+                    final_score = scores[0]
+                else:
+                    primary_percentile = method_options.get("primary_percentile", 0.9)
+                    secondary_percentile = method_options.get("secondary_percentile", 0.7)
+                    primary_weight = method_options.get("primary_weight", 0.7)
+                    # Calculate percentiles
+                    primary_score = np.percentile(scores, primary_percentile * 100)
+                    secondary_score = np.percentile(scores, secondary_percentile * 100)
+                    method_metadata["primary_score"] = primary_score
+                    method_metadata["secondary_score"] = secondary_score
+                    method_metadata["primary_percentile"] = primary_percentile
+                    method_metadata["secondary_percentile"] = secondary_percentile
+                    method_metadata["primary_wieght"] = primary_weight
+                    # Weighted combination
+                    final_score = primary_score * primary_weight + secondary_score * (1 - primary_weight)
+            elif method == "geometric_mean":
+                stabilization_factor = 0.1
+                stabilized_scores = [score + stabilization_factor for score in scores]
+
+                # Calculate geometric mean
+                product = 1.0
+                for score in stabilized_scores:
+                    product *= score
+
+                geometric_mean = product ** (1.0 / len(stabilized_scores))
+
+                # Remove stabilization factor
+                final_score = max(0.0, geometric_mean - stabilization_factor)
+            else:
+                final_score = max(scores)  # Default to best
+
+            # Get document metadata
+            doc_metadata = doc_metadata_batch.get(doc_id, {})
+
+            # Add aggregation metadata
+            method_metadata['_aggregation_method'] = method
+            method_metadata['_chunk_count'] = len(chunks)
+            method_metadata['_best_chunk_score'] = max(scores)
+            method_metadata['_average_chunk_score'] = sum(scores) / len(scores)
+            doc_metadata["_scoring"] = method_metadata
+
+            # Create document result
+            doc_result = QueryResult(
+                id=doc_id,
+                score=final_score,
+                type='document',
+                content=doc_content,
+                metadata=doc_metadata
+            )
+
+            document_results.append(doc_result)
 
         # Sort by final score
         document_results.sort(key=lambda x: x.score, reverse=True)

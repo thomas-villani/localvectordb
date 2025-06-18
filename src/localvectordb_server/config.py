@@ -77,9 +77,9 @@ class EmbeddingSettings(BaseSettings):
     model: str = "nomic-embed-text"
     base_url: Optional[str] = None  # Provider-specific base URL
     api_key: Optional[str] = None  # API key for providers that need it
-    batch_size: int = 64     # TODO: is this implemented?
-    timeout: int = 30  # Request timeout in seconds : TODO: not actually used by server
-    max_retries: int = 3  # TODO: implement this, currently EmbeddingProviders don't retry.
+    batch_size: int = 64
+    timeout: int = 30  # Request timeout in seconds
+    max_retries: int = 3
 
     # Provider-specific configurations
     config: Dict[str, Any] = field(default_factory=dict)
@@ -695,8 +695,6 @@ class Config:
             'default_key_expiry_days', 'auto_prune_expired_keys',
             'key_audit_logging', 'auth_log_level', 'warn_expiring_days', 'trusted_hosts'
         }
-
-        # TODO: handle the new cache_settings and proxy_settings
 
         security_config = {}
         for key, value in list(server_dict.items()):

@@ -662,8 +662,18 @@ class DatabaseManager:
                         chunk_size=db_config.chunk_size
                     )
 
-                    # TODO: the embedding config has a timeout parameter that's not being passed,
-                    #  it should probably go in the `embedding_config.config`
+                    # Some of the config parameters need to be included in the `embedding_config` kwarg.
+                    embedding_config_dict = dict(timeout=embedding_config.timeout,
+                                                 max_retries=embedding_config.max_retries,
+                                                 base_url=embedding_config.base_url,
+                                                 api_key=embedding_config.api_key,
+                                                 **embedding_config.config
+                                                 )
+                    if embedding_config.base_url:
+                        embedding_config_dict["base_url"] = embedding_config.base_url
+                    if embedding_config.api_key:
+                        embedding_config_dict["api_key"] = embedding_config.api_key
+
                     # Create new database instance
                     db = LocalVectorDB(
                         name=new_db_name,
@@ -671,7 +681,7 @@ class DatabaseManager:
                         metadata_schema=metadata_schema,
                         embedding_provider=embedding_config.provider,
                         embedding_model=embedding_config.model,
-                        embedding_config=embedding_config.config,
+                        embedding_config=embedding_config_dict,
                         chunking_method=db_config.chunking_method,
                         chunk_size=db_config.chunk_size,
                         chunk_overlap=db_config.chunk_overlap,
@@ -929,7 +939,8 @@ class DatabaseManager:
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7
+            vector_weight: float = 0.7,
+            context_window: int = 2
     ) -> Dict[str, Union[List, str]]:
         """Search across multiple databases with enhanced error handling"""
 
@@ -957,7 +968,8 @@ class DatabaseManager:
                     k=k,
                     score_threshold=score_threshold,
                     filters=filters,
-                    vector_weight=vector_weight
+                    vector_weight=vector_weight,
+                    context_window=context_window
                 )
 
                 results[db_name] = db_results

@@ -1877,7 +1877,6 @@ class QueryExecutor:
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method
         )
-        # TODO: add weight?
 
         if self.builder._semantic_filters:
             results = self._apply_semantic_filters(results)

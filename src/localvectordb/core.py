@@ -434,7 +434,7 @@ class BaseVectorDB(ABC):
 
     @property
     @abstractmethod
-    def embedding_provider(self) -> Union[str, EmbeddingProvider]:
+    def embedding_provider(self) -> EmbeddingProvider:
         """Return the embedding provider name or instance."""
         pass
 

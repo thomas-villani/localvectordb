@@ -85,6 +85,7 @@ import numpy as np
 
 from localvectordb.core import Document, QueryResult, MetadataField, AsyncBaseVectorDB
 from localvectordb.database import LocalVectorDB
+from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import DatabaseError, DuplicateDocumentIDError
 
 logger = logging.getLogger(__name__)
@@ -241,8 +242,10 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
         return self._init_params['embedding_model']
 
     @property
-    def embedding_provider(self) -> str:
-        return self._init_params['embedding_provider']
+    def embedding_provider(self) -> EmbeddingProvider:
+        if not self._initialized or self._sync_db is None:
+            raise DatabaseError("Database not initialized. Use await db._ensure_initialized() first.")
+        return self._sync_db.embedding_provider
 
     @property
     def chunk_size(self) -> int:
@@ -796,6 +799,15 @@ class AsyncLocalVectorDB(AsyncBaseVectorDB):
         )
 
         return result_ids
+
+    async def get_chunk_embeddings(self, chunk_ids: str | List[str]) -> np.ndarray:
+        await self._ensure_initialized()
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._sync_db.get_chunk_embeddings,
+            chunk_ids
+        )
 
     async def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
         """Async get documents by ID"""

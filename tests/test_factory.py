@@ -139,7 +139,7 @@ class TestVectorDBFactory:
             call_kwargs = mock_remote.call_args[1]
             assert "connection_pool_size" not in call_kwargs
             assert call_kwargs["api_key"] == "test-key"
-            assert call_kwargs["request_timeout"] == 30
+            assert call_kwargs["timeout"] == 30
 
     def test_shared_parameters_passed_through(self):
         """Test that shared parameters are passed to both local and remote."""
@@ -417,7 +417,7 @@ class TestVectorDBFactory:
             assert call_kwargs["chunk_overlap"] == 80
             assert call_kwargs["enable_gpu"] is False
             assert call_kwargs["enable_fts"] is True
-            assert call_kwargs["request_timeout"] == 120
+            assert call_kwargs["timeout"] == 120
 
             # Verify local-only parameters were filtered out
             assert "connection_pool_size" not in call_kwargs
