@@ -13,6 +13,7 @@ from localvectordb.embeddings import (
     EmbeddingRegistry, create_embedding_provider, list_providers,
     embed_texts, embed_texts_sync
 )
+from localvectordb.exceptions import OllamaNotFoundError, EmbeddingError
 
 
 class TestEmbeddingProvider:
@@ -27,8 +28,8 @@ class TestEmbeddingProvider:
         """Test that abstract methods are defined."""
         abstract_methods = EmbeddingProvider.__abstractmethods__
         expected_methods = {
-            'embed_batch', 'get_dimension', 'validate_model',
-            'provider_name', 'max_batch_size'
+            'get_dimension', 'validate_model',
+            'provider_name', 'max_batch_size', '_embed_batch_impl'
         }
         assert abstract_methods == expected_methods
 
@@ -133,7 +134,7 @@ class TestOllamaEmbeddings:
 
         assert result is True
         mock_client.get.assert_called_once_with(
-            "http://localhost:11434/api/tags", timeout=10.0
+            "http://localhost:11434/api/tags", timeout=provider.timeout
         )
 
     @patch('httpx.Client')
@@ -161,9 +162,9 @@ class TestOllamaEmbeddings:
         mock_client_class.return_value.__enter__.return_value = mock_client
 
         provider = OllamaEmbeddings("test-model")
-        result = provider.validate_model()
+        with pytest.raises(OllamaNotFoundError):
+            result = provider.validate_model()
 
-        assert result is False
 
     @patch('httpx.AsyncClient')
     @pytest.mark.asyncio
@@ -206,15 +207,21 @@ class TestOllamaEmbeddings:
     @pytest.mark.asyncio
     async def test_embed_batch_error_response(self, mock_client_class):
         """Test embedding with error response."""
-        mock_client = Mock()
         mock_response = Mock()
         mock_response.json.return_value = {"error": "Model not found"}
         mock_response.raise_for_status = Mock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response # AsyncMock(return_value=mock_response)
+
+        # Fix: Properly mock the async context manager
+        async_context_manager = AsyncMock()
+        async_context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+        async_context_manager.__aexit__ = AsyncMock(return_value=None)
+        mock_client_class.return_value = async_context_manager
 
         provider = OllamaEmbeddings("test-model")
+        provider._dimension = 384
 
         with pytest.raises(RuntimeError, match="Ollama error: Model not found"):
             await provider.embed_batch(["test"])
@@ -223,14 +230,24 @@ class TestOllamaEmbeddings:
     @pytest.mark.asyncio
     async def test_embed_batch_connection_error(self, mock_client_class):
         """Test embedding with connection error."""
-        mock_client = Mock()
-        mock_client.post = AsyncMock(side_effect=httpx.RequestError("Connection failed"))
-        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_response = Mock()
+        mock_response.json.return_value = {"error": "Model not found"}
+        mock_response.raise_for_status = Mock()
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.ConnectError("Connection failed")
+        mock_client.post.return_value = mock_response  # AsyncMock(return_value=mock_response)
+
+        # Fix: Properly mock the async context manager
+        async_context_manager = AsyncMock()
+        async_context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+        async_context_manager.__aexit__ = AsyncMock(return_value=None)
+        mock_client_class.return_value = async_context_manager
 
         provider = OllamaEmbeddings("test-model")
+        provider._dimension = 384
 
-        with pytest.raises(RuntimeError, match="Failed to connect to Ollama"):
+        with pytest.raises(EmbeddingError):
             await provider.embed_batch(["test"])
 
     @patch('httpx.AsyncClient')
@@ -256,10 +273,10 @@ class TestOllamaEmbeddings:
         # Should make multiple API calls
         assert mock_client.post.call_count == 2
 
-    @patch.object(OllamaEmbeddings, 'embed_batch')
+    @patch.object(OllamaEmbeddings, '_embed_single_batch')
     def test_get_dimension_calls_embed_batch(self, mock_embed):
         """Test get_dimension makes test call to determine dimension."""
-        mock_embed.return_value = np.array([[0.1, 0.2, 0.3, 0.4]])
+        mock_embed.return_value = [[0.1, 0.2, 0.3, 0.4]]
 
         provider = OllamaEmbeddings("test-model")
         dimension = provider.get_dimension()
@@ -286,12 +303,12 @@ class TestOpenAIEmbeddings:
         """Test creating without API key raises error."""
         with patch.dict('os.environ', {}, clear=True):
             with pytest.raises(ValueError, match="OpenAI API key is required"):
-                OpenAIEmbeddings("test-model")
+                OpenAIEmbeddings("text-embedding-ada-002")
 
     @patch.dict('os.environ', {'OPENAI_API_KEY': 'env-key'})
     def test_api_key_from_environment(self):
         """Test getting API key from environment."""
-        provider = OpenAIEmbeddings("test-model")
+        provider = OpenAIEmbeddings("text-embedding-ada-002")
         assert provider.api_key == "env-key"
 
     def test_validate_known_model(self):
@@ -302,8 +319,8 @@ class TestOpenAIEmbeddings:
         provider = OpenAIEmbeddings("text-embedding-3-small", api_key="test")
         assert provider.validate_model() is True
 
-        provider = OpenAIEmbeddings("unknown-model", api_key="test")
-        assert provider.validate_model() is False
+        with pytest.raises(ValueError):
+            provider = OpenAIEmbeddings("unknown-model", api_key="test")
 
     def test_get_dimension_known_model(self):
         """Test getting dimension for known models."""
@@ -331,6 +348,7 @@ class TestOpenAIEmbeddings:
         mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
         provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
+        provider._dimension = 3
 
         texts = ["hello", "world"]
         embeddings = await provider.embed_batch(texts)
@@ -350,7 +368,7 @@ class TestOpenAIEmbeddings:
                 "model": "text-embedding-ada-002",
                 "input": texts
             },
-            timeout=300.0
+            timeout=provider.timeout
         )
 
     @patch('httpx.AsyncClient')
@@ -367,7 +385,7 @@ class TestOpenAIEmbeddings:
         mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        provider = OpenAIEmbeddings("test-model", api_key="test-key")
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
 
         with pytest.raises(RuntimeError, match="OpenAI error: Invalid API key"):
             await provider.embed_batch(["test"])
@@ -440,10 +458,7 @@ class TestEmbeddingRegistry:
         mock_ep = Mock()
         mock_ep.name = "test_plugin"
         mock_ep.load.return_value = MockEmbeddings
-
-        mock_eps = Mock()
-        mock_eps.select.return_value = [mock_ep]
-        mock_entry_points.return_value = mock_eps
+        mock_entry_points.return_value = [mock_ep]
 
         # Reset discovery state
         EmbeddingRegistry._plugins_discovered = False

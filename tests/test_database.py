@@ -9,7 +9,7 @@ import numpy as np
 from unittest.mock import Mock, patch
 from localvectordb.database import LocalVectorDB
 from localvectordb.core import Document, QueryResult
-from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError
+from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DocumentNotFoundError
 
 
 def create_mock_connection():
@@ -500,9 +500,8 @@ class TestLocalVectorDBRetrieval:
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
         with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
-            result = mock_db.get("nonexistent")
-
-        assert result is None
+            with pytest.raises(DocumentNotFoundError):
+                result = mock_db.get("nonexistent")
 
     def test_exists_single_document(self, mock_db):
         """Test checking if single document exists."""

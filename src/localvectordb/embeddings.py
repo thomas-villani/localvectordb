@@ -24,7 +24,7 @@ from typing import List, Optional, Dict, Type
 import httpx
 import numpy as np
 
-from localvectordb.exceptions import OllamaNotFoundError
+from localvectordb.exceptions import OllamaNotFoundError, EmbeddingError
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +40,18 @@ class EmbeddingProvider(ABC):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 
+        self._dimension = None
+
+
     async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
         """Generate embeddings with automatic retry handling."""
+
         for attempt in range(self.max_retries + 1):
             try:
                 return await self._embed_batch_impl(texts, batch_size)
             except Exception as e:
                 if not self._should_retry(e, attempt):
-                    raise e
+                    raise EmbeddingError(f"Error retrieving embeddings: {str(e)}")
 
                 if attempt < self.max_retries:
                     delay = self.retry_delay * (2 ** attempt)  # Exponential backoff
@@ -126,8 +130,63 @@ class EmbeddingProvider(ABC):
             return asyncio.run(self.embed_batch(texts, batch_size))
 
 
-class OllamaEmbeddings(EmbeddingProvider):
-    """Ollama embedding provider"""
+class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
+    """Embedding Providers which utilize HTTP requests to get embeddings.
+
+    Subclasses need to implement `_embed_single_batch(self, texts: list[str], client: httpx.AsyncClient)`
+    which provides an async httpx client to use to make the http request.
+
+    """
+
+    async def _embed_batch_impl(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+        if not texts:
+            return np.array([]).reshape(0, self.get_dimension())
+
+        batch_size = batch_size or self.max_batch_size
+        if batch_size > self.max_batch_size:
+            batch_size = self.max_batch_size
+
+        final_embeddings = np.empty(
+            (len(texts), self.get_dimension()),
+            dtype=np.float32
+        )
+        async with httpx.AsyncClient() as client:
+            current_idx = 0
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
+
+                embeddings = await self._embed_single_batch(batch, client)
+                current_batch_size = len(embeddings)
+                final_embeddings[current_idx:current_idx + current_batch_size] = embeddings
+                current_idx += current_batch_size
+
+                del embeddings  # free the memory!
+
+        return final_embeddings
+
+    @abstractmethod
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient) -> List[List[float]]:
+        """Embed a batch using asynchronous httpx client."""
+        pass
+
+
+class OllamaEmbeddings(HTTPEmbeddingProvider):
+    """Ollama embedding provider.
+
+    Parameters
+    ----------
+    model : str
+        The OpenAI model to use for embeddding
+    base_url : str
+        The base url for the ollama server (default for Ollama install is http://localhost:11434)
+        Alternatively, you can set the `OLLAMA_HOST` environment variable.
+    timeout : int, default = 90
+        Timeout in sceonds for the http request
+    max_retries : int, default = 3
+        How many times to retry on a failed request.
+    retry_delay : float, default = 1.0
+        How long to delay after a failed request (the backoff is exponential)
+    """
 
     _model_info_cache = {}
 
@@ -135,7 +194,6 @@ class OllamaEmbeddings(EmbeddingProvider):
         super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
         base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.base_url = base_url.rstrip('/')
-        self._dimension = None
         self._validated = False
 
     @property
@@ -180,70 +238,62 @@ class OllamaEmbeddings(EmbeddingProvider):
                 self._validated = True
                 return True
             return False
-        except (httpx.ConnectError, TimeoutError, ConnectionError) as e:
+        except (httpx.ConnectError, TimeoutError, ConnectionError, httpx.RequestError) as e:
             logger.error(f"Could not connect to Ollama service: {str(e)}")
             raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}")
 
+    def _get_model_dimension_api(self) -> int:
+        # Because we may be calling get_dimension from the sync or async function, we need to handle it properly.
+        client = httpx.AsyncClient()
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an async context, we need to run in a new thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self._embed_single_batch(["test"], client=client))
+                    test_embedding = future.result()
+
+            else:
+                test_embedding = loop.run_until_complete(self._embed_single_batch(["test"], client=client))
+
+        except RuntimeError:
+            # No event loop, create one
+            test_embedding = asyncio.run(self._embed_single_batch(["test"], client=client))
+
+        return len(test_embedding[0])
+
     def get_dimension(self) -> int:
         """Get embedding dimension by making a test call"""
-        if self._dimension is not None:
-            return self._dimension
+        if self._dimension is None:
+            self._dimension = self._get_model_dimension_api()
+        return self._dimension
 
-        try:
-            # Make a test embedding call
-            test_embedding = asyncio.run(self.embed_batch(["test"], batch_size=1))
-            self._dimension = test_embedding.shape[1]
-            return self._dimension
-        except Exception as e:
-            raise RuntimeError(f"Failed to determine embedding dimension: {e}")
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient):
+        """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
+        response = await client.post(
+            f"{self.base_url}/api/embed",
+            json={
+                "model": self.model,
+                "input": texts,
+                "truncate": True
+            },
+            timeout=self.timeout
+        )
+        response.raise_for_status()
 
-    async def _embed_batch_impl(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
-    ) -> np.ndarray:
-        """Generate embeddings using Ollama"""
-        if not texts:
-            return np.array([]).reshape(0, self.get_dimension())
+        data = response.json()
+        if "error" in data:
+            raise RuntimeError(f"Ollama error: {data['error']}")
 
-        batch_size = batch_size or self.max_batch_size
-        all_embeddings = []
+        embeddings = data.get("embeddings", [])
+        if not embeddings:
+            raise RuntimeError("No embeddings returned from Ollama")
 
-        async with httpx.AsyncClient() as client:
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-
-                try:
-                    response = await client.post(
-                        f"{self.base_url}/api/embed",
-                        json={
-                            "model": self.model,
-                            "input": batch,
-                            "truncate": True
-                        },
-                        timeout=self.timeout
-                    )
-                    response.raise_for_status()
-
-                    data = response.json()
-                    if "error" in data:
-                        raise RuntimeError(f"Ollama error: {data['error']}")
-
-                    embeddings = data.get("embeddings", [])
-                    if not embeddings:
-                        raise RuntimeError("No embeddings returned from Ollama")
-
-                    all_embeddings.extend(embeddings)
-
-                except httpx.RequestError as e:
-                    raise RuntimeError(f"Failed to connect to Ollama: {e}")
-                except Exception as e:
-                    raise RuntimeError(f"Error generating embeddings: {e}")
-
-        return np.array(all_embeddings, dtype=np.float32)
+        return embeddings
 
 
-class OpenAIEmbeddings(EmbeddingProvider):
+class OpenAIEmbeddings(HTTPEmbeddingProvider):
     """OpenAI embedding provider.
 
     Parameters
@@ -273,7 +323,6 @@ class OpenAIEmbeddings(EmbeddingProvider):
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
-        self._dimension = None
         self._validated = False
 
         # Model dimension mapping
@@ -282,6 +331,12 @@ class OpenAIEmbeddings(EmbeddingProvider):
             "text-embedding-3-small": 1536,
             "text-embedding-3-large": 3072,
         }
+
+        if model not in self._model_dimensions:
+            raise ValueError("Currently the only supported OpenAI embedding models are: "
+                             f"{', '.join(self._model_dimensions.keys())}")
+
+        self._dimension = self._model_dimensions[model]
 
     @property
     def provider_name(self) -> str:
@@ -296,14 +351,7 @@ class OpenAIEmbeddings(EmbeddingProvider):
         if self._validated:
             return True
 
-        # For now, just check if it's a known model
-        known_models = [
-            "text-embedding-ada-002",
-            "text-embedding-3-small",
-            "text-embedding-3-large"
-        ]
-
-        self._validated = self.model in known_models
+        self._validated = self.model in self._model_dimensions.keys()
         return self._validated
 
     def get_dimension(self) -> int:
@@ -315,58 +363,77 @@ class OpenAIEmbeddings(EmbeddingProvider):
         if self.model in self._model_dimensions:
             self._dimension = self._model_dimensions[self.model]
             return self._dimension
+        else:
+            # Should never get here.
+            raise ValueError("Unknown model.")
 
-        # Otherwise make a test call
-        try:
-            test_embedding = asyncio.run(self.embed_batch(["test"], batch_size=1))
-            self._dimension = test_embedding.shape[1]
-            return self._dimension
-        except Exception as e:
-            raise RuntimeError(f"Failed to determine embedding dimension: {e}")
-
-    async def _embed_batch_impl(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-        """Generate embeddings using OpenAI"""
-        if not texts:
-            return np.array([]).reshape(0, self.get_dimension())
-
-        batch_size = batch_size or self.max_batch_size
-        all_embeddings = []
-
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        response = await client.post(
+            "https://api.openai.com/v1/embeddings",
+            headers=headers,
+            json={
+                "model": self.model,
+                "input": texts
+            },
+            timeout=self.timeout
+        )
+        response.raise_for_status()
 
-        async with httpx.AsyncClient() as client:
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
+        data = response.json()
 
-                try:
-                    response = await client.post(
-                        "https://api.openai.com/v1/embeddings",
-                        headers=headers,
-                        json={
-                            "model": self.model,
-                            "input": batch
-                        },
-                        timeout=self.timeout
-                    )
-                    response.raise_for_status()
+        if "error" in data:
+            raise RuntimeError(f"OpenAI error: {data['error']['message']}")
 
-                    data = response.json()
+        embeddings = [item["embedding"] for item in data["data"]]
+        return embeddings
 
-                    if "error" in data:
-                        raise RuntimeError(f"OpenAI error: {data['error']['message']}")
-
-                    embeddings = [item["embedding"] for item in data["data"]]
-                    all_embeddings.extend(embeddings)
-
-                except httpx.RequestError as e:
-                    raise RuntimeError(f"Failed to connect to OpenAI: {e}")
-                except Exception as e:
-                    raise RuntimeError(f"Error generating embeddings: {e}")
-
-        return np.array(all_embeddings, dtype=np.float32)
+    # async def _embed_batch_impl_OLD(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+    #     """Generate embeddings using OpenAI"""
+    #     if not texts:
+    #         return np.array([]).reshape(0, self.get_dimension())
+    #
+    #     batch_size = batch_size or self.max_batch_size
+    #     all_embeddings = []
+    #
+    #     headers = {
+    #         "Authorization": f"Bearer {self.api_key}",
+    #         "Content-Type": "application/json"
+    #     }
+    #
+    #     async with httpx.AsyncClient() as client:
+    #         for i in range(0, len(texts), batch_size):
+    #             batch = texts[i:i + batch_size]
+    #
+    #             try:
+    #                 response = await client.post(
+    #                     "https://api.openai.com/v1/embeddings",
+    #                     headers=headers,
+    #                     json={
+    #                         "model": self.model,
+    #                         "input": batch
+    #                     },
+    #                     timeout=self.timeout
+    #                 )
+    #                 response.raise_for_status()
+    #
+    #                 data = response.json()
+    #
+    #                 if "error" in data:
+    #                     raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+    #
+    #                 embeddings = [item["embedding"] for item in data["data"]]
+    #                 all_embeddings.extend(embeddings)
+    #
+    #             except httpx.RequestError as e:
+    #                 raise RuntimeError(f"Failed to connect to OpenAI: {e}")
+    #             except Exception as e:
+    #                 raise RuntimeError(f"Error generating embeddings: {e}")
+    #
+    #     return np.array(all_embeddings, dtype=np.float32)
 
 
 class MockEmbeddings(EmbeddingProvider):
