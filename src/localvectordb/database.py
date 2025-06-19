@@ -341,6 +341,7 @@ class LocalVectorDB(BaseVectorDB):
             logger.error(f"Error setting up FTS5: {e}")
             self._fts_enabled = False
 
+    # TODO: All the sanitization should go in a separate module
     def _sanitize_fts_query(self, query: str) -> str:
         """
         Sanitize query for FTS5 while preserving useful search capabilities
@@ -686,6 +687,7 @@ class LocalVectorDB(BaseVectorDB):
 
             return result_ids
 
+    # TODO: this is dumb, just combine it with below
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
         """Validate metadata against schema"""
         for metadata in metadata_batch:
@@ -1071,6 +1073,7 @@ class LocalVectorDB(BaseVectorDB):
             chunks_to_embed = []
             chunk_texts = []
 
+            # TODO: can we parallelize
             for chunk in new_chunks:
                 existing = existing_chunks.get(chunk.index)
 
@@ -2807,6 +2810,7 @@ class LocalVectorDB(BaseVectorDB):
 
         return merged
 
+    # TODO: move the document scoring to their own class in a different module
     def _aggregate_document_scores_with_method(
             self,
             chunk_results: List[QueryResult],
@@ -3101,32 +3105,6 @@ class LocalVectorDB(BaseVectorDB):
         final_results.sort(key=lambda x: x.score, reverse=True)
         return final_results[:k]
 
-    def _get_document_metadata(self, conn: sqlite3.Connection, doc_id: str) -> Dict[str, Any]:
-        """Get metadata for a document"""
-        metadata_columns = list(self.metadata_schema.keys())
-        if not metadata_columns:
-            return {}
-
-        cursor = conn.execute(
-            f"SELECT {', '.join(metadata_columns)} FROM documents WHERE id = ?",
-            (doc_id,)
-        )
-        row = cursor.fetchone()
-        if not row:
-            return {}
-
-        metadata = {}
-        for col_name in metadata_columns:
-            if col_name in row.keys():
-                value = row[col_name]
-                if value is not None and col_name in self.metadata_schema:
-                    field_def = self.metadata_schema[col_name]
-                    if field_def.type == MetadataFieldType.JSON:
-                        value = json.loads(value)
-                metadata[col_name] = value
-
-        return metadata
-
     def filter(
             self,
             where: Optional[Dict[str, Any]] = None,
@@ -3323,6 +3301,7 @@ class LocalVectorDB(BaseVectorDB):
 
         return documents
 
+    # TODO: this is dumb, remove it and replace inline
     @staticmethod
     def _matches_filters(metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
         """

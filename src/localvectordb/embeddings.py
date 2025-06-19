@@ -19,7 +19,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Type
+from typing import List, Optional, Dict, Type, Callable
 
 import httpx
 import numpy as np
@@ -32,23 +32,27 @@ logger = logging.getLogger(__name__)
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers."""
 
-    def __init__(self, model: str, timeout=90, max_retries=3, retry_delay=1.0, **kwargs):
+    def __init__(self, model: str, timeout=90, max_retries=3, retry_delay=1.0, max_concurrent_requests=5, **kwargs):
         self.model = model
         self.config = kwargs
 
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-
+        self.max_concurrent_requests = max_concurrent_requests
         self._dimension = None
 
+    @property
+    def async_supported(self) -> bool:
+        return True
 
-    async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+    async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None,
+                          progress_callback: Optional[callable] = None) -> np.ndarray:
         """Generate embeddings with automatic retry handling."""
 
         for attempt in range(self.max_retries + 1):
             try:
-                return await self._embed_batch_impl(texts, batch_size)
+                return await self._embed_batch_impl(texts, batch_size, progress_callback)
             except Exception as e:
                 if not self._should_retry(e, attempt):
                     raise EmbeddingError(f"Error retrieving embeddings: {str(e)}")
@@ -60,6 +64,7 @@ class EmbeddingProvider(ABC):
 
         # Should never reach here, but safety net
         raise RuntimeError(f"All {self.max_retries + 1} embedding attempts failed")
+
 
     def _should_retry(self, error: Exception, attempt: int) -> bool:
         """Determine if an error should trigger a retry."""
@@ -82,9 +87,92 @@ class EmbeddingProvider(ABC):
 
         return False
 
+    async def _embed_batch_impl(
+            self,
+            texts: List[str],
+            batch_size: Optional[int] = None,
+            progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> np.ndarray:
+        """
+        Generate embeddings with progress tracking
+
+        Parameters
+        ----------
+        texts : List[str]
+            List of texts to embed
+        batch_size : Optional[int]
+            Size of each batch
+        progress_callback : Optional[callable]
+            Callback function called with (completed_batches, total_batches)
+
+        Returns
+        -------
+        np.ndarray
+            Array of embeddings
+        """
+        if not texts:
+            return np.array([]).reshape(0, self.get_dimension())
+
+        batch_size = batch_size or self.max_batch_size
+        if batch_size > self.max_batch_size:
+            batch_size = self.max_batch_size
+
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        completed_batches = 0
+
+        # Pre-allocate final embeddings array
+        final_embeddings = np.empty(
+            (len(texts), self.get_dimension()),
+            dtype=np.float32
+        )
+
+        # Semaphore for concurrency control
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+        async def process_batch_with_progress(
+                batch_texts: List[str],
+                _start_index: int,
+                _batch_num: int
+        ):
+            """Process batch and update progress"""
+            nonlocal completed_batches
+
+            async with semaphore:
+                try:
+                    _embeddings = await self._embed_single_batch(batch_texts)
+
+                    # Update progress
+                    completed_batches += 1
+                    if progress_callback is not None:
+                        progress_callback(completed_batches, total_batches)
+
+                    return _start_index, _embeddings
+
+                except Exception as e:
+                    logger.error(f"Error processing batch {_batch_num}: {e}")
+                    raise
+
+        # Create tasks for all batches
+        tasks = []
+
+        for batch_num, i in enumerate(range(0, len(texts), batch_size)):
+            batch = texts[i:i + batch_size]
+            task = process_batch_with_progress(batch, i, batch_num)
+            tasks.append(task)
+
+        # Execute all batches concurrently
+        batch_results = await asyncio.gather(*tasks)
+
+        # Assemble final results
+        for start_index, embeddings in batch_results:
+            batch_size_actual = len(embeddings)
+            final_embeddings[start_index:start_index + batch_size_actual] = embeddings
+
+        return final_embeddings
+
     @abstractmethod
-    async def _embed_batch_impl(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-        """Actual embedding implementation - child classes implement this."""
+    async def _embed_single_batch(self, texts, **kwargs) -> List[List[float]]:
+        """Embed a single batch"""
         pass
 
     async def embed_async(self, texts: List[str], batch_size: Optional[int] = None):
@@ -138,7 +226,29 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
     """
 
-    async def _embed_batch_impl(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+    async def _embed_batch_impl(
+            self,
+            texts: List[str],
+            batch_size: Optional[int] = None,
+            progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> np.ndarray:
+        """
+        Generate embeddings with progress tracking
+
+        Parameters
+        ----------
+        texts : List[str]
+            List of texts to embed
+        batch_size : Optional[int]
+            Size of each batch
+        progress_callback : Optional[Callable[[int, int], None]]
+            Callback function called with (completed_batches, total_batches)
+
+        Returns
+        -------
+        np.ndarray
+            Array of embeddings
+        """
         if not texts:
             return np.array([]).reshape(0, self.get_dimension())
 
@@ -146,27 +256,67 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         if batch_size > self.max_batch_size:
             batch_size = self.max_batch_size
 
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        completed_batches = 0
+
+        # Pre-allocate final embeddings array
         final_embeddings = np.empty(
             (len(texts), self.get_dimension()),
             dtype=np.float32
         )
+
+        # Semaphore for concurrency control
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+        async def process_batch_with_progress(
+                batch_texts: List[str],
+                _client: httpx.AsyncClient,
+                _start_index: int,
+                _batch_num: int
+        ):
+            """Process batch and update progress"""
+            nonlocal completed_batches
+
+            async with semaphore:
+                try:
+                    _embeddings = await self._embed_single_batch(batch_texts, _client)
+
+                    # Update progress
+                    completed_batches += 1
+                    if progress_callback is not None:
+                        progress_callback(completed_batches, total_batches)
+
+                    return _start_index, _embeddings
+
+                except Exception as e:
+                    logger.error(f"Error processing batch {_batch_num}: {e}")
+                    raise
+
         async with httpx.AsyncClient() as client:
-            current_idx = 0
-            for i in range(0, len(texts), batch_size):
+            # Create tasks for all batches
+            tasks = []
+
+            for batch_num, i in enumerate(range(0, len(texts), batch_size)):
                 batch = texts[i:i + batch_size]
+                task = process_batch_with_progress(batch, client, i, batch_num)
+                tasks.append(task)
 
-                embeddings = await self._embed_single_batch(batch, client)
-                current_batch_size = len(embeddings)
-                final_embeddings[current_idx:current_idx + current_batch_size] = embeddings
-                current_idx += current_batch_size
+            # Execute all batches concurrently
+            batch_results = await asyncio.gather(*tasks)
 
-                del embeddings  # free the memory!
+            # Assemble final results
+            for start_index, embeddings in batch_results:
+                batch_size_actual = len(embeddings)
+                final_embeddings[start_index:start_index + batch_size_actual] = embeddings
 
         return final_embeddings
 
+
     @abstractmethod
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient) -> List[List[float]]:
-        """Embed a batch using asynchronous httpx client."""
+    async def _embed_single_batch(self, texts, **kwargs) -> List[List[float]]:
+        """Embed a batch using asynchronous httpx client.
+
+        The async httpx client is passed in as the `client` kwarg."""
         pass
 
 
@@ -186,12 +336,15 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         How many times to retry on a failed request.
     retry_delay : float, default = 1.0
         How long to delay after a failed request (the backoff is exponential)
+    max_concurrent_requests : int, default = 3
+        How many requests to make concurrently to the ollama server.
     """
 
     _model_info_cache = {}
 
-    def __init__(self, model: str, base_url: str = None, timeout=300, max_retries=3, retry_delay=1.0, **kwargs):
-        super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
+    def __init__(self, model: str, base_url: str = None, timeout=300, max_retries=3, retry_delay=1.0,
+                 max_concurrent_requests=3):
+        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
         base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.base_url = base_url.rstrip('/')
         self._validated = False
@@ -269,8 +422,11 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             self._dimension = self._get_model_dimension_api()
         return self._dimension
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient):
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient = None):
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
+        if client is None:
+            client = httpx.AsyncClient()
+
         response = await client.post(
             f"{self.base_url}/api/embed",
             json={
@@ -305,17 +461,20 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         You can specify a custom environment variable to use by prefixing with a "$", for example using:
         apikey="$CUSTOM_ENV_VAR" would try to load the api key from the `CUSTOM_ENV_VAR` environment variable.
     timeout : int, default = 90
-        Timeout in sceonds for the http request
+        Timeout in seconds for the http request
     max_retries : int, default = 3
         How many times to retry on a failed request.
     retry_delay : float, default = 1.0
         How long to delay after a failed request (the backoff is exponential)
+    max_concurrent_requests : int, default = 5
+        How many requests to make concurrently to the OpenAI server.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, timeout=90, max_retries=3, retry_delay=1.0, **kwargs):
-        super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
+    def __init__(self, model: str, api_key: Optional[str] = None, timeout=90, max_retries=3, retry_delay=1.0,
+                 max_concurrent_requests=5):
+        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
 
-        if api_key is not None and api_key.startswith("$"):
+        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
             api_key = os.getenv(api_key[1:])
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -367,7 +526,10 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient):
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None):
+        if client is None:
+            client = httpx.AsyncClient()
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -390,50 +552,6 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
 
         embeddings = [item["embedding"] for item in data["data"]]
         return embeddings
-
-    # async def _embed_batch_impl_OLD(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-    #     """Generate embeddings using OpenAI"""
-    #     if not texts:
-    #         return np.array([]).reshape(0, self.get_dimension())
-    #
-    #     batch_size = batch_size or self.max_batch_size
-    #     all_embeddings = []
-    #
-    #     headers = {
-    #         "Authorization": f"Bearer {self.api_key}",
-    #         "Content-Type": "application/json"
-    #     }
-    #
-    #     async with httpx.AsyncClient() as client:
-    #         for i in range(0, len(texts), batch_size):
-    #             batch = texts[i:i + batch_size]
-    #
-    #             try:
-    #                 response = await client.post(
-    #                     "https://api.openai.com/v1/embeddings",
-    #                     headers=headers,
-    #                     json={
-    #                         "model": self.model,
-    #                         "input": batch
-    #                     },
-    #                     timeout=self.timeout
-    #                 )
-    #                 response.raise_for_status()
-    #
-    #                 data = response.json()
-    #
-    #                 if "error" in data:
-    #                     raise RuntimeError(f"OpenAI error: {data['error']['message']}")
-    #
-    #                 embeddings = [item["embedding"] for item in data["data"]]
-    #                 all_embeddings.extend(embeddings)
-    #
-    #             except httpx.RequestError as e:
-    #                 raise RuntimeError(f"Failed to connect to OpenAI: {e}")
-    #             except Exception as e:
-    #                 raise RuntimeError(f"Error generating embeddings: {e}")
-    #
-    #     return np.array(all_embeddings, dtype=np.float32)
 
 
 class MockEmbeddings(EmbeddingProvider):
@@ -458,27 +576,23 @@ class MockEmbeddings(EmbeddingProvider):
     def get_dimension(self) -> int:
         return self._dimension
 
-    async def _embed_batch_impl(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
-    ) -> np.ndarray:
-        """Generate random embeddings for testing"""
+    async def _embed_single_batch(self, texts, **kwargs) -> List[List[float]]:
         if not texts:
-            return np.array([]).reshape(0, self._dimension)
+            return [[]]
 
-        # Generate deterministic "embeddings" based on text hash
         embeddings = []
         for text in texts:
             # Simple hash-based embedding
-            np.random.seed(hash(text) % (2**31))
+            np.random.seed(hash(text) % (2 ** 31))
             embedding = np.random.normal(0, 1, self._dimension)
             # Normalize
             embedding = embedding / np.linalg.norm(embedding)
-            embeddings.append(embedding)
+            embeddings.append(embedding.tolist())
 
         self.number_of_calls += 1
-        return np.array(embeddings, dtype=np.float32)
+
+        return embeddings
+
 
 
 class EmbeddingRegistry:

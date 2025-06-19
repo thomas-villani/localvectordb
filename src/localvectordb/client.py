@@ -517,7 +517,7 @@ class RemoteVectorDB(BaseVectorDB):
 
         api_key_env_var = "LVDB_API_KEY"
         # Allow the user to specify an environment variable by prefixing $
-        if api_key and api_key.startswith("$"):
+        if api_key and api_key.startswith("$") and api_key[1:].isupper():
             api_key_env_var = api_key[1:]
             api_key = None
 
