@@ -92,6 +92,9 @@ dev = [
     "localvectordb[file-extraction]",
     "localvectordb[server]"
 ]
+async = [
+    "aiosqlite>=0.21.0",
+]
 
 
 [tool.bumpversion]

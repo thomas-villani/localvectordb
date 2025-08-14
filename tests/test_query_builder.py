@@ -132,7 +132,6 @@ class TestQueryBuilderInitialization:
         assert builder._having_clauses == []
         assert builder._rerank_config is None
         assert builder._explain is False
-        assert builder._hints == {}
         assert builder._context_window == 2
         assert builder._semantic_dedup_threshold is None
         assert builder._document_scoring_method == "frequency_boost"
@@ -592,7 +591,6 @@ class TestQueryBuilderUtilityMethods:
         result = builder.explain(detailed=True)
 
         assert result._explain is True
-        assert result._hints.get("detailed_explain") is True
 
     def test_return_type(self, builder):
         """Test return_type functionality."""

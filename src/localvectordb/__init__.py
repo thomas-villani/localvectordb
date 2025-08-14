@@ -193,8 +193,6 @@ Not for commercial use without explicit permission.
 Contact: thomas.villani@gmail.com
 """
 
-from localvectordb.async_client import AsyncRemoteVectorDB, create_async_remote_vectordb
-from localvectordb.async_database import AsyncLocalVectorDB, create_async_vectordb
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.client import RemoteVectorDB
 from localvectordb.core import MetadataField
@@ -205,5 +203,4 @@ from localvectordb.query_builder import QueryBuilder
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions",
-           "AsyncLocalVectorDB", "create_async_vectordb", "async_database", "async_client", "AsyncRemoteVectorDB",
-           "create_async_remote_vectordb", "QueryBuilder", "query_builder"]
+           "QueryBuilder", "query_builder"]

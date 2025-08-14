@@ -455,7 +455,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
     Parameters
     ----------
     model : str
-        The OpenAI model to use for embeddding
+        The OpenAI model to use for embedding
     api_key : str, optional
         Optionally provide the api key as a str. If not provided, tries to use "OPENAI_API_KEY" environment variable.
         You can specify a custom environment variable to use by prefixing with a "$", for example using:

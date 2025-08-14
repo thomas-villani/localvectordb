@@ -33,7 +33,6 @@ scale to distributed deployments without changing your code.
    chunking
    metadata.filtering
    querybuilder
-   async
    server/index
    cli
    modules/index

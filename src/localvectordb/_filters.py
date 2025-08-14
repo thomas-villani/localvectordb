@@ -670,3 +670,179 @@ def matches_metadata_filter(doc_or_metadata, metadata_filter: dict) -> bool:
         for field, condition in metadata_filter.items()
         if not field.startswith('$')
     )
+
+class FTSQuerySanitization:
+
+    @staticmethod
+    def sanitize_fts_query(query: str) -> str:
+        """
+        Sanitize query for FTS5 while preserving useful search capabilities
+
+        This method tries to balance safety with search effectiveness by:
+        1. Supporting exact phrase matching with quotes
+        2. Using AND logic by default (all terms must match)
+        3. Safely handling FTS5 operators
+        4. Falling back to safe term-by-term search for complex queries
+        """
+        if not query or not query.strip():
+            return ""
+
+        query = query.strip()
+
+        # If the entire query is already quoted, treat as exact phrase
+        if query.startswith('"') and query.endswith('"') and query.count('"') == 2:
+            # Validate the phrase doesn't contain FTS5 special chars that could break things
+            inner_query = query[1:-1]
+            if FTSQuerySanitization.is_safe_phrase(inner_query):
+                return query
+            else:
+                # Fall back to safe handling
+                return f'"{FTSQuerySanitization.clean_term(inner_query)}"'
+
+        # Check if query contains quotes for phrase matching
+        if '"' in query:
+            return FTSQuerySanitization.handle_phrase_query(query)
+
+        # Check if query contains basic boolean operators
+        if any(op in query.upper() for op in [' AND ', ' OR ', ' NOT ']):
+            return FTSQuerySanitization.handle_boolean_query(query)
+
+        # Simple multi-term query - default to AND behavior for better relevance
+        terms = query.split()
+        if len(terms) == 1:
+            # Single term - clean and return
+            clean_term = FTSQuerySanitization.clean_term(terms[0])
+            return f'"{clean_term}"' if clean_term else ""
+        else:
+            # Multiple terms - use AND logic (all terms must be present)
+            clean_terms = []
+            for term in terms:
+                clean_term = FTSQuerySanitization.clean_term(term)
+                if clean_term:
+                    clean_terms.append(f'"{clean_term}"')
+
+            return " AND ".join(clean_terms) if clean_terms else ""
+
+    @staticmethod
+    def is_safe_phrase(phrase: str) -> bool:
+        """Check if a phrase is safe to use in FTS5 without additional escaping"""
+        # Avoid phrases with FTS5 special characters that could cause issues
+        dangerous_chars = ['*', ':', '^', '(', ')', '[', ']', '{', '}']
+        return not any(char in phrase for char in dangerous_chars)
+
+    @staticmethod
+    def clean_term(term: str) -> str:
+        """Clean a single term for safe FTS5 usage"""
+        # Remove FTS5 special characters but preserve basic word characters
+        # Keep unicode word characters, numbers, hyphens, apostrophes
+        clean_term = re.sub(r'[^\w\s\'-]', '', term, flags=re.UNICODE).strip()
+        return clean_term
+
+    @staticmethod
+    def handle_phrase_query(query: str) -> str:
+        """Handle queries that contain quoted phrases"""
+        # Split on quotes to separate phrases from individual terms
+        parts = []
+        in_quote = False
+        current_part = ""
+
+        i = 0
+        while i < len(query):
+            char = query[i]
+            if char == '"':
+                if in_quote:
+                    # End of phrase
+                    if current_part.strip():
+                        clean_phrase = FTSQuerySanitization.clean_term(current_part)
+                        if clean_phrase:
+                            parts.append(f'"{clean_phrase}"')
+                    current_part = ""
+                    in_quote = False
+                else:
+                    # Start of phrase - first process any pending non-quoted content
+                    if current_part.strip():
+                        # Split into terms and add as AND
+                        terms = current_part.split()
+                        for term in terms:
+                            clean_term = FTSQuerySanitization.clean_term(term)
+                            if clean_term:
+                                parts.append(f'"{clean_term}"')
+                    current_part = ""
+                    in_quote = True
+            else:
+                current_part += char
+            i += 1
+
+        # Handle any remaining content
+        if current_part.strip():
+            if in_quote:
+                # Unclosed quote - treat as phrase anyway
+                clean_phrase = FTSQuerySanitization.clean_term(current_part)
+                if clean_phrase:
+                    parts.append(f'"{clean_phrase}"')
+            else:
+                # Regular terms
+                terms = current_part.split()
+                for term in terms:
+                    clean_term = FTSQuerySanitization.clean_term(term)
+                    if clean_term:
+                        parts.append(f'"{clean_term}"')
+
+        return " AND ".join(parts) if parts else ""
+
+    @staticmethod
+    def handle_boolean_query(query: str) -> str:
+        """Handle queries with AND/OR/NOT operators"""
+        # For safety, we'll parse basic boolean queries but fall back to term-by-term
+        # if the query is too complex
+
+        # Replace boolean operators with standardized versions
+        normalized = query.upper()
+        normalized = re.sub(r'\bAND\b', ' AND ', normalized)
+        normalized = re.sub(r'\bOR\b', ' OR ', normalized)
+        normalized = re.sub(r'\bNOT\b', ' NOT ', normalized)
+
+        # Split by operators while preserving them
+        tokens = re.split(r'(\s+(?:AND|OR|NOT)\s+)', normalized)
+
+        # Clean each non-operator token
+        cleaned_tokens = []
+        for token in tokens:
+            token = token.strip()
+            if token in ['AND', 'OR', 'NOT']:
+                cleaned_tokens.append(token)
+            elif token:
+                # Regular term - clean it
+                clean_term = FTSQuerySanitization.clean_term(token)
+                if clean_term:
+                    cleaned_tokens.append(f'"{clean_term}"')
+
+        # Validate the structure (operators should be between terms)
+        if FTSQuerySanitization.is_valid_boolean_structure(cleaned_tokens):
+            return " ".join(cleaned_tokens)
+        else:
+            # Fall back to simple AND of all terms
+            terms = re.split(r'\s+(?:AND|OR|NOT)\s+', query, flags=re.IGNORECASE)
+            clean_terms = []
+            for term in terms:
+                clean_term = FTSQuerySanitization.clean_term(term.strip())
+                if clean_term:
+                    clean_terms.append(f'"{clean_term}"')
+            return " AND ".join(clean_terms) if clean_terms else ""
+
+    @staticmethod
+    def is_valid_boolean_structure(tokens: List[str]) -> bool:
+        """Check if boolean query structure is valid"""
+        if not tokens:
+            return False
+
+        # Should start and end with terms, not operators
+        if tokens[0] in ['AND', 'OR', 'NOT'] or tokens[-1] in ['AND', 'OR']:
+            return False
+
+        # Operators and terms should alternate (roughly)
+        operator_count = sum(1 for token in tokens if token in ['AND', 'OR', 'NOT'])
+        term_count = len(tokens) - operator_count
+
+        # Should have roughly one fewer operator than terms
+        return operator_count <= term_count

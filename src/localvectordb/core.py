@@ -19,18 +19,70 @@ import hashlib
 import json
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Any, Literal, Type, Generator, Tuple
 from datetime import datetime
+
+import aiosqlite
+
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import ConnectionPoolError
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Type alias for the document-score aggregation that occurs when querying
+DocumentScoringMethod = Literal["best", "average", "worst", "weighted_average", "frequency_boost",
+                                         "harmonic_mean", "diminishing_returns", "statistical", "robust_mean",
+                                         "percentile", "geometric_mean"]
+"""
+Document scoring methods for aggregating chunk scores:
+
+- "best": Highest chunk score (single best passage matters)
+- "worst": Lowest chunk score (all content must meet threshold)  
+- "average": Mean of all chunk scores (overall quality)
+- "weighted_average": Score-weighted average (emphasizes top chunks)
+- "frequency_boost": Boosts score by number of quality chunks (default, good for comprehensive docs)
+  - frequency_bias (0.3): How much to boost based on chunk count
+- "harmonic_mean": Conservative mean with coverage bonus
+  - max_chunks (5): Top chunks for calculation
+  - coverage_threshold (0.7): Quality threshold for bonus
+- "diminishing_returns": Exponential decay for later chunks
+  - decay_factor (0.8): How quickly impact decreases
+- "statistical": Multi-factor scoring (best + mean + consistency + coverage)
+  - best_weight (0.6), mean_weight (0.2), consistency_weight (0.1), coverage_weight (0.1)
+- "robust_mean": Outlier-resistant with position weighting
+  - outlier_threshold (2.0): Z-score for outlier removal
+  - position_decay (0.9): Penalty for lower-ranked chunks
+- "percentile": Combines high/low percentiles for balanced scoring
+  - primary_percentile (0.9), secondary_percentile (0.7), primary_weight (0.7)
+- "geometric_mean": Conservative mean (all chunks contribute meaningfully)
+"""
+
+
+def _adapt_datetime_with_tz(dt):
+    return dt.isoformat()
+
+def _convert_datetime_with_tz(dt):
+    s = dt.decode("utf-8")
+    return datetime.fromisoformat(s)
+
+def _adapt_json(json_data):
+    return json.dumps(json_data)
+
+def _convert_json(json_data):
+    return json.loads(json_data.decode("utf-8"))
+
+sqlite3.register_adapter(datetime, _adapt_datetime_with_tz)
+sqlite3.register_converter("timestamp", _convert_datetime_with_tz)
+sqlite3.register_adapter(dict, _adapt_json)
+sqlite3.register_adapter(list, _adapt_json)
+sqlite3.register_converter("json", _convert_json)
+
 
 
 class MetadataFieldType(str, Enum):
@@ -559,75 +611,51 @@ class BaseVectorDB(ABC):
         """Check if the database is accessible. Override in subclasses."""
         return not self.closed
 
-    # Helper methods for QueryBuilder
-    def is_async_database(self) -> bool:
-        """Check if this is an async database implementation."""
-        import asyncio
-        # Check if any of the main methods are coroutines
-        return (
-            asyncio.iscoroutinefunction(getattr(self, 'query', None)) or
-            asyncio.iscoroutinefunction(getattr(self, 'filter', None)) or
-            hasattr(self, '_is_async_db')  # Allow explicit marking
-        )
-
-    def supports_async_embeddings(self) -> bool:
-        """Check if the database supports async embedding generation."""
-        return (
-            hasattr(self, 'embedding_provider') and
-            hasattr(self.embedding_provider, 'embed_async') and
-            asyncio.iscoroutinefunction(self.embedding_provider.embed_async)
-        ) or hasattr(self, '_generate_embeddings_async')
-
-
-class AsyncBaseVectorDB(BaseVectorDB):
-    """
-    Async version of BaseVectorDB for databases that have native async support.
-
-    This class provides the same interface but with async methods.
-    """
-
+    # Core async database operations
     @abstractmethod
-    async def upsert(
-            self,
-            documents: Union[str, List[str]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None
-    ) -> List[str]:
-        """Insert or update documents in the database asynchronously."""
-        pass
-
-    @abstractmethod
-    async def insert(
+    async def upsert_async(
             self,
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise"
+            **kwargs
+    ) -> List[str]:
+        """Insert or update documents in the database asynchronously."""
+        pass
+
+    @abstractmethod
+    async def insert_async(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            **kwargs
     ) -> List[str]:
         """Insert new documents into the database asynchronously."""
         pass
 
     @abstractmethod
-    async def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+    async def get_async(self, ids: Union[str, List[str]]) -> Union["Document", List["Document"], None]:
         """Retrieve documents by ID asynchronously."""
         pass
 
     @abstractmethod
-    async def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
+    async def exists_async(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """Check if documents exist asynchronously."""
         pass
 
     @abstractmethod
-    async def delete(self, ids: Union[str, List[str]]) -> int:
+    async def delete_async(self, ids: Union[str, List[str]]) -> int:
         """Delete documents asynchronously."""
         pass
 
     @abstractmethod
-    async def update(
+    async def update_async(
             self,
             doc_id: str,
             content: Optional[str] = None,
@@ -637,7 +665,7 @@ class AsyncBaseVectorDB(BaseVectorDB):
         pass
 
     @abstractmethod
-    async def query(
+    async def query_async(
             self,
             query: str,
             *,
@@ -649,46 +677,31 @@ class AsyncBaseVectorDB(BaseVectorDB):
             vector_weight: float = 0.7,
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: Literal[
-                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
-    ) -> List[QueryResult]:
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List["QueryResult"]:
         """Unified query interface for all search types asynchronously."""
         pass
 
     @abstractmethod
-    async def filter(
+    async def filter_async(
             self,
             where: Optional[Dict[str, Any]] = None,
             order_by: Optional[str] = None,
             limit: Optional[int] = None,
             offset: int = 0
-    ) -> List[Document]:
+    ) -> List["Document"]:
         """Filter documents using metadata filtering asynchronously."""
         pass
 
     @abstractmethod
-    async def save(self):
+    async def save_async(self):
         """Save the database asynchronously."""
         pass
 
     @abstractmethod
-    async def close(self):
+    async def close_async(self):
         """Close the database asynchronously."""
-        pass
-
-    @abstractmethod
-    async def update_metadata_schema(
-            self,
-            new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False,
-            column_mapping: Optional[dict] = None
-    ) -> Dict[str, Any]:
-        """Update the metadata schema asynchronously."""
-        pass
-
-    @abstractmethod
-    async def get_metadata_schema_info(self) -> Dict[str, Any]:
-        """Get detailed information about the current metadata schema asynchronously."""
         pass
 
     # Async context manager support
@@ -696,28 +709,10 @@ class AsyncBaseVectorDB(BaseVectorDB):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-
-    def is_async_database(self) -> bool:
-        """Always returns True for async databases."""
-        return True
-
-    # Override QueryBuilder to return async-aware builder
-    def query_builder(self) -> "QueryBuilder":
-        """
-        Create a new QueryBuilder for this async database.
-
-        The QueryBuilder will automatically detect that this is an async database
-        and use async execution methods when available.
-        """
-        from localvectordb.query_builder import QueryBuilder
-        builder = QueryBuilder(self)
-        builder._is_async_db = True  # Mark as async for the executor
-        return builder
+        await self.close_async()
 
 # Type alias for better readability
-AnyVectorDB = Union["LocalVectorDB", "RemoteVectorDB", "AsyncLocalVectorDB", "AsyncRemoteVectorDB",
-                    AsyncBaseVectorDB, BaseVectorDB]
+AnyVectorDB = Union["LocalVectorDB", "RemoteVectorDB", BaseVectorDB]
 
 
 class DatabaseSchema:
@@ -854,6 +849,10 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)"
     ]
 
+    BASE_COLUMNS = {
+        "id", "content", "content_hash", "created_at", "updated_at"
+    }
+
     def __init__(self, db_path: Union[str, Path], read_write_lock):
         self.db_path = Path(db_path)
         self.metadata_fields: Dict[str, MetadataField] = {}
@@ -863,7 +862,7 @@ class DatabaseSchema:
         """Initialize database schema"""
         with self._read_write_lock.write_lock():
             if db_connection is None:
-                db_connection = sqlite3.connect(self.db_path)
+                db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
             with db_connection as conn:
                 # Enable foreign keys
                 conn.execute("PRAGMA foreign_keys = ON")
@@ -884,17 +883,13 @@ class DatabaseSchema:
 
     def _setup_metadata_schema(self, conn: sqlite3.Connection, schema: Dict[str, MetadataField]):
         """Set up metadata schema and add columns to documents table"""
-        # Define reserved column names that cannot be used for metadata fields
-        RESERVED_COLUMNS = {
-            "id", "content", "content_hash", "created_at", "updated_at"
-        }
 
         # Validate that no metadata field names conflict with reserved columns
         for field_name in schema.keys():
-            if field_name.lower() in RESERVED_COLUMNS:
+            if field_name.lower() in self.BASE_COLUMNS:
                 raise ValueError(
                     f"Metadata field name '{field_name}' conflicts with reserved column name. "
-                    f"Reserved columns are: {", ".join(sorted(RESERVED_COLUMNS))}"
+                    f"Reserved columns are: {", ".join(sorted(self.BASE_COLUMNS))}"
                 )
 
         for field_name, field_def in schema.items():
@@ -976,7 +971,7 @@ class DatabaseSchema:
     def load_metadata_schema(self, db_connection=None) -> Dict[str, MetadataField]:
         """Load metadata schema from database"""
         if db_connection is None:
-            db_connection = sqlite3.connect(self.db_path)
+            db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
         with db_connection as conn:
             cursor = conn.execute("SELECT * FROM metadata_schema")
@@ -1041,7 +1036,7 @@ class DatabaseSchema:
         """
         with self._read_write_lock.write_lock():
             if db_connection is None:
-                db_connection = sqlite3.connect(self.db_path)
+                db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
             changes = {
                 'added_fields': [],
@@ -1057,23 +1052,18 @@ class DatabaseSchema:
             # Load current schema
             current_schema = self.load_metadata_schema(db_connection)
 
-            # Define reserved column names that cannot be used for metadata fields
-            RESERVED_COLUMNS = {
-                "id", "content", "content_hash", "created_at", "updated_at"
-            }
-
             # Validate column mapping if provided
             if column_mapping:
-                self._validate_column_mapping(column_mapping, current_schema, new_schema, RESERVED_COLUMNS)
+                self._validate_column_mapping(column_mapping, current_schema, new_schema, self.BASE_COLUMNS)
 
             with db_connection as conn:
                 try:
                     # Validate new schema field names and required fields
                     for field_name, field_def in new_schema.items():
-                        if field_name.lower() in RESERVED_COLUMNS:
+                        if field_name.lower() in self.BASE_COLUMNS:
                             raise ValueError(
                                 f"Metadata field name '{field_name}' conflicts with reserved column name. "
-                                f"Reserved columns are: {', '.join(sorted(RESERVED_COLUMNS))}"
+                                f"Reserved columns are: {', '.join(sorted(self.BASE_COLUMNS))}"
                             )
 
                         # Validate required fields have defaults if they're new
@@ -1122,9 +1112,8 @@ class DatabaseSchema:
                                     field_def.type.value,
                                     field_def.indexed,
                                     field_def.required,
-                                    json.dumps(field_def.default_value) if field_def.default_value is not None else None
+                                    field_def.default_value
                                 ))
-                                # Why are we dumping in json?
 
                                 # Add column to documents table
                                 self._add_metadata_column(conn, field_name, field_def)
@@ -1183,8 +1172,7 @@ class DatabaseSchema:
                                         field_def.type.value,
                                         field_def.indexed,
                                         field_def.required,
-                                        json.dumps(
-                                            field_def.default_value) if field_def.default_value is not None else None,
+                                        field_def.default_value,
                                         field_name
                                     ))
 
@@ -1505,7 +1493,63 @@ class DatabaseSchema:
             'default_value': field_def.default_value
         }
 
+def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, MetadataField]] | Dict[str, MetadataField]:
+    """Get predefined metadata schemas for common use cases"""
 
+    schemas = {
+        "files": {
+            "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "created_at": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "last_modified": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "mimetype": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER),
+            "tags": MetadataField(type=MetadataFieldType.JSON),
+        },
+        "documents": {
+            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "tags": MetadataField(type=MetadataFieldType.JSON),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+        },
+        "research_papers": {
+            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "authors": MetadataField(type=MetadataFieldType.JSON, indexed=False),
+            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "publication_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "journal": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "doi": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "keywords": MetadataField(type=MetadataFieldType.JSON),
+            "citation_count": MetadataField(type=MetadataFieldType.INTEGER),
+        },
+        "code_repository": {
+            "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "language": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "last_modified": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "file_size": MetadataField(type=MetadataFieldType.INTEGER),
+            "is_test": MetadataField(type=MetadataFieldType.BOOLEAN, default_value=False),
+            "complexity_score": MetadataField(type=MetadataFieldType.REAL),
+        },
+        "customer_support": {
+            "ticket_id": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "customer_id": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "priority": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "status": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "created_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "resolved_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+            "satisfaction_score": MetadataField(type=MetadataFieldType.INTEGER),
+        }
+    }
+
+    if not schema:
+        return schemas
+    else:
+        if schema not in schemas:
+            raise KeyError(f"Schema `{schema}` was not found in predefined schema templates. Available options: "
+                           f"{", ".join(schemas.keys())}")
+        return schemas.get(schema)
 
 class PooledConnection:
     """Wrapper for a pooled connection that handles automatic return to pool"""
@@ -1548,7 +1592,7 @@ class ConnectionPool:
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with proper settings"""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         self._created_connections += 1
@@ -1635,65 +1679,102 @@ class ConnectionPool:
             self.close_all()
         except:
             pass  # Ignore errors during cleanup
-            
 
-def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, MetadataField]] | Dict[str, MetadataField]:
-    """Get predefined metadata schemas for common use cases"""
 
-    schemas = {
-        "files": {
-            "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "created_at": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "last_modified": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "mimetype": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER),
-            "tags": MetadataField(type=MetadataFieldType.JSON),
-        },
-        "documents": {
-            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "tags": MetadataField(type=MetadataFieldType.JSON),
-            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-        },
-        "research_papers": {
-            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "authors": MetadataField(type=MetadataFieldType.JSON, indexed=False),
-            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "publication_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "journal": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "doi": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "keywords": MetadataField(type=MetadataFieldType.JSON),
-            "citation_count": MetadataField(type=MetadataFieldType.INTEGER),
-        },
-        "code_repository": {
-            "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "language": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "last_modified": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "file_size": MetadataField(type=MetadataFieldType.INTEGER),
-            "is_test": MetadataField(type=MetadataFieldType.BOOLEAN, default_value=False),
-            "complexity_score": MetadataField(type=MetadataFieldType.REAL),
-        },
-        "customer_support": {
-            "ticket_id": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "customer_id": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "priority": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "status": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "created_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "resolved_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
-            "satisfaction_score": MetadataField(type=MetadataFieldType.INTEGER),
+class AsyncConnectionPool:
+    """
+    Async connection pool for SQLite using aiosqlite
+
+    This provides async database operations while maintaining the same interface
+    patterns as the sync ConnectionPool.
+    """
+
+    def __init__(self, db_path: Union[str, Path], max_connections: int = 10):
+        self.db_path = Path(db_path)
+        self.max_connections = max_connections
+        self._pool: List[aiosqlite.Connection] = []
+        self._lock = asyncio.Lock()
+        self._created_connections = 0
+
+    async def _create_connection(self) -> aiosqlite.Connection:
+        """Create a new async SQLite connection with proper settings"""
+        conn = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        await conn.execute("PRAGMA foreign_keys = ON")
+        # Enable row factory for dict-like access
+        conn.row_factory = aiosqlite.Row
+        self._created_connections += 1
+        return conn
+
+    @property
+    def closed(self):
+        return self._created_connections == 0
+
+    async def get_connection(self) -> aiosqlite.Connection:
+        """Get a connection from the pool"""
+        async with self._lock:
+            if self._pool:
+                # Reuse existing connection from pool
+                conn = self._pool.pop()
+                # Verify connection is still valid
+                try:
+                    await conn.execute("SELECT 1")
+                    return conn
+                except Exception:
+                    # Connection is invalid, close it and create new one
+                    await conn.close()
+                    self._created_connections -= 1
+
+            # Create new connection if pool is empty or connection was invalid
+            if self._created_connections < self.max_connections:
+                return await self._create_connection()
+            else:
+                # Pool exhausted - wait for a connection to be returned
+                # In practice, this is rare with proper maxsize on queues
+                raise RuntimeError("Async connection pool exhausted")
+
+    async def return_connection(self, conn: aiosqlite.Connection):
+        """Return a connection to the pool"""
+        async with self._lock:
+            if len(self._pool) < self.max_connections:
+                # Check if connection is still valid before returning to pool
+                try:
+                    await conn.execute("SELECT 1")
+                    self._pool.append(conn)
+                except Exception:
+                    # Connection is invalid, close it
+                    await conn.close()
+                    self._created_connections -= 1
+            else:
+                # Pool is full, close the connection
+                await conn.close()
+                self._created_connections -= 1
+
+    @asynccontextmanager
+    async def get_connection_context(self):
+        """Async context manager for getting/returning connections"""
+        conn = await self.get_connection()
+        try:
+            yield conn
+        finally:
+            await self.return_connection(conn)
+
+    async def close_all(self):
+        """Close all connections in the pool"""
+        async with self._lock:
+            for conn in self._pool:
+                await conn.close()
+            self._pool.clear()
+            self._created_connections = 0
+
+    @property
+    def stats(self) -> dict:
+        """Get pool statistics for debugging"""
+        return {
+            "pool_size": len(self._pool),
+            "max_connections": self.max_connections,
+            "created_connections": self._created_connections,
+            "available_connections": len(self._pool)
         }
-    }
-
-    if not schema:
-        return schemas
-    else:
-        if schema not in schemas:
-            raise KeyError(f"Schema `{schema}` was not found in predefined schema templates. Available options: "
-                           f"{", ".join(schemas.keys())}")
-        return schemas.get(schema)
 
 
 class ReadWriteLock:
@@ -1781,3 +1862,5 @@ class ReadWriteLock:
 
                     self._write_ready.notify()
                     self._read_ready.notify_all()
+
+

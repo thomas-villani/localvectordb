@@ -18,7 +18,7 @@ import json
 import logging
 import mimetypes
 import re
-from datetime import datetime
+from datetime import datetime, UTC
 from math import ceil
 from typing import Dict, Any
 
@@ -689,8 +689,6 @@ def list_documents(db_name):
             for key, value in request.args.items():
                 if key not in ['page', 'limit']:
                     filters[key] = value
-
-
 
             # Calculate offset
             offset = (page - 1) * limit
@@ -1366,7 +1364,7 @@ def upload_files(db_name):
                     'secure_filename': filename,
                     'file_size_bytes': len(file_content),
                     'mimetype': mimetype,
-                    'upload_timestamp': datetime.now().isoformat()
+                    'upload_timestamp': datetime.now(UTC).isoformat()
                 }
 
                 # Only add metadata fields that exist in the database schema

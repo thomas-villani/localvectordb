@@ -21,7 +21,7 @@ import threading
 import time
 import weakref
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import Dict, Union, Literal, Optional, Any, List, Tuple
 
@@ -429,17 +429,17 @@ class DatabaseManager:
         self.worker_id = f"worker-{os.getpid()}-{threading.get_ident()}"
 
         # Registry synchronization
-        self._last_registry_sync = datetime.now()
+        self._last_registry_sync = datetime.now(UTC)
         self._registry_sync_interval = timedelta(seconds=30)  # Sync every 30 seconds
 
         # Health monitoring
-        self._last_health_check = datetime.now()
+        self._last_health_check = datetime.now(UTC)
         self._health_check_interval = timedelta(minutes=5)
 
         # Error tracking
         self._error_counts = {}
         self._last_errors = {}
-        self._start_time = datetime.now()
+        self._start_time = datetime.now(UTC)
 
         # Ensure database directory exists
         try:
@@ -562,7 +562,7 @@ class DatabaseManager:
                 logger.info(f"Database '{db_name}' no longer exists on filesystem, unregistering")
                 self.registry.unregister_database(db_name)
 
-            self._last_registry_sync = datetime.now()
+            self._last_registry_sync = datetime.now(UTC)
 
         except Exception as e:
             logger.error(f"Failed to sync registry from filesystem: {e}")
@@ -698,8 +698,8 @@ class DatabaseManager:
                     db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
                     metadata = {
                         "name": new_db_name,
-                        "created_at": datetime.now().isoformat(),
-                        "last_modified": datetime.now().isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "last_modified": datetime.now(UTC).isoformat(),
                         "created_by": self.worker_id,
                         "embedding_model": embedding_config.model,
                         "embedding_provider": embedding_config.provider,
@@ -716,7 +716,7 @@ class DatabaseManager:
                     self.registry.register_database(new_db_name, metadata)
 
                     # Cache locally
-                    self.databases[new_db_name] = (db, datetime.now())
+                    self.databases[new_db_name] = (db, datetime.now(UTC))
 
                     db_logger.log_query(
                         "create_database_success",
@@ -774,7 +774,7 @@ class DatabaseManager:
                 try:
                     if self._check_database_health(db):
                         # Update last access time
-                        self.databases[name] = (db, datetime.now())
+                        self.databases[name] = (db, datetime.now(UTC))
                         return db
                     else:
                         # Database is unhealthy, remove from cache
@@ -826,7 +826,7 @@ class DatabaseManager:
                         raise DatabaseError(f"Database {name} failed post-load health check")
 
                     # Cache locally
-                    self.databases[name] = (db, datetime.now())
+                    self.databases[name] = (db, datetime.now(UTC))
 
                     db_logger.log_query("load_database_success", database_name=name, stats=db.get_stats())
                     logger.info(f"Successfully loaded database: {name}")
@@ -858,7 +858,7 @@ class DatabaseManager:
         """List all available databases from shared registry with enhanced error handling"""
         try:
             # Ensure we have recent data
-            if datetime.now() - self._last_registry_sync > self._registry_sync_interval:
+            if datetime.now(UTC) - self._last_registry_sync > self._registry_sync_interval:
                 self._sync_registry_from_filesystem()
 
             return self.registry.list_databases()
@@ -1081,7 +1081,7 @@ class DatabaseManager:
 
     def _record_error(self, db_name: str, error: Exception):
         """Record error for monitoring and recovery decisions"""
-        current_time = datetime.now()
+        current_time = datetime.now(UTC)
 
         if db_name not in self._error_counts:
             self._error_counts[db_name] = 0
@@ -1105,7 +1105,7 @@ class DatabaseManager:
 
     def _cleanup_inactive(self):
         """Close inactive database connections"""
-        now = datetime.now()
+        now = datetime.now(UTC)
         timeout = timedelta(seconds=self.config.get("DB_TIMEOUT", 3600))  # Default 1 hour
 
         with self.lock:
@@ -1138,7 +1138,7 @@ class DatabaseManager:
 
     def _perform_health_checks(self):
         """Perform health checks on active databases"""
-        now = datetime.now()
+        now = datetime.now(UTC)
 
         if now - self._last_health_check < self._health_check_interval:
             return
@@ -1176,7 +1176,7 @@ class DatabaseManager:
             total_dbs = len(self.list_databases())
 
             # Calculate uptime
-            uptime = (datetime.now() - self._start_time).total_seconds()
+            uptime = (datetime.now(UTC) - self._start_time).total_seconds()
 
             stats = {
                 'active_databases': active_dbs,
@@ -1201,7 +1201,7 @@ class DatabaseManager:
                 try:
                     db_stats[name] = {
                         'last_access': last_access.isoformat(),
-                        'idle_seconds': (datetime.now() - last_access).total_seconds(),
+                        'idle_seconds': (datetime.now(UTC) - last_access).total_seconds(),
                         'stats': db.get_stats()
                     }
                 except Exception as e:

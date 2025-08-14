@@ -130,8 +130,9 @@ from typing import Union, Literal, List, Optional, Dict, Any
 import httpx
 import numpy as np
 
-from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB
-from localvectordb.embeddings import EmbeddingProvider
+from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB, \
+    DocumentScoringMethod
+from localvectordb.embeddings import EmbeddingProvider, HTTPEmbeddingProvider
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError,
     DocumentNotFoundError
@@ -140,9 +141,8 @@ from localvectordb.exceptions import (
 logger = logging.getLogger(__name__)
 
 
-class RemoteEmbeddingProvider(EmbeddingProvider):
-    """
-    Embedding provider that proxies requests to a LocalVectorDB server.
+class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
+    """Embedding provider that proxies requests to a LocalVectorDB server.
 
     This provider mimics the interface of local embedding providers but makes
     HTTP requests to the server's embedding endpoint. This allows RemoteVectorDB
@@ -150,303 +150,96 @@ class RemoteEmbeddingProvider(EmbeddingProvider):
 
     Parameters
     ----------
-    db_name : str
-        Name of the database on the server
+    model : str
+        The model to use for embedding
+    provider : str
+        The embedding provider for the model
+    dimension : int
+        The dimension of the embedding provider (should be known beforehand)
     base_url : str
-        Base URL of the LocalVectorDB server
-    api_key : Optional[str]
-        API key for authentication
-    timeout : Optional[int]
-        Timeout for HTTP requests in seconds
-    authorization_header : str
-        Authorization header name, by default "Authorization"
-
-    Examples
-    --------
-    Direct usage (typically handled automatically by RemoteVectorDB)::
-
-        provider = RemoteEmbeddingProvider(
-            db_name="research_papers",
-            base_url="http://localhost:5000",
-            api_key="your_api_key"
-        )
-
-        embeddings = provider.embed_sync(["text to embed"])
-        dimension = provider.get_dimension()
+        The base url for the localvectordb_server
+    api_key : str, optional
+        The API key for the localvectordb_server, if auth is enabled.
+    timeout : int, default = 90
+        Timeout in seconds for the http request
+    max_retries : int, default = 3
+        How many times to retry on a failed request.
+    retry_delay : float, default = 1.0
+        How long to delay after a failed request (the backoff is exponential)
+    max_concurrent_requests : int, default = 5
+        How many requests to make concurrently to the LVDB server.
+    authorization_header : str, default = "Authorization"
+        For custom auth headers.
     """
 
-    def __init__(
-            self,
-            db_name: str,
-            base_url: str,
-            api_key: Optional[str] = None,
-            timeout: Optional[int] = None,
-            max_retries: int = 3,
-            retry_delay: float = 1.0,
-            authorization_header: str = "Authorization",
-            model: str = "remote",  # Required by base class
-            **kwargs
-    ):
-        # Skip the super call since it tries to set the `model` attribute which we set manually.
-        # super().__init__(model, **kwargs)
-        self.config = kwargs
+    def __init__(self,
+                 model: str,
+                 provider: str,
+                 dimension: int,
+                 base_url: str,
+                 api_key: Optional[str] = None,
+                 timeout=90, max_retries=3,
+                 retry_delay=1.0,
+                 max_concurrent_requests=5,
+                 authorization_header="Authorization"):
+        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
 
-        self.db_name = db_name
-        self.base_url = base_url.rstrip('/')
+        self._provider = provider
+        self._model_name = model
+        self._base_url = base_url
         self.api_key = api_key
-        self.timeout = timeout or 300
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-        self.authorization_header = authorization_header
-
-        # Cache for database info to avoid repeated requests
-        self._db_info_cache: Optional[Dict[str, Any]] = None
-        self._cache_timestamp: float = 0
-        self._cache_ttl: float = 300  # 5 minutes cache TTL
-
-        # Derived info from database
-        self._provider_name: Optional[str] = None
-        self._model_name: Optional[str] = None
-        self._dimension: Optional[int] = None
-        self._validated: bool = False
-
-        # Load initial database info
-        self._ensure_db_info()
-
-    def _get_headers(self) -> Dict[str, str]:
-        """Get HTTP headers including authentication."""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers[self.authorization_header] = f"Bearer {self.api_key}"
-        return headers
-
-    def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
-        """Handle HTTP response and raise appropriate exceptions."""
-        if response.status_code == 200:
-            return response.json()
-
-        try:
-            error_data = response.json()
-            error_msg = error_data.get("error", str(response.status_code))
-        except Exception:
-            error_msg = f"HTTP {response.status_code}: {response.text}"
-
-        if response.status_code == 404:
-            raise DatabaseNotFoundError(f"Database '{self.db_name}' not found on server")
-        elif response.status_code == 401:
-            raise RuntimeError("Authentication failed. Check your API key.")
-        else:
-            raise RuntimeError(f"Server error: {error_msg}")
-
-    def _ensure_db_info(self, force_refresh: bool = False) -> None:
-        """Ensure database info is loaded and cached."""
-        current_time = time.time()
-
-        if (not force_refresh and
-                self._db_info_cache and
-                current_time - self._cache_timestamp < self._cache_ttl):
-            return
-
-        try:
-            self._load_db_info()
-            self._cache_timestamp = current_time
-        except Exception as e:
-            logger.error(f"Failed to load database info for {self.db_name}: {e}")
-            if not self._db_info_cache:
-                # If we have no cached info at all, re-raise the error
-                raise e
-            # Otherwise, use stale cache and log warning
-            logger.warning(f"Using stale cache for database {self.db_name} due to error: {e}")
-
-    def _load_db_info(self) -> None:
-        """Load database information from server."""
-        url = f"{self.base_url}/api/v1/{self.db_name}/info"
-
-        with httpx.Client() as client:
-            response = client.get(
-                url,
-                headers=self._get_headers(),
-                timeout=self.timeout
-            )
-
-        # logger.debug(f"Raw response: {response.text}")
-        db_info = self._handle_response(response)
-        self._db_info_cache = db_info
-
-        # Extract relevant configuration
-        config = db_info.get("config", {})
-        self._provider_name = config.get("embedding_provider", "unknown")
-        self._model_name = config.get("embedding_model", "unknown")
-        self._dimension = config.get("embedding_dimension", 0)
-
-        if self._dimension <= 0:
-            raise RuntimeError(f"Invalid embedding dimension: {self._dimension}")
-
-        self._validated = True
-        logger.debug(f"Loaded database info: provider={self._provider_name}, "
-                     f"model={self._model_name}, dimension={self._dimension}")
-
+        self.__authorization_header = authorization_header
+        self._dimension = dimension
 
     @property
     def provider_name(self) -> str:
-        """Return the underlying embedding provider name."""
-        self._ensure_db_info()
-        return f"remote-{self._provider_name}"
-
-    @property
-    def model(self) -> str:
-        """Return the underlying embedding model name."""
-        self._ensure_db_info()
-        return self._model_name
+        return self._provider
 
     @property
     def max_batch_size(self) -> int:
-        """Maximum batch size for this provider."""
-        # Conservative default for remote provider to avoid timeouts
-        return 100
+        return 128
 
     def validate_model(self) -> bool:
-        """Check if the remote model is available."""
-        try:
-            self._ensure_db_info()
-            return self._validated
-        except Exception:
-            return False
+        """Check if the model exists.
+
+        Should always exist because this shouldn't be instantiated until after the RemoteVectorDB is
+        created, which involves confirming the embedding model on the server side."""
+        return True
 
     def get_dimension(self) -> int:
-        """Get embedding dimension from the remote database."""
-        self._ensure_db_info()
+        """Get embedding dimension"""
         return self._dimension
 
-    async def _embed_batch_impl(
-            self,
-            texts: List[str],
-            batch_size: Optional[int] = None
-    ) -> np.ndarray:
-        """Generate embeddings using the remote server."""
-        if not texts:
-            return np.array([]).reshape(0, self.get_dimension())
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None):
+        if client is None:
+            client = httpx.AsyncClient()
+        headers = {
+            "Content-Type": "application/json"
+        }
+        if self.api_key:
+            headers[self.__authorization_header] = f"Bearer {self.api_key}"
 
-        batch_size = batch_size or self.max_batch_size
-        all_embeddings = []
-
-        async with httpx.AsyncClient() as client:
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-
-                try:
-                    embeddings = await self._embed_batch_request(client, batch)
-                    all_embeddings.extend(embeddings)
-
-                except Exception as e:
-                    logger.error(f"Error getting embeddings for batch {i // batch_size + 1}: {e}")
-                    raise RuntimeError(f"Failed to get embeddings from server: {e}")
-
-        return np.array(all_embeddings, dtype=np.float32)
-
-    async def _embed_batch_request(
-            self,
-            client: httpx.AsyncClient,
-            texts: List[str]
-    ) -> List[List[float]]:
-        """Make a single embedding request to the server."""
-        url = f"{self.base_url}/api/v1/{self.db_name}/embeddings"
-
-        payload = {"texts": texts}
-
-        response = await client.post(
-            url,
-            json=payload,
-            headers=self._get_headers(),
-            timeout=self.timeout
-        )
-
-        result = self._handle_response(response)
-        embeddings = result.get("embeddings", [])
-
-        if len(embeddings) != len(texts):
-            raise RuntimeError(
-                f"Server returned {len(embeddings)} embeddings for {len(texts)} texts"
-            )
-
-        return embeddings
-
-    def embed_sync(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-        """Synchronous wrapper for embed_batch."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we're already in an async context, run in thread pool
-                with ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, self.embed_batch(texts, batch_size))
-                    return future.result()
-            else:
-                return loop.run_until_complete(self.embed_batch(texts, batch_size))
-        except RuntimeError:
-            # No event loop, create one
-            return asyncio.run(self.embed_batch(texts, batch_size))
-
-    def get_config_info(self) -> Dict[str, Any]:
-        """Get detailed configuration information about the remote embedding setup."""
-        self._ensure_db_info()
-        return {
-            "provider_name": self._provider_name,
-            "model_name": self._model_name,
-            "dimension": self._dimension,
-            "remote_database": self.db_name,
-            "server_url": self.base_url,
-            "max_batch_size": self.max_batch_size,
-            "cache_ttl": self._cache_ttl,
-            "last_cache_update": self._cache_timestamp
+        url = f"{self._base_url}/api/v1/embeddings"
+        payload = {
+            "provider": self._provider,
+            "model": self._model_name,
+            "texts": texts
         }
 
-    def refresh_cache(self) -> None:
-        """Force refresh of the database info cache."""
-        self._ensure_db_info(force_refresh=True)
+        response = await client.post(url,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout
+        )
+        response.raise_for_status()
 
-    def test_connection(self) -> Dict[str, Any]:
-        """Test the connection to the remote server and return diagnostic info."""
-        start_time = time.time()
+        data = response.json()
 
-        try:
-            # Test basic connectivity
-            self._ensure_db_info(force_refresh=True)
+        if "error" in data:
+            raise RuntimeError(f"OpenAI error: {data['error']['message']}")
 
-            # Test embedding functionality with a simple request
-            test_embeddings = self.embed_sync(["test connection"])
-
-            end_time = time.time()
-
-            return {
-                "status": "success",
-                "response_time_seconds": end_time - start_time,
-                "server_reachable": True,
-                "authentication_valid": True,
-                "embedding_functional": True,
-                "test_embedding_dimension": len(test_embeddings[0]) if len(test_embeddings) > 0 else 0,
-                "server_info": {
-                    "provider": self._provider_name,
-                    "model": self._model_name,
-                    "dimension": self._dimension
-                }
-            }
-
-        except Exception as e:
-            end_time = time.time()
-            return {
-                "status": "error",
-                "response_time_seconds": end_time - start_time,
-                "error": str(e),
-                "server_reachable": "unknown",
-                "authentication_valid": "unknown",
-                "embedding_functional": False
-            }
-
-    def __repr__(self) -> str:
-        """String representation of the provider."""
-        status = "connected" if self._validated else "disconnected"
-        return (f"RemoteEmbeddingProvider(db='{self.db_name}', "
-                f"server='{self.base_url}', status='{status}')")
+        embeddings = [item["embedding"] for item in data["data"]]
+        return embeddings
 
 
 class RemoteVectorDB(BaseVectorDB):
@@ -487,8 +280,16 @@ class RemoteVectorDB(BaseVectorDB):
         Timeout for HTTP requests
     authorization_header : str, default = "Authorization"
         The server can be configured to accept alternate headers, and the client can too.
-    """
+    max_retries : int
+        Max number of retries for a request
+    retry_delay : int
+        The delay after a failed request before trying again
+    max_concurrent_requests : int
+        How many maximum requests for embeddings
+    connection_pool_limits : httpx.Limits
+        Parameters for the httpx client connection pool
 
+    """
 
     def __init__(
             self,
@@ -510,6 +311,7 @@ class RemoteVectorDB(BaseVectorDB):
             authorization_header: str = "Authorization",
             max_retries: int = 3,
             retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5,
             connection_pool_limits: Optional[httpx.Limits] = None
     ):
         self.name = name
@@ -549,20 +351,27 @@ class RemoteVectorDB(BaseVectorDB):
         # State variables to be loaded from server
         self._embedding_dimension = 0
 
-        self._remote_embedding_provider = RemoteEmbeddingProvider(
-            db_name=self.name,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.request_timeout,
-            authorization_header=self._authorization_header
-        )
-
         # Check if database exists and create if needed
         if create_if_not_exists:
             self._ensure_database_exists()
         else:
             # Load existing database info
             self._load_database_info()
+
+        self._remote_embedding_provider = _RemoteEmbeddingProvider(
+            model=self._embedding_model,
+            provider=self._embedding_provider,
+            dimension=self._embedding_dimension,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            max_concurrent_requests=max_concurrent_requests,
+            timeout=self.request_timeout,
+            authorization_header=self._authorization_header
+        )
+
+        # Async
+        self._client = None
+
 
     def _make_request_with_retry(
             self,
@@ -747,7 +556,7 @@ class RemoteVectorDB(BaseVectorDB):
         self._embedding_dimension = config.get("embedding_dimension", 0)
 
     @property
-    def embedding_provider(self) -> RemoteEmbeddingProvider:
+    def embedding_provider(self) -> EmbeddingProvider:
         """Return the remote embedding provider instance."""
         return self._remote_embedding_provider
 
@@ -1084,8 +893,8 @@ class RemoteVectorDB(BaseVectorDB):
             # NEW PARAMETERS:
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: Literal[
-                "best", "average", "weighted_average", "frequency_boost"] = "frequency_boost"
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -1112,6 +921,8 @@ class RemoteVectorDB(BaseVectorDB):
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
         document_scoring_method : str
             Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters controlling the various scoring methods
 
         Returns
         -------
@@ -1127,7 +938,8 @@ class RemoteVectorDB(BaseVectorDB):
             "score_threshold": score_threshold,
             "vector_weight": vector_weight,
             "context_window": context_window,
-            "document_scoring_method": document_scoring_method
+            "document_scoring_method": document_scoring_method,
+            "document_scoring_options": document_scoring_options
         }
 
         if filters is not None:
@@ -1551,3 +1363,499 @@ class RemoteVectorDB(BaseVectorDB):
             result = response.json()
             return db_name in result.get("databases", [])
         return False
+
+    #################
+    # Async Methods #
+    #################
+
+    async def _ensure_client(self) -> httpx.AsyncClient:
+        """Ensure HTTP client is available"""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.request_timeout),
+                limits=self._connection_pool_limits,
+                headers=self._get_headers()
+            )
+        return self._client
+
+    async def _make_request_with_retry_async(
+            self,
+            method: str,
+            url: str,
+            **kwargs
+    ) -> httpx.Response | None:
+        """Make HTTP request with exponential backoff retry"""
+        client = await self._ensure_client()
+
+        last_exception = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await client.request(method, url, **kwargs)
+
+                # Don't retry on 4xx errors (client errors)
+                if 400 <= response.status_code < 500:
+                    return response
+
+                # Success or 5xx error that we might retry
+                if response.status_code < 500:
+                    return response
+
+                # 5xx error - might retry
+                if attempt == self.max_retries:
+                    return response  # Last attempt, return even if error
+
+                # Wait before retry with exponential backoff
+                delay = self.retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"Request failed with {response.status_code}, retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{self.max_retries + 1})"
+                )
+                await asyncio.sleep(delay)
+
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                last_exception = e
+
+                if attempt == self.max_retries:
+                    raise ConnectionError(f"Failed to connect after {self.max_retries + 1} attempts: {e}")
+
+                # Wait before retry
+                delay = self.retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"Request failed with {type(e).__name__}: {e}, retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{self.max_retries + 1})"
+                )
+                await asyncio.sleep(delay)
+
+        # Should not reach here, but just in case
+        if last_exception:
+            raise last_exception
+        return None
+
+    @staticmethod
+    async def _handle_response_async(response: httpx.Response) -> dict:
+        """Handle API response and raise appropriate exceptions"""
+        if response.status_code == 200:
+            return response.json()
+
+        try:
+            error_data = response.json()
+            error_type = error_data.get("type", "unknown")
+            error_msg = error_data.get("error", str(response.status_code))
+
+            # TODO: is this error checking working properly? Should test.
+            # Map error type to appropriate exception
+            error_map = {
+                "database_not_found": DatabaseNotFoundError,
+                "duplicate_document_id": DuplicateDocumentIDError,
+                "embedding_error": EmbeddingError,
+                "document_not_found": DocumentNotFoundError
+            }
+
+            # Raise the appropriate exception if we recognize the type
+            if error_type in error_map:
+                raise error_map[error_type](error_msg)
+
+        except (ValueError, KeyError):
+            # Fallback if we can't parse the response
+            error_msg = response.text or f"HTTP Error: {response.status_code}"
+
+        # Generic error mapping based on HTTP status
+        if response.status_code == 404:
+            raise DatabaseNotFoundError(error_msg)
+        elif response.status_code == 400:
+            raise ValueError(error_msg)
+        elif response.status_code == 401:
+            raise PermissionError("Authentication failed. Check your API key.")
+        elif response.status_code == 409:
+            raise DuplicateDocumentIDError(error_msg)
+        else:
+            raise BaseLocalVectorDBException(f"API Error: {error_msg}")
+
+    async def get_stats_async(self) -> Dict[str, Any]:
+        """Get database statistics"""
+        url = self._build_url(f"/api/v1/{self.name}/info")
+        response = await self._make_request_with_retry_async("GET", url)
+        db_info = await self._handle_response_async(response)
+        return db_info.get("stats", {})
+
+
+    async def upsert_async(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            **kwargs
+    ) -> List[str]:
+        """
+        Insert or update documents in the database
+
+        Parameters
+        ----------
+        documents : Union[str, List[str]]
+            Document text(s) to add
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents
+        ids : Optional[Union[str, List[str]]]
+            Document IDs (auto-generated if not provided)
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : float, optional
+            If provided, skip chunks which have semantic similarity greater than this value (pre-deduplication)
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+        """
+        # Handle single document case
+        if isinstance(documents, str):
+            documents = [documents]
+            if isinstance(metadata, dict):
+                metadata = [metadata]
+            if isinstance(ids, str):
+                ids = [ids]
+
+        # Prepare request payload
+        payload = {
+            "documents": documents,
+            "batch_size": batch_size
+        }
+
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if ids is not None:
+            payload["ids"] = ids
+
+        url = self._build_url(f"/api/v1/{self.name}/documents")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        return result.get("ids", [])
+
+    async def insert_async(
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            **kwargs
+    ) -> List[str]:
+        """
+        Insert new documents into the database
+
+        Parameters
+        ----------
+        documents : Union[str, List[str]]
+            Document text(s) to add
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents
+        ids : Optional[Union[str, List[str]]]
+            Document IDs (auto-generated if not provided)
+        batch_size : int
+            Batch size for processing, by default 100
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts, by default "raise"
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+        """
+
+        # Handle single document case
+        if isinstance(documents, str):
+            documents = [documents]
+            if isinstance(metadata, dict):
+                metadata = [metadata]
+            if isinstance(ids, str):
+                ids = [ids]
+
+        # Prepare request payload
+        payload = {
+            "documents": documents,
+            "batch_size": batch_size,
+            "errors": errors
+        }
+
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if ids is not None:
+            payload["ids"] = ids
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/insert")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        return result.get("ids", [])
+
+    async def get_async(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+        """
+        Retrieve documents by ID
+
+        Parameters
+        ----------
+        ids : Union[str, List[str]]
+            Document ID(s) to retrieve
+
+        Returns
+        -------
+        Union[Document, List[Document], None]
+            Retrieved document(s) or None if not found
+        """
+
+        single_id = isinstance(ids, str)
+        if single_id:
+            url = self._build_url(f"/api/v1/{self.name}/documents/{ids}")
+        else:
+            url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(ids)}")
+
+        response = await self._make_request_with_retry_async("GET", url)
+        result = await self._handle_response_async(response)
+        if single_id:
+            return Document.from_dict(result)
+        else:
+            return [Document.from_dict(doc) for doc in result["documents"]]
+
+    async def exists_async(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
+        """
+        Check if documents exist
+
+        Parameters
+        ----------
+        ids : Union[str, List[str]]
+            Document ID(s) to check
+
+        Returns
+        -------
+        Union[bool, List[bool]]
+            Existence status for each ID
+        """
+        single_id = isinstance(ids, str)
+        check_ids = [ids] if single_id else ids
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/exists")
+        response = await self._make_request_with_retry_async(
+            "POST", url, json={"ids": check_ids}
+        )
+        results = await self._handle_response_async(response)
+
+        return results.get("exists")[0] if single_id else results.get("exists")
+
+    async def delete_async(self, ids: Union[str, List[str]]) -> int:
+        """
+        Delete documents
+
+        Parameters
+        ----------
+        ids : Union[str, List[str]]
+            Document ID(s) to delete
+
+        Returns
+        -------
+        int
+            Number of documents deleted
+        """
+
+        if isinstance(ids, str):
+            ids = [ids]
+
+        deleted_count = 0
+        async def delete_single(doc_id: str) -> int:
+            url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+            response = await self._make_request_with_retry_async("DELETE", url)
+            result = await self._handle_response_async(response)
+            return result.get("deleted_count", 0)
+
+        tasks = [delete_single(doc_id) for doc_id in ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, int):
+                deleted_count += result
+            elif isinstance(result, Exception):
+                logger.warning(f"Failed to delete document: {result}")
+
+        return deleted_count
+
+    async def update_async(
+            self,
+            doc_id: str,
+            content: Optional[str] = None,
+            metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Update a document's content and/or metadata
+
+        Parameters
+        ----------
+        doc_id : str
+            Document ID to update
+        content : Optional[str]
+            New content (if None, content is not updated)
+        metadata : Optional[Dict[str, Any]]
+            New metadata (merged with existing)
+
+        Returns
+        -------
+        bool
+            True if document was updated, False if not found
+        """
+
+        if not content and not metadata:
+            return False
+
+        payload = {}
+        if content is not None:
+            payload["content"] = content
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+
+        try:
+            response = await self._make_request_with_retry_async("PUT", url, json=payload)
+            result = await self._handle_response_async(response)
+            return result.get("updated", False)
+        except DatabaseNotFoundError:
+            return False
+
+    async def query_async(
+            self,
+            query: str,
+            *,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List[QueryResult]:
+        """
+        Unified query interface for all search types
+
+        Parameters
+        ----------
+        query : str
+            Query text
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : str
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict
+            Optional parameters specific to each scoring method
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with normalized scores
+        """
+
+        # Prepare request payload
+        payload = {
+            "query": query,
+            "search_type": search_type,
+            "return_type": return_type,
+            "k": k,
+            "score_threshold": score_threshold,
+            "vector_weight": vector_weight,
+            "context_window": context_window,
+            "semantic_dedup_threshold": semantic_dedup_threshold,
+            "document_scoring_method": document_scoring_method,
+            "document_scoring_options": document_scoring_options
+        }
+
+        if filters is not None:
+            payload["filters"] = filters
+
+        url = self._build_url(f"/api/v1/{self.name}/query")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        # Process results
+        raw_results = result.get("results", [])
+        return [QueryResult.from_dict(res) for res in raw_results]
+
+    async def filter_async(
+            self,
+            where: Optional[Dict[str, Any]] = None,
+            order_by: Optional[str] = None,
+            limit: Optional[int] = None,
+            offset: int = 0
+    ) -> List[Document]:
+        """
+        Filter documents using enhanced metadata filtering
+
+        Parameters
+        ----------
+        where : Optional[Dict[str, Any]]
+            Filter conditions using either simple format or MongoDB-style operators
+        order_by : Optional[str]
+            ORDER BY clause (field name with optional ASC/DESC)
+        limit : Optional[int]
+            Maximum number of results
+        offset : int
+            Number of results to skip
+
+        Returns
+        -------
+        List[Document]
+            Filtered documents
+        """
+
+        # Prepare request payload
+        payload = {
+            "where": where,
+            "offset": offset
+        }
+
+        if order_by is not None:
+            payload["order_by"] = order_by
+
+        if limit is not None:
+            payload["limit"] = limit
+
+        url = self._build_url(f"/api/v1/{self.name}/filter")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        # Process results
+        raw_docs = result.get("documents", [])
+        return [Document.from_dict(doc) for doc in raw_docs]
+
+    async def save_async(self):
+        """No-op for remote databases"""
+        pass
+
+    async def close_async(self):
+        """No-op for remote databases"""
+        pass
