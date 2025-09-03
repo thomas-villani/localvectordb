@@ -223,16 +223,16 @@ class TestLocalVectorDBUpsert:
 
     def test_upsert_single_document(self, mock_db):
         """Test upserting a single document."""
-        with patch.object(mock_db, '_upsert_batch') as mock_upsert_batch:
-            mock_upsert_batch.return_value = ["doc_1"]
+        with patch.object(mock_db, '_process_with_pipeline') as mock_pipeline:
+            mock_pipeline.return_value = ["doc_1"]
 
             result = mock_db.upsert("Test document")
 
             assert result == ["doc_1"]
-            mock_upsert_batch.assert_called_once()
+            mock_pipeline.assert_called_once()
 
             # Check arguments
-            args = mock_upsert_batch.call_args[0]
+            args = mock_pipeline.call_args[0]
             assert args[0] == ["Test document"]  # documents
             assert args[1] == [{}]  # metadata
             assert len(args[2]) == 1  # ids
@@ -242,29 +242,29 @@ class TestLocalVectorDBUpsert:
         documents = ["Doc 1", "Doc 2", "Doc 3"]
         metadata = [{"author": "A"}, {"author": "B"}, {"author": "C"}]
 
-        with patch.object(mock_db, '_upsert_batch') as mock_upsert_batch:
-            mock_upsert_batch.return_value = ["doc_1", "doc_2", "doc_3"]
+        with patch.object(mock_db, '_process_with_pipeline') as mock_pipeline:
+            mock_pipeline.return_value = ["doc_1", "doc_2", "doc_3"]
 
             result = mock_db.upsert(documents, metadata=metadata)
 
             assert result == ["doc_1", "doc_2", "doc_3"]
 
             # Check arguments
-            args = mock_upsert_batch.call_args[0]
+            args = mock_pipeline.call_args[0]
             assert args[0] == documents
             assert args[1] == metadata
 
     def test_upsert_with_custom_ids(self, mock_db):
         """Test upserting with custom document IDs."""
-        with patch.object(mock_db, '_upsert_batch') as mock_upsert_batch:
-            mock_upsert_batch.return_value = ["custom_1"]
+        with patch.object(mock_db, '_process_with_pipeline') as mock_pipeline:
+            mock_pipeline.return_value = ["custom_1"]
 
             result = mock_db.upsert("Test", ids="custom_1")
 
             assert result == ["custom_1"]
 
             # Check that custom ID was used
-            args = mock_upsert_batch.call_args[0]
+            args = mock_pipeline.call_args[0]
             assert args[2] == ["custom_1"]
 
     def test_upsert_validation_error(self, mock_db):
@@ -279,13 +279,14 @@ class TestLocalVectorDBUpsert:
         """Test that large upserts are batched."""
         documents = [f"Doc {i}" for i in range(150)]  # More than default batch size
 
-        with patch.object(mock_db, '_upsert_batch') as mock_upsert_batch:
-            mock_upsert_batch.return_value = [f"doc_{i}" for i in range(100)]
+        with patch.object(mock_db, '_process_with_pipeline') as mock_pipeline:
+            mock_pipeline.return_value = [f"doc_{i}" for i in range(150)]
 
-            mock_db.upsert(documents, batch_size=100)
+            result = mock_db.upsert(documents, batch_size=100)
 
-            # Should be called twice due to batching
-            assert mock_upsert_batch.call_count == 2
+            # Should be called once (pipeline handles internal batching)
+            assert mock_pipeline.call_count == 1
+            assert len(result) == 150
 
 
 class TestLocalVectorDBInsert:
@@ -341,8 +342,8 @@ class TestLocalVectorDBInsert:
 
     def test_insert_new_documents(self, mock_db):
         """Test inserting new documents."""
-        with patch.object(mock_db, '_insert_batch') as mock_insert_batch:
-            mock_insert_batch.return_value = ["doc_1", "doc_2"]
+        with patch.object(mock_db, '_process_with_pipeline') as mock_pipeline:
+            mock_pipeline.return_value = ["doc_1", "doc_2"]
 
             # Mock connection to return no existing docs
             mock_conn = create_mock_connection()
@@ -353,7 +354,7 @@ class TestLocalVectorDBInsert:
                 result = mock_db.insert(["Doc 1", "Doc 2"])
 
             assert result == ["doc_1", "doc_2"]
-            mock_insert_batch.assert_called_once()
+            mock_pipeline.assert_called_once()
 
     def test_insert_duplicate_id_error(self, mock_db):
         """Test insert with duplicate ID raises error."""
@@ -380,8 +381,8 @@ class TestLocalVectorDBInsert:
 
     def test_insert_with_similarity_threshold(self, mock_db):
         """Test insert with similarity threshold."""
-        with patch.object(mock_db, '_insert_batch') as mock_insert_batch:
-            mock_insert_batch.return_value = ["doc_1"]
+        with patch.object(mock_db, '_process_with_pipeline') as mock_pipeline:
+            mock_pipeline.return_value = ["doc_1"]
 
             # Mock no existing documents
             mock_conn = create_mock_connection()
@@ -391,11 +392,11 @@ class TestLocalVectorDBInsert:
             with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
                 result = mock_db.insert("Test doc", similarity_threshold=0.95)
 
-            # Check similarity threshold was passed
-            args = mock_insert_batch.call_args[0]
-            kwargs = mock_insert_batch.call_args[1] if mock_insert_batch.call_args[1] else {}
-            # Should pass similarity_threshold in kwargs or args
+            # Check that pipeline was called with similarity threshold
+            args = mock_pipeline.call_args[0]
+            # similarity_threshold should be in position or kwargs
             assert result == ["doc_1"]
+            mock_pipeline.assert_called_once()
 
 
 class TestLocalVectorDBRetrieval:
@@ -702,7 +703,7 @@ class TestLocalVectorDBUpdate:
 
         with patch.object(mock_db, 'get', return_value=existing_doc), \
                 patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled), \
-                patch.object(mock_db, '_validate_metadata'):
+                patch.object(mock_db, '_validate_metadata_batch'):
             result = mock_db.update("doc_1", metadata={"category": "new", "rating": 5})
 
             assert result is True

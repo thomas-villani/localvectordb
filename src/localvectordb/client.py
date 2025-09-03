@@ -449,24 +449,25 @@ class RemoteVectorDB(BaseVectorDB):
         if response.status_code == 200:
             return response.json()
 
-        try:
-            error_data = response.json()
-            error_type = error_data.get("type", "unknown")
-            error_msg = error_data.get("error", str(response.status_code))
+        error_data = response.json()
+        error_dict = error_data.get("error", {})
+        error_type = error_dict.get("code", "unknown").lower()
+        # error_type = error_data.get("type", "unknown")
+        error_msg = error_dict.get("message", "")
+        # error_msg = error_data.get("error", str(response.status_code))
 
-            logger.debug(f"Client error: {error_type} - {error_msg}")
-            # Map error type to appropriate exception
-            error_map = {
-                "database_not_found": DatabaseNotFoundError,
-                "duplicate_document_id": DuplicateDocumentIDError,
-                "embedding_error": EmbeddingError,
-            }
-
-            # Raise the appropriate exception if we recognize the type
-            if error_type in error_map:
-                raise error_map[error_type](error_msg)
-
-        except (ValueError, KeyError):
+        logger.debug(f"Client error: {error_type} - {error_msg}")
+        # Map error type to appropriate exception
+        error_map = {
+            "database_not_found": DatabaseNotFoundError,
+            "duplicate_document_id": DuplicateDocumentIDError,
+            "embedding_error": EmbeddingError,
+            "document_not_found": DocumentNotFoundError
+        }
+        # Raise the appropriate exception if we recognize the type
+        if error_type in error_map:
+            raise error_map[error_type](error_msg)
+        else:
             # Fallback if we can't parse the response
             error_msg = response.text or f"HTTP Error: {response.status_code}"
 
@@ -1859,3 +1860,166 @@ class RemoteVectorDB(BaseVectorDB):
     async def close_async(self):
         """No-op for remote databases"""
         pass
+
+    async def update_metadata_schema_async(
+            self,
+            new_schema: Union[str, Dict[str, Any]],
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
+    ) -> Dict[str, Any]:
+        """
+        Update the metadata schema for the database asynchronously
+
+        This method allows you to add new metadata fields, modify existing ones,
+        or remove fields from the schema. Existing document data is preserved.
+
+        Parameters
+        ----------
+        new_schema : Union[str, Dict[str, Any]]
+            The new metadata schema to apply. Can be:
+            - str: Schema name from common schemas (e.g., 'research_papers')
+            - Dict with field definitions
+        drop_columns : bool, default=False
+            Whether to actually drop columns that are no longer in the schema.
+            If False, columns are kept but removed from schema for safety.
+        column_mapping : dict, optional
+            Optionally provide a mapping dict with old-column (key) -> new-column (value)
+
+        Returns
+        -------
+        Dict[str, Any]
+            Summary of changes made including:
+            - added_fields: List of newly added field names
+            - removed_fields: List of removed field names
+            - modified_fields: List of modified fields with change details
+            - populated_defaults: List of fields where default values were populated
+            - dropped_columns: List of actually dropped columns (if drop_columns=True)
+            - warnings: List of warnings about potential issues
+            - errors: List of any errors encountered
+
+        Examples
+        --------
+        Add new metadata fields::
+
+            new_schema = {
+                'category': {
+                    'type': 'text',
+                    'indexed': True
+                },
+                'priority': {
+                    'type': 'integer',
+                    'default_value': 0
+                }
+            }
+
+            changes = await db.update_metadata_schema_async(new_schema)
+            print(f"Added fields: {changes['added_fields']}")
+
+        Apply a common schema::
+
+            changes = await db.update_metadata_schema_async('research_papers')
+        """
+        # Handle different input formats
+        if isinstance(new_schema, str):
+            # Send schema name to server
+            schema_data = new_schema
+        elif isinstance(new_schema, dict):
+            # Convert to server-compatible format
+            schema_data = {}
+            for field_name, field_def in new_schema.items():
+                if isinstance(field_def, str):
+                    # Simple type string
+                    schema_data[field_name] = field_def
+                elif isinstance(field_def, tuple):
+                    # Tuple format: (type, indexed) or (type, indexed, required)
+                    if len(field_def) == 2:
+                        field_type, indexed = field_def
+                        schema_data[field_name] = {
+                            'type': field_type,
+                            'indexed': indexed
+                        }
+                    elif len(field_def) == 3:
+                        field_type, indexed, required = field_def
+                        schema_data[field_name] = {
+                            'type': field_type,
+                            'indexed': indexed,
+                            'required': required
+                        }
+                    else:
+                        raise ValueError(f"Tuple definition for '{field_name}' must have 2 or 3 elements")
+                elif hasattr(field_def, 'type'):
+                    # MetadataField object
+                    schema_data[field_name] = {
+                        'type': field_def.type.value if hasattr(field_def.type, 'value') else str(field_def.type),
+                        'indexed': field_def.indexed,
+                        'required': getattr(field_def, 'required', False),
+                        'default_value': getattr(field_def, 'default_value', None)
+                    }
+                elif isinstance(field_def, dict):
+                    # Already in dict format
+                    schema_data[field_name] = field_def
+                else:
+                    raise ValueError(f"Invalid field definition for '{field_name}': {type(field_def)}")
+        else:
+            raise ValueError("new_schema must be a string (schema name) or dict")
+
+        url = self._build_url(f"/api/v1/{self.name}/update_schema")
+        payload = {
+            'new_schema': schema_data,
+            'drop_columns': drop_columns,
+            'column_mapping': column_mapping or {}
+        }
+
+        client = await self._ensure_client()
+        response = await self._make_request_with_retry_async(
+            "POST", url, json=payload, client=client
+        )
+        result = await self._handle_response_async(response)
+
+        # Update local metadata schema cache
+        if 'new_schema' in result:
+            self._metadata_schema = {}
+            for field_name, field_config in result['new_schema'].items():
+                self.metadata_schema[field_name] = MetadataField(
+                    type=MetadataFieldType(field_config['type']),
+                    indexed=field_config.get('indexed', False),
+                    required=field_config.get('required', False),
+                    default_value=field_config.get('default_value')
+                )
+
+        return result.get('changes', {})
+
+    async def get_metadata_schema_info_async(self) -> Dict[str, Any]:
+        """
+        Get detailed information about the current metadata schema asynchronously
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing:
+            - fields: Dict of field definitions
+            - field_count: Number of fields
+            - indexed_fields: List of indexed field names
+            - required_fields: List of required field names
+            - field_types: Summary of field types used
+
+        Examples
+        --------
+        Get schema information::
+
+            schema_info = await db.get_metadata_schema_info_async()
+            print(f"Total fields: {schema_info['field_count']}")
+            print(f"Indexed fields: {schema_info['indexed_fields']}")
+            print(f"Required fields: {schema_info['required_fields']}")
+            print(f"Field types: {schema_info['field_types']}")
+
+            # Detailed field information
+            for field_name, field_info in schema_info['fields'].items():
+                print(f"{field_name}: {field_info['type']} "
+                      f"(indexed={field_info['indexed']}, required={field_info['required']})")
+        """
+        url = self._build_url(f"/api/v1/{self.name}/schema")
+        client = await self._ensure_client()
+        response = await self._make_request_with_retry_async("GET", url, client=client)
+        result = await self._handle_response_async(response)
+        return result.get('schema_info', {})

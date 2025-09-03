@@ -1373,7 +1373,7 @@ class LocalVectorDB(BaseVectorDB):
                 updated_metadata = existing_doc.metadata.copy()
                 updated_metadata.update(metadata)
 
-                self._validate_metadata(updated_metadata)
+                self._validate_metadata_batch([updated_metadata])
 
                 with self.connection_pool.get_connection() as conn:
                     # Build UPDATE statement for metadata
@@ -2810,6 +2810,195 @@ class LocalVectorDB(BaseVectorDB):
     def get_metadata_schema_info(self) -> Dict[str, Any]:
         """
         Get detailed information about the current metadata schema
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing:
+            - fields: Dict of field definitions
+            - field_count: Number of fields
+            - indexed_fields: List of indexed field names
+            - required_fields: List of required field names
+            - field_types: Summary of field types used
+        """
+        info = {
+            'fields': {},
+            'field_count': len(self.metadata_schema),
+            'indexed_fields': [],
+            'required_fields': [],
+            'field_types': {}
+        }
+
+        for field_name, field_def in self.metadata_schema.items():
+            info['fields'][field_name] = {
+                'type': field_def.type.value,
+                'indexed': field_def.indexed,
+                'required': field_def.required,
+                'default_value': field_def.default_value
+            }
+
+            if field_def.indexed:
+                info['indexed_fields'].append(field_name)
+            if field_def.required:
+                info['required_fields'].append(field_name)
+
+            field_type = field_def.type.value
+            info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
+
+        return info
+
+    async def update_metadata_schema_async(
+            self,
+            new_schema: Union[str, Dict[str, MetadataField]],
+            drop_columns: bool = False,
+            column_mapping: Optional[dict] = None
+    ) -> Dict[str, Any]:
+        """
+        Update the metadata schema for the database asynchronously
+
+        This method allows you to add new metadata fields, modify existing ones,
+        or remove fields from the schema. Existing document data is preserved.
+
+        Parameters
+        ----------
+        new_schema : Union[str, Dict[str, MetadataField]]
+            The new metadata schema to apply. Can be:
+            - str: Schema name from common schemas (e.g., 'research_papers')
+            - Dict[str, MetadataField]: Complete field definitions
+            - Dict[str, str]: Simple type-only definitions (e.g., {'field': 'text'})
+            - Dict[str, tuple]: Tuple definitions (type, indexed) or (type, indexed, required)
+        drop_columns : bool, default=False
+            Whether to actually drop columns that are no longer in the schema.
+            If False, columns are kept but removed from schema for safety.
+        column_mapping : dict, optional
+            Optionally provide a mapping dict with old-column (key) -> new-column (value)
+
+        Returns
+        -------
+        Dict[str, Any]
+            Summary of changes made including:
+            - added_fields: List of newly added field names
+            - removed_fields: List of removed field names
+            - modified_fields: List of modified fields with change details
+            - populated_defaults: List of fields where default values were populated
+            - dropped_columns: List of actually dropped columns (if drop_columns=True)
+            - warnings: List of warnings about potential issues
+            - errors: List of any errors encountered
+
+        Examples
+        --------
+        Add new metadata fields::
+
+            new_schema = {
+                'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                'priority': MetadataField(type=MetadataFieldType.INTEGER, default_value=0),
+                'tags': MetadataField(type=MetadataFieldType.JSON)
+            }
+
+            changes = await db.update_metadata_schema_async(new_schema)
+            print(f"Added fields: {changes['added_fields']}")
+
+        Use shorthand syntax::
+
+            new_schema = {
+                'category': 'text',  # Simple type
+                'priority': ('integer', False, True),  # (type, indexed, required)
+                'rating': ('real', True)  # (type, indexed)
+            }
+
+            changes = await db.update_metadata_schema_async(new_schema)
+
+        Apply a common schema::
+
+            changes = await db.update_metadata_schema_async('research_papers')
+
+        Notes
+        -----
+        - Field names cannot conflict with reserved columns: id, content, content_hash, created_at, updated_at
+        - Removed fields are removed from the schema but columns are kept for data safety
+        - Type changes are recorded but don't modify existing data (SQLite limitation)
+        - Index changes are applied immediately
+        - Changes are applied in a transaction and rolled back on error
+        """
+        # Handle special cases
+        if isinstance(new_schema, str):
+            # Load from common schemas
+            new_schema = get_common_metadata_schemas(new_schema)
+        elif isinstance(new_schema, dict):
+            # Convert any shorthand definitions
+            normalized_schema = {}
+            for field_name, field_def in new_schema.items():
+                if isinstance(field_def, str):
+                    normalized_schema[field_name] = MetadataField(MetadataFieldType(field_def))
+                elif isinstance(field_def, tuple):
+                    if len(field_def) == 2:
+                        field_type, indexed = field_def
+                        normalized_schema[field_name] = MetadataField(
+                            MetadataFieldType(field_type), indexed=indexed
+                        )
+                    elif len(field_def) == 3:
+                        field_type, indexed, required = field_def
+                        normalized_schema[field_name] = MetadataField(
+                            MetadataFieldType(field_type), indexed=indexed, required=required
+                        )
+                    else:
+                        raise ValueError(f"Tuple definition for '{field_name}' must have 2 or 3 elements")
+                elif isinstance(field_def, MetadataField):
+                    normalized_schema[field_name] = field_def
+                else:
+                    raise ValueError(f"Invalid field definition for '{field_name}': {type(field_def)}")
+
+            new_schema = normalized_schema
+
+        if not isinstance(new_schema, dict):
+            raise ValueError("new_schema must be a dictionary, string (schema name), or Dict[str, MetadataField]")
+
+        # Validate new schema
+        for field_name, field_def in new_schema.items():
+            if not isinstance(field_name, str) or not field_name.strip():
+                raise ValueError("Metadata field names must be non-empty strings")
+            if not isinstance(field_def, MetadataField):
+                raise ValueError(f"Field definition for '{field_name}' must be a MetadataField instance")
+
+        try:
+            # Ensure async connection pool is initialized
+            if self.async_connection_pool is None:
+                self.async_connection_pool = AsyncConnectionPool(self.db_path, self.async_max_connections)
+            
+            # Apply schema changes using async connection
+            async with self.async_connection_pool.get_connection_context() as conn:
+                changes = await self.schema.update_metadata_schema_async(new_schema, conn, drop_columns, column_mapping)
+
+            # Update in-memory schema
+            self._metadata_schema = new_schema.copy()
+
+            # Log the changes
+            logger.info(f"Updated metadata schema for database '{self.name}' (async)")
+            if changes['added_fields']:
+                logger.info(f"Added fields: {changes['added_fields']}")
+            if changes['removed_fields']:
+                logger.info(f"Removed fields: {changes['removed_fields']}")
+            if changes['modified_fields']:
+                modified_names = [f['field_name'] for f in changes['modified_fields']]
+                logger.info(f"Modified fields: {modified_names}")
+            if changes['populated_defaults']:
+                populated_info = [(p['field_name'], p['rows_updated']) for p in changes['populated_defaults']]
+                logger.info(f"Populated default values: {populated_info}")
+            if changes['warnings']:
+                for warning in changes['warnings']:
+                    logger.warning(f"Schema update warning: {warning}")
+            if changes['errors']:
+                logger.error(f"Errors during schema update: {changes['errors']}")
+
+            return changes
+
+        except Exception as e:
+            logger.error(f"Failed to update metadata schema (async): {e}")
+            raise DatabaseError(f"Schema update failed: {str(e)}")
+
+    async def get_metadata_schema_info_async(self) -> Dict[str, Any]:
+        """
+        Get detailed information about the current metadata schema asynchronously
 
         Returns
         -------

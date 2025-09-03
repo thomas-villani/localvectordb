@@ -225,35 +225,6 @@ def mock_tiktoken():
         yield mock_encoding
 
 
-# @contextmanager
-# def isolated_localvectordb(temp_dir, **kwargs):
-#     """Context manager for creating isolated LocalVectorDB instances."""
-#     from localvectordb.database import LocalVectorDB
-#
-#     # Default settings for testing
-#     default_kwargs = {
-#         "name": "test_db",
-#         "base_path": temp_dir,
-#         "embedding_provider": "mock",
-#         "embedding_model": "test-model",
-#         "enable_fts": False,  # Disable FTS to avoid SQLite extension issues
-#         "chunk_size": 100,
-#         "chunk_overlap": 0,
-#     }
-#     default_kwargs.update(kwargs)
-#
-#     db = None
-#     try:
-#         db = LocalVectorDB(**default_kwargs)
-#         yield db
-#     finally:
-#         if db:
-#             try:
-#                 db.close()
-#             except Exception:
-#                 pass
-
-
 @pytest.fixture
 def sample_metadata_schema():
     """Sample metadata schema for testing."""

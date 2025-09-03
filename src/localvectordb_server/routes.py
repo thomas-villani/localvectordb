@@ -283,7 +283,7 @@ def get_database_info(db_name):
 
         except Exception as e:
             db_logger.log_error("get_database_info", e, database_name=db_name)
-            raise
+            raise e
 
 
 @api.route("/api/v1/<db_name>", methods=["DELETE"])
@@ -370,7 +370,8 @@ def upsert_documents(db_name):
                 )
 
         # Validate batch size
-        batch_size = int(data.get("batch_size", current_app.config_obj.embedding.batch_size))
+        default_batch_size = current_app.config_obj.embedding.batch_size if hasattr(current_app, 'config_obj') else 100
+        batch_size = int(data.get("batch_size", default_batch_size))
 
         validate_field_type(data, "batch_size", int)
         if batch_size < 1 or batch_size > 1000:
@@ -448,7 +449,8 @@ def insert_documents(db_name):
         if isinstance(ids, str):
             ids = [ids]
 
-        batch_size = int(data.get("batch_size", current_app.config_obj.embedding.batch_size))
+        default_batch_size = current_app.config_obj.embedding.batch_size if hasattr(current_app, 'config_obj') else 100
+        batch_size = int(data.get("batch_size", default_batch_size))
         errors = data.get("errors", "raise")  # "raise" or "ignore"
         similarity_threshold = data.get("similarity_threshold")
 
@@ -1253,7 +1255,8 @@ def upload_files(db_name):
 
     with request_context("upload_files"):
         # Check if server uploads are enabled
-        if not current_app.config_obj.server.file_upload_enabled:
+        file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app, 'config_obj') else True
+        if not file_upload_enabled:
             raise APIError(
                 message="File extraction route is not enabled",
                 error_code="EXTRACTION_NOT_AVAILABLE",
@@ -1291,7 +1294,8 @@ def upload_files(db_name):
 
         # Get form parameters
         extract_text = True # request.form.get('extract_text', 'true').lower() == 'true'
-        batch_size = int(request.form.get('batch_size', current_app.config_obj.embedding.batch_size))
+        default_batch_size = current_app.config_obj.embedding.batch_size if hasattr(current_app, 'config_obj') else 100
+        batch_size = int(request.form.get('batch_size', default_batch_size))
 
         # Parse metadata if provided
         metadata_json = request.form.get('metadata')
@@ -1480,7 +1484,8 @@ def get_upload_supported_formats():
     and what extraction methods are available.
     """
 
-    if not current_app.config_obj.server.file_upload_enabled:
+    file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app, 'config_obj') else True
+    if not file_upload_enabled:
         raise APIError(
             message="File extraction route is not enabled",
             error_code="EXTRACTION_NOT_AVAILABLE",
@@ -1537,7 +1542,8 @@ def extract_preview():
     """
 
     with request_context("extract_preview"):
-        if not current_app.config_obj.server.file_upload_enabled:
+        file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app, 'config_obj') else True
+        if not file_upload_enabled:
             raise APIError(
                 message="File extraction is not enabled",
                 error_code="EXTRACTION_NOT_AVAILABLE",

@@ -29,7 +29,7 @@ class TestEmbeddingProvider:
         abstract_methods = EmbeddingProvider.__abstractmethods__
         expected_methods = {
             'get_dimension', 'validate_model',
-            'provider_name', 'max_batch_size', '_embed_batch_impl'
+            'provider_name', 'max_batch_size', '_embed_single_batch'
         }
         assert abstract_methods == expected_methods
 

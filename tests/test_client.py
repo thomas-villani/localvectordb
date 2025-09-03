@@ -10,7 +10,7 @@ from localvectordb.client import RemoteVectorDB, Document, QueryResult
 from localvectordb.core import ChunkPosition
 from localvectordb.exceptions import (
     DatabaseNotFoundError, DuplicateDocumentIDError,
-    EmbeddingError, BaseLocalVectorDBException
+    EmbeddingError, BaseLocalVectorDBException, DocumentNotFoundError
 )
 
 @pytest.fixture(autouse=True)
@@ -107,15 +107,15 @@ class TestRemoteVectorDBInitialization:
 
         assert db.name == "existing_db"
         # Should call get to load database info
-        mock_httpx_client.get.assert_called()
+        mock_httpx_client.request.assert_called()
 
     def test_database_not_found(self, mock_httpx_client):
         """Test error when database doesn't exist."""
         # Override default response for 404 error
         mock_response = Mock()
         mock_response.status_code = 404
-        mock_response.json.return_value = {"type": "database_not_found", "error": "Database not found"}
-        mock_httpx_client.get.return_value = mock_response
+        mock_response.json.return_value = {"error": {"code": "database_not_found", "message": "Database not found"}}
+        mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(DatabaseNotFoundError):
             RemoteVectorDB(
@@ -205,8 +205,10 @@ class TestRemoteVectorDBDocumentOperations:
         mock_response = Mock()
         mock_response.status_code = 409
         mock_response.json.return_value = {
-            "type": "duplicate_document_id",
-            "error": "Document already exists"
+            "error": {
+                "code": "duplicate_document_id",
+                "message": "Document already exists"
+            }
         }
         mock_httpx_client.request.return_value = mock_response
 
@@ -256,7 +258,9 @@ class TestRemoteVectorDBDocumentOperations:
                     "metadata": {},
                     "content_hash": "hash2"
                 }
-            ]
+            ],
+            "returned_ids": ["doc_1", "doc_2"],
+            "missing_ids": []
         }
         # mock_response2 = Mock()
         # mock_response2.status_code = 200
@@ -284,12 +288,17 @@ class TestRemoteVectorDBDocumentOperations:
         """Test getting nonexistent document."""
         mock_response = Mock()
         mock_response.status_code = 404
-        mock_response.json.return_value = {"type": "database_not_found", "error": "Not found"}
+        mock_response.json.return_value = {
+            'error': {
+                "message": f"Document 'nonexistent' not found in database '{mock_db.name}'",
+                "code": "DOCUMENT_NOT_FOUND"
+            }
+        }
         mock_httpx_client.request.return_value = mock_response
 
-        result = mock_db.get("nonexistent")
+        with pytest.raises(DocumentNotFoundError):
+            result = mock_db.get("nonexistent")
 
-        assert result is None
 
     def test_exists_documents(self, mock_httpx_client, mock_db):
         """Test checking document existence."""
@@ -346,7 +355,7 @@ class TestRemoteVectorDBDocumentOperations:
         """Test updating nonexistent document."""
         mock_response = Mock()
         mock_response.status_code = 404
-        mock_response.json.return_value = {"type": "database_not_found", "error": "Not found"}
+        mock_response.json.return_value = {"error": {"code": "database_not_found", "message": "Not found"}}
         mock_httpx_client.request.return_value = mock_response
 
         result = mock_db.update("nonexistent", content="New content")
@@ -590,10 +599,10 @@ class TestRemoteVectorDBErrorHandling:
         """Test embedding error handling."""
         mock_response = Mock()
         mock_response.status_code = 400
-        mock_response.json.return_value = {
-            "type": "embedding_error",
-            "error": "Embedding model not available"
-        }
+        mock_response.json.return_value = {"error": {
+            "code": "embedding_error",
+            "message": "Embedding model not available"
+        }}
         mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(EmbeddingError):
@@ -604,7 +613,7 @@ class TestRemoteVectorDBErrorHandling:
         mock_response = Mock()
         mock_response.status_code = 500
         mock_response.text = "Internal server error"
-        mock_response.json.return_value = {"error": {"message": "Internal server error", "code": 500}}
+        mock_response.json.return_value = {"error": {"message": "Internal server error", "code": "unknown"}}
         mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(BaseLocalVectorDBException):

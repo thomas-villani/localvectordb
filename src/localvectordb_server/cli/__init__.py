@@ -78,17 +78,44 @@ Notes:
     - Database files are stored in the directory specified by DB_ROOT_DIR in the configuration
     - Authentication can be enabled with the auth commands
 """
+import os
 
 import click
 
-@click.group()
-def cli():
+
+@click.group(context_settings=dict(help_option_names=["-h", "--help"]))
+@click.option('--config', '-c',
+              type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
+              help='Path to config file.',
+              envvar='LVDB_SERVER_CONFIG')
+@click.version_option(None, "-V", "--version", package_name="localvectordb", message="%(version)s")
+@click.pass_context
+def cli(ctx, config):
     """LocalVectorDB Server command-line interface v1.0.
 
     Main entry point for the LocalVectorDB server CLI. Provides commands for
     managing and running the vector database server.
     """
-    pass
+    if ctx.obj is None:
+        ctx.obj = {}
+    elif not config:
+        # This is to allow llmcli to pass the config path through the context when we embed it later.
+        config = ctx.obj.get("lvdb_config_path")
+
+    # TODO: THE FOLLOWING HAS NOT BEEN TESTED
+    # TODO: if it works, remove it from the other commands
+    from localvectordb_server.cli._utils import find_config_file
+    config_path = find_config_file(config)
+
+    if not config_path and ctx.invoked_subcommand != "config":
+        click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
+        raise click.exceptions.Exit(1)
+
+    from localvectordb_server.config import load_config
+    cfg = load_config(config_path)
+    api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
+    ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path}
+
 
 from localvectordb_server.cli._basic import serve, create_vector_database, list_databases, delete_database
 from localvectordb_server.cli._db import db_group

@@ -29,6 +29,9 @@ def create_mock_connection():
     mock_conn.execute.return_value = mock_cursor
     mock_conn.commit = Mock()
     mock_conn.rollback = Mock()
+    # Add context manager support
+    mock_conn.__enter__ = Mock(return_value=mock_conn)
+    mock_conn.__exit__ = Mock(return_value=None)
     return mock_conn
 
 
@@ -57,10 +60,17 @@ class TestLocalVectorDBIntegration:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                patch('localvectordb.database.DatabaseSchema') as mock_schema:
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
+            
+            # Mock DatabaseSchema
+            mock_schema_instance = Mock()
+            mock_schema_instance.initialize = Mock()
+            mock_schema_instance.metadata_fields = metadata_schema
+            mock_schema.return_value = mock_schema_instance
 
             # Mock FAISS index
             mock_index = Mock()
@@ -214,7 +224,7 @@ class TestLocalVectorDBIntegration:
 
         # Test filtering
         mock_conn = create_mock_connection()
-        # Mock filtered results (Alice's documents)
+        # Mock filtered results (Alice's documents) - include all schema fields
         mock_conn.execute.return_value.fetchall.return_value = [
             {
                 'id': doc_ids[0],
@@ -224,7 +234,8 @@ class TestLocalVectorDBIntegration:
                 'updated_at': '2024-01-01T00:00:00',
                 'author': 'Alice',
                 'category': 'Python',
-                'rating': 4.5
+                'rating': 4.5,
+                'tags': '["python", "programming"]'  # Include tags field
             },
             {
                 'id': doc_ids[2],
@@ -234,7 +245,8 @@ class TestLocalVectorDBIntegration:
                 'updated_at': '2024-01-01T00:00:00',
                 'author': 'Alice',
                 'category': 'JavaScript',
-                'rating': 4.8
+                'rating': 4.8,
+                'tags': '["javascript", "programming"]'  # Include tags field
             }
         ]
         mock_pooled = create_mock_pooled_connection(mock_conn)
@@ -285,9 +297,9 @@ class TestLocalVectorDBIntegration:
         }
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db, '_get_document_metadata') as mock_get_meta, \
+        with patch.object(integration_db, '_get_documents_metadata_batch') as mock_get_meta, \
                 patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
-            mock_get_meta.return_value = {"category": "ML"}
+            mock_get_meta.return_value = {doc_ids[0]: {"category": "ML"}}
 
             # Test vector search
             results = integration_db.query("machine learning", search_type="vector", k=3)
@@ -304,9 +316,15 @@ class TestLocalVectorDBIntegration:
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
                     patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                    patch('localvectordb.database.ConnectionPool') as mock_pool:
+                    patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                    patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
+                
+                # Mock DatabaseSchema
+                mock_schema_instance = Mock()
+                mock_schema_instance.initialize = Mock()
+                mock_schema.return_value = mock_schema_instance
 
                 mock_index = Mock()
                 mock_index.ntotal = 0
@@ -375,7 +393,6 @@ class TestLocalVectorDBIntegration:
                     base_path=temp_dir,
                     metadata_schema=metadata_schema,
                     chunk_size=500,
-                    enable_gpu=True,
                     # This should be filtered out for local DB
                     api_key="should-not-appear"
                 )
@@ -384,7 +401,6 @@ class TestLocalVectorDBIntegration:
                 call_kwargs = mock_local.call_args[1]
                 assert call_kwargs["metadata_schema"] == metadata_schema
                 assert call_kwargs["chunk_size"] == 500
-                assert call_kwargs["enable_gpu"] is True
                 assert "api_key" not in call_kwargs
 
     @pytest.mark.integration
@@ -422,9 +438,15 @@ class TestLocalVectorDBIntegration:
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
                     patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                    patch('localvectordb.database.ConnectionPool') as mock_pool:
+                    patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                    patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
+                
+                # Mock DatabaseSchema
+                mock_schema_instance = Mock()
+                mock_schema_instance.initialize = Mock()
+                mock_schema.return_value = mock_schema_instance
 
                 mock_index = Mock()
                 mock_index.ntotal = 0
@@ -522,12 +544,18 @@ class TestLocalVectorDBIntegration:
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
                     patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                    patch('localvectordb.database.ConnectionPool') as mock_pool:
+                    patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                    patch('localvectordb.database.DatabaseSchema') as mock_schema:
 
                 # Setup mocks with proper isolation
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_provider.number_of_calls = 0  # Explicitly reset
                 mock_embedding.return_value = mock_provider
+                
+                # Mock DatabaseSchema
+                mock_schema_instance = Mock()
+                mock_schema_instance.initialize = Mock()
+                mock_schema.return_value = mock_schema_instance
 
                 mock_index = Mock()
                 mock_index.ntotal = 0
@@ -610,9 +638,16 @@ class TestLocalVectorDBIntegration:
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
                     patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                    patch('localvectordb.database.ConnectionPool') as mock_pool:
+                    patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                    patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
+                
+                # Mock DatabaseSchema
+                mock_schema_instance = Mock()
+                mock_schema_instance.initialize = Mock()
+                mock_schema.return_value = mock_schema_instance
+                
                 mock_index = Mock()
                 mock_index.ntotal = 0
                 mock_faiss.return_value = mock_index
@@ -705,9 +740,16 @@ class TestLocalVectorDBIntegration:
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
                     patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                    patch('localvectordb.database.ConnectionPool') as mock_pool:
+                    patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                    patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
+                
+                # Mock DatabaseSchema
+                mock_schema_instance = Mock()
+                mock_schema_instance.initialize = Mock()
+                mock_schema.return_value = mock_schema_instance
+                
                 mock_index = Mock()
                 mock_index.ntotal = 0
                 mock_index.search.return_value = (np.array([[0.1, 0.2]]), np.array([[0, 1]]))
@@ -806,9 +848,9 @@ class TestLocalVectorDBIntegration:
                 }
                 mock_pooled = create_mock_pooled_connection(mock_conn)
 
-                with patch.object(db, '_get_document_metadata') as mock_get_meta, \
+                with patch.object(db, '_get_documents_metadata_batch') as mock_get_meta, \
                         patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled):
-                    mock_get_meta.return_value = {"title": "AI System Spec", "priority": 1}
+                    mock_get_meta.return_value = {doc_ids[0]: {"title": "AI System Spec", "priority": 1}}
 
                     # Search for AI-related documents
                     results = db.query("artificial intelligence system", k=5)
@@ -842,9 +884,16 @@ class TestLocalVectorDBIntegration:
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
                     patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-                    patch('localvectordb.database.ConnectionPool') as mock_pool:
+                    patch('localvectordb.database.ConnectionPool') as mock_pool, \
+                    patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
+                
+                # Mock DatabaseSchema
+                mock_schema_instance = Mock()
+                mock_schema_instance.initialize = Mock()
+                mock_schema.return_value = mock_schema_instance
+                
                 mock_index = Mock()
                 mock_index.ntotal = 0
                 mock_faiss.return_value = mock_index

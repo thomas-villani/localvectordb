@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from localvectordb.core import (
     MetadataField, MetadataFieldType, ChunkPosition, Chunk, Document,
-    QueryResult, DatabaseSchema, ConnectionPool
+    QueryResult, DatabaseSchema, ConnectionPool, ReadWriteLock
 )
 
 
@@ -303,7 +303,8 @@ class TestDatabaseSchema:
     def test_create_schema(self, temp_dir):
         """Test creating database schema."""
         db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
+        read_write_lock = ReadWriteLock()
+        schema = DatabaseSchema(db_path, read_write_lock=read_write_lock)
         assert schema.db_path == db_path
         assert schema.metadata_fields == {}
 
@@ -315,7 +316,8 @@ class TestDatabaseSchema:
         mock_connect.return_value.__enter__.return_value = mock_conn
 
         db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
+        read_write_lock = ReadWriteLock()
+        schema = DatabaseSchema(db_path, read_write_lock=read_write_lock)
         schema.initialize()
 
         # Check that base tables were created
@@ -336,7 +338,8 @@ class TestDatabaseSchema:
         mock_conn.execute.return_value = mock_cursor
 
         db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
+        read_write_lock = ReadWriteLock()
+        schema = DatabaseSchema(db_path, read_write_lock=read_write_lock)
         schema.initialize(sample_metadata_schema)
 
         # Should call _setup_metadata_schema
@@ -352,7 +355,8 @@ class TestDatabaseSchema:
         mock_conn.execute.return_value = mock_cursor
 
         db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
+        read_write_lock = ReadWriteLock()
+        schema = DatabaseSchema(db_path, read_write_lock=read_write_lock)
 
         metadata_schema = {
             'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -380,7 +384,8 @@ class TestDatabaseSchema:
         mock_conn.execute.return_value = mock_cursor
 
         db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
+        read_write_lock = ReadWriteLock()
+        schema = DatabaseSchema(db_path, read_write_lock=read_write_lock)
 
         field = MetadataField(type=MetadataFieldType.TEXT, indexed=True)
         schema._add_metadata_column(mock_conn, 'author', field)
@@ -403,7 +408,8 @@ class TestDatabaseSchema:
         mock_conn.execute.return_value = mock_cursor
 
         db_path = temp_dir / "test.db"
-        schema = DatabaseSchema(db_path)
+        read_write_lock = ReadWriteLock()
+        schema = DatabaseSchema(db_path, read_write_lock=read_write_lock)
         loaded_schema = schema.load_metadata_schema()
 
         assert 'author' in loaded_schema
@@ -439,7 +445,7 @@ class TestConnectionPool:
         with pool.get_connection() as conn:
             assert conn == mock_conn
 
-        mock_connect.assert_called_once_with(db_path, check_same_thread=False)
+        mock_connect.assert_called_once_with(db_path, check_same_thread=False, detect_types=1)
         mock_conn.execute.assert_called_with('SELECT 1')
         pool.close_all()
 

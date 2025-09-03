@@ -44,7 +44,7 @@ def VectorDB(
     **kwargs : dict
         Additional arguments to pass to the appropriate constructor.
 
-        For LocalVectorDB/AsyncLocalVectorDB, these include:
+        For LocalVectorDB, these include:
         - metadata_schema: Dict[str, MetadataField] - Schema for metadata fields
         - embedding_provider: str - Provider for embeddings ("ollama", "openai")
         - embedding_model: str - Model name for embeddings
@@ -56,7 +56,7 @@ def VectorDB(
         - enable_fts: bool - Whether to enable full-text search
         - create_if_not_exists: bool - Whether to create if not exists
 
-        For RemoteVectorDB/AsyncRemoteVectorDB, these include:
+        For RemoteVectorDB, these include:
         - api_key: str - API key for authentication
         - create_if_not_exists: bool - Whether to create if not exists
         - metadata_schema: Dict[str, MetadataField] - Schema for metadata fields

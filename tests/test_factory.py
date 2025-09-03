@@ -131,7 +131,7 @@ class TestVectorDBFactory:
                 name="test_db",
                 base_path="http://localhost:5000",
                 api_key="test-key",  # Remote-only
-                request_timeout=30,  # Remote-only
+                timeout=30,  # Remote-only
                 connection_pool_size=10  # Local-only - should be filtered
             )
 
@@ -401,7 +401,7 @@ class TestVectorDBFactory:
                 chunk_overlap=80,
                 enable_gpu=False,
                 enable_fts=True,
-                request_timeout=120
+                timeout=120
             )
 
             # Verify all parameters were passed

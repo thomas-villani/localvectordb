@@ -704,6 +704,21 @@ class BaseVectorDB(ABC):
         """Close the database asynchronously."""
         pass
 
+    @abstractmethod
+    async def update_metadata_schema_async(
+            self,
+            new_schema: Union[str, Dict[str, MetadataField]],
+            drop_columns: bool = False,
+            column_mapping: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """Update metadata schema asynchronously."""
+        pass
+
+    @abstractmethod
+    async def get_metadata_schema_info_async(self) -> Dict[str, Any]:
+        """Get metadata schema information asynchronously."""
+        pass
+
     # Async context manager support
     async def __aenter__(self):
         return self
@@ -1490,6 +1505,497 @@ class DatabaseSchema:
         return {
             'field_name': field_name,
             'rows_updated': cursor.rowcount,
+            'default_value': field_def.default_value
+        }
+
+    # Async methods for DatabaseSchema
+    async def initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None):
+        """Initialize database schema asynchronously"""
+        import aiosqlite
+        
+        # Determine if we need to manage the connection lifecycle
+        owns_connection = db_connection is None
+        
+        if owns_connection:
+            db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        
+        try:
+            # Enable foreign keys
+            await db_connection.execute("PRAGMA foreign_keys = ON")
+
+            # Create base tables
+            for table_name, ddl in self.BASE_SCHEMA.items():
+                await db_connection.execute(ddl)
+
+            # Create base indexes
+            for index_ddl in self.BASE_INDEXES:
+                await db_connection.execute(index_ddl)
+
+            # Set up metadata schema if provided
+            if metadata_schema:
+                await self._setup_metadata_schema_async(db_connection, metadata_schema)
+
+            await db_connection.commit()
+        finally:
+            if owns_connection and db_connection:
+                await db_connection.close()
+
+    async def _setup_metadata_schema_async(self, conn, schema: Dict[str, MetadataField]):
+        """Set up metadata schema and add columns to documents table asynchronously"""
+        import aiosqlite
+        
+        # Validate that no metadata field names conflict with reserved columns
+        for field_name in schema.keys():
+            if field_name.lower() in self.BASE_COLUMNS:
+                raise ValueError(
+                    f"Metadata field name '{field_name}' conflicts with reserved column name. "
+                    f"Reserved columns are: {', '.join(sorted(self.BASE_COLUMNS))}"
+                )
+
+        for field_name, field_def in schema.items():
+            if isinstance(field_def, str):
+                field_def = MetadataField(MetadataFieldType(field_def), False, required=False)
+            elif isinstance(field_def, tuple):
+                if len(field_def) == 2:
+                    field_type, should_index = field_def
+                    required = False
+                    default_value = None
+                elif len(field_def) == 3:
+                    field_type, should_index, required = field_def
+                    default_value = None
+                elif len(field_def) == 4:
+                    field_type, should_index, required, default_value = field_def
+                else:
+                    raise ValueError(
+                        f"Schema definition tuple must be 2-4 items: "
+                        f"(field_type, should_index[, required, default_value]). Found: {len(field_def)}")
+                field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index,
+                                          required=required, default_value=default_value)
+
+            # Store schema definition
+            await conn.execute("""INSERT OR REPLACE INTO metadata_schema 
+                (field_name, field_type, indexed, required, default_value)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                field_name,
+                field_def.type.value,
+                field_def.indexed,
+                field_def.required,
+                json.dumps(field_def.default_value) if field_def.default_value is not None else None
+            ))
+
+            # Add column to documents table
+            await self._add_metadata_column_async(conn, field_name, field_def)
+
+        self.metadata_fields = schema
+
+    @staticmethod
+    async def _add_metadata_column_async(conn, field_name: str, field_def: MetadataField):
+        """Add a metadata column to the documents table asynchronously"""
+        # Map field types to SQLite types
+        sqlite_type_map = {
+            MetadataFieldType.TEXT: "TEXT",
+            MetadataFieldType.INTEGER: "INTEGER",
+            MetadataFieldType.REAL: "REAL",
+            MetadataFieldType.BOOLEAN: "BOOLEAN",
+            MetadataFieldType.DATE: "TEXT",  # Store as ISO string
+            MetadataFieldType.JSON: "TEXT"  # Store as JSON string
+        }
+
+        sqlite_type = sqlite_type_map[field_def.type]
+
+        # Check if column already exists
+        cursor = await conn.execute("PRAGMA table_info(documents)")
+        existing_columns = {row[1] for row in await cursor.fetchall()}
+
+        if field_name not in existing_columns:
+            # Add the column
+            default_clause = ""
+            if field_def.default_value is not None:
+                if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
+                    default_clause = f" DEFAULT '{field_def.default_value}'"
+                elif field_def.type == MetadataFieldType.JSON:
+                    default_clause = f" DEFAULT '{json.dumps(field_def.default_value)}'"
+                else:
+                    default_clause = f" DEFAULT {field_def.default_value}"
+
+            ddl = f'ALTER TABLE documents ADD COLUMN {field_name} {sqlite_type}{default_clause}'
+            await conn.execute(ddl)
+
+            logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
+            # Create index if requested
+            if field_def.indexed:
+                index_name = f'idx_documents_{field_name}'
+                await conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+
+    async def load_metadata_schema_async(self, db_connection=None) -> Dict[str, MetadataField]:
+        """Load metadata schema from database asynchronously"""
+        import aiosqlite
+        
+        # Determine if we need to manage the connection lifecycle
+        owns_connection = db_connection is None
+        
+        if owns_connection:
+            db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        
+        conn = db_connection
+        try:
+            cursor = await conn.execute("SELECT * FROM metadata_schema")
+            schema = {}
+
+            rows = await cursor.fetchall()
+            for row in rows:
+                field_name, field_type, indexed, required, default_value = row
+
+                # Parse default value
+                parsed_default = None
+                if default_value is not None:
+                    try:
+                        parsed_default = json.loads(default_value)
+                    except json.JSONDecodeError:
+                        parsed_default = default_value
+
+                schema[field_name] = MetadataField(
+                    type=MetadataFieldType(field_type),
+                    indexed=bool(indexed),
+                    required=bool(required),
+                    default_value=parsed_default
+                )
+
+            self.metadata_fields = schema
+            return schema
+        finally:
+            if owns_connection and db_connection:
+                await db_connection.close()
+
+    async def update_metadata_schema_async(
+            self,
+            new_schema: Dict[str, MetadataField],
+            db_connection=None,
+            drop_columns: bool = False,
+            column_mapping: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Update the metadata schema asynchronously, adding new fields and updating existing ones
+        
+        This enhanced version supports column remapping to rename existing columns
+        and transfer their data. The processing order is:
+        1. Create new columns (including remapping targets)
+        2. Transfer data from old columns to new columns
+        3. Remove old columns that are no longer needed
+        
+        Parameters
+        ----------
+        new_schema : Dict[str, MetadataField]
+            The new metadata schema to apply
+        db_connection : aiosqlite.Connection, optional
+            Database connection to use
+        drop_columns : bool, default=False
+            Whether to actually drop columns that are no longer in the schema.
+            If False, columns are kept but removed from schema for safety.
+        column_mapping : Dict[str, str], optional
+            Optionally provide a mapping of old column names to new column names.
+            Format: {'old_column_name': 'new_column_name'}
+            Data will be transferred from old columns to new columns.
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Summary of changes made including added, removed, modified fields,
+            and column remapping operations
+        """
+        import aiosqlite
+        
+        # Determine if we need to manage the connection lifecycle
+        owns_connection = db_connection is None
+        
+        if owns_connection:
+            db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        
+        changes = {
+            'added_fields': [],
+            'removed_fields': [],
+            'modified_fields': [],
+            'populated_defaults': [],
+            'dropped_columns': [],
+            'remapped_columns': [],
+            'warnings': [],
+            'errors': []
+        }
+        
+        try:
+            # Load current schema
+            current_schema = await self.load_metadata_schema_async(db_connection)
+            
+            # Validate column mapping if provided
+            if column_mapping:
+                validation_errors = await self._validate_column_mapping_async(
+                    db_connection, current_schema, new_schema, column_mapping
+                )
+                if validation_errors:
+                    changes['errors'].extend(validation_errors)
+                    return changes
+            await db_connection.execute("BEGIN TRANSACTION")
+            
+            # Process column remapping first
+            if column_mapping:
+                remapped = await self._perform_column_remapping_async(
+                    db_connection, column_mapping, new_schema
+                )
+                changes['remapped_columns'].extend(remapped)
+                
+                # Process added and modified fields
+                for field_name, field_def in new_schema.items():
+                    if field_name not in current_schema:
+                        # Add new field
+                        await self._add_metadata_column_async(db_connection, field_name, field_def)
+                        changes['added_fields'].append(field_name)
+                        
+                        # Populate defaults if needed
+                        populated = await self._populate_field_defaults_async(
+                            db_connection, field_name, field_def
+                        )
+                        if populated:
+                            changes['populated_defaults'].append(populated)
+                    else:
+                        # Check for modifications
+                        old_def = current_schema[field_name]
+                        modifications = []
+                        
+                        # Check type change
+                        if old_def.type != field_def.type:
+                            if not self._are_types_compatible(old_def.type, field_def.type):
+                                changes['warnings'].append(
+                                    f"Type change for '{field_name}' from {old_def.type.value} "
+                                    f"to {field_def.type.value} may cause data loss"
+                                )
+                            modifications.append({
+                                'change': 'type',
+                                'from': old_def.type.value,
+                                'to': field_def.type.value
+                            })
+                        
+                        # Check index change
+                        if old_def.indexed != field_def.indexed:
+                            index_name = f'idx_documents_{field_name}'
+                            if field_def.indexed:
+                                await db_connection.execute(
+                                    f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})'
+                                )
+                                modifications.append({'change': 'index', 'action': 'added'})
+                            else:
+                                await db_connection.execute(f'DROP INDEX IF EXISTS {index_name}')
+                                modifications.append({'change': 'index', 'action': 'removed'})
+                        
+                        # Check required change
+                        if old_def.required != field_def.required:
+                            modifications.append({
+                                'change': 'required',
+                                'from': old_def.required,
+                                'to': field_def.required
+                            })
+                            
+                            # If making field required, populate defaults for NULLs
+                            if field_def.required and not old_def.required:
+                                populated = await self._populate_field_defaults_async(
+                                    db_connection, field_name, field_def, old_def
+                                )
+                                if populated:
+                                    changes['populated_defaults'].append(populated)
+                        
+                        # Check default value change
+                        if old_def.default_value != field_def.default_value:
+                            modifications.append({
+                                'change': 'default_value',
+                                'from': old_def.default_value,
+                                'to': field_def.default_value
+                            })
+                        
+                        if modifications:
+                            changes['modified_fields'].append({
+                                'field_name': field_name,
+                                'modifications': modifications
+                            })
+                
+                # Process removed fields
+                removed_fields = set(current_schema.keys()) - set(new_schema.keys())
+                
+                # Don't mark remapped source columns as removed
+                if column_mapping:
+                    removed_fields -= set(column_mapping.keys())
+                
+                for field_name in removed_fields:
+                    changes['removed_fields'].append(field_name)
+                    if drop_columns:
+                        # SQLite doesn't support DROP COLUMN in older versions
+                        # This is a placeholder - would need table recreation for full support
+                        changes['warnings'].append(
+                            f"Column '{field_name}' marked for removal but SQLite "
+                            "requires table recreation for column drops"
+                        )
+                    
+                    # Remove from metadata_schema table
+                    await db_connection.execute(
+                        "DELETE FROM metadata_schema WHERE field_name = ?", (field_name,)
+                    )
+                
+                # Update metadata_schema table for all fields in new schema
+                for field_name, field_def in new_schema.items():
+                    await db_connection.execute("""
+                        INSERT OR REPLACE INTO metadata_schema 
+                        (field_name, field_type, indexed, required, default_value)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        field_name,
+                        field_def.type.value,
+                        field_def.indexed,
+                        field_def.required,
+                        json.dumps(field_def.default_value) if field_def.default_value is not None else None
+                    ))
+                
+                await db_connection.commit()
+                
+            # Update in-memory schema
+            self.metadata_fields = new_schema.copy()
+            
+        except Exception as e:
+            try:
+                await db_connection.execute("ROLLBACK")
+            except:
+                pass  # Ignore rollback errors
+            changes['errors'].append(f"Schema update failed: {str(e)}")
+            raise
+        finally:
+            if owns_connection and db_connection:
+                await db_connection.close()
+        
+        return changes
+
+    async def _validate_column_mapping_async(
+            self,
+            conn,
+            current_schema: Dict[str, MetadataField],
+            new_schema: Dict[str, MetadataField],
+            column_mapping: Dict[str, str]
+    ) -> List[str]:
+        """Validate column mapping asynchronously"""
+        errors = []
+        
+        for old_name, new_name in column_mapping.items():
+            # Check source column exists
+            if old_name not in current_schema:
+                errors.append(f"Source column '{old_name}' does not exist")
+                continue
+            
+            # Check target is in new schema
+            if new_name not in new_schema:
+                errors.append(f"Target column '{new_name}' is not in new schema")
+                continue
+            
+            # Check type compatibility
+            old_type = current_schema[old_name].type
+            new_type = new_schema[new_name].type
+            if not self._are_types_compatible(old_type, new_type):
+                errors.append(
+                    f"Incompatible types for mapping '{old_name}' ({old_type.value}) "
+                    f"to '{new_name}' ({new_type.value})"
+                )
+        
+        return errors
+
+    async def _perform_column_remapping_async(
+            self,
+            conn,
+            column_mapping: Dict[str, str],
+            new_schema: Dict[str, MetadataField]
+    ) -> List[Dict[str, Any]]:
+        """Perform column remapping operations asynchronously"""
+        remapped = []
+        
+        for old_name, new_name in column_mapping.items():
+            # Transfer data from old column to new column
+            field_def = new_schema[new_name]
+            
+            # Add the new column if it doesn't exist
+            await self._add_metadata_column_async(conn, new_name, field_def)
+            
+            # Transfer the data
+            rows_affected = await self._transfer_column_data_async(conn, old_name, new_name, field_def)
+            
+            remapped.append({
+                'from': old_name,
+                'to': new_name,
+                'rows_affected': rows_affected
+            })
+            
+            # Remove old column from metadata_schema
+            await conn.execute("DELETE FROM metadata_schema WHERE field_name = ?", (old_name,))
+        
+        return remapped
+
+    async def _transfer_column_data_async(
+            self,
+            conn,
+            old_name: str,
+            new_name: str,
+            field_def: MetadataField
+    ) -> int:
+        """Transfer data from old column to new column asynchronously"""
+        # Get the appropriate SQL for data transfer
+        transfer_sql = self._get_transfer_sql(old_name, new_name, field_def)
+        
+        # Execute the transfer
+        cursor = await conn.execute(transfer_sql)
+        return cursor.rowcount
+
+    async def _populate_field_defaults_async(
+            self,
+            conn,
+            field_name: str,
+            field_def: MetadataField,
+            old_field_def: Optional[MetadataField] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Populate default values for a field where NULL values exist asynchronously.
+        
+        This handles both new fields and fields being made required.
+        """
+        if field_def.default_value is None:
+            return None
+            
+        # Build WHERE clause
+        where_clause = f"{field_name} IS NULL"
+        
+        # Don't populate defaults if the field already had a default
+        # (existing NULLs were intentional)
+        if old_field_def and old_field_def.default_value is not None:
+            return None
+            
+        # Check how many rows would be affected
+        cursor = await conn.execute(f"SELECT COUNT(*) FROM documents WHERE {where_clause}")
+        row = await cursor.fetchone()
+        null_count = row[0]
+        
+        if null_count == 0:
+            return None
+            
+        # Prepare the default value for SQL
+        if field_def.type == MetadataFieldType.JSON:
+            sql_value = json.dumps(field_def.default_value)
+        elif field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
+            sql_value = str(field_def.default_value)
+        else:
+            sql_value = field_def.default_value
+            
+        # Update the NULL values
+        await conn.execute(
+            f"UPDATE documents SET {field_name} = ? WHERE {where_clause}",
+            (sql_value,)
+        )
+        
+        return {
+            'field_name': field_name,
+            'rows_updated': null_count,
             'default_value': field_def.default_value
         }
 
