@@ -1571,9 +1571,8 @@ class LocalVectorDB(BaseVectorDB):
             if idx == -1:  # Invalid index
                 continue
 
-            # TODO: is there any other way to do the distance instead? I think this would give a minimum of 0.5
             # Convert distance to normalized score (0-1, higher=better)
-            score = max(0.0, 1.0 / (1.0 + float(dist)))
+            score = (max(0.0, 1.0 / (1.0 + float(dist))) - 0.5 / 0.5)
 
             if score < score_threshold:
                 continue
