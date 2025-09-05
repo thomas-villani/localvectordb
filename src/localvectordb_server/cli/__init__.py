@@ -111,16 +111,20 @@ def cli(ctx, config, db_folder):
     from localvectordb_server.cli._utils import find_config_file
     config_path = find_config_file(config)
 
-    if not config_path and ctx.invoked_subcommand != "config":
-        click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1)
+    if not config_path:
+        if ctx.invoked_subcommand not in ("config", "mcp"):
+            click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
+            raise click.exceptions.Exit(1)
+        cfg = config_path = api_key_path = db_folder = None
+    else:
+        from localvectordb_server.config import load_config
+        cfg = load_config(config_path)
+        api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
 
-    from localvectordb_server.config import load_config
-    cfg = load_config(config_path)
-    api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
-
-    if not db_folder:
-        db_folder = cfg.database.root_dir
+        if not db_folder:
+            db_folder = cfg.database.root_dir
+        else:
+            cfg.database.root_dir = db_folder
 
     ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path, 'db_folder': db_folder}
 
@@ -129,6 +133,7 @@ from localvectordb_server.cli._auth import auth
 from localvectordb_server.cli._basic import create_vector_database, delete_database, list_databases, serve
 from localvectordb_server.cli._config import config_group
 from localvectordb_server.cli._db import db_group
+from localvectordb_server.cli._mcp import mcp_commands
 
 cli.add_command(serve)
 cli.add_command(create_vector_database)
@@ -137,6 +142,7 @@ cli.add_command(delete_database)
 cli.add_command(db_group)
 cli.add_command(config_group)
 cli.add_command(auth)
+cli.add_command(mcp_commands)
 
 __all__ = ["cli"]
 

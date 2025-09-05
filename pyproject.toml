@@ -12,6 +12,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "aiosqlite>=0.21.0",
     "faiss-cpu>=1.11.0",
     "httpx>=0.28.1",
     "numpy>=2.2.6",
@@ -46,10 +47,16 @@ build-backend = "hatchling.build"
 [dependency-groups]
 server = [
     "bcrypt>=4.3.0",
+    "cachelib>=0.13.0",
     "flask>=3.1.1",
     "flask-caching>=2.3.1",
     "flask-cors>=6.0.0",
     "flask-limiter>=3.12",
+]
+
+mcp = [
+    "aiosqlite>=0.21.0",
+    "fastmcp>=2.12.2",
 ]
 
 file-extraction = [
@@ -93,9 +100,6 @@ dev = [
     "localvectordb[server]",
     "ruff>=0.12.12",
     "mypy>=1.17.1",
-]
-async = [
-    "aiosqlite>=0.21.0",
 ]
 
 

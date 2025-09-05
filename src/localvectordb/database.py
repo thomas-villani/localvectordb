@@ -4934,7 +4934,7 @@ class LocalVectorDB(BaseVectorDB):
 
         # Build SQL to include document metadata columns
         base_columns = self.schema.BASE_COLUMNS
-        metadata_columns = base_columns + list(self.metadata_schema.keys())
+        metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
 
         # Build SELECT clause with metadata columns prefixed
         chunk_columns = [
@@ -5030,7 +5030,7 @@ class LocalVectorDB(BaseVectorDB):
 
         # Only select metadata columns (not content)
         base_columns = self.schema.BASE_COLUMNS
-        metadata_columns = base_columns + list(self.metadata_schema.keys())
+        metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
 
         if not metadata_columns:
             # No metadata schema defined, return empty metadata for all docs
