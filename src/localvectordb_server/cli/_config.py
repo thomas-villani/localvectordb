@@ -20,12 +20,12 @@ from localvectordb_server.cli._utils import get_nested_value, _format_value_for_
 
 
 @click.group('config', invoke_without_command=True)
-@click.option('--config', '-c',
-              type=click.Path(file_okay=True, dir_okay=False, resolve_path=True),
-              help='Path to config file.',
-              envvar='LVDB_SERVER_CONFIG')
+# @click.option('--config', '-c',
+#               type=click.Path(file_okay=True, dir_okay=False, resolve_path=True),
+#               help='Path to config file.',
+#               envvar='LVDB_SERVER_CONFIG')
 @click.pass_context
-def config_group(ctx, config):
+def config_group(ctx):
     """
     View or modify the server configuration.
 
@@ -41,15 +41,17 @@ def config_group(ctx, config):
         lvdb config init --output ./.lvdb-config.toml
 
     """
-    config_path = find_config_file(config)
-    if not config_path and ctx.invoked_subcommand != "init":
-        click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    # config_path = find_config_file(config)
+    # if not config_path and ctx.invoked_subcommand != "init":
+    #     click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
+    #     raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
-    from localvectordb_server.config import load_config
+    # from localvectordb_server.config import load_config
     # Load existing config
-    cfg = load_config(config_path)
-    ctx.obj = {'config': cfg, 'config_path': config_path}
+    # cfg = load_config(config_path)
+    # cfg = ctx.obj["config"]
+    # config_path = ctx.obj["config_path"]
+    # ctx.obj = {'config': cfg, 'config_path': config_path}
 
     # If no subcommand was invoked, display current config
     if ctx.invoked_subcommand is None:
