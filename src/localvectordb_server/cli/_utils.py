@@ -15,6 +15,8 @@ from typing import Any, Union, get_type_hints
 
 import click
 
+from localvectordb import LocalVectorDB
+
 EXIT_CODE_SUCCESS = 0
 EXIT_CODE_ERROR = 1
 EXIT_CODE_CONFIGURATION_ERROR = 2
@@ -68,7 +70,7 @@ def get_stdin_input(input_required=True, err_msg=None):
     return data_from_stdin
 
 
-def print_db_stats(db: "LocalVectorDB"):
+def print_db_stats(db: LocalVectorDB):
     """Print database statistics for v1.0"""
     try:
         stats = db.get_stats()

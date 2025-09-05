@@ -32,7 +32,13 @@ logger = logging.getLogger(__name__)
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers."""
 
-    def __init__(self, model: str, timeout=90, max_retries=3, retry_delay=1.0, max_concurrent_requests=5, **kwargs):
+    def __init__(self,
+                 model: str,
+                 timeout: int = 90,
+                 max_retries: int = 3,
+                 retry_delay: float = 1.0,
+                 max_concurrent_requests: int = 5,
+                 **kwargs):
         self.model = model
         self.config = kwargs
 
@@ -46,7 +52,9 @@ class EmbeddingProvider(ABC):
     def async_supported(self) -> bool:
         return True
 
-    async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None,
+    async def embed_batch(self,
+                          texts: List[str],
+                          batch_size: Optional[int] = None,
                           progress_callback: Optional[callable] = None) -> np.ndarray:
         """Generate embeddings with automatic retry handling."""
 
@@ -357,7 +365,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     def max_batch_size(self) -> int:
         return 64  # Ollama's typical batch size
 
-    def _get_model_info(self, force=False):
+    def _get_model_info(self, force=False) -> list[dict]:
         if not self._model_info_cache or not self._model_info_cache.get(self.base_url) or force:
             with httpx.Client() as client:
                 response = client.get(f"{self.base_url}/api/tags", timeout=self.timeout)
@@ -375,7 +383,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         if self._validated:
             return True
 
-        def _check_it(_models):
+        def _check_it(_models) -> bool:
             for model_info in _models:
                 if model_info["name"].startswith(self.model):
                     return True
@@ -422,7 +430,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             self._dimension = self._get_model_dimension_api()
         return self._dimension
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient = None, **kwargs):
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient = None, **kwargs) -> List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
         if client is None:
             client = httpx.AsyncClient()
@@ -526,7 +534,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None, **kwargs):
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None, **kwargs) -> List[List[float]]:
         if client is None:
             client = httpx.AsyncClient()
 

@@ -26,9 +26,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Type, Union
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Type, Union, AsyncGenerator
 
 import aiosqlite
+from aiosqlite import Connection
 
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import ConnectionPoolError
@@ -1637,7 +1638,6 @@ class DatabaseSchema:
     # Async methods for DatabaseSchema
     async def initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None):
         """Initialize database schema asynchronously"""
-        import aiosqlite
 
         # Determine if we need to manage the connection lifecycle
         owns_connection = db_connection is None
@@ -1755,7 +1755,6 @@ class DatabaseSchema:
 
     async def load_metadata_schema_async(self, db_connection=None) -> Dict[str, MetadataField]:
         """Load metadata schema from database asynchronously"""
-        import aiosqlite
 
         # Determine if we need to manage the connection lifecycle
         owns_connection = db_connection is None
@@ -1829,7 +1828,7 @@ class DatabaseSchema:
             Summary of changes made including added, removed, modified fields,
             and column remapping operations
         """
-        import aiosqlite
+
 
         # Determine if we need to manage the connection lifecycle
         owns_connection = db_connection is None
@@ -1855,7 +1854,7 @@ class DatabaseSchema:
             # Validate column mapping if provided
             if column_mapping:
                 validation_errors = await self._validate_column_mapping_async(
-                    db_connection, current_schema, new_schema, column_mapping
+                    current_schema, new_schema, column_mapping
                 )
                 if validation_errors:
                     changes['errors'].extend(validation_errors)
@@ -1865,7 +1864,7 @@ class DatabaseSchema:
             # Process column remapping first
             if column_mapping:
                 remapped = await self._perform_column_remapping_async(
-                    db_connection, column_mapping, new_schema
+                    db_connection, column_mapping, new_schema, current_schema
                 )
                 changes['remapped_columns'].extend(remapped)
 
@@ -1998,7 +1997,6 @@ class DatabaseSchema:
 
     async def _validate_column_mapping_async(
             self,
-            conn,
             current_schema: Dict[str, MetadataField],
             new_schema: Dict[str, MetadataField],
             column_mapping: Dict[str, str]
@@ -2032,7 +2030,8 @@ class DatabaseSchema:
             self,
             conn,
             column_mapping: Dict[str, str],
-            new_schema: Dict[str, MetadataField]
+            new_schema: Dict[str, MetadataField],
+            current_schema: Dict[str, MetadataField]
     ) -> List[Dict[str, Any]]:
         """Perform column remapping operations asynchronously"""
         remapped = []
@@ -2040,12 +2039,12 @@ class DatabaseSchema:
         for old_name, new_name in column_mapping.items():
             # Transfer data from old column to new column
             field_def = new_schema[new_name]
-
+            old_field_def = current_schema[old_name]
             # Add the new column if it doesn't exist
             await self._add_metadata_column_async(conn, new_name, field_def)
 
             # Transfer the data
-            rows_affected = await self._transfer_column_data_async(conn, old_name, new_name, field_def)
+            rows_affected = await self._transfer_column_data_async(conn, old_name, new_name, field_def, old_field_def)
 
             remapped.append({
                 'from': old_name,
@@ -2060,22 +2059,23 @@ class DatabaseSchema:
 
     async def _transfer_column_data_async(
             self,
-            conn,
+            conn: aiosqlite.Connection,
             old_name: str,
             new_name: str,
-            field_def: MetadataField
+            field_def: MetadataField,
+            old_field_def: MetadataField
     ) -> int:
         """Transfer data from old column to new column asynchronously"""
         # Get the appropriate SQL for data transfer
-        transfer_sql = self._get_transfer_sql(old_name, new_name, field_def)
+        transfer_sql = self._get_transfer_sql(old_name, new_name, field_def.type, old_field_def.type)
 
         # Execute the transfer
         cursor = await conn.execute(transfer_sql)
         return cursor.rowcount
 
+    @staticmethod
     async def _populate_field_defaults_async(
-            self,
-            conn,
+            conn: aiosqlite.Connection,
             field_name: str,
             field_def: MetadataField,
             old_field_def: Optional[MetadataField] = None
@@ -2124,7 +2124,9 @@ class DatabaseSchema:
             'default_value': field_def.default_value
         }
 
-def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, MetadataField]] | Dict[str, MetadataField]:
+def get_common_metadata_schemas(
+        schema: Optional[str] = None
+    ) -> dict[str, dict[str, MetadataField]] | dict[str, MetadataField]:
     """Get predefined metadata schemas for common use cases"""
 
     schemas = {
@@ -2144,13 +2146,13 @@ def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, Metad
             "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
         },
         "research_papers": {
-            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True),
             "authors": MetadataField(type=MetadataFieldType.JSON, indexed=False),
-            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True),
             "publication_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
             "journal": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
             "doi": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            "keywords": MetadataField(type=MetadataFieldType.JSON),
+            "keywords": MetadataField(type=MetadataFieldType.JSON, fts_enabled=True),
             "citation_count": MetadataField(type=MetadataFieldType.INTEGER),
         },
         "code_repository": {
@@ -2185,26 +2187,26 @@ def get_common_metadata_schemas(schema: str = None) -> Dict[str, Dict[str, Metad
 class PooledConnection:
     """Wrapper for a pooled connection that handles automatic return to pool"""
 
-    def __init__(self, connection: sqlite3.Connection, pool: "ConnectionPool"):
+    def __init__(self, connection: sqlite3.Connection, pool: "ConnectionPool") -> None:
         self.connection = connection
         self.pool = pool
         self._closed = False
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Any:
         """Delegate all other attributes to the underlying connection"""
         return getattr(self.connection, name)
 
-    def __enter__(self):
+    def __enter__(self) -> sqlite3.Connection:
         self._closed = False
         return self.connection
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Return connection to pool on exit"""
         if not self._closed:
             self.pool.return_connection(self.connection)
             self._closed = True
 
-    def close(self):
+    def close(self) -> None:
         """Manually return connection to pool"""
         if not self._closed:
             self.pool.return_connection(self.connection)
@@ -2230,7 +2232,7 @@ class ConnectionPool:
         return conn
 
     @property
-    def closed(self):
+    def closed(self) -> bool:
         return self._created_connections == 0
 
     def get_connection(self) -> PooledConnection:
@@ -2285,7 +2287,7 @@ class ConnectionPool:
         finally:
             pooled_conn.close()
 
-    def close_all(self):
+    def close_all(self) -> None:
         """Close all connections in the pool"""
         with self._lock:
             for conn in self._pool:
@@ -2304,7 +2306,7 @@ class ConnectionPool:
                 "available_connections": len(self._pool)
             }
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup on garbage collection"""
         try:
             self.close_all()
@@ -2363,7 +2365,7 @@ class AsyncConnectionPool:
                 # In practice, this is rare with proper maxsize on queues
                 raise RuntimeError("Async connection pool exhausted")
 
-    async def return_connection(self, conn: aiosqlite.Connection):
+    async def return_connection(self, conn: aiosqlite.Connection) -> None:
         """Return a connection to the pool"""
         async with self._lock:
             if len(self._pool) < self.max_connections:
@@ -2381,7 +2383,7 @@ class AsyncConnectionPool:
                 self._created_connections -= 1
 
     @asynccontextmanager
-    async def get_connection_context(self):
+    async def get_connection_context(self) -> AsyncGenerator[Connection, None]:
         """Async context manager for getting/returning connections"""
         conn = await self.get_connection()
         try:
@@ -2389,7 +2391,7 @@ class AsyncConnectionPool:
         finally:
             await self.return_connection(conn)
 
-    async def close_all(self):
+    async def close_all(self) -> None:
         """Close all connections in the pool"""
         async with self._lock:
             for conn in self._pool:
@@ -2423,7 +2425,7 @@ class ReadWriteLock:
     - Efficient notification targeting only threads that can proceed
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.RLock()  # Main coordination lock
         self._readers = 0
         self._writer_thread: Optional[threading.Thread] = None
@@ -2434,7 +2436,7 @@ class ReadWriteLock:
         self._write_ready = threading.Condition(self._lock)  # Writers wait here
 
     @contextmanager
-    def read_lock(self):
+    def read_lock(self) -> None:
         """Acquire read lock (multiple readers allowed, unless writer active)"""
         current_thread = threading.current_thread()
 
@@ -2460,7 +2462,7 @@ class ReadWriteLock:
                     self._write_ready.notify()
 
     @contextmanager
-    def write_lock(self):
+    def write_lock(self) -> None:
         """Acquire write lock (exclusive, but re-entrant for same thread)"""
         current_thread = threading.current_thread()
 

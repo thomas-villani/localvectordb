@@ -17,7 +17,7 @@ enabling perfect reconstruction and precise highlighting.
 
 import re
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Type
 
 import tiktoken
 
@@ -1304,7 +1304,7 @@ class CodeBlockChunker(PositionTrackingChunker):
 class ChunkerFactory:
     """Factory for creating chunkers"""
 
-    CHUNKERS = {
+    CHUNKERS: dict[str, Type[PositionTrackingChunker]] = {
         'sentences': SentenceChunker,
         'tokens': TokenChunker,
         'words': WordChunker,
