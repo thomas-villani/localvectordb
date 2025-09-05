@@ -1,9 +1,7 @@
 Overview
 ========
 
-LocalVectorDB provides a document-first API that abstracts away the complexity of chunking while providing powerful
-search and metadata capabilities. The library supports both local databases and remote connections to LocalVectorDB servers,
-with comprehensive async/await support and a SQL-like query interface.
+LocalVectorDB is a **document-first vector database** that combines the simplicity of SQLite with the power of FAISS for vector similarity search. The library provides a unified API that works seamlessly with both local embedded databases and remote server deployments, featuring comprehensive async/await support and advanced multi-column search capabilities.
 
 Core Concepts
 -------------
@@ -11,9 +9,7 @@ Core Concepts
 Documents vs Chunks
 ^^^^^^^^^^^^^^^^^^^
 
-**Documents** are the primary unit of storage—complete texts like articles, papers, or files. **Chunks** are
-automatically created internal representations that enable efficient vector search. Users work with documents;
-the system handles chunking transparently.
+**Documents** are the primary unit of storage—complete texts like articles, papers, or files that you work with directly. **Chunks** are automatically created internal representations that enable efficient vector search, maintaining position tracking for perfect document reconstruction.
 
 .. code-block:: python
 
@@ -24,680 +20,530 @@ the system handles chunking transparently.
    # System automatically creates chunks for vector search
    # Chunks maintain position tracking for perfect reconstruction
 
+Local vs Remote Databases
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+LocalVectorDB operates in two modes:
+
+- **Local**: Embedded database stored as files on your filesystem
+- **Remote**: Client-server architecture with HTTP API communication
+
+The same API works for both modes, allowing easy migration from local development to remote production deployments.
+
+Synchronous vs Asynchronous APIs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every operation is available in both sync and async variants on the same database instance, allowing you to choose the best approach for each operation:
+
+.. code-block:: python
+
+   # Create database instance (works for both sync and async)
+   db = VectorDB("my_db", "./data")
+   
+   # Synchronous API - simpler for scripts and single-threaded apps
+   doc_ids = db.upsert(["Document 1", "Document 2"])
+   results = db.query("search term", k=5)
+
+   # Asynchronous API - same instance, just use async methods
+   doc_ids = await db.upsert_async(["Document 1", "Document 2"])
+   results = await db.query_async("search term", k=5)
+   
+   # Can use async context manager for automatic cleanup
+   async with db:
+       results = await db.query_async("search term", k=5)
+
 Metadata Schema
 ^^^^^^^^^^^^^^^
 
-Define structured metadata with type validation and indexing:
+Define structured metadata with type validation, indexing, and multi-column embedding support:
 
 .. code-block:: python
 
    from localvectordb.core import MetadataField, MetadataFieldType
 
    schema = {
-       'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'title': MetadataField(
+           type=MetadataFieldType.TEXT, 
+           indexed=True, 
+           embedding_enabled=True,  # Generate embeddings for this field
+           fts_enabled=True        # Enable full-text search
+       ),
        'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'abstract': MetadataField(type=MetadataFieldType.TEXT, embedding_enabled=True),
        'publish_date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
        'tags': MetadataField(type=MetadataFieldType.JSON),
        'word_count': MetadataField(type=MetadataFieldType.INTEGER),
        'is_published': MetadataField(type=MetadataFieldType.BOOLEAN, default_value=False)
    }
 
+**Multi-Column Embeddings**: Enable ``embedding_enabled`` on TEXT or JSON fields to make them searchable using vector similarity, not just the main document content.
+
 Search Types
 ^^^^^^^^^^^^
 
+LocalVectorDB supports four types of search operations:
+
 - **Vector Search**: Semantic similarity using embeddings
-- **Keyword Search**: Traditional full-text search with FTS5
+- **Keyword Search**: Traditional full-text search with SQLite FTS5
 - **Hybrid Search**: Combines vector and keyword with weighted scoring
+- **Multi-Column Search**: Search across document content AND metadata fields simultaneously
 
-Basic Usage
------------
+Getting Started
+---------------
 
-Creating a Database
-^^^^^^^^^^^^^^^^^^^
+Installation
+^^^^^^^^^^^^
 
-Synchronous Local Database
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: bash
+
+   # Basic installation
+   pip install localvectordb
+
+   # With server capabilities
+   pip install localvectordb[server]
+
+   # Development installation with all features
+   pip install localvectordb[all]
+
+Quick Example
+^^^^^^^^^^^^^
+
+Here's a complete example showing both sync and async usage:
 
 .. code-block:: python
 
    from localvectordb import VectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
 
-   # Local database
+   # Define schema with embedding-enabled fields
+   schema = {
+       'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True),
+       'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
+   }
+
+   # Synchronous usage
+   db = VectorDB("my_docs", "./data", metadata_schema=schema)
+   
+   # Add documents with metadata
+   doc_ids = db.upsert(
+       documents=["Artificial intelligence is transforming healthcare...", 
+                  "Machine learning algorithms can detect patterns..."],
+       metadata=[
+           {"title": "AI in Healthcare", "author": "Dr. Smith", "category": "medical"},
+           {"title": "ML Pattern Detection", "author": "Prof. Jones", "category": "technical"}
+       ]
+   )
+
+   # Search across all columns
+   results = db.query_multi_column("healthcare AI", k=5)
+   for result in results:
+       print(f"Found in {result.metadata.get('_search_column')}: {result.content[:50]}...")
+
+   # Asynchronous usage (same database instance, use async methods)
+   async def async_example():
+       db = VectorDB("my_docs", "./data", metadata_schema=schema)
+       async with db:
+           doc_ids = await db.upsert_async(
+               documents=["Neural networks are powerful tools...", 
+                          "Deep learning models require large datasets..."],
+               metadata=[
+                   {"title": "Neural Network Basics", "author": "Dr. Brown", "category": "education"},
+                   {"title": "Deep Learning Data", "author": "Prof. Wilson", "category": "research"}
+               ]
+           )
+           
+           results = await db.query_multi_column_async("neural networks", k=5)
+           return results
+
+Local Database Usage
+--------------------
+
+Creating Local Databases
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Local databases are stored as files on your filesystem and provide the fastest performance for single-application use cases:
+
+.. code-block:: python
+
+   # Synchronous local database
    db = VectorDB(
        name="my_database",
-       base_path="./vector_data",
-       metadata_schema={
-           'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-           'priority': MetadataField(type=MetadataFieldType.INTEGER, default_value=1)
-       },
-       embedding_provider="ollama",
+       base_path="./vector_data",           # Directory to store database files
+       metadata_schema=schema,
+       embedding_provider="ollama",         # Local embedding provider
        embedding_model="nomic-embed-text",
        chunk_size=500,
        chunking_method="sentences"
    )
 
-Asynchronous Local Database
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   # Same database for async operations (recommended for web applications)
+   db = VectorDB(
+       name="my_database", 
+       base_path="./vector_data",
+       metadata_schema=schema
+   )
+   
+   # Use async context manager and async methods
+   async with db:
+       doc_ids = await db.upsert_async(["Document content..."])
+       results = await db.query_async("search query", k=10)
 
-LocalVectorDB includes full async/await support for improved performance in I/O-intensive applications
-and web servers. Async operations are particularly beneficial when working with remote embedding providers
-or handling multiple concurrent operations.
+Local Database Operations
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
-   # Async local database using factory
-   async_db = VectorDB(
-       name="my_database",
-       base_path="./vector_data",
-       async_mode=True,  # Enable async mode
-       metadata_schema=schema,
-       embedding_provider="ollama",
-       embedding_model="nomic-embed-text"
+   # Document operations (same API for sync/async)
+   
+   # Adding documents (sync)
+   doc_ids = db.upsert(
+       documents=["First document...", "Second document..."],
+       metadata=[{"category": "tech"}, {"category": "business"}],
+       ids=["doc1", "doc2"]  # Optional custom IDs
    )
 
-   # Or use async context manager (recommended)
-   async with VectorDB("my_db", "./data", async_mode=True) as db:
-       doc_ids = await db.upsert(["Document 1", "Document 2"])
-       results = await db.query("search term", k=5)
+   # Adding documents (async)
+   doc_ids = await db.upsert_async(
+       documents=["First document...", "Second document..."],
+       metadata=[{"category": "tech"}, {"category": "business"}],
+       ids=["doc1", "doc2"]
+   )
 
-Alternative Async Factory
-~~~~~~~~~~~~~~~~~~~~~~~~~
+   # Searching with different types (async examples)
+   vector_results = await db.query_async("machine learning", search_type="vector", k=5)
+   keyword_results = await db.query_async("python programming", search_type="keyword", k=5)
+   hybrid_results = await db.query_async("AI research", search_type="hybrid", k=5)
 
-For convenience, you can also use the direct async factory function:
+   # Multi-column search across content and metadata
+   multi_results = await db.query_multi_column_async(
+       "deep learning",
+       columns=["content", "title", "abstract"],  # Search specific fields
+       k=10
+   )
 
-.. code-block:: python
+   # Document management (async examples)
+   doc = await db.get_async("doc1")                    # Retrieve document
+   success = await db.update_async("doc1", metadata={"priority": 5})  # Update metadata
+   count = await db.delete_async(["doc1", "doc2"])     # Delete documents
 
-   from localvectordb.async_database import AsyncVectorDB
+Remote Database Usage
+---------------------
 
-   # Direct async factory function - automatically initializes the database
-   async_db = await AsyncVectorDB("my_db", "./local_path")
-   try:
-       results = await async_db.query("search term")
-   finally:
-       await async_db.close()
+Setting Up the Server
+^^^^^^^^^^^^^^^^^^^^^^
 
-Remote Database Connection
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Understanding the LocalVectorDB Server
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-LocalVectorDB can operate in two modes: **local** (embedded database) and **remote** (client-server).
-The remote mode allows you to:
-
-- **Centralize databases**: Multiple applications can access the same vector databases
-- **Scale horizontally**: Run the server on powerful hardware while keeping clients lightweight
-- **Share resources**: Multiple users can collaborate on the same document collections
-- **Deploy in production**: Separate your application logic from database management
-
-The LocalVectorDB server provides a REST API that mirrors the local database interface, so you can
-switch between local and remote modes with minimal code changes.
-
-Setting Up the LocalVectorDB Server
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Before connecting remotely, you need to start a LocalVectorDB server. The easiest way is using the
-built-in CLI:
-
-**Basic Server Setup:**
+Before using remote databases, start a LocalVectorDB server:
 
 .. code-block:: bash
 
-   # Install the server component (if not already installed)
-   pip install localvectordb[server]
-
-   # Start a basic server
+   # Basic development server
    lvdb serve --host 0.0.0.0 --port 5000
 
-   # Start with a specific database directory
-   lvdb serve --host 0.0.0.0 --port 5000 --db-folder ./my_databases
-
-This starts a server that will:
-
-- Listen on all interfaces (``0.0.0.0``) at port 5000
-- Store databases in the specified folder (or default ``.lvdb`` directory)
-- Accept connections without authentication (suitable for development)
-
-**Production Server Setup:**
-
-For production deployments, you'll want additional security and configuration:
-
-.. code-block:: bash
-
-   # Initialize a configuration file with production settings
-   lvdb config init --interactive
-
-   # Or create a production config directly
-   lvdb config init --enable-auth --enable-cors --cors-origins "https://myapp.com" \
-                    --enable-rate-limiting --rate-limit "1000 per hour" \
-                    --output ./production-config.toml
-
-   # Start server with configuration
+   # Production server with authentication
+   lvdb config init --enable-auth --enable-cors
    lvdb serve --config ./production-config.toml
 
-**Server Configuration Example:**
-
-.. code-block:: toml
-
-   [server]
-   host = "0.0.0.0"
-   port = 5000
-   debug = false
-   cors_enabled = true
-   cors_origins = ["https://myapp.com", "https://admin.myapp.com"]
-
-   [database]
-   root_directory = "./databases"
-   default_embedding_provider = "ollama"
-   default_embedding_model = "nomic-embed-text"
-   default_chunk_size = 500
-
-   [auth]
-   enabled = true
-   api_key_required = true
-
-   [rate_limiting]
-   enabled = true
-   default_limit = "1000 per hour"
-
-**Managing API Keys:**
-
-If you enable authentication, create API keys for your applications:
-
-.. code-block:: bash
-
-   # Create an API key
-   lvdb auth create-key --description "My Application" --expires-days 90
-
-   # List existing keys
-   lvdb auth list-keys
-
-   # Revoke a key
-   lvdb auth revoke-key <key-id>
+   # Create API key for clients
+   lvdb auth create-key --description "My App" --expires-days 90
 
 Connecting to Remote Databases
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Once your server is running, you can connect from any Python application:
-
-**Synchronous Remote Connection:**
+Remote databases provide the same API as local databases but communicate over HTTP:
 
 .. code-block:: python
 
-   # Connect to remote server
-   db = VectorDB(
+   # Synchronous remote connection
+   remote_db = VectorDB(
        name="my_database",
-       base_path="http://localhost:5000",  # Server URL
-       api_key="your_api_key",              # If authentication is enabled
-       create_if_not_exists=True,           # Create database if it doesn't exist
+       base_path="http://localhost:5000",   # Server URL
+       api_key="your_api_key",             # If authentication enabled
        metadata_schema=schema
    )
 
    # Use exactly like a local database
-   doc_ids = db.upsert(["Document 1", "Document 2"])
-   results = db.query("search term", k=5)
+   doc_ids = remote_db.upsert(["Remote document content..."])
+   results = remote_db.query("search term", k=5)
 
-**Asynchronous Remote Connection:**
-
-.. code-block:: python
-
-   # Async remote database - ideal for web applications
-   async with VectorDB(
+   # Asynchronous remote connection (recommended)
+   remote_db = VectorDB(
        name="my_database",
        base_path="http://localhost:5000",
-       async_mode=True,                    # Enable async mode
        api_key="your_api_key",
-       max_retries=3,                      # Handle network issues gracefully
-       timeout=60.0                       # Request timeout
-   ) as db:
-       doc_ids = await db.upsert(["Document 1", "Document 2"])
-       results = await db.query("search term", k=5)
+       timeout=60.0,                       # Request timeout
+       max_retries=3                       # Handle network issues
+   )
+   
+   async with remote_db:
+       doc_ids = await remote_db.upsert_async(["Remote document..."])
+       results = await remote_db.query_async("search term", k=5)
 
-**Connection Configuration:**
+Production Remote Configuration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-You can configure various aspects of the remote connection:
+For production deployments, configure authentication, rate limiting, and monitoring:
 
 .. code-block:: python
 
-   # Advanced remote configuration
-   db = VectorDB(
+   # Production remote database configuration
+   production_db = VectorDB(
        name="production_db",
-       base_path="https://vectordb.mycompany.com",
-       api_key=os.getenv("LVDB_API_KEY"),    # Use environment variable
-       async_mode=True,
-
+       base_path="https://vectordb.company.com",
+       api_key=os.getenv("LVDB_API_KEY"),  # Use environment variable
+       
        # Connection settings
-       timeout=120.0,                        # 2 minute timeout
-       max_retries=5,                        # Retry failed requests
-       retry_delay=1.0,                      # Base delay between retries
-
+       timeout=120.0,                      # 2 minute timeout
+       max_retries=5,                      # Retry failed requests
+       retry_delay=1.0,                    # Base delay between retries
+       
        # Database settings (applied when creating)
+       metadata_schema=production_schema,
        embedding_provider="openai",
        embedding_model="text-embedding-3-small",
-       chunk_size=800,
-       chunking_method="paragraphs"
+       chunk_size=800
    )
 
-**Environment Variables:**
+Multi-Column Search (Advanced)
+------------------------------
 
-For security and convenience, you can use environment variables:
+Multi-column search is LocalVectorDB's most powerful feature, allowing you to search across both document content and metadata fields simultaneously.
 
-.. code-block:: bash
+Enabling Multi-Column Search
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-   # Set API key environment variable
-   export LVDB_API_KEY="your_api_key_here"
+First, enable embeddings on metadata fields in your schema:
 
 .. code-block:: python
 
-   # No need to specify api_key in code
-   db = VectorDB(
-       name="my_database",
-       base_path="http://localhost:5000"
-       # api_key automatically loaded from LVDB_API_KEY
-   )
+   schema = {
+       'title': MetadataField(
+           type=MetadataFieldType.TEXT, 
+           indexed=True,
+           embedding_enabled=True      # This field will be searchable
+       ),
+       'abstract': MetadataField(
+           type=MetadataFieldType.TEXT,
+           embedding_enabled=True      # This field will be searchable
+       ),
+       'author': MetadataField(
+           type=MetadataFieldType.TEXT,
+           indexed=True                # Only indexed, not embedding-enabled
+       )
+   }
 
-Explicit Database Type Specification
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Sometimes you may want to explicitly control whether to use local or remote databases,
-regardless of how the ``base_path`` looks:
+Using Multi-Column Search
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
-   from localvectordb.factory import create_vectordb
+   # Search all embedding-enabled fields plus main content
+   results = await db.query_multi_column_async("machine learning", k=10)
+   
+   # Search specific columns only
+   results = await db.query_multi_column_async(
+       "neural networks",
+       columns=["content", "title", "abstract"],  # Only search these fields
+       search_type="vector",
+       k=5
+   )
+   
+   # Results include column attribution
+   for result in results:
+       column = result.metadata.get('_search_column')
+       score = result.score
+       print(f"Found in {column} (score: {score:.3f}): {result.content[:100]}...")
 
-   # Force local database even with URL-like path
-   local_db = create_vectordb(
-       "my_db",
-       "http_server_backup",              # This looks like URL but will be treated as local path
-       database_type="local"
+Advanced Search Examples
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+   # Scientific paper search across multiple fields
+   paper_results = await db.query_multi_column_async(
+       "deep learning transformers",
+       columns=["content", "title", "abstract", "keywords"],
+       search_type="hybrid",           # Combine vector and keyword search
+       k=20,
+       filters={                       # Filter by metadata
+           "year": {"$gte": 2020},
+           "category": {"$in": ["AI", "ML", "NLP"]}
+       },
+       document_scoring_method="frequency_boost"  # Boost documents with multiple matches
    )
 
-   # Force remote database with local-looking path
-   remote_db = create_vectordb(
-       "my_db",
-       "localhost:5000",                  # Will be treated as http://localhost:5000
-       database_type="remote",
-       api_key="your_api_key"
+   # Customer support search across tickets and knowledge base
+   support_results = await db.query_multi_column_async(
+       "password reset issue",
+       columns=["content", "title", "tags", "solution"],
+       search_type="hybrid",
+       k=10,
+       filters={"status": "resolved"},
+       score_threshold=0.7
    )
-
-   # Async variants
-   async_local = create_vectordb(
-       "my_db",
-       "./local_path",
-       database_type="local",
-       async_mode=True
-   )
-
-.. note::
-
-    The ``VectorDB`` class is a factory that returns different implementations based on the parameters:
-
-    - **LocalVectorDB**: When ``base_path`` is a local file path
-    - **RemoteVectorDB**: When ``base_path`` starts with ``http://`` or ``https://``
-    - **AsyncLocalVectorDB**: Local with ``async_mode=True``
-    - **AsyncRemoteVectorDB**: Remote with ``async_mode=True``
-
-    This allows you to use the same codebase for local development and remote production deployments.
 
 Document Operations
 -------------------
+
+The same comprehensive document operations work for both local and remote databases, in both sync and async modes.
 
 Adding Documents
 ^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
-   # Single document
-   doc_id = await db.upsert("This is my document content")
+   # Single document (sync)
+   doc_id = db.upsert("This is my document content")
+   
+   # Single document (async)
+   doc_id = await db.upsert_async("This is my document content")
 
    # Multiple documents with metadata
    documents = [
-       "First document content...",
-       "Second document content...",
-       "Third document content..."
+       "First document about machine learning...",
+       "Second document about data science...",
+       "Third document about artificial intelligence..."
    ]
-
+   
    metadata = [
-       {"category": "tech", "priority": 5},
-       {"category": "business", "priority": 3},
-       {"category": "personal", "priority": 1}
+       {"title": "ML Basics", "category": "education", "tags": ["ml", "basics"]},
+       {"title": "Data Science", "category": "technical", "tags": ["data", "analysis"]},
+       {"title": "AI Overview", "category": "overview", "tags": ["ai", "general"]}
    ]
 
-   doc_ids = await db.upsert(
+   # Async version
+   doc_ids = await db.upsert_async(
        documents=documents,
        metadata=metadata,
-       ids=["doc_1", "doc_2", "doc_3"]  # Optional custom IDs
+       ids=["ml_basics", "data_sci", "ai_overview"],  # Custom IDs
+       batch_size=100,                                # For large batches
+       similarity_threshold=0.95                      # Skip near-duplicates
    )
 
 Searching Documents
 ^^^^^^^^^^^^^^^^^^^
 
-.. todo: should explain the search types in more detail
-
-Basic Search Operations
-~~~~~~~~~~~~~~~~~~~~~~~
-
 .. code-block:: python
 
-   # Vector search (semantic similarity)
-   results = await db.query(
+   # Vector search (semantic similarity) - async
+   vector_results = await db.query_async(
        "machine learning algorithms",
        search_type="vector",
        k=5,
-       score_threshold=0.7
+       score_threshold=0.7,
+       return_type="documents"        # Return full documents (default)
    )
 
-   # Keyword search (exact matches using FTS5)
-   results = await db.query(
+   # Keyword search (exact text matching) - async
+   keyword_results = await db.query_async(
        "python programming",
-       search_type="keyword",
-       k=10
+       search_type="keyword", 
+       k=10,
+       return_type="chunks"           # Return matching chunks only
    )
 
-   # Hybrid search (combines vector and keyword)
-   results = await db.query(
+   # Hybrid search (combines vector + keyword) - async
+   hybrid_results = await db.query_async(
        "neural networks",
        search_type="hybrid",
        k=5,
-       vector_weight=0.7  # 70% vector, 30% keyword
+       vector_weight=0.7,             # 70% vector, 30% keyword
+       return_type="context",         # Return chunks with surrounding context
+       context_window=2               # 2 chunks before and after match
    )
 
-Search with Metadata Filters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Search with metadata filters
-   results = await db.query(
+   # Search with metadata filters - async
+   filtered_results = await db.query_async(
        "artificial intelligence",
        search_type="vector",
-       k=3,
-       filters={"category": "tech", "priority": {">=": 3}}
+       k=10,
+       filters={                      # MongoDB-style filters
+           "category": "technical",
+           "tags": {"$contains": "ai"},
+           "created_at": {"$gte": "2024-01-01"}
+       }
    )
 
-   # Process results
-   for result in results:
-       print(f"Score: {result.score:.3f}")
-       print(f"Document: {result.id}")
-       print(f"Content: {result.content[:200]}...")
-       print(f"Metadata: {result.metadata}")
-       print("---")
-
-Return Types and Context Windows
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Due to increasing context windows in modern LLMs, by default, search results return the entire document
-where there is a match. You can also retrieve only the matched chunks or a context window surrounding
-the matched chunks.
-
-.. code-block:: python
-
-   # Return only the relevant chunks
-   results = await db.query(
-       "machine learning algorithms",
-       search_type="vector",
-       return_type="chunks",
-       k=5
-   )
-
-   # Return a context-window surrounding the relevant chunks
-   results = await db.query(
-       "machine learning algorithms",
-       search_type="vector",
-       return_type="context",
-       k=5,
-       context_window=2  # 2 chunks before and after the relevant chunk
-   )
-
-Advanced Query Builder
-----------------------
-
-The Query Builder provides a SQL-like interface for complex queries with advanced filtering, grouping,
-and aggregation capabilities. This is particularly powerful for analytical workloads and complex
-document discovery scenarios.
-
-Basic Query Builder Usage
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Simple semantic search
-   results = (db.query_builder()
-       .search("machine learning algorithms")
-       .limit(10)
-       .execute())
-
-   # For async databases, execution is awaitable
-   results = await (db.query_builder()
-       .search("machine learning algorithms")
-       .limit(10)
-       .execute())
-
-Advanced Filtering and Search Combinations
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Complex multi-field query with exact and semantic filters
-   results = await (db.query_builder()
-       .search("deep learning frameworks")
-       .filter("year", gte_=2020, lt_=2024)          # Year range
-       .filter("category", "AI")                     # Exact match
-       .filter("tags", contains_="pytorch")          # Tag filtering
-       .semantic_filter("methodology", "supervised learning", threshold=0.75)
-       .order_by("year", "desc")
-       .limit(50)
-       .execute())
-
-   # Multi-term search with different types
-   results = await (db.query_builder()
-       .vector("machine learning", score_threshold=0.8)
-       .keyword("python OR pytorch")
-       .filter("category", in_=["AI", "research"])
-       .execute())
-
-Aggregations and Grouping
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The Query Builder supports SQL-like aggregations for analytical queries:
-
-.. code-block:: python
-
-   # Group by category and count documents
-   results = await (db.query_builder()
-       .search("artificial intelligence")
-       .group_by("category")
-       .count_by("*", "doc_count")
-       .having("doc_count", "gt", 5)
-       .order_by("doc_count", "desc")
-       .execute())
-
-   # Multiple aggregations with complex grouping
-   results = await (db.query_builder()
-       .search("research papers")
-       .group_by("year", "category")
-       .count_by("*", "paper_count")
-       .avg_by("citation_count", "avg_citations")
-       .max_by("impact_factor", "max_impact")
-       .sum_by("page_count", "total_pages")
-       .having("paper_count", "gte", 10)
-       .order_by("avg_citations", "desc")
-       .execute())
-
-Result Reranking and Post-Processing
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Rerank by recency (newer documents ranked higher)
-   results = await (db.query_builder()
-       .search("news")
-       .rerank("recency", date_field="published_date", weight=0.3)
-       .limit(20)
-       .execute())
-
-   # Rerank by diversity (promote variety in results)
-   results = await (db.query_builder()
-       .search("scientific articles")
-       .rerank("diversity", field="category", weight=0.4)
-       .execute())
-
-   # Custom reranking with multiple factors
-   results = await (db.query_builder()
-       .search("technical documentation")
-       .rerank("custom",
-               relevance_weight=0.6,
-               recency_weight=0.2,
-               diversity_weight=0.2,
-               date_field="updated_at")
-       .execute())
-
-Query Explanation and Performance Analysis
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Enable query explanation for debugging and optimization
-   results = await (db.query_builder()
-       .search("complex query")
-       .filter("category", "research")
-       .group_by("author")
-       .count_by("*", "doc_count")
-       .explain(detailed=True)
-       .execute())
-
-   # Results include execution metadata
-   if results and hasattr(results[0], 'execution_stats'):
-       print(f"Query took: {results[0].execution_stats['total_time']:.3f}s")
-       print(f"Search time: {results[0].execution_stats['search_time']:.3f}s")
-       print(f"Filter time: {results[0].execution_stats['filter_time']:.3f}s")
-       print(f"Steps: {results[0].execution_plan}")
-
-Document Management
--------------------
-
-Retrieving Documents
-^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Get single document
-   doc = await db.get("doc_1")
-   if doc:
-       print(f"Content: {doc.content}")
-       print(f"Metadata: {doc.metadata}")
-       print(f"Created: {doc.created_at}")
-
-   # Get multiple documents
-   docs = await db.get(["doc_1", "doc_2", "doc_3"])
-
-   # Check if documents exist without retrieving content
-   exists = await db.exists(["doc_1", "doc_2"])  # Returns [True, False]
-
-Updating Documents
+Managing Documents
 ^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
-   # Update content only
-   success = await db.update("doc_1", content="Updated document content")
+   # Retrieve documents (async)
+   doc = await db.get_async("ml_basics")                    # Single document
+   docs = await db.get_async(["ml_basics", "data_sci"])     # Multiple documents
+   
+   if doc:
+       print(f"Title: {doc.metadata.get('title')}")
+       print(f"Content: {doc.content[:200]}...")
+       print(f"Created: {doc.created_at}")
 
-   # Update metadata only
-   success = await db.update("doc_1", metadata={"priority": 5})
+   # Check existence without retrieving content (async)
+   exists = await db.exists_async(["ml_basics", "nonexistent"])  # Returns [True, False]
 
-   # Update both content and metadata
-   success = await db.update(
-       "doc_1",
-       content="New content",
-       metadata={"category": "updated", "priority": 10}
-   )
+   # Update documents (async)
+   success = await db.update_async("ml_basics", 
+                                   content="Updated content about machine learning...",
+                                   metadata={"category": "advanced", "last_updated": "2024-12-01"})
 
-Filtering and Querying Metadata
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   # Delete documents (async)
+   deleted_count = await db.delete_async(["old_doc1", "old_doc2"])
 
-.. code-block:: python
-
-   # Simple filters
-   docs = await db.filter(where={"category": "tech"})
-
-   # Complex filters with operators
-   docs = await db.filter(where={
-       "priority": {"$gte": 3},
-       "category": {"$in": ["tech", "business"]},
-       "publish_date": {"$between": ["2024-01-01", "2024-12-31"]}
-   })
-
-   # Pagination support
-   docs = await db.filter(
-       where={"category": "tech"},
+   # Filter documents by metadata (async)
+   tech_docs = await db.filter_async(
+       where={"category": "technical", "tags": {"$contains": "python"}},
        order_by="created_at DESC",
        limit=20,
-       offset=40  # Page 3 of 20 items per page
+       offset=0  # Pagination support
    )
 
 Advanced Configuration
 ----------------------
 
-Custom Chunking Strategies
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Embedding Providers
+^^^^^^^^^^^^^^^^^^^^
 
-.. code-block:: python
-
-   # Different chunking methods for different content types
-   db_sentences = VectorDB("docs", chunking_method="sentences", chunk_size=300)
-   db_paragraphs = VectorDB("docs", chunking_method="paragraphs", chunk_size=800)
-   db_sections = VectorDB("docs", chunking_method="sections", chunk_size=1000)
-
-   # Code-specific chunking for programming content
-   db_code = VectorDB("code", chunking_method="code-blocks", chunk_size=500)
-
-   # Token-based chunking for precise control
-   db_tokens = VectorDB("precise", chunking_method="tokens", chunk_size=512)
-
-Multiple Embedding Providers
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+LocalVectorDB supports multiple embedding providers through a plugin architecture:
 
 .. code-block:: python
 
    # Ollama (local, free)
    db_ollama = VectorDB(
-       "db1",
+       "my_db", "./data",
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text"
+       embedding_model="nomic-embed-text",
+       embedding_config={"base_url": "http://localhost:11434"}
    )
 
    # OpenAI (cloud, requires API key)
    db_openai = VectorDB(
-       "db2",
+       "my_db", "./data", 
        embedding_provider="openai",
        embedding_model="text-embedding-3-small",
-       embedding_config={"api_key": "your_key"}  # Or set OPENAI_API_KEY environment variable
+       embedding_config={"api_key": os.getenv("OPENAI_API_KEY")}
    )
 
-.. important::
-   Don't leave your API keys in code committed to version control. Use environment variables
-   or configuration files that are excluded from version control.
+Chunking Strategies
+^^^^^^^^^^^^^^^^^^^
 
-Batch Operations
-^^^^^^^^^^^^^^^^
+Choose chunking methods based on your content type:
 
 .. code-block:: python
 
-   # Large document insertion with batching for performance
-   large_docs = ["doc content " + str(i) for i in range(10000)]
-   doc_ids = await db.upsert(documents=large_docs, batch_size=100)
+   # Sentence-based chunking for general text
+   db_sentences = VectorDB("docs", chunking_method="sentences", chunk_size=300)
+   
+   # Paragraph-based for structured documents
+   db_paragraphs = VectorDB("docs", chunking_method="paragraphs", chunk_size=800)
+   
+   # Token-based for precise control
+   db_tokens = VectorDB("docs", chunking_method="tokens", chunk_size=512)
+   
+   # Code-specific chunking for programming content
+   db_code = VectorDB("code", chunking_method="code-blocks", chunk_size=500)
 
-   # Similarity threshold to avoid duplicates
-   doc_ids = await db.insert(
-       documents=new_docs,
-       similarity_threshold=0.95,  # Skip if 95%+ similar to existing
-       errors="ignore"  # Don't fail on duplicates
-   )
-
-Performance Tuning
-^^^^^^^^^^^^^^^^^^^
+Performance Optimization
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
@@ -707,298 +553,140 @@ Performance Tuning
        base_path="./data",
 
        # Embedding settings
-       embedding_provider="ollama",
+       embedding_provider="ollama", 
        embedding_model="nomic-embed-text",
 
        # Chunking optimization
        chunking_method="sentences",
-       chunk_size=400,           # Smaller chunks = better precision
-       chunk_overlap=2,          # Overlap sentences for context
+       chunk_size=400,                # Balance between precision and efficiency
+       chunk_overlap=2,               # Overlap for better context
 
        # Performance settings
-       enable_gpu=True,          # Use GPU for FAISS if available
-       enable_fts=True,          # Enable full-text search
-       connection_pool_size=20,  # More connections for concurrent access
-
-       # Async-specific settings (for AsyncLocalVectorDB)
-       async_mode=True,
-       max_workers=8             # More workers for CPU-heavy workloads
+       enable_gpu=True,               # Use GPU for FAISS if available
+       enable_fts=True,               # Enable full-text search
+       connection_pool_size=20,       # More connections for concurrency
+       
+       # FAISS index optimization
+       faiss_index_type="IndexHNSWFlat",  # Faster approximate search
+       faiss_index_hnsw_flat_neighbors=32  # Trade memory for speed
    )
-
-Memory-Only Database
-^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # In-memory database for testing/temporary use
-   temp_db = VectorDB("temp", ":memory:", async_mode=True)
+   
+   # Use async methods for better concurrency in web applications
+   async with db:
+       await db.upsert_async(large_document_batch, batch_size=100)
+       results = await db.query_async("search query", k=10)
 
 Command Line Interface
 ----------------------
 
-LocalVectorDB includes a comprehensive CLI for server management and database operations.
+LocalVectorDB includes a powerful CLI for server management and database operations:
 
 Server Management
 ^^^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # Start a basic development server
+   # Start development server
    lvdb serve --host 0.0.0.0 --port 5000
 
-   # Start with configuration file
-   lvdb serve --config ./my-config.toml --db-folder ./databases
+   # Production server with configuration
+   lvdb config init --enable-auth --enable-cors
+   lvdb serve --config ./config.toml
 
-   # Start with debug mode and custom logging
-   lvdb serve --debug --log-level DEBUG
-
-   # Production server with specific settings
-   lvdb serve --host 0.0.0.0 --port 5000 --disable-ollama-check
-
-Configuration Management
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: bash
-
-   # Initialize configuration interactively
-   lvdb config init --interactive
-
-   # Create production configuration with common settings
-   lvdb config init --redis-registry redis://localhost:6379/1 \
-                    --enable-cache --cache-type redis \
-                    --enable-rate-limiting --rate-limit "1000 per hour" \
-                    --enable-cors --cors-origins "https://myapp.com" \
-                    --enable-auth
-
-   # View current configuration
-   lvdb config show
-   lvdb config show --format json --section database
-
-   # Get and set specific configuration values
-   lvdb config get server.host
-   lvdb config set database.chunk_size 1000
+   # Manage API keys
+   lvdb auth create-key --description "My App" --expires-days 90
+   lvdb auth list-keys
+   lvdb auth revoke-key <key-id>
 
 Database Operations
 ^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # List available databases with details
+   # List and create databases
    lvdb list --details
+   lvdb create mydatabase --embedding-model nomic-embed-text
 
-   # Create a new database with specific settings
-   lvdb create mydatabase --embedding-model nomic-embed-text --chunk-size 500
-
-   # Add documents to a database
+   # Add and search documents  
    lvdb db mydatabase add document.txt
-   lvdb db mydatabase add "documents/*.py"        # Glob patterns
-   cat document.txt | lvdb db mydatabase add -   # From stdin
+   lvdb db mydatabase add "docs/*.md"
+   lvdb db mydatabase search "query text" --limit 5 --search-type hybrid
 
-   # Search documents with various options
-   lvdb db mydatabase search "query text" --limit 5
-   lvdb db mydatabase search "query text" --search-type hybrid \
-       --metadata-filter '{"author":"Smith"}'
-
-   # Get specific documents
-   lvdb db mydatabase get doc_1
-
-   # Find similar documents using k-nearest neighbors
-   lvdb db mydatabase knn doc_1 --k 5
-
-   # Interactive database shell
+   # Interactive shell
    lvdb db mydatabase shell
 
-Authentication Management
+Migration and Best Practices
+----------------------------
+
+Choosing Sync vs Async
+^^^^^^^^^^^^^^^^^^^^^^^
+
+**Use Async when:**
+- Building web applications or APIs
+- Handling multiple concurrent operations
+- Working with remote databases over networks
+- Processing large batches of documents
+
+**Use Sync when:**
+- Writing simple scripts or data processing pipelines  
+- Single-threaded applications
+- Quick prototypes and experiments
+
+**Migration Example:**
+
+.. code-block:: python
+
+   # Synchronous code
+   def process_documents():
+       db = VectorDB("my_db", "./data")
+       for doc in documents:
+           db.upsert([doc])
+       return db.query("search term", k=5)
+
+   # Asynchronous code (better performance)
+   async def process_documents_async():
+       db = VectorDB("my_db", "./data")
+       async with db:
+           # Batch operations are more efficient
+           await db.upsert_async(documents, batch_size=100)
+           return await db.query_async("search term", k=5)
+
+Local to Remote Migration
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. code-block:: bash
-
-   # Create API keys for applications
-   lvdb auth create-key --description "My Application" --expires-days 30
-   lvdb auth create-key --description "Admin Access" --no-expiry
-
-   # List and manage existing keys
-   lvdb auth list-keys
-   lvdb auth revoke-key <key-id>
-
-Database Statistics and Management
------------------------------------
+The same code works for both local and remote databases:
 
 .. code-block:: python
 
-   # Get comprehensive database statistics
-   stats = await db.get_stats()
-   print(f"Documents: {stats['documents']}")
-   print(f"Chunks: {stats['chunks']}")
-   print(f"Embedding model: {stats['embedding_model']}")
-   print(f"Index vectors: {stats['index_vectors']}")
-   print(f"Database size: {stats['size_mb']:.1f} MB")
+   # Development with local database
+   db = VectorDB("my_app_db", "./local_data")
 
-   # Save database state (for local databases)
-   await db.save()
-
-   # Close database and cleanup resources
-   await db.close()
-
-   # Context manager ensures automatic cleanup
-   async with VectorDB("temp_db", ":memory:", async_mode=True) as db:
-       await db.upsert(["temporary document"])
-       results = await db.query("search")
-   # Database automatically closed and resources cleaned up
-
-Updating Metadata Schema
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-You can update a database's metadata schema after creation to add new fields, modify existing ones,
-or change indexing:
-
-.. code-block:: python
-
-   # Add new metadata fields to existing database
-   new_schema = {
-       # Keep existing fields
-       'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-       'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-
-       # Add new fields
-       'category': MetadataField(
-           type=MetadataFieldType.TEXT,
-           indexed=True,
-           required=True,
-           default_value="general"
-       ),
-       'rating': MetadataField(type=MetadataFieldType.REAL, indexed=True),
-       'tags': MetadataField(type=MetadataFieldType.JSON, default_value=[])
-   }
-
-   # Apply schema update
-   changes = await db.update_metadata_schema(new_schema)
-
-   # Review what changed
-   print(f"Added fields: {changes['added_fields']}")
-   print(f"Populated defaults: {len(changes['populated_defaults'])} documents updated")
-
-.. note::
-   - Existing document data is preserved when updating schema
-   - New required fields get populated with default values automatically
-   - Removed fields are kept in the database for safety (use ``drop_columns=True`` to actually remove)
-   - Schema changes are applied in a transaction and rolled back on error
-
-Error Handling
---------------
-
-.. code-block:: python
-
-   from localvectordb.exceptions import (
-       DatabaseNotFoundError,
-       DuplicateDocumentIDError,
-       EmbeddingError,
-       ConfigurationError
-   )
-
-   try:
-       db = VectorDB("nonexistent", create_if_not_exists=False)
-   except DatabaseNotFoundError:
-       print("Database does not exist")
-
-   try:
-       await db.insert(["content"], ids=["existing_id"])
-   except DuplicateDocumentIDError:
-       print("Document ID already exists")
-
-   try:
-       results = await db.query("search query")
-   except EmbeddingError as e:
-       print(f"Embedding generation failed: {e}")
-
-   try:
-       # Server connection issues
-       remote_db = VectorDB("test", "http://nonexistent-server:5000")
-   except ConfigurationError as e:
-       print(f"Configuration error: {e}")
-
-Migration Guide
----------------
-
-Migrating from Synchronous to Asynchronous
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Old synchronous code
-   db = VectorDB("my_db", "./data")
-   doc_ids = db.upsert(["Document 1", "Document 2"])
-   results = db.query("search term", k=5)
-
-   # New asynchronous code
-   async with VectorDB("my_db", "./data", async_mode=True) as db:
-       doc_ids = await db.upsert(["Document 1", "Document 2"])
-       results = await db.query("search term", k=5)
-
-Migrating to Query Builder
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Old direct query method
-   results = await db.query(
-       "search term",
-       search_type="hybrid",
-       k=10,
-       filters={"category": "tech"}
-   )
-
-   # New query builder approach (more powerful and flexible)
-   results = await (db.query_builder()
-       .hybrid("search term")
-       .filter("category", "tech")
-       .limit(10)
-       .execute())
-
-Performance Considerations
---------------------------
-
-**Async vs Sync Selection**
-   Use async variants for I/O-intensive applications, web servers, and when handling multiple
-   concurrent operations. Sync variants are simpler for scripts and single-threaded applications.
-
-**Batch Operations**
-   Use the ``batch_size`` parameter for large document insertions to optimize memory usage and performance.
-
-**Thread Pool Configuration**
-   For ``AsyncLocalVectorDB``, adjust ``max_workers`` based on CPU cores. More workers help with
-   CPU-intensive operations like chunking and embedding generation.
-
-**Connection Pooling**
-   Increase ``connection_pool_size`` for high-concurrency scenarios with multiple simultaneous database operations.
-
-**GPU Acceleration**
-   Enable ``enable_gpu=True`` if FAISS GPU support is available for faster vector similarity search.
-
-**Chunking Strategy Selection**
-   - Smaller chunks provide better precision but increase storage overhead
-   - Larger chunks are more efficient but may reduce search accuracy
-   - Choose chunking method based on content type (sentences for prose, code-blocks for programming content)
+   # Production with remote database (just change the base_path!)
+   db = VectorDB("my_app_db", "https://vectordb.company.com", 
+                api_key=os.getenv("LVDB_API_KEY"))
+   
+   # Same async methods work for both local and remote
+   async with db:
+       results = await db.query_async("search query", k=10)
 
 Architecture Overview
 ---------------------
 
-**Local Databases**
-   - **Storage**: SQLite for documents and metadata, FAISS for vector indices
-   - **Chunking**: Position-aware chunking with multiple strategies and overlap support
-   - **Embeddings**: Plugin architecture supporting multiple providers
-   - **Search**: Normalized scoring across vector, keyword, and hybrid modes
+**Factory Pattern**: The `VectorDB` function automatically selects the appropriate implementation:
+- `LocalVectorDB`: File-based storage with SQLite + FAISS
+- `RemoteVectorDB`: HTTP client for server communication  
+- Async variants available for both with full async/await support
 
-**Remote Databases**
-   - **Client**: HTTP client with connection pooling, retry logic, and async support
-   - **Server**: Flask-based REST API with authentication and rate limiting
-   - **Scaling**: Multi-worker deployment with Redis for coordination
+**Storage Architecture**:
+- **Documents & Metadata**: SQLite with full ACID transactions
+- **Vector Indices**: FAISS for fast similarity search
+- **Full-Text Search**: SQLite FTS5 for keyword search  
+- **Multi-Column Embeddings**: Additional FAISS indices for metadata fields
 
-**Async Implementation**
-   - **Thread Pool**: CPU and I/O bound operations executed in thread pools
-   - **Native Async**: Direct async calls for embedding APIs when available
-   - **Resource Management**: Proper cleanup with context managers and connection pooling
+**Performance Features**:
+- Connection pooling for database operations
+- Batch processing for large document sets
+- GPU acceleration support for FAISS
+- Intelligent caching and similarity-based deduplication
 
-**Factory Pattern**
-   The ``VectorDB`` factory automatically selects the appropriate implementation based on parameters,
-   enabling seamless switching between local/remote and sync/async variants with minimal code changes.
+This unified architecture provides a seamless experience whether you're building a local prototype or deploying a production system with remote databases and async operations.

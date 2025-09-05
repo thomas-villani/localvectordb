@@ -941,3 +941,250 @@ class TestLocalVectorDBIntegration:
 
                     # Verify embeddings were generated for non-empty documents
                     assert mock_provider.number_of_calls > 0
+
+
+@pytest.mark.integration
+class TestMultiColumnIntegration:
+    """Integration tests for multi-column embedding functionality."""
+    
+    @pytest.fixture
+    def multi_column_db(self, temp_dir):
+        """Create a database with multi-column search capabilities."""
+        metadata_schema = {
+            'title': MetadataField(
+                type=MetadataFieldType.TEXT,
+                indexed=True,
+                embedding_enabled=True,
+                fts_enabled=True
+            ),
+            'abstract': MetadataField(
+                type=MetadataFieldType.TEXT,
+                embedding_enabled=True
+            ),
+            'summary': MetadataField(
+                type=MetadataFieldType.TEXT,
+                embedding_enabled=True
+            ),
+            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            'year': MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
+            'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            'keywords': MetadataField(
+                type=MetadataFieldType.JSON,
+                embedding_enabled=True
+            )
+        }
+        
+        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('faiss.IndexFlatL2') as mock_faiss, \
+                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+            
+            # Use mock embeddings for predictable testing
+            mock_provider = MockEmbeddings("test-model", dimension=384)
+            mock_embedding.return_value = mock_provider
+            
+            # Mock FAISS index
+            mock_index = Mock()
+            mock_index.ntotal = 0
+            mock_index.add = Mock()
+            mock_index.add_with_ids = Mock()
+            mock_index.search = Mock(return_value=(
+                np.array([[0.1, 0.2, 0.3]]),
+                np.array([[0, 1, 2]])
+            ))
+            mock_index.reconstruct = Mock(return_value=np.random.rand(384))
+            mock_faiss.return_value = mock_index
+            mock_faiss_idmap.return_value = mock_index
+            
+            db = LocalVectorDB(
+                name="multi_column_test",
+                base_path=temp_dir,
+                metadata_schema=metadata_schema,
+                embedding_provider="mock",
+                embedding_model="test-model",
+                chunk_size=500,
+                chunking_method="sentences"
+            )
+            
+            yield db
+            db.close()
+    
+    def test_multi_column_workflow(self, multi_column_db):
+        """Test complete workflow with multi-column embeddings."""
+        # Test documents
+        documents = [
+            "This is a comprehensive paper about machine learning algorithms and their applications.",
+            "A detailed study on neural networks and deep learning architectures.",
+            "Research on natural language processing using transformer models."
+        ]
+        
+        metadata = [
+            {
+                'title': 'Machine Learning Algorithms',
+                'abstract': 'Study of various ML algorithms for classification and regression',
+                'summary': 'ML algorithms overview',
+                'author': 'Dr. Smith',
+                'year': 2023,
+                'category': 'AI',
+                'keywords': ['machine learning', 'algorithms', 'classification']
+            },
+            {
+                'title': 'Deep Learning Architectures',
+                'abstract': 'Comprehensive review of neural network architectures',
+                'summary': 'Deep learning survey',
+                'author': 'Dr. Jones',
+                'year': 2024,
+                'category': 'AI',
+                'keywords': ['neural networks', 'deep learning', 'architectures']
+            },
+            {
+                'title': 'NLP with Transformers',
+                'abstract': 'Advanced NLP techniques using transformer architecture',
+                'summary': 'Transformer models in NLP',
+                'author': 'Dr. Brown',
+                'year': 2024,
+                'category': 'NLP',
+                'keywords': ['nlp', 'transformers', 'attention']
+            }
+        ]
+        
+        # Test upsert with metadata
+        doc_ids = multi_column_db.upsert(documents, metadata=metadata)
+        assert len(doc_ids) == 3
+        
+        # Verify embedding-enabled fields are identified
+        embedding_fields = multi_column_db._get_embedding_enabled_fields()
+        assert 'title' in embedding_fields
+        assert 'abstract' in embedding_fields
+        assert 'summary' in embedding_fields
+        assert 'keywords' in embedding_fields
+        assert 'author' not in embedding_fields  # Not embedding-enabled
+        
+        # Check that column_embeddings table exists and has data
+        with multi_column_db.connection_pool.get_connection() as conn:
+            # Check table exists
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'"
+            )
+            assert cursor.fetchone() is not None
+            
+            # Check FTS tables for fts_enabled fields
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='fts_title'"
+            )
+            assert cursor.fetchone() is not None
+    
+    def test_multi_column_query(self, multi_column_db):
+        """Test multi-column query functionality."""
+        # Add test data
+        documents = ["Document about AI and machine learning"]
+        metadata = [{
+            'title': 'AI Overview',
+            'abstract': 'Introduction to artificial intelligence',
+            'summary': 'AI basics',
+            'author': 'Test Author',
+            'year': 2024,
+            'category': 'AI',
+            'keywords': ['ai', 'machine learning']
+        }]
+        
+        multi_column_db.upsert(documents, metadata=metadata)
+        
+        # Mock the query methods to avoid complex FAISS interactions
+        with patch.object(multi_column_db, 'query') as mock_query, \
+                patch.object(multi_column_db, '_search_metadata_field') as mock_search:
+            
+            # Setup mock returns
+            mock_result = Mock()
+            mock_result.score = 0.9
+            mock_result.content = "test content"
+            mock_result.metadata = {'title': 'AI Overview'}
+            mock_result.type = 'chunk'
+            mock_result.document_id = 'doc_1'  # Add proper document ID
+            
+            mock_query.return_value = [mock_result]
+            mock_search.return_value = []
+            
+            # Test query_multi_column
+            results = multi_column_db.query_multi_column("machine learning", k=5)
+            assert isinstance(results, list)
+            
+            # Test with specific columns
+            results = multi_column_db.query_multi_column(
+                "AI",
+                columns=['title', 'abstract'],
+                k=3
+            )
+            assert isinstance(results, list)
+    
+    def test_metadata_field_validation(self):
+        """Test validation of metadata field attributes."""
+        from localvectordb.core import MetadataField, MetadataFieldType
+        
+        # Valid cases
+        text_field = MetadataField(
+            type=MetadataFieldType.TEXT,
+            embedding_enabled=True,
+            fts_enabled=True
+        )
+        assert text_field.embedding_enabled is True
+        assert text_field.fts_enabled is True
+        
+        json_field = MetadataField(
+            type=MetadataFieldType.JSON,
+            embedding_enabled=True
+        )
+        assert json_field.embedding_enabled is True
+        
+        # Invalid cases
+        with pytest.raises(ValueError, match="embedding_enabled can only be True"):
+            MetadataField(
+                type=MetadataFieldType.INTEGER,
+                embedding_enabled=True
+            )
+        
+        with pytest.raises(ValueError, match="fts_enabled can only be True"):
+            MetadataField(
+                type=MetadataFieldType.BOOLEAN,
+                fts_enabled=True
+            )
+    
+    def test_schema_migration(self, temp_dir):
+        """Test that existing databases are migrated to support new schema fields."""
+        from localvectordb.database import LocalVectorDB
+        
+        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('faiss.IndexFlatL2') as mock_faiss, \
+                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+            
+            mock_provider = MockEmbeddings("test-model", dimension=384)
+            mock_embedding.return_value = mock_provider
+            
+            mock_index = Mock()
+            mock_index.ntotal = 0
+            mock_faiss.return_value = mock_index
+            mock_faiss_idmap.return_value = mock_index
+            
+            # Create database (migration should happen automatically)
+            db = LocalVectorDB(
+                name="migration_test",
+                base_path=temp_dir,
+                metadata_schema={
+                    'title': MetadataField(type=MetadataFieldType.TEXT)
+                }
+            )
+            
+            # Verify migration
+            with db.connection_pool.get_connection() as conn:
+                # Check metadata_schema has new columns
+                cursor = conn.execute("PRAGMA table_info(metadata_schema)")
+                columns = {row[1] for row in cursor.fetchall()}
+                assert 'embedding_enabled' in columns
+                assert 'fts_enabled' in columns
+                
+                # Check column_embeddings table exists
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'"
+                )
+                assert cursor.fetchone() is not None
+            
+            db.close()

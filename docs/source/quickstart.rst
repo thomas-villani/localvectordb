@@ -48,8 +48,11 @@ Quick Installation
         name="my_documents",
         base_path="./my_vectordb",
         metadata_schema={
-            'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True, 
+                                 embedding_enabled=True),  # Enable embeddings for title
             'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            'abstract': MetadataField(type=MetadataFieldType.TEXT, 
+                                    embedding_enabled=True),  # Enable embeddings for abstract
             'date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
             'tags': MetadataField(type=MetadataFieldType.JSON)
         },
@@ -88,6 +91,20 @@ Quick Installation
 
     # Hybrid search combining vector and keyword search
     results = db.query("python programming", search_type="hybrid", k=2)
+
+    # Multi-column search - searches document content AND metadata fields
+    # This searches across content, title, and abstract simultaneously
+    multi_results = db.query_multi_column("machine learning", k=5)
+    for result in multi_results:
+        column = result.metadata.get('_search_column', 'unknown')
+        print(f"Found in {column}: Score {result.score:.3f}")
+
+    # Search specific columns only
+    title_results = db.query_multi_column(
+        "database", 
+        columns=['title', 'abstract'],  # Only search these fields
+        k=3
+    )
 
     # Filter by metadata
     python_docs = db.filter(where={"author": "Developer"})

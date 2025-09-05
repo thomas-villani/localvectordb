@@ -14,6 +14,7 @@ LocalVectorDB v1.0
 This module contains the main LocalVectorDB v1.0 implementation with:
 
 - Document-first API that hides chunking complexity
+- Async/sync interface
 - Direct SQLite implementation
 - Unified query interface with normalized scoring
 - Position-tracking chunking for perfect reconstruction
@@ -939,6 +940,9 @@ class LocalVectorDB(BaseVectorDB):
         def embedding_worker():
             """Stage 2: Embedding generation (only for chunks that need it)"""
             try:
+                # Get metadata fields that need embeddings once
+                embedding_enabled_fields = self._get_embedding_enabled_fields()
+                
                 while True:
                     chunk_data = chunk_queue.get()
                     if chunk_data is None:  # Completion signal
@@ -961,6 +965,16 @@ class LocalVectorDB(BaseVectorDB):
                     else:
                         chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
                         logger.debug(f"No new embeddings needed for {chunk_data['doc_id']}")
+                    
+                    # Generate metadata embeddings if needed
+                    if embedding_enabled_fields:
+                        metadata = chunk_data['metadata']
+                        field_embeddings = self._generate_metadata_embeddings(
+                            metadata, embedding_enabled_fields, batch_size
+                        )
+                        chunk_data['field_embeddings'] = field_embeddings
+                    else:
+                        chunk_data['field_embeddings'] = {}
 
                     embedding_queue.put(chunk_data)
                     chunk_queue.task_done()
@@ -983,6 +997,7 @@ class LocalVectorDB(BaseVectorDB):
                     unchanged_chunks = chunk_data['unchanged_chunks']
                     chunks_needing_embedding = chunk_data['chunks_needing_embedding']
                     new_embeddings = chunk_data['new_embeddings']
+                    field_embeddings = chunk_data['field_embeddings']
 
                     # Apply similarity filtering only to new chunks if requested
                     if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
@@ -1005,17 +1020,17 @@ class LocalVectorDB(BaseVectorDB):
                                            chunk_data['content_hash'], chunk_data['metadata'])]
                         chunks_data = [(chunk_data['doc_id'], chunk) for chunk in all_chunks]
 
-                        if mode == "upsert":
-                            # Remove old data that's not being reused
-                            self._remove_old_chunks_batch(
-                                chunk_data['doc_id'],
-                                chunk_data['chunk_indices_to_remove'],
-                                chunk_data['faiss_ids_to_remove']
-                            )
-
                         with self.connection_pool.get_connection() as conn:
                             conn.execute('BEGIN')
                             try:
+                                if mode == "upsert":
+                                    # Remove old data that's not being reused (including metadata embeddings)
+                                    self._remove_metadata_embeddings(conn, chunk_data['doc_id'])
+                                    self._remove_old_chunks_batch(
+                                        chunk_data['doc_id'],
+                                        chunk_data['chunk_indices_to_remove'],
+                                        chunk_data['faiss_ids_to_remove']
+                                    )
 
                                 self._insert_documents_bulk(conn, documents_data, mode=mode)
                                 # Add only new embeddings to FAISS
@@ -1023,11 +1038,17 @@ class LocalVectorDB(BaseVectorDB):
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
 
                                 self._insert_chunks_bulk(conn, chunks_data)
+                                
+                                # Store metadata field embeddings
+                                if field_embeddings:
+                                    self._store_metadata_embeddings(conn, chunk_data['doc_id'], field_embeddings)
+
                                 conn.commit()
 
                                 logger.debug(f"Processed {chunk_data['doc_id']}: "
                                              f"{len(unchanged_chunks)} reused, "
-                                             f"{len(chunks_needing_embedding)} new chunks")
+                                             f"{len(chunks_needing_embedding)} new chunks, "
+                                             f"{len(field_embeddings)} metadata fields embedded")
 
                             except Exception:
                                 conn.rollback()
@@ -1296,18 +1317,27 @@ class LocalVectorDB(BaseVectorDB):
             if isinstance(ids, str):
                 ids = [ids]
 
-            # Get FAISS IDs for chunks to remove
+            # Get FAISS IDs for chunks and metadata to remove
             faiss_ids_to_remove = []
 
             with self.connection_pool.get_connection() as conn:
                 placeholders = ','.join(['?'] * len(ids))
+                
+                # Get chunk FAISS IDs
                 cursor = conn.execute(
                     f'SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
                     ids
                 )
-                faiss_ids_to_remove = [row['faiss_id'] for row in cursor.fetchall()]
+                faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                
+                # Get metadata field FAISS IDs
+                cursor = conn.execute(
+                    f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
+                    ids
+                )
+                faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
 
-                # Delete documents (cascades to chunks)
+                # Delete documents (cascades to chunks and column_embeddings)
                 cursor = conn.execute(f'DELETE FROM documents WHERE id IN ({placeholders})', ids)
                 deleted_count = cursor.rowcount
                 conn.commit()
@@ -2178,6 +2208,245 @@ class LocalVectorDB(BaseVectorDB):
         merged.append((current_start, current_end, first_chunk, first_result))
 
         return merged
+    
+    def query_multi_column(
+            self,
+            query: str,
+            *,
+            columns: Optional[List[str]] = None,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List[QueryResult]:
+        """
+        Query across multiple columns (main content + embedding-enabled metadata fields)
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        columns : Optional[List[str]]
+            Specific columns to search. If None, searches all embedding-enabled fields
+            plus main content. Use 'content' for main document content.
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters for the scoring method
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results with column attribution
+        """
+        with self._read_write_lock.read_lock():
+            # Determine which columns to search
+            embedding_enabled_fields = self._get_embedding_enabled_fields()
+            
+            if columns is None:
+                # Search all embedding-enabled fields plus main content
+                search_columns = ['content'] + list(embedding_enabled_fields.keys())
+            else:
+                # Validate requested columns
+                search_columns = []
+                for col in columns:
+                    if col == 'content':
+                        search_columns.append(col)
+                    elif col in embedding_enabled_fields:
+                        search_columns.append(col)
+                    else:
+                        logger.warning(f"Column '{col}' is not embedding-enabled, skipping")
+                
+                if not search_columns:
+                    logger.warning("No valid columns specified for search")
+                    return []
+            
+            all_results = []
+            
+            # Search main content if requested
+            if 'content' in search_columns:
+                content_results = self.query(
+                    query=query,
+                    search_type=search_type,
+                    return_type='chunks',  # Always get chunks for multi-column
+                    k=k * 2,  # Get more results to allow for proper ranking
+                    score_threshold=score_threshold,
+                    filters=filters,
+                    vector_weight=vector_weight,
+                    document_scoring_method=document_scoring_method,
+                    document_scoring_options=document_scoring_options
+                )
+                
+                # Add column attribution
+                for result in content_results:
+                    result.metadata = result.metadata or {}
+                    result.metadata['_search_column'] = 'content'
+                    all_results.append(result)
+            
+            # Search metadata fields
+            metadata_columns = [col for col in search_columns if col != 'content']
+            if metadata_columns and search_type in ['vector', 'hybrid']:
+                for field_name in metadata_columns:
+                    field_results = self._search_metadata_field(
+                        query=query,
+                        field_name=field_name,
+                        k=k * 2,
+                        score_threshold=score_threshold,
+                        filters=filters
+                    )
+                    
+                    # Add column attribution
+                    for result in field_results:
+                        result.metadata = result.metadata or {}
+                        result.metadata['_search_column'] = field_name
+                        all_results.append(result)
+            
+            # Sort all results by score and limit
+            all_results.sort(key=lambda x: x.score, reverse=True)
+            limited_results = all_results[:k]
+            
+            if return_type == 'documents':
+                # Aggregate chunks into documents
+                return self._aggregate_document_scores_with_method(
+                    limited_results, 
+                    document_scoring_method, 
+                    document_scoring_options
+                )
+            else:
+                return limited_results
+    
+    def _search_metadata_field(
+            self,
+            query: str,
+            field_name: str,
+            k: int,
+            score_threshold: float,
+            filters: Optional[Dict[str, Any]]
+    ) -> List[QueryResult]:
+        """
+        Search a specific metadata field's embeddings
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        field_name : str
+            Name of metadata field to search
+        k : int
+            Maximum results to return
+        score_threshold : float
+            Minimum score threshold
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results for this field
+        """
+        # Generate query embedding
+        if hasattr(self.embedding_provider, 'embed_query'):
+            query_embedding = self.embedding_provider.embed_query(query)
+        else:
+            # Fallback to embed_sync for single query
+            query_embedding = self.embedding_provider.embed_sync([query])[0]
+        
+        with self.connection_pool.get_connection() as conn:
+            # Get all metadata field embeddings
+            cursor = conn.execute("""
+                SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
+                FROM column_embeddings ce
+                JOIN documents d ON ce.document_id = d.id
+                WHERE ce.field_name = ?
+            """, (field_name,))
+            
+            field_embedding_data = cursor.fetchall()
+            
+            if not field_embedding_data:
+                return []
+            
+            # Extract FAISS IDs for this field
+            faiss_ids = [row['faiss_id'] for row in field_embedding_data]
+            
+            # Search in FAISS index
+            if not faiss_ids:
+                return []
+                
+            # Get embeddings for these FAISS IDs
+            field_embeddings = self._reconstruct_embeddings_batch(faiss_ids)
+            
+            if field_embeddings.size == 0:
+                return []
+            
+            # Compute similarities
+            query_embedding_2d = query_embedding.reshape(1, -1)
+            similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
+            
+            # Convert to scores (higher is better)
+            scores = (similarities + 1) / 2  # Normalize to 0-1
+            
+            # Filter by score threshold
+            valid_indices = np.where(scores >= score_threshold)[0]
+            
+            if len(valid_indices) == 0:
+                return []
+            
+            # Sort by score and limit
+            sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
+            
+            results = []
+            for idx in sorted_indices:
+                row_data = field_embedding_data[idx]
+                
+                # Get document metadata
+                doc_metadata = self._get_document_metadata(conn, row_data['document_id'])
+                
+                # Create result
+                result = QueryResult(
+                    id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
+                    content=str(doc_metadata.get(field_name, "")),
+                    score=float(scores[idx]),
+                    document_id=row_data['document_id'],
+                    metadata=doc_metadata,
+                    type='chunk'
+                )
+                results.append(result)
+            
+            # Apply metadata filters if provided
+            if filters:
+                results = [r for r in results if matches_metadata_filter(r.metadata, filters)]
+            
+            return results
+    
+    def _get_document_metadata(self, conn: sqlite3.Connection, document_id: str) -> Dict[str, Any]:
+        """Get metadata for a single document"""
+        if not self.metadata_schema:
+            return {}
+            
+        columns = ['id'] + list(self.metadata_schema.keys())
+        cursor = conn.execute(f"SELECT {', '.join(columns)} FROM documents WHERE id = ?", (document_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            return {}
+            
+        return {col: row[col] for col in columns[1:]}  # Exclude 'id'
 
     def _aggregate_document_scores_with_method(
             self,
@@ -3127,6 +3396,149 @@ class LocalVectorDB(BaseVectorDB):
             row = cursor.fetchone()
             return row['count'] if row else 0
 
+
+    #############################
+    # Metadata Embedding Methods #
+    #############################
+    
+    def _get_embedding_enabled_fields(self) -> Dict[str, MetadataField]:
+        """Get all metadata fields that have embedding_enabled=True"""
+        return {
+            field_name: field_def 
+            for field_name, field_def in self.metadata_schema.items()
+            if field_def.embedding_enabled
+        }
+    
+    def _track_column_embedding(
+        self,
+        conn: sqlite3.Connection,
+        document_id: str,
+        field_name: str,
+        chunk_index: int,
+        faiss_id: int
+    ) -> None:
+        """Track a metadata field embedding in the column_embeddings table"""
+        conn.execute("""
+            INSERT OR REPLACE INTO column_embeddings 
+            (document_id, field_name, chunk_index, faiss_id)
+            VALUES (?, ?, ?, ?)
+        """, (document_id, field_name, chunk_index, faiss_id))
+    
+    def _generate_metadata_embeddings(
+        self,
+        metadata: Dict[str, Any],
+        embedding_enabled_fields: Dict[str, MetadataField],
+        batch_size: int = 100
+    ) -> Dict[str, np.ndarray]:
+        """
+        Generate embeddings for metadata fields that have embedding_enabled=True
+        
+        Parameters
+        ----------
+        metadata : Dict[str, Any]
+            Document metadata
+        embedding_enabled_fields : Dict[str, MetadataField]
+            Fields that need embeddings
+        batch_size : int
+            Batch size for embedding generation
+            
+        Returns
+        -------
+        Dict[str, np.ndarray]
+            Field name to embeddings mapping
+        """
+        field_embeddings = {}
+        
+        for field_name, field_def in embedding_enabled_fields.items():
+            field_value = metadata.get(field_name)
+            
+            if field_value is None:
+                continue
+                
+            # Convert value to text for embedding
+            if field_def.type == MetadataFieldType.JSON:
+                text_value = json.dumps(field_value)
+            else:
+                text_value = str(field_value)
+            
+            # Chunk the field value if it's long
+            field_chunks = self.chunker.chunk(text_value)
+            
+            if field_chunks:
+                # Generate embeddings for all chunks
+                chunk_texts = [chunk.content for chunk in field_chunks]
+                embeddings = self.embedding_provider.embed_sync(chunk_texts, batch_size)
+                field_embeddings[field_name] = embeddings
+                
+        return field_embeddings
+    
+    def _store_metadata_embeddings(
+        self,
+        conn: sqlite3.Connection,
+        document_id: str,
+        field_embeddings: Dict[str, np.ndarray]
+    ) -> None:
+        """
+        Store metadata field embeddings in FAISS and track in column_embeddings table
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            Database connection
+        document_id : str
+            Document ID
+        field_embeddings : Dict[str, np.ndarray]
+            Field name to embeddings mapping
+        """
+        for field_name, embeddings in field_embeddings.items():
+            if embeddings.size == 0:
+                continue
+                
+            # Add embeddings to FAISS
+            start_id = self.index.ntotal
+            if hasattr(self.index, 'add_with_ids'):
+                # Use add_with_ids for IndexIDMap
+                ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
+                self.index.add_with_ids(embeddings, ids)
+            else:
+                self.index.add(embeddings)
+            
+            # Track in column_embeddings table
+            for chunk_index, faiss_id in enumerate(range(start_id, self.index.ntotal)):
+                self._track_column_embedding(conn, document_id, field_name, chunk_index, faiss_id)
+    
+    def _remove_metadata_embeddings(
+        self,
+        conn: sqlite3.Connection,
+        document_id: str
+    ) -> None:
+        """
+        Remove metadata field embeddings for a document
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            Database connection
+        document_id : str
+            Document ID to remove embeddings for
+        """
+        # Get FAISS IDs for metadata embeddings
+        cursor = conn.execute("""
+            SELECT faiss_id FROM column_embeddings 
+            WHERE document_id = ?
+        """, (document_id,))
+        
+        faiss_ids = [row['faiss_id'] for row in cursor.fetchall()]
+        
+        if faiss_ids:
+            # Remove from FAISS
+            self._remove_old_vectors_bulk(faiss_ids)
+            
+            # Remove from tracking table
+            conn.execute("""
+                DELETE FROM column_embeddings 
+                WHERE document_id = ?
+            """, (document_id,))
 
     #############################
     # Async methods and helpers #
@@ -5156,6 +5568,251 @@ class LocalVectorDB(BaseVectorDB):
             # Reconstruction of embeddings from faiss is cpu/gpu bound, so use the event loop
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None,  self._reconstruct_embeddings_batch, faiss_ids)
+
+    async def query_multi_column_async(
+            self,
+            query: str,
+            *,
+            columns: Optional[List[str]] = None,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List[QueryResult]:
+        """
+        Async query across multiple columns (main content + embedding-enabled metadata fields)
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        columns : Optional[List[str]]
+            Specific columns to search. If None, searches all embedding-enabled fields
+            plus main content. Use 'content' for main document content.
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters for the scoring method
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results with column attribution
+        """
+        self._ensure_async_pool()
+        
+        # Determine which columns to search
+        embedding_enabled_fields = self._get_embedding_enabled_fields()
+        
+        if columns is None:
+            # Search all embedding-enabled fields plus main content
+            search_columns = ['content'] + list(embedding_enabled_fields.keys())
+        else:
+            # Validate requested columns
+            search_columns = []
+            for col in columns:
+                if col == 'content':
+                    search_columns.append(col)
+                elif col in embedding_enabled_fields:
+                    search_columns.append(col)
+                else:
+                    logger.warning(f"Column '{col}' is not embedding-enabled, skipping")
+            
+            if not search_columns:
+                logger.warning("No valid columns specified for search")
+                return []
+        
+        all_results = []
+        
+        # Search main content if requested
+        if 'content' in search_columns:
+            content_results = await self.query_async(
+                query=query,
+                search_type=search_type,
+                return_type='chunks',  # Always get chunks for multi-column
+                k=k * 2,  # Get more results to allow for proper ranking
+                score_threshold=score_threshold,
+                filters=filters,
+                vector_weight=vector_weight,
+                document_scoring_method=document_scoring_method,
+                document_scoring_options=document_scoring_options
+            )
+            
+            # Add column attribution
+            for result in content_results:
+                result.metadata = result.metadata or {}
+                result.metadata['_search_column'] = 'content'
+                all_results.append(result)
+        
+        # Search metadata fields
+        metadata_columns = [col for col in search_columns if col != 'content']
+        if metadata_columns and search_type in ['vector', 'hybrid']:
+            # Create tasks for concurrent metadata field searches
+            metadata_search_tasks = []
+            for field_name in metadata_columns:
+                task = asyncio.create_task(
+                    self._search_metadata_field_async(
+                        query=query,
+                        field_name=field_name,
+                        k=k * 2,
+                        score_threshold=score_threshold,
+                        filters=filters
+                    )
+                )
+                metadata_search_tasks.append((field_name, task))
+            
+            # Wait for all metadata searches to complete
+            for field_name, task in metadata_search_tasks:
+                field_results = await task
+                
+                # Add column attribution
+                for result in field_results:
+                    result.metadata = result.metadata or {}
+                    result.metadata['_search_column'] = field_name
+                    all_results.append(result)
+        
+        # Sort all results by score and limit
+        all_results.sort(key=lambda x: x.score, reverse=True)
+        limited_results = all_results[:k]
+        
+        if return_type == 'documents':
+            # Aggregate chunks into documents
+            return await self._aggregate_document_scores_with_method_async(
+                limited_results, 
+                document_scoring_method, 
+                document_scoring_options
+            )
+        else:
+            return limited_results
+
+    async def _search_metadata_field_async(
+            self,
+            query: str,
+            field_name: str,
+            k: int,
+            score_threshold: float,
+            filters: Optional[Dict[str, Any]]
+    ) -> List[QueryResult]:
+        """
+        Async search a specific metadata field's embeddings
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        field_name : str
+            Name of metadata field to search
+        k : int
+            Maximum results to return
+        score_threshold : float
+            Minimum score threshold
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results for this field
+        """
+        # Generate query embedding asynchronously
+        embeddings = await self.embedding_provider.embed_batch([query])
+        query_embedding = embeddings[0]
+        
+        async with self.async_connection_pool.get_connection_context() as conn:
+            # Get all metadata field embeddings
+            cursor = await conn.execute("""
+                SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
+                FROM column_embeddings ce
+                JOIN documents d ON ce.document_id = d.id
+                WHERE ce.field_name = ?
+            """, (field_name,))
+            
+            field_embedding_data = await cursor.fetchall()
+            
+            if not field_embedding_data:
+                return []
+            
+            # Extract FAISS IDs for this field
+            faiss_ids = [row['faiss_id'] for row in field_embedding_data]
+            
+            if not faiss_ids:
+                return []
+            
+            # Get embeddings for these FAISS IDs (run in executor as FAISS is not async)
+            loop = asyncio.get_event_loop()
+            field_embeddings = await loop.run_in_executor(
+                None, self._reconstruct_embeddings_batch, faiss_ids
+            )
+            
+            if field_embeddings.size == 0:
+                return []
+            
+            # Compute similarities (run in executor for numpy operations)
+            def compute_similarities():
+                query_embedding_2d = query_embedding.reshape(1, -1)
+                similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
+                # Convert to scores (higher is better)
+                scores = (similarities + 1) / 2  # Normalize to 0-1
+                return scores
+            
+            scores = await loop.run_in_executor(None, compute_similarities)
+            
+            # Filter by score threshold
+            valid_indices = np.where(scores >= score_threshold)[0]
+            
+            if len(valid_indices) == 0:
+                return []
+            
+            # Sort by score and limit
+            sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
+            
+            results = []
+            
+            # Get document metadata for all results in batch
+            doc_ids = [field_embedding_data[idx]['document_id'] for idx in sorted_indices]
+            doc_metadata_batch = await self._get_document_metadata_async(doc_ids)
+            
+            for idx in sorted_indices:
+                row_data = field_embedding_data[idx]
+                doc_metadata = doc_metadata_batch.get(row_data['document_id'], {})
+                
+                # Create result
+                result = QueryResult(
+                    id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
+                    content=str(doc_metadata.get(field_name, "")),
+                    score=float(scores[idx]),
+                    document_id=row_data['document_id'],
+                    metadata=doc_metadata,
+                    type='chunk'
+                )
+                results.append(result)
+            
+            # Apply metadata filters if provided
+            if filters:
+                loop = asyncio.get_event_loop()
+                # Use the existing sync filter function in executor
+                def apply_filters():
+                    return [r for r in results if matches_metadata_filter(r.metadata, filters)]
+                
+                results = await loop.run_in_executor(None, apply_filters)
+            
+            return results
 
     async def __aenter__(self):
         self._ensure_async_pool()

@@ -123,18 +123,27 @@ class MetadataField:
         Whether the field is required, by default False.
     default_value : Any, optional
         Default value for the field if not provided, by default None.
+    embedding_enabled : bool, optional
+        Whether this field should have its own embeddings for vector search.
+        Only applicable to TEXT and JSON fields, by default False.
+    fts_enabled : bool, optional
+        Whether this field should have full-text search enabled.
+        Only applicable to TEXT fields, by default False.
 
     """
     type: MetadataFieldType | str | Type
     indexed: bool = False
     required: bool = False
     default_value: Any = None
+    embedding_enabled: bool = False
+    fts_enabled: bool = False
 
     def __post_init__(self):
         """
         Post-initialization processing to resolve type into MetadataFieldType.
 
         Converts string or builtin types to corresponding MetadataFieldType.
+        Validates embedding_enabled and fts_enabled based on field type.
 
         Returns
         -------
@@ -152,6 +161,18 @@ class MetadataField:
             self.type = MetadataFieldType.BOOLEAN
         elif self.type in (dict, list):
             self.type = MetadataFieldType.JSON
+        
+        # Validate embedding_enabled - only TEXT and JSON fields can have embeddings
+        if self.embedding_enabled and self.type not in (MetadataFieldType.TEXT, MetadataFieldType.JSON):
+            raise ValueError(f"embedding_enabled can only be True for TEXT or JSON fields, not {self.type}")
+        
+        # Validate fts_enabled - only TEXT fields can have FTS
+        if self.fts_enabled and self.type != MetadataFieldType.TEXT:
+            raise ValueError(f"fts_enabled can only be True for TEXT fields, not {self.type}")
+        
+        # Auto-enable FTS for indexed TEXT fields if not explicitly set
+        if self.type == MetadataFieldType.TEXT and self.indexed and not self.fts_enabled:
+            self.fts_enabled = True
 
 
 @dataclass
@@ -842,26 +863,43 @@ class DatabaseSchema:
         field_type TEXT NOT NULL CHECK(field_type IN ('text', 'integer', 'real', 'boolean', 'date', 'json')),
         indexed BOOLEAN DEFAULT FALSE,
         required BOOLEAN DEFAULT FALSE,
-        default_value TEXT
+        default_value TEXT,
+        embedding_enabled BOOLEAN DEFAULT FALSE,
+        fts_enabled BOOLEAN DEFAULT FALSE
+    )"""
+    
+    BASE_COLUMN_EMBEDDINGS_SCHEMA = """CREATE TABLE IF NOT EXISTS column_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT NOT NULL,
+        field_name TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        faiss_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+        FOREIGN KEY (field_name) REFERENCES metadata_schema(field_name),
+        UNIQUE(document_id, field_name, chunk_index)
     )"""
 
     BASE_SCHEMA = {
         "documents": BASE_DOCUMENTS_SCHEMA,
         "chunks": BASE_CHUNKS_SCHEMA,
         "metadata_schema": BASE_METADATA_SCHEMA,
+        "column_embeddings": BASE_COLUMN_EMBEDDINGS_SCHEMA,
         "config": """CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )"""
     }
 
-    # Updated base indexes to include content_hash
+    # Updated base indexes to include content_hash and column_embeddings
     BASE_INDEXES = [
         "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)",
         "CREATE INDEX IF NOT EXISTS idx_chunks_faiss_id ON chunks(faiss_id)",
         "CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash)",  # New index
         "CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)",
-        "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)"
+        "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON column_embeddings(document_id, field_name)",
+        "CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)"
     ]
 
     BASE_COLUMNS = {
@@ -929,14 +967,16 @@ class DatabaseSchema:
 
             # Store schema definition
             conn.execute("""INSERT OR REPLACE INTO metadata_schema 
-                (field_name, field_type, indexed, required, default_value)
-                VALUES (?, ?, ?, ?, ?)
+                (field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 field_name,
                 field_def.type.value,
                 field_def.indexed,
                 field_def.required,
-                json.dumps(field_def.default_value) if field_def.default_value is not None else None
+                json.dumps(field_def.default_value) if field_def.default_value is not None else None,
+                field_def.embedding_enabled,
+                field_def.fts_enabled
             ))
 
             # Add column to documents table
@@ -982,18 +1022,102 @@ class DatabaseSchema:
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
                 conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+            
+            # Create FTS table if requested
+            if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
+                fts_table_name = f'fts_{field_name}'
+                conn.execute(f'''
+                    CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                    USING fts5(document_id, content, tokenize='trigram')
+                ''')
+                logger.info(f"Created FTS table: {fts_table_name}")
+                
+                # Create triggers to keep FTS in sync
+                conn.execute(f'''
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert 
+                    AFTER INSERT ON documents
+                    WHEN NEW.{field_name} IS NOT NULL
+                    BEGIN
+                        INSERT INTO {fts_table_name}(document_id, content) 
+                        VALUES (NEW.id, NEW.{field_name});
+                    END
+                ''')
+                
+                conn.execute(f'''
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update 
+                    AFTER UPDATE OF {field_name} ON documents
+                    WHEN NEW.{field_name} IS NOT NULL
+                    BEGIN
+                        DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
+                        INSERT INTO {fts_table_name}(document_id, content) 
+                        VALUES (NEW.id, NEW.{field_name});
+                    END
+                ''')
+                
+                conn.execute(f'''
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete 
+                    AFTER DELETE ON documents
+                    BEGIN
+                        DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
+                    END
+                ''')
+
+    def _ensure_enhanced_metadata_schema(self, db_connection):
+        """
+        Ensure metadata_schema table has embedding_enabled and fts_enabled columns.
+        This handles migration from older database versions.
+        """
+        with db_connection as conn:
+            # Check if the columns exist
+            cursor = conn.execute("PRAGMA table_info(metadata_schema)")
+            columns = {row[1] for row in cursor.fetchall()}
+            
+            if 'embedding_enabled' not in columns:
+                logger.info("Migrating metadata_schema table to add embedding_enabled column")
+                conn.execute("ALTER TABLE metadata_schema ADD COLUMN embedding_enabled BOOLEAN DEFAULT FALSE")
+            
+            if 'fts_enabled' not in columns:
+                logger.info("Migrating metadata_schema table to add fts_enabled column")
+                conn.execute("ALTER TABLE metadata_schema ADD COLUMN fts_enabled BOOLEAN DEFAULT FALSE")
+                
+                # Auto-enable FTS for indexed TEXT fields
+                conn.execute("""
+                    UPDATE metadata_schema 
+                    SET fts_enabled = TRUE 
+                    WHERE field_type = 'text' AND indexed = TRUE
+                """)
+            
+            # Ensure column_embeddings table exists
+            conn.execute(self.BASE_COLUMN_EMBEDDINGS_SCHEMA)
+            
+            # Create indexes for column_embeddings if not already present
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON column_embeddings(document_id, field_name)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)")
+            
+            conn.commit()
 
     def load_metadata_schema(self, db_connection=None) -> Dict[str, MetadataField]:
         """Load metadata schema from database"""
         if db_connection is None:
             db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
+        # First ensure the schema is up to date
+        self._ensure_enhanced_metadata_schema(db_connection)
+        
         with db_connection as conn:
             cursor = conn.execute("SELECT * FROM metadata_schema")
             schema = {}
 
             for row in cursor.fetchall():
-                field_name, field_type, indexed, required, default_value = row
+                # Handle both old schema (5 columns) and new schema (7 columns)
+                if len(row) == 5:
+                    # Old schema - no embedding_enabled or fts_enabled
+                    field_name, field_type, indexed, required, default_value = row
+                    embedding_enabled = False
+                    fts_enabled = False
+                else:
+                    # New schema with embedding_enabled and fts_enabled
+                    field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled = row
 
                 # Parse default value
                 parsed_default = None
@@ -1007,7 +1131,9 @@ class DatabaseSchema:
                     type=MetadataFieldType(field_type),
                     indexed=bool(indexed),
                     required=bool(required),
-                    default_value=parsed_default
+                    default_value=parsed_default,
+                    embedding_enabled=bool(embedding_enabled),
+                    fts_enabled=bool(fts_enabled)
                 )
 
             self.metadata_fields = schema

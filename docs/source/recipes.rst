@@ -459,6 +459,238 @@ Process multiple file types from a directory automatically.
    # Usage
    results = process_mixed_directory(db, "./mixed_documents", recursive=True)
 
+Multi-Column Search Recipes
+============================
+
+Basic Multi-Column Search
+-------------------------
+
+Enable embeddings on metadata fields to search across both content and metadata:
+
+.. code-block:: python
+
+   from localvectordb import LocalVectorDB
+   from localvectordb.core import MetadataField, MetadataFieldType
+
+   def create_multi_column_db():
+       """Create a database with multi-column search capabilities."""
+       return LocalVectorDB(
+           name="multi_search_db",
+           base_path="./multi_db",
+           metadata_schema={
+               'title': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   indexed=True,
+                   embedding_enabled=True,  # Enable vector search on title
+                   fts_enabled=True  # Also enable FTS
+               ),
+               'abstract': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   embedding_enabled=True  # Enable embeddings without indexing
+               ),
+               'summary': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   embedding_enabled=True
+               ),
+               'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+               'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+               'tags': MetadataField(type=MetadataFieldType.JSON, embedding_enabled=True)
+           },
+           embedding_provider="ollama",
+           embedding_model="nomic-embed-text"
+       )
+
+   # Usage example
+   db = create_multi_column_db()
+   
+   # Add documents with rich metadata
+   db.upsert(
+       documents=["Full document content about machine learning..."],
+       metadata=[{
+           'title': 'Introduction to Deep Learning',
+           'abstract': 'This paper explores neural networks and deep learning architectures',
+           'summary': 'A comprehensive guide to modern AI techniques',
+           'category': 'AI',
+           'author': 'Dr. Smith',
+           'tags': ['machine learning', 'neural networks', 'AI']
+       }]
+   )
+   
+   # Search across all embedding-enabled fields
+   results = db.query_multi_column("neural networks", k=5)
+   for result in results:
+       column = result.metadata.get('_search_column', 'unknown')
+       print(f"Found in {column}: {result.content[:100]}... (Score: {result.score:.3f})")
+
+Advanced Multi-Column Queries
+-----------------------------
+
+Control which columns to search and combine with filters:
+
+.. code-block:: python
+
+   # Search only specific columns
+   title_abstract_results = db.query_multi_column(
+       "machine learning",
+       columns=['title', 'abstract'],  # Only search these fields
+       search_type='vector',
+       k=10,
+       score_threshold=0.7
+   )
+   
+   # Multi-column search with metadata filtering
+   filtered_results = db.query_multi_column(
+       "deep learning",
+       columns=['content', 'title', 'summary'],
+       filters={'category': 'AI', 'author': {'$ne': 'Anonymous'}},
+       k=5
+   )
+   
+   # Hybrid multi-column search
+   hybrid_results = db.query_multi_column(
+       "transformer architecture",
+       search_type='hybrid',
+       vector_weight=0.8,
+       k=10
+   )
+
+Scientific Paper Search
+-----------------------
+
+Complete example for searching academic papers across multiple fields:
+
+.. code-block:: python
+
+   def setup_paper_search():
+       """Setup comprehensive paper search database."""
+       db = LocalVectorDB(
+           name="papers",
+           base_path="./paper_db",
+           metadata_schema={
+               'title': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   indexed=True,
+                   required=True,
+                   embedding_enabled=True,
+                   fts_enabled=True
+               ),
+               'abstract': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   embedding_enabled=True
+               ),
+               'introduction': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   embedding_enabled=True
+               ),
+               'conclusion': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   embedding_enabled=True
+               ),
+               'authors': MetadataField(type=MetadataFieldType.JSON),
+               'year': MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
+               'journal': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+               'citations': MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
+               'keywords': MetadataField(
+                   type=MetadataFieldType.JSON,
+                   embedding_enabled=True  # JSON fields can have embeddings too
+               )
+           },
+           embedding_model="nomic-embed-text",
+           chunk_size=1000
+       )
+       return db
+   
+   def search_papers(db, query: str, min_citations: int = 10):
+       """
+       Search papers across multiple sections with citation filtering.
+       """
+       results = db.query_multi_column(
+           query,
+           columns=['content', 'title', 'abstract', 'introduction', 'conclusion'],
+           filters={'citations': {'$gte': min_citations}},
+           search_type='hybrid',
+           k=20,
+           document_scoring_method='frequency_boost'
+       )
+       
+       # Group results by column for analysis
+       by_column = {}
+       for result in results:
+           column = result.metadata.get('_search_column', 'unknown')
+           if column not in by_column:
+               by_column[column] = []
+           by_column[column].append(result)
+       
+       # Show distribution
+       print(f"Results distribution for query '{query}':")
+       for column, items in by_column.items():
+           avg_score = sum(r.score for r in items) / len(items)
+           print(f"  {column}: {len(items)} results (avg score: {avg_score:.3f})")
+       
+       return results
+   
+   # Usage
+   db = setup_paper_search()
+   results = search_papers(db, "transformer attention mechanisms", min_citations=50)
+
+Column Attribution Analysis
+---------------------------
+
+Analyze which columns are most relevant for different queries:
+
+.. code-block:: python
+
+   def analyze_column_relevance(db, queries: list, columns: list = None):
+       """
+       Analyze which columns are most relevant for different query types.
+       """
+       results_analysis = {}
+       
+       for query in queries:
+           results = db.query_multi_column(
+               query,
+               columns=columns,
+               k=20
+           )
+           
+           # Analyze column distribution
+           column_scores = {}
+           for result in results:
+               col = result.metadata.get('_search_column', 'content')
+               if col not in column_scores:
+                   column_scores[col] = []
+               column_scores[col].append(result.score)
+           
+           # Calculate statistics
+           query_stats = {}
+           for col, scores in column_scores.items():
+               query_stats[col] = {
+                   'count': len(scores),
+                   'avg_score': sum(scores) / len(scores),
+                   'max_score': max(scores),
+                   'min_score': min(scores)
+               }
+           
+           results_analysis[query] = query_stats
+       
+       return results_analysis
+   
+   # Example usage
+   queries = [
+       "machine learning algorithms",
+       "experimental results",
+       "future work",
+       "related research"
+   ]
+   
+   analysis = analyze_column_relevance(db, queries)
+   
+   for query, stats in analysis.items():
+       print(f"\nQuery: '{query}'")
+       for col, metrics in stats.items():
+           print(f"  {col}: {metrics['count']} hits, "
+                 f"avg score {metrics['avg_score']:.3f}")
+
 Server Setup and JavaScript Usage
 ==================================
 

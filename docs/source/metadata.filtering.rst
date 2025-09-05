@@ -19,6 +19,39 @@ Key Features
 * **Type-safe operations** with schema validation
 * **JSON/Array support** for complex data structures
 * **Performance optimized** with proper indexing
+* **Multi-column embeddings** - Enable vector search on metadata fields (v1.1+)
+* **Full-text search** - FTS5 support for metadata fields
+
+Metadata Field Attributes
+-------------------------
+
+When defining metadata fields, you can specify several attributes:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 15 65
+
+   * - Attribute
+     - Default
+     - Description
+   * - ``type``
+     - Required
+     - Field type: TEXT, INTEGER, REAL, BOOLEAN, DATE, or JSON
+   * - ``indexed``
+     - False
+     - Create database index for faster filtering
+   * - ``required``
+     - False
+     - Field must be provided when adding documents
+   * - ``default_value``
+     - None
+     - Default value for optional fields
+   * - ``embedding_enabled``
+     - False
+     - Generate embeddings for vector search (TEXT/JSON only)
+   * - ``fts_enabled``
+     - False
+     - Enable full-text search with FTS5 (TEXT only)
 
 Supported Operators
 -------------------
@@ -515,9 +548,14 @@ Create indexes on frequently filtered fields:
 
    from localvectordb.core import MetadataField, MetadataFieldType
 
-   # Define schema with indexed fields
+   # Define schema with indexed fields and optional embeddings
    metadata_schema = {
        "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+       "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True, 
+                            embedding_enabled=True,  # Enable vector search on title
+                            fts_enabled=True),        # Enable full-text search
+       "abstract": MetadataField(type=MetadataFieldType.TEXT, 
+                               embedding_enabled=True),  # Enable embeddings without indexing
        "year": MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
        "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
        "rating": MetadataField(type=MetadataFieldType.REAL, indexed=True),
