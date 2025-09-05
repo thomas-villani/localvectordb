@@ -88,9 +88,13 @@ import click
               type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
               help='Path to config file.',
               envvar='LVDB_SERVER_CONFIG')
+@click.option('--db-folder', '-d', default=None,
+              type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
+              help='The directory containing vector databases.',
+              envvar='LVDB_DATABASE_ROOT_DIR')
 @click.version_option(None, "-V", "--version", package_name="localvectordb", message="%(version)s")
 @click.pass_context
-def cli(ctx, config):
+def cli(ctx, config, db_folder):
     """LocalVectorDB Server command-line interface v1.0.
 
     Main entry point for the LocalVectorDB server CLI. Provides commands for
@@ -114,7 +118,11 @@ def cli(ctx, config):
     from localvectordb_server.config import load_config
     cfg = load_config(config_path)
     api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
-    ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path}
+
+    if not db_folder:
+        db_folder = cfg.database.root_dir
+
+    ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path, 'db_folder': db_folder}
 
 
 from localvectordb_server.cli._basic import serve, create_vector_database, list_databases, delete_database

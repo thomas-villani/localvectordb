@@ -24,25 +24,20 @@ import os
 
 import click
 
-from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_OLLAMA_ERROR, EXIT_CODE_CONFIGURATION_ERROR, \
-    EXIT_CODE_ERROR
+from localvectordb_server.cli._utils import EXIT_CODE_OLLAMA_ERROR, EXIT_CODE_CONFIGURATION_ERROR, EXIT_CODE_ERROR
 
 
 @click.command()
 @click.option('--host', '-h', default=None, help='The interface to bind to (e.g. 127.0.0.1 for local serving).')
 @click.option('--port', '-p', default=None, type=int, help='The port to bind to (default = 5000).')
 @click.option('--debug', is_flag=True, help='Enable Flask debug mode.')
-# @click.option('--config', '-c', type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
-#               help='Path to config file.', envvar='LVDB_SERVER_CONFIG')
-@click.option('--db-folder', '-d', default=None, type=click.Path(dir_okay=True, exists=True, resolve_path=True),
-              help='The directory containing vector databases.')
 @click.option(
     '--log-level', '-l', default=None, type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
     help='Set the logging level. Must be one of "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"'
 )
 @click.option('--disable-ollama-check', '-x', is_flag=True, help='Disable checking for ollama on startup')
 @click.pass_context
-def serve(ctx, host, port, debug, db_folder, log_level, disable_ollama_check):
+def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     """
     Start the LocalVectorDB server.
 
@@ -58,12 +53,7 @@ def serve(ctx, host, port, debug, db_folder, log_level, disable_ollama_check):
 
     """
     config_path = ctx.obj["config_path"]
-    # config_path = find_config_file(config)
-    #
-    # if config_path:
-    #     click.secho(f"Loading configuration from `{config_path}`", fg='blue')
-    # else:
-    #     click.secho('No configuration file found. Using default configuration.', fg='yellow')
+    db_folder = ctx.obj["db_folder"]
 
     from localvectordb_server import create_app
     from localvectordb.exceptions import ConfigurationError
@@ -109,13 +99,9 @@ def serve(ctx, host, port, debug, db_folder, log_level, disable_ollama_check):
 
 
 @click.command('list')
-@click.option('--db-folder', '-f', default=None,
-              type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
-              help='The directory containing vector databases.',
-              envvar='LVDB_DATABASE_ROOT_DIR')
 @click.option("--details", "-v", is_flag=True, default=False, help="Show details")
 @click.pass_context
-def list_databases(ctx, db_folder, details):
+def list_databases(ctx, details):
     """
     List databases
 
@@ -129,9 +115,7 @@ def list_databases(ctx, db_folder, details):
         lvdb list --details
 
     """
-    if not db_folder:
-        cfg = ctx.obj["config"]
-        db_folder = cfg.database.root_dir
+    db_folder = ctx.obj["db_folder"]
 
     if os.path.isdir(db_folder):
         click.secho(f"Databases in {os.path.abspath(db_folder)}", fg="blue", err=True)
@@ -174,18 +158,10 @@ def list_databases(ctx, db_folder, details):
 @click.option('--metadata-schema', default=None,
               type=click.Choice(['documents', 'research_papers', 'code_repository', 'customer_support']),
               help='Predefined metadata schema to use')
-# @click.option('--config', '-c',
-#               type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
-#               help='Path to config file.',
-#               envvar='LVDB_SERVER_CONFIG')
-@click.option('--db-folder', '-d', default=None,
-              type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
-              help='The directory containing vector databases.',
-              envvar='LVDB_DATABASE_ROOT_DIR')
 @click.pass_context
 def create_vector_database(
         ctx, name, embedding_model, embedding_provider, chunk_size, chunking_method,
-        chunk_overlap, metadata_schema, db_folder
+        chunk_overlap, metadata_schema
         ):
     """
     Create a new vector database.
@@ -200,18 +176,7 @@ def create_vector_database(
         lvdb create mydb --metadata-schema research_papers
 
     """
-
-    if not db_folder:
-        cfg = ctx.obj["config"]
-        db_folder = cfg.database.root_dir
-
-        # Use config defaults if not specified
-        embedding_model = embedding_model or cfg.embedding.model
-        embedding_provider = embedding_provider or cfg.embedding.provider
-        chunk_size = chunk_size or cfg.database.chunk_size
-        chunking_method = chunking_method or cfg.database.chunking_method
-        chunk_overlap = chunk_overlap or cfg.database.chunk_overlap
-
+    db_folder = ctx.obj["db_folder"]
     if not db_folder:
         click.secho("No configuration found and `--db-folder` not specified.", fg="bright_red")
         click.echo(
@@ -219,6 +184,15 @@ def create_vector_database(
             "specify the location of an existing config file using `--config <path-to-config>`"
         )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    cfg = ctx.obj["config"]
+
+    # Use config defaults if not specified
+    embedding_model = embedding_model or cfg.embedding.model
+    embedding_provider = embedding_provider or cfg.embedding.provider
+    chunk_size = chunk_size or cfg.database.chunk_size
+    chunking_method = chunking_method or cfg.database.chunking_method
+    chunk_overlap = chunk_overlap or cfg.database.chunk_overlap
 
     os.makedirs(db_folder, exist_ok=True)
 
@@ -268,14 +242,6 @@ def create_vector_database(
 
 @click.command('delete')
 @click.argument('name')
-# @click.option('--config', '-c',
-#               type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
-#               help='Path to config file.',
-#               envvar='LVDB_SERVER_CONFIG')
-@click.option('--db-folder', '-d', default=None,
-              type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
-              help='The directory containing vector databases.',
-              envvar='LVDB_DATABASE_ROOT_DIR')
 @click.option('--confirm', '-y', flag_value=True, default=False, help='Pre-confirm deletion (danger!)')
 @click.pass_context
 def delete_database(ctx, name, db_folder, confirm):
@@ -292,9 +258,7 @@ def delete_database(ctx, name, db_folder, confirm):
         lvdb delete mydb --confirm
 
     """
-    if not db_folder:
-        cfg = ctx.obj["config"]
-        db_folder = cfg.database.root_dir
+    db_folder = ctx.obj["db_folder"]
 
     if not db_folder or not os.path.exists(db_folder):
         click.secho(

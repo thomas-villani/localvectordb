@@ -20,16 +20,8 @@ from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_ERROR, p
 
 @click.group('db')
 @click.argument("name")
-# @click.option('--config', '-c',
-#               type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
-#               help='Path to config file.',
-#               envvar='LVDB_SERVER_CONFIG')
-@click.option('--db-folder', '-d', default=None,
-              type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
-              help='The directory containing vector databases.',
-              envvar='LVDB_DATABASE_ROOT_DIR')
 @click.pass_context
-def db_group(ctx, name, db_folder):
+def db_group(ctx, name):
     """
     Commands related to a specific database NAME.
 
@@ -45,9 +37,11 @@ def db_group(ctx, name, db_folder):
         lvdb db mydb shell
 
     """
-    if not db_folder:
-        cfg = ctx.obj["config"]
-        db_folder = cfg.database.root_dir
+    db_folder = ctx.obj["db_folder"]
+
+    # if not db_folder:
+    #     cfg = ctx.obj["config"]
+    #     db_folder = cfg.database.root_dir
 
     if not db_folder or not os.path.exists(db_folder):
         click.secho(
@@ -65,7 +59,7 @@ def db_group(ctx, name, db_folder):
                     fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
-    ctx.obj = {"db_name": name, "db_folder": db_folder, "db": db}
+    ctx.obj = {"db_name": name, "db": db}
 
 
 @db_group.command('info')

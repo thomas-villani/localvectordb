@@ -18,10 +18,6 @@ from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_ERROR
 
 
 @click.group()
-# @click.option('--config', '-c',
-#               type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
-#               help='Path to config file.',
-#               envvar='LVDB_SERVER_CONFIG')
 @click.pass_context
 def auth(ctx):
     """
@@ -37,17 +33,7 @@ def auth(ctx):
         lvdb auth revoke-key <key_id>
         lvdb auth status
     """
-    # config_path = find_config_file(config)
-    # if not config_path:
-    #     click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
-    #     raise click.exceptions.Exit(EXIT_CODE_ERROR)
-    #
-    # from localvectordb_server.config import load_config
-    # cfg = load_config(config_path)
-    cfg = ctx.obj["config"]
-    api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
-
-    ctx.obj = {'api_key_db_path': api_key_path}
+    pass
 
 
 @auth.command('create-key')
