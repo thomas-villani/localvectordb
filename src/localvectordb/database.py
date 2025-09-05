@@ -31,25 +31,40 @@ import sqlite3
 import statistics
 import threading
 from collections import defaultdict
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Literal, Any, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import aiosqlite
 import faiss
 import numpy as np
 
-from localvectordb.query_builder import QueryBuilder
-from localvectordb._filters import FilterQueryBuilder, matches_metadata_filter, FTSQuerySanitization
+from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import (
-    DatabaseSchema, ConnectionPool, Document, Chunk, QueryResult,
-    MetadataField, MetadataFieldType, ChunkPosition, get_common_metadata_schemas, ReadWriteLock, BaseVectorDB,
-    AsyncConnectionPool, DocumentScoringMethod
+    AsyncConnectionPool,
+    BaseVectorDB,
+    Chunk,
+    ChunkPosition,
+    ConnectionPool,
+    DatabaseSchema,
+    Document,
+    DocumentScoringMethod,
+    MetadataField,
+    MetadataFieldType,
+    QueryResult,
+    ReadWriteLock,
+    get_common_metadata_schemas,
 )
-from localvectordb.embeddings import EmbeddingRegistry, EmbeddingProvider
-from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DatabaseError, \
-    MetadataFilterError, DocumentNotFoundError
+from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
+from localvectordb.exceptions import (
+    DatabaseError,
+    DatabaseNotFoundError,
+    DocumentNotFoundError,
+    DuplicateDocumentIDError,
+    MetadataFilterError,
+)
+from localvectordb.query_builder import QueryBuilder
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
@@ -807,7 +822,7 @@ class LocalVectorDB(BaseVectorDB):
 
             # Handle ID conflicts
             docs_to_insert = []
-            for doc, meta, doc_id in zip(documents, metadata, ids):
+            for doc, meta, doc_id in zip(documents, metadata, ids, strict=False):
                 if doc_id in existing_ids:
                     if errors == "raise":
                         raise DuplicateDocumentIDError(f"Document with ID '{doc_id}' already exists")
@@ -868,7 +883,7 @@ class LocalVectorDB(BaseVectorDB):
         def chunking_worker():
             """Stage 1: Document chunking + existing chunk comparison"""
             try:
-                for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids)):
+                for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids, strict=False)):
                     # Generate new chunks
                     content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
                     chunks = self.chunker.chunk(doc_text)
@@ -942,7 +957,7 @@ class LocalVectorDB(BaseVectorDB):
             try:
                 # Get metadata fields that need embeddings once
                 embedding_enabled_fields = self._get_embedding_enabled_fields()
-                
+
                 while True:
                     chunk_data = chunk_queue.get()
                     if chunk_data is None:  # Completion signal
@@ -965,7 +980,7 @@ class LocalVectorDB(BaseVectorDB):
                     else:
                         chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
                         logger.debug(f"No new embeddings needed for {chunk_data['doc_id']}")
-                    
+
                     # Generate metadata embeddings if needed
                     if embedding_enabled_fields:
                         metadata = chunk_data['metadata']
@@ -1038,7 +1053,7 @@ class LocalVectorDB(BaseVectorDB):
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
 
                                 self._insert_chunks_bulk(conn, chunks_data)
-                                
+
                                 # Store metadata field embeddings
                                 if field_embeddings:
                                     self._store_metadata_embeddings(conn, chunk_data['doc_id'], field_embeddings)
@@ -1322,14 +1337,14 @@ class LocalVectorDB(BaseVectorDB):
 
             with self.connection_pool.get_connection() as conn:
                 placeholders = ','.join(['?'] * len(ids))
-                
+
                 # Get chunk FAISS IDs
                 cursor = conn.execute(
                     f'SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
                     ids
                 )
                 faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
-                
+
                 # Get metadata field FAISS IDs
                 cursor = conn.execute(
                     f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
@@ -1552,7 +1567,7 @@ class LocalVectorDB(BaseVectorDB):
         valid_results = []
         valid_faiss_ids = []
 
-        for dist, idx in zip(distances[0], indices[0]):
+        for dist, idx in zip(distances[0], indices[0], strict=False):
             if idx == -1:  # Invalid index
                 continue
 
@@ -2208,7 +2223,7 @@ class LocalVectorDB(BaseVectorDB):
         merged.append((current_start, current_end, first_chunk, first_result))
 
         return merged
-    
+
     def query_multi_column(
             self,
             query: str,
@@ -2258,7 +2273,7 @@ class LocalVectorDB(BaseVectorDB):
         with self._read_write_lock.read_lock():
             # Determine which columns to search
             embedding_enabled_fields = self._get_embedding_enabled_fields()
-            
+
             if columns is None:
                 # Search all embedding-enabled fields plus main content
                 search_columns = ['content'] + list(embedding_enabled_fields.keys())
@@ -2272,13 +2287,13 @@ class LocalVectorDB(BaseVectorDB):
                         search_columns.append(col)
                     else:
                         logger.warning(f"Column '{col}' is not embedding-enabled, skipping")
-                
+
                 if not search_columns:
                     logger.warning("No valid columns specified for search")
                     return []
-            
+
             all_results = []
-            
+
             # Search main content if requested
             if 'content' in search_columns:
                 content_results = self.query(
@@ -2292,13 +2307,13 @@ class LocalVectorDB(BaseVectorDB):
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options
                 )
-                
+
                 # Add column attribution
                 for result in content_results:
                     result.metadata = result.metadata or {}
                     result.metadata['_search_column'] = 'content'
                     all_results.append(result)
-            
+
             # Search metadata fields
             metadata_columns = [col for col in search_columns if col != 'content']
             if metadata_columns and search_type in ['vector', 'hybrid']:
@@ -2310,27 +2325,27 @@ class LocalVectorDB(BaseVectorDB):
                         score_threshold=score_threshold,
                         filters=filters
                     )
-                    
+
                     # Add column attribution
                     for result in field_results:
                         result.metadata = result.metadata or {}
                         result.metadata['_search_column'] = field_name
                         all_results.append(result)
-            
+
             # Sort all results by score and limit
             all_results.sort(key=lambda x: x.score, reverse=True)
             limited_results = all_results[:k]
-            
+
             if return_type == 'documents':
                 # Aggregate chunks into documents
                 return self._aggregate_document_scores_with_method(
-                    limited_results, 
-                    document_scoring_method, 
+                    limited_results,
+                    document_scoring_method,
                     document_scoring_options
                 )
             else:
                 return limited_results
-    
+
     def _search_metadata_field(
             self,
             query: str,
@@ -2366,7 +2381,7 @@ class LocalVectorDB(BaseVectorDB):
         else:
             # Fallback to embed_sync for single query
             query_embedding = self.embedding_provider.embed_sync([query])[0]
-        
+
         with self.connection_pool.get_connection() as conn:
             # Get all metadata field embeddings
             cursor = conn.execute("""
@@ -2375,48 +2390,48 @@ class LocalVectorDB(BaseVectorDB):
                 JOIN documents d ON ce.document_id = d.id
                 WHERE ce.field_name = ?
             """, (field_name,))
-            
+
             field_embedding_data = cursor.fetchall()
-            
+
             if not field_embedding_data:
                 return []
-            
+
             # Extract FAISS IDs for this field
             faiss_ids = [row['faiss_id'] for row in field_embedding_data]
-            
+
             # Search in FAISS index
             if not faiss_ids:
                 return []
-                
+
             # Get embeddings for these FAISS IDs
             field_embeddings = self._reconstruct_embeddings_batch(faiss_ids)
-            
+
             if field_embeddings.size == 0:
                 return []
-            
+
             # Compute similarities
             query_embedding_2d = query_embedding.reshape(1, -1)
             similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
-            
+
             # Convert to scores (higher is better)
             scores = (similarities + 1) / 2  # Normalize to 0-1
-            
+
             # Filter by score threshold
             valid_indices = np.where(scores >= score_threshold)[0]
-            
+
             if len(valid_indices) == 0:
                 return []
-            
+
             # Sort by score and limit
             sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
-            
+
             results = []
             for idx in sorted_indices:
                 row_data = field_embedding_data[idx]
-                
+
                 # Get document metadata
                 doc_metadata = self._get_document_metadata(conn, row_data['document_id'])
-                
+
                 # Create result
                 result = QueryResult(
                     id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
@@ -2427,25 +2442,25 @@ class LocalVectorDB(BaseVectorDB):
                     type='chunk'
                 )
                 results.append(result)
-            
+
             # Apply metadata filters if provided
             if filters:
                 results = [r for r in results if matches_metadata_filter(r.metadata, filters)]
-            
+
             return results
-    
+
     def _get_document_metadata(self, conn: sqlite3.Connection, document_id: str) -> Dict[str, Any]:
         """Get metadata for a single document"""
         if not self.metadata_schema:
             return {}
-            
+
         columns = ['id'] + list(self.metadata_schema.keys())
         cursor = conn.execute(f"SELECT {', '.join(columns)} FROM documents WHERE id = ?", (document_id,))
         row = cursor.fetchone()
-        
+
         if not row:
             return {}
-            
+
         return {col: row[col] for col in columns[1:]}  # Exclude 'id'
 
     def _aggregate_document_scores_with_method(
@@ -2629,7 +2644,7 @@ class LocalVectorDB(BaseVectorDB):
                     sorted_scores = sorted(filtered_scores, reverse=True)
                     weights = [position_decay ** i for i in range(len(sorted_scores))]
 
-                    weighted_sum = sum(score * weight for score, weight in zip(sorted_scores, weights))
+                    weighted_sum = sum(score * weight for score, weight in zip(sorted_scores, weights, strict=False))
                     weight_sum = sum(weights)
 
                     method_metadata["standard_deviation"] = std_score
@@ -3233,7 +3248,7 @@ class LocalVectorDB(BaseVectorDB):
             # Ensure async connection pool is initialized
             if self.async_connection_pool is None:
                 self.async_connection_pool = AsyncConnectionPool(self.db_path, self.async_max_connections)
-            
+
             # Apply schema changes using async connection
             async with self.async_connection_pool.get_connection_context() as conn:
                 changes = await self.schema.update_metadata_schema_async(new_schema, conn, drop_columns, column_mapping)
@@ -3400,15 +3415,15 @@ class LocalVectorDB(BaseVectorDB):
     #############################
     # Metadata Embedding Methods #
     #############################
-    
+
     def _get_embedding_enabled_fields(self) -> Dict[str, MetadataField]:
         """Get all metadata fields that have embedding_enabled=True"""
         return {
-            field_name: field_def 
+            field_name: field_def
             for field_name, field_def in self.metadata_schema.items()
             if field_def.embedding_enabled
         }
-    
+
     def _track_column_embedding(
         self,
         conn: sqlite3.Connection,
@@ -3423,7 +3438,7 @@ class LocalVectorDB(BaseVectorDB):
             (document_id, field_name, chunk_index, faiss_id)
             VALUES (?, ?, ?, ?)
         """, (document_id, field_name, chunk_index, faiss_id))
-    
+
     def _generate_metadata_embeddings(
         self,
         metadata: Dict[str, Any],
@@ -3448,30 +3463,30 @@ class LocalVectorDB(BaseVectorDB):
             Field name to embeddings mapping
         """
         field_embeddings = {}
-        
+
         for field_name, field_def in embedding_enabled_fields.items():
             field_value = metadata.get(field_name)
-            
+
             if field_value is None:
                 continue
-                
+
             # Convert value to text for embedding
             if field_def.type == MetadataFieldType.JSON:
                 text_value = json.dumps(field_value)
             else:
                 text_value = str(field_value)
-            
+
             # Chunk the field value if it's long
             field_chunks = self.chunker.chunk(text_value)
-            
+
             if field_chunks:
                 # Generate embeddings for all chunks
                 chunk_texts = [chunk.content for chunk in field_chunks]
                 embeddings = self.embedding_provider.embed_sync(chunk_texts, batch_size)
                 field_embeddings[field_name] = embeddings
-                
+
         return field_embeddings
-    
+
     def _store_metadata_embeddings(
         self,
         conn: sqlite3.Connection,
@@ -3493,7 +3508,7 @@ class LocalVectorDB(BaseVectorDB):
         for field_name, embeddings in field_embeddings.items():
             if embeddings.size == 0:
                 continue
-                
+
             # Add embeddings to FAISS
             start_id = self.index.ntotal
             if hasattr(self.index, 'add_with_ids'):
@@ -3502,11 +3517,11 @@ class LocalVectorDB(BaseVectorDB):
                 self.index.add_with_ids(embeddings, ids)
             else:
                 self.index.add(embeddings)
-            
+
             # Track in column_embeddings table
             for chunk_index, faiss_id in enumerate(range(start_id, self.index.ntotal)):
                 self._track_column_embedding(conn, document_id, field_name, chunk_index, faiss_id)
-    
+
     def _remove_metadata_embeddings(
         self,
         conn: sqlite3.Connection,
@@ -3527,13 +3542,13 @@ class LocalVectorDB(BaseVectorDB):
             SELECT faiss_id FROM column_embeddings 
             WHERE document_id = ?
         """, (document_id,))
-        
+
         faiss_ids = [row['faiss_id'] for row in cursor.fetchall()]
-        
+
         if faiss_ids:
             # Remove from FAISS
             self._remove_old_vectors_bulk(faiss_ids)
-            
+
             # Remove from tracking table
             conn.execute("""
                 DELETE FROM column_embeddings 
@@ -3693,7 +3708,7 @@ class LocalVectorDB(BaseVectorDB):
 
         # Handle ID conflicts
         docs_to_insert = []
-        for doc, meta, doc_id in zip(documents, metadata, ids):
+        for doc, meta, doc_id in zip(documents, metadata, ids, strict=False):
             if doc_id in existing_ids:
                 if errors == "raise":
                     raise DuplicateDocumentIDError(f"Document with ID '{doc_id}' already exists")
@@ -3772,7 +3787,7 @@ class LocalVectorDB(BaseVectorDB):
             """Stage 1: Async document chunking + existing chunk comparison"""
             try:
                 chunk_tasks = []
-                for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids)):
+                for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids, strict=False)):
                     task = asyncio.create_task(
                         self._chunk_document_with_comparison_async(
                             i, doc_id, doc_text, metadata, existing_chunks_by_doc.get(doc_id, {}), chunk_semaphore
@@ -4690,7 +4705,7 @@ class LocalVectorDB(BaseVectorDB):
         indices = indices[0].tolist()
 
         # Filter out invalid results
-        valid_results = [(dist, idx) for dist, idx in zip(distances, indices) if idx != -1]
+        valid_results = [(dist, idx) for dist, idx in zip(distances, indices, strict=False) if idx != -1]
 
         if not valid_results:
             return []
@@ -5616,10 +5631,10 @@ class LocalVectorDB(BaseVectorDB):
             Search results with column attribution
         """
         self._ensure_async_pool()
-        
+
         # Determine which columns to search
         embedding_enabled_fields = self._get_embedding_enabled_fields()
-        
+
         if columns is None:
             # Search all embedding-enabled fields plus main content
             search_columns = ['content'] + list(embedding_enabled_fields.keys())
@@ -5633,13 +5648,13 @@ class LocalVectorDB(BaseVectorDB):
                     search_columns.append(col)
                 else:
                     logger.warning(f"Column '{col}' is not embedding-enabled, skipping")
-            
+
             if not search_columns:
                 logger.warning("No valid columns specified for search")
                 return []
-        
+
         all_results = []
-        
+
         # Search main content if requested
         if 'content' in search_columns:
             content_results = await self.query_async(
@@ -5653,13 +5668,13 @@ class LocalVectorDB(BaseVectorDB):
                 document_scoring_method=document_scoring_method,
                 document_scoring_options=document_scoring_options
             )
-            
+
             # Add column attribution
             for result in content_results:
                 result.metadata = result.metadata or {}
                 result.metadata['_search_column'] = 'content'
                 all_results.append(result)
-        
+
         # Search metadata fields
         metadata_columns = [col for col in search_columns if col != 'content']
         if metadata_columns and search_type in ['vector', 'hybrid']:
@@ -5676,26 +5691,26 @@ class LocalVectorDB(BaseVectorDB):
                     )
                 )
                 metadata_search_tasks.append((field_name, task))
-            
+
             # Wait for all metadata searches to complete
             for field_name, task in metadata_search_tasks:
                 field_results = await task
-                
+
                 # Add column attribution
                 for result in field_results:
                     result.metadata = result.metadata or {}
                     result.metadata['_search_column'] = field_name
                     all_results.append(result)
-        
+
         # Sort all results by score and limit
         all_results.sort(key=lambda x: x.score, reverse=True)
         limited_results = all_results[:k]
-        
+
         if return_type == 'documents':
             # Aggregate chunks into documents
             return await self._aggregate_document_scores_with_method_async(
-                limited_results, 
-                document_scoring_method, 
+                limited_results,
+                document_scoring_method,
                 document_scoring_options
             )
         else:
@@ -5733,7 +5748,7 @@ class LocalVectorDB(BaseVectorDB):
         # Generate query embedding asynchronously
         embeddings = await self.embedding_provider.embed_batch([query])
         query_embedding = embeddings[0]
-        
+
         async with self.async_connection_pool.get_connection_context() as conn:
             # Get all metadata field embeddings
             cursor = await conn.execute("""
@@ -5742,27 +5757,27 @@ class LocalVectorDB(BaseVectorDB):
                 JOIN documents d ON ce.document_id = d.id
                 WHERE ce.field_name = ?
             """, (field_name,))
-            
+
             field_embedding_data = await cursor.fetchall()
-            
+
             if not field_embedding_data:
                 return []
-            
+
             # Extract FAISS IDs for this field
             faiss_ids = [row['faiss_id'] for row in field_embedding_data]
-            
+
             if not faiss_ids:
                 return []
-            
+
             # Get embeddings for these FAISS IDs (run in executor as FAISS is not async)
             loop = asyncio.get_event_loop()
             field_embeddings = await loop.run_in_executor(
                 None, self._reconstruct_embeddings_batch, faiss_ids
             )
-            
+
             if field_embeddings.size == 0:
                 return []
-            
+
             # Compute similarities (run in executor for numpy operations)
             def compute_similarities():
                 query_embedding_2d = query_embedding.reshape(1, -1)
@@ -5770,28 +5785,28 @@ class LocalVectorDB(BaseVectorDB):
                 # Convert to scores (higher is better)
                 scores = (similarities + 1) / 2  # Normalize to 0-1
                 return scores
-            
+
             scores = await loop.run_in_executor(None, compute_similarities)
-            
+
             # Filter by score threshold
             valid_indices = np.where(scores >= score_threshold)[0]
-            
+
             if len(valid_indices) == 0:
                 return []
-            
+
             # Sort by score and limit
             sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
-            
+
             results = []
-            
+
             # Get document metadata for all results in batch
             doc_ids = [field_embedding_data[idx]['document_id'] for idx in sorted_indices]
             doc_metadata_batch = await self._get_document_metadata_async(doc_ids)
-            
+
             for idx in sorted_indices:
                 row_data = field_embedding_data[idx]
                 doc_metadata = doc_metadata_batch.get(row_data['document_id'], {})
-                
+
                 # Create result
                 result = QueryResult(
                     id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
@@ -5802,16 +5817,16 @@ class LocalVectorDB(BaseVectorDB):
                     type='chunk'
                 )
                 results.append(result)
-            
+
             # Apply metadata filters if provided
             if filters:
                 loop = asyncio.get_event_loop()
                 # Use the existing sync filter function in executor
                 def apply_filters():
                     return [r for r in results if matches_metadata_filter(r.metadata, filters)]
-                
+
                 results = await loop.run_in_executor(None, apply_filters)
-            
+
             return results
 
     async def __aenter__(self):

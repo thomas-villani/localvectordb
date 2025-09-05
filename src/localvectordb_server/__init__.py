@@ -195,7 +195,7 @@ def create_app(
 
     # Log final configuration summary
     logger.info("Server Application successfully initialized!")
-    logger.info(f"Configuration summary:")
+    logger.info("Configuration summary:")
     logger.info(f"  - Debug mode: {app.debug}")
     logger.info(f"  - Log level: {config.server.log_level}")
     logger.info(f"  - Database path: {config.database.root_dir}")

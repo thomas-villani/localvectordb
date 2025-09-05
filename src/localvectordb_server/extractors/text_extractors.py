@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/extractors/text_extractors.py
 """
 Text file extractors for plain text and fallback handling.

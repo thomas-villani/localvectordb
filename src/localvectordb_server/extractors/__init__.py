@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/extractors/__init__.py
 """
 File content extraction plugin system for LocalVectorDB Server.
@@ -18,7 +18,7 @@ All dependencies are optional and gracefully degrade if not available.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Type
+from typing import Any, Dict, List, Optional, Type
 
 from localvectordb import MetadataField
 
@@ -391,22 +391,10 @@ class ExtractorRegistry:
     def _load_builtin_extractors(cls):
         """Load built-in extractors."""
         # Import and register built-in extractors
-        from localvectordb_server.extractors.text_extractors import (
-            TextFileExtractor,
-            TextFallbackExtractor
-        )
-        from localvectordb_server.extractors.pdf_extractors import (
-            PDFPlumberExtractor,
-            PyPDFExtractor
-        )
-        from localvectordb_server.extractors.office_extractors import (
-            DocxExtractor,
-            PptxExtractor,
-            XlsxExtractor
-        )
-        from localvectordb_server.extractors.other_extractors import (
-            RTFExtractor, EPubExtractor
-        )
+        from localvectordb_server.extractors.office_extractors import DocxExtractor, PptxExtractor, XlsxExtractor
+        from localvectordb_server.extractors.other_extractors import EPubExtractor, RTFExtractor
+        from localvectordb_server.extractors.pdf_extractors import PDFPlumberExtractor, PyPDFExtractor
+        from localvectordb_server.extractors.text_extractors import TextFallbackExtractor, TextFileExtractor
 
         # Register in order of preference
         extractors = [

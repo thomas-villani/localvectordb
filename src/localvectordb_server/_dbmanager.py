@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/_dbmanager.py
 
 """
@@ -21,16 +21,16 @@ import threading
 import time
 import weakref
 from contextlib import contextmanager
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Union, Literal, Optional, Any, List, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
-from cachelib import SimpleCache, RedisCache, FileSystemCache, MemcachedCache, DynamoDbCache, MongoDbCache
+from cachelib import DynamoDbCache, FileSystemCache, MemcachedCache, MongoDbCache, RedisCache, SimpleCache
 
 from localvectordb.core import MetadataFieldType
-from localvectordb.exceptions import DatabaseNotFoundError, DatabaseError
+from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
 from localvectordb_server._error_handlers import APIError
-from localvectordb_server._logcfg import log_performance, DatabaseLogger
+from localvectordb_server._logcfg import DatabaseLogger, log_performance
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 
 logger = logging.getLogger(__name__)

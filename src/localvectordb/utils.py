@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb/utils.py
 import importlib.metadata
 import os

@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/config.py
 """
 LocalVectorDB Server Configuration Management v1.0
@@ -42,9 +42,9 @@ import json
 import os
 import tomllib
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Union, Any, Optional, get_type_hints, Literal
+from typing import Any, Dict, List, Literal, Optional, Union, get_type_hints
 
 import click
 

@@ -6,15 +6,14 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/_auth.py
 
-import os
 from datetime import UTC
 
 import click
 
-from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_ERROR
+from localvectordb_server.cli._utils import EXIT_CODE_ERROR
 
 
 @click.group()
@@ -91,7 +90,7 @@ def create_api_key(ctx, description, expires_days, created_by, output):
                 click.echo(f"  Expires: {key_record.expires_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
                 click.echo(f"  Days until expiry: {key_record.days_until_expiry}")
             else:
-                click.echo(f"  Expires: Never")
+                click.echo("  Expires: Never")
 
             click.echo()
             click.secho("API Key (save this now - it won't be shown again):", fg="yellow", bold=True)
@@ -244,7 +243,7 @@ def revoke_api_key(ctx, key_id, confirm):
 
         # Confirmation
         if not confirm:
-            click.echo(f"Key Details:")
+            click.echo("Key Details:")
             click.echo(f"  ID: {key_record.id}")
             click.echo(f"  Description: {key_record.description or 'None'}")
             click.echo(f"  Created: {key_record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
@@ -333,7 +332,7 @@ def rotate_api_key(ctx, key_id, output):
             if new_key.expires_at:
                 click.echo(f"  Expires: {new_key.expires_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
             else:
-                click.echo(f"  Expires: Never")
+                click.echo("  Expires: Never")
 
             click.echo()
             click.secho("New API Key (save this now):", fg="yellow", bold=True)
@@ -367,8 +366,9 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
 
     """
     try:
-        from localvectordb_server.keymanager import get_key_manager
         from datetime import datetime
+
+        from localvectordb_server.keymanager import get_key_manager
 
         api_key_db_path = ctx.obj.get('api_key_db_path')
         key_manager = get_key_manager(api_key_db_path)
@@ -488,15 +488,15 @@ def show_key_info(ctx, key_id, output):
                         days_desc = f"{key_record.days_until_expiry} days"
                         color = "green"
 
-                    click.echo(f"  Days until expiry: " +
+                    click.echo("  Days until expiry: " +
                                click.style(days_desc, fg=color))
             else:
-                click.echo(f"  Expires: Never")
+                click.echo("  Expires: Never")
 
             if key_record.last_used:
                 click.echo(f"  Last used: {key_record.last_used.strftime('%Y-%m-%d %H:%M:%S UTC')}")
             else:
-                click.echo(f"  Last used: Never")
+                click.echo("  Last used: Never")
 
     except Exception as e:
         click.secho(f"Error getting key info: {str(e)}", fg="bright_red")
@@ -549,8 +549,8 @@ def auth_status(ctx, output):
             click.echo(json.dumps(status_data, indent=2))
         else:
             click.secho("Authentication Status", fg="blue", bold=True)
-            click.echo(f"Configuration file: " + click.style(f"{config_path}", fg="blue"))
-            click.echo(f"API Authentication: " +
+            click.echo("Configuration file: " + click.style(f"{config_path}", fg="blue"))
+            click.echo("API Authentication: " +
                        click.style(f"{'Enabled' if auth_enabled else 'Disabled'}",
                                    fg="green" if auth_enabled else "red"))
             click.echo()
@@ -558,7 +558,7 @@ def auth_status(ctx, output):
             click.secho("Database-managed Keys:", fg="cyan")
             if db_status["available"]:
                 stats = db_status["stats"]
-                click.echo(f"  Status: " + click.style("Available", fg="green"))
+                click.echo("  Status: " + click.style("Available", fg="green"))
                 click.echo(f"  Total keys: {stats.get('total_keys', 0)}")
                 click.echo(f"  Active keys: {stats.get('active_keys', 0)}")
                 click.echo(f"  Expired keys: {stats.get('expired_keys', 0)}")
@@ -569,7 +569,7 @@ def auth_status(ctx, output):
                     click.echo()
                     click.secho(f"  ⚠️  {stats['expiring_soon']} key(s) expiring within 7 days", fg="yellow")
             else:
-                click.echo(f"  Status: " + click.style("Not Available", fg="red"))
+                click.echo("  Status: " + click.style("Not Available", fg="red"))
                 if "error" in db_status:
                     click.echo(f"  Error: {db_status['error']}")
 

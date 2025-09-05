@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb/filters.py
 """Enhanced filtering system for LocalVectorDB with SQL query generation.
 
@@ -27,7 +27,7 @@ The filtering system supports:
 import json
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Tuple, Union, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DatabaseError

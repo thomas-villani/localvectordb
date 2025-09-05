@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/extractors/web_extractors.py
 """
 HTML and XML file extractors using BeautifulSoup4.
@@ -46,7 +46,7 @@ class HTMLExtractor(BaseExtractor):
     @property
     def priority(self) -> int:
         return 20  # Higher than basic text extractor
-    
+
     @property
     def metadata_schema(self) -> dict[str, MetadataField]:
         return {
@@ -57,7 +57,7 @@ class HTMLExtractor(BaseExtractor):
             "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "html_elements": MetadataField(type=MetadataFieldType.JSON, indexed=False, required=False),
         }
-    
+
     def _check_availability(self) -> bool:
         try:
             from bs4 import BeautifulSoup
@@ -281,8 +281,8 @@ class XMLExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         try:
-            from bs4 import BeautifulSoup
             import lxml
+            from bs4 import BeautifulSoup
             return True
         except ImportError:
             try:

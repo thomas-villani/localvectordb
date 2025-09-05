@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/_db.py
 import glob
 import json
@@ -14,8 +14,12 @@ import os
 
 import click
 
-from localvectordb_server.cli._utils import find_config_file, EXIT_CODE_ERROR, print_db_stats, get_stdin_input, \
-    format_table
+from localvectordb_server.cli._utils import (
+    EXIT_CODE_ERROR,
+    format_table,
+    get_stdin_input,
+    print_db_stats,
+)
 
 
 @click.group('db')
@@ -322,7 +326,7 @@ def add_to_database(ctx, files_or_text, metadata, id):
 
     if len(files_or_text) == 0:
         click.secho(
-            f"Error: FILES_OR_TEXT is required. Must be file path, glob, str to add, or '-' "
+            "Error: FILES_OR_TEXT is required. Must be file path, glob, str to add, or '-' "
             "to read from stdin\n"
             "Usage:\n"
             "   $ lvdb db <DB_NAME> add path/to/the/file.txt [OPTIONS]\n"
@@ -589,7 +593,7 @@ def delete_document(ctx, doc_id):
         if deleted_count > 0:
             click.echo(f"Successfully deleted document: {doc_id}")
         else:
-            click.echo(f"No documents were deleted")
+            click.echo("No documents were deleted")
 
     except Exception as e:
         click.secho(f"Error: Unexpected error while deleting document: {str(repr(e))}", fg='bright_red')
@@ -693,7 +697,7 @@ def show_schema(ctx, format, output):
                     else:
                         output_str += f"  Default Value: {field_def.default_value}\n"
                 else:
-                    output_str += f"  Default Value: None\n"
+                    output_str += "  Default Value: None\n"
                 output_str += "\n"
 
         if output:
@@ -1088,4 +1092,5 @@ def _validate_mapping_format(mapping_data):
 
 # Add the shell command!
 from localvectordb_server.cli._shell import shell
+
 db_group.add_command(shell)

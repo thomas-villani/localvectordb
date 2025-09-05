@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/routes.py
 """
 localvectordb_server/routes.py - LocalVectorDB v1.0 API Routes
@@ -18,11 +18,11 @@ import json
 import logging
 import mimetypes
 import re
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from math import ceil
-from typing import Dict, Any
+from typing import Any, Dict
 
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from localvectordb.core import MetadataField, MetadataFieldType
@@ -31,12 +31,18 @@ from localvectordb_server._auth import require_api_key
 from localvectordb_server._cache import cache
 from localvectordb_server._checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
-    handle_errors, APIError, ValidationError,
-    validate_required_fields, validate_field_type, validate_pagination_params,
-    validate_search_params, validate_database_creation_params
+    APIError,
+    ValidationError,
+    handle_errors,
+    validate_database_creation_params,
+    validate_field_type,
+    validate_pagination_params,
+    validate_required_fields,
+    validate_search_params,
 )
-from localvectordb_server._logcfg import log_performance, request_context, DatabaseLogger
+from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
+
 # Add this import after the existing imports in routes.py
 from localvectordb_server.extractors import get_extractor_registry, get_supported_formats
 

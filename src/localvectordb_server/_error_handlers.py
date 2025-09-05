@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/_error_handlers.py
 """
 Enhanced error handling framework for LocalVectorDB Server with
@@ -15,17 +15,21 @@ standardized error responses, validation, and recovery strategies.
 
 import logging
 import traceback
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-from flask import jsonify, g, current_app
+from flask import current_app, g, jsonify
 from werkzeug.exceptions import HTTPException
 
 from localvectordb.exceptions import (
-    BaseLocalVectorDBException, DatabaseNotFoundError,
-    DuplicateDocumentIDError, EmbeddingError, ConfigurationError,
-    ConnectionPoolError, OllamaNotFoundError
+    BaseLocalVectorDBException,
+    ConfigurationError,
+    ConnectionPoolError,
+    DatabaseNotFoundError,
+    DuplicateDocumentIDError,
+    EmbeddingError,
+    OllamaNotFoundError,
 )
 
 
@@ -377,7 +381,7 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
 
     document_scoring_options = data.get("document_scoring_options")
     if document_scoring_options and not isinstance(document_scoring_options, dict):
-        raise ValidationError(f"document_scoring_options must be a dictionary object",
+        raise ValidationError("document_scoring_options must be a dictionary object",
                               field="document_scoring_options",
                               value=document_scoring_options)
 

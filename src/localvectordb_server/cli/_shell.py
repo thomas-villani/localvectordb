@@ -6,13 +6,13 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/_shell.py
 from datetime import datetime
 
 import click
 
-from localvectordb_server.cli._utils import print_db_stats, format_table
+from localvectordb_server.cli._utils import format_table, print_db_stats
 
 
 @click.command('shell')
@@ -111,7 +111,7 @@ def shell(ctx):
                 else:
                     output += f"  Default Value: {field_def.default_value}\n"
             else:
-                output += f"  Default Value: None\n"
+                output += "  Default Value: None\n"
             output += "\n"
 
         return output
@@ -385,12 +385,12 @@ def shell(ctx):
             click.echo("Available schema commands: show, update, update-str, export, map, map-clear, map-show")
 
     try:
-        click.echo(click.style(f"Connected to database: ", fg="green")
+        click.echo(click.style("Connected to database: ", fg="green")
                    + click.style(db.name, fg="green", underline=True))
 
         stats = db.get_stats()
         click.secho(f"Documents: {stats['documents']}, Chunks: {stats['chunks']}", fg="blue")
-        click.echo(f"Type 'help' for available commands, 'exit' to quit")
+        click.echo("Type 'help' for available commands, 'exit' to quit")
 
         # Simple REPL with enhanced schema support
         while True:

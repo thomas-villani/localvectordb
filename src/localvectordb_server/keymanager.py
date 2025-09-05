@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/keymanager.py
 
 """
@@ -82,10 +82,10 @@ import sqlite3
 import string
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from sqlite3 import Connection
-from typing import List, Optional, Dict, Any, Generator
+from typing import Any, Dict, Generator, List, Optional
 
 import bcrypt
 

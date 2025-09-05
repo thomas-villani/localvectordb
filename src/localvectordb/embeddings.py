@@ -19,12 +19,12 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Type, Callable
+from typing import Callable, Dict, List, Optional, Type
 
 import httpx
 import numpy as np
 
-from localvectordb.exceptions import OllamaNotFoundError, EmbeddingError
+from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
 
 logger = logging.getLogger(__name__)
 

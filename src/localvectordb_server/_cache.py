@@ -6,8 +6,9 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/_cache.py
 
 from flask_caching import Cache
+
 cache = Cache()

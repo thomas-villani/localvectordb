@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/__init__.py
 """
 LocalVectorDB Server Command-Line Interface v1.0
@@ -125,10 +125,10 @@ def cli(ctx, config, db_folder):
     ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path, 'db_folder': db_folder}
 
 
-from localvectordb_server.cli._basic import serve, create_vector_database, list_databases, delete_database
-from localvectordb_server.cli._db import db_group
-from localvectordb_server.cli._config import config_group
 from localvectordb_server.cli._auth import auth
+from localvectordb_server.cli._basic import create_vector_database, delete_database, list_databases, serve
+from localvectordb_server.cli._config import config_group
+from localvectordb_server.cli._db import db_group
 
 cli.add_command(serve)
 cli.add_command(create_vector_database)

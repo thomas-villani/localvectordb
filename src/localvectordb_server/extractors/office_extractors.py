@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/extractors/office_extractors.py
 # src/localvectordb_server/extractors/office_extractors.py
 """
@@ -210,7 +210,7 @@ class PptxExtractor(BaseExtractor):
                                     table_text.append('\t'.join(row_text))
 
                             if table_text:
-                                slide_content.append(f"[Table]\n" + '\n'.join(table_text))
+                                slide_content.append("[Table]\n" + '\n'.join(table_text))
                                 shapes_with_text += 1
 
                     if slide_content:

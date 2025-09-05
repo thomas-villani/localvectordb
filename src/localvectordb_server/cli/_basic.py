@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/_basic.py
 
 """Basic commands for the CLI.
@@ -24,7 +24,7 @@ import os
 
 import click
 
-from localvectordb_server.cli._utils import EXIT_CODE_OLLAMA_ERROR, EXIT_CODE_CONFIGURATION_ERROR, EXIT_CODE_ERROR
+from localvectordb_server.cli._utils import EXIT_CODE_CONFIGURATION_ERROR, EXIT_CODE_ERROR, EXIT_CODE_OLLAMA_ERROR
 
 
 @click.command()
@@ -55,8 +55,8 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     config_path = ctx.obj["config_path"]
     db_folder = ctx.obj["db_folder"]
 
-    from localvectordb_server import create_app
     from localvectordb.exceptions import ConfigurationError
+    from localvectordb_server import create_app
 
     try:
         app = create_app(
@@ -137,7 +137,7 @@ def list_databases(ctx, details):
                     click.echo(f"{name:<25}{stats['documents']:<10}{stats['chunks']:<10}"
                                f"{stats['embedding_model']:<25}{stats['chunking_method']:<20}")
                     db.close()
-                except Exception as e:
+                except Exception:
                     click.echo(f"{name:<25}{'ERROR':<10}{'ERROR':<10}{'ERROR':<25}{'ERROR':<20}")
 
     else:
@@ -278,8 +278,8 @@ def delete_database(ctx, name, db_folder, confirm):
                 click.style(f'Are you sure you want to delete the database "{name}"?', fg="bright_red") +
                 f'\nThis will remove the following file(s):\n'
                 f'{chr(10).join("- " + f for f in files)}\n' +
-                click.style(f'Warning: this action cannot be undone!', fg="bright_red", bold=True) +
-                f'\nEnter "confirm" to delete, anything else to exit.'
+                click.style('Warning: this action cannot be undone!', fg="bright_red", bold=True) +
+                '\nEnter "confirm" to delete, anything else to exit.'
             )
             if confirm != "confirm":
                 click.echo("Aborted by user!")

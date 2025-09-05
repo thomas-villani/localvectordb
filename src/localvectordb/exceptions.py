@@ -8,7 +8,7 @@
 # Contact: thomas.villani@gmail.com
 #
 # src/localvectordb/exceptions.py
-from typing import Union, List
+from typing import List, Union
 
 
 class BaseLocalVectorDBException(Exception):

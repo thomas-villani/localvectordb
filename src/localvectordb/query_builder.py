@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb/query_builder.py
 """
 LocalVectorDB Query Builder - SQL-like interface for vector database queries.
@@ -73,14 +73,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import (
-    Dict, List, Optional, Any, Iterator,
-    Literal, Union
-)
+from typing import Any, Dict, Iterator, List, Literal, Optional, Union
 
 import numpy as np
-from localvectordb.core import QueryResult, Document, AnyVectorDB, DocumentScoringMethod
+
 from localvectordb._filters import FILTER_OPERATORS
+from localvectordb.core import AnyVectorDB, Document, DocumentScoringMethod, QueryResult
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +143,7 @@ class SemanticFilter:
 
         # Apply similarity filtering
         filtered_docs = []
-        for doc, field_embedding in zip(valid_docs, field_embeddings):
+        for doc, field_embedding in zip(valid_docs, field_embeddings, strict=False):
             similarity = self._calculate_similarity(concept_embedding, field_embedding)
 
             if similarity >= self.threshold:
@@ -180,7 +178,7 @@ class SemanticFilter:
 
         # Apply similarity filtering
         filtered_docs = []
-        for doc, field_embedding in zip(valid_docs, field_embeddings):
+        for doc, field_embedding in zip(valid_docs, field_embeddings, strict=False):
             similarity = self._calculate_similarity(concept_embedding, field_embedding)
 
             if similarity >= self.threshold:
@@ -943,7 +941,7 @@ class QueryExecutor:
             # Create result for this group
             if self.builder._group_by:
                 group_metadata = dict(zip(self.builder._group_by,
-                                          group_key if isinstance(group_key, tuple) else [group_key]))
+                                          group_key if isinstance(group_key, tuple) else [group_key], strict=False))
                 group_metadata.update(aggregation_data)
 
                 result = QueryResult(

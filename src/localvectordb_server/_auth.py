@@ -24,7 +24,7 @@ import logging
 import time
 from functools import wraps
 
-from flask import request, current_app, g
+from flask import current_app, g, request
 from werkzeug.exceptions import Unauthorized
 
 from localvectordb_server._logcfg import SecurityLogger

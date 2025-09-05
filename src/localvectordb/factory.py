@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb/factory.py
 """Enhanced Factory function for LocalVectorDB v1.0 with Async Support
 
@@ -15,11 +15,12 @@ local and remote database implementations, with support for both sync and async 
 """
 
 from pathlib import Path
-from typing import Union, Literal
+from typing import Union
 
 from localvectordb.client import RemoteVectorDB
-from localvectordb.database import LocalVectorDB
 from localvectordb.core import AnyVectorDB
+from localvectordb.database import LocalVectorDB
+
 
 def VectorDB(
         name: str,

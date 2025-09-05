@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/_config.py
 import json
 import os
@@ -15,8 +15,12 @@ from pathlib import Path
 
 import click
 
-from localvectordb_server.cli._utils import get_nested_value, _format_value_for_display, set_nested_value, \
-    DEFAULT_CONFIG_FILE
+from localvectordb_server.cli._utils import (
+    DEFAULT_CONFIG_FILE,
+    _format_value_for_display,
+    get_nested_value,
+    set_nested_value,
+)
 
 
 @click.group('config', invoke_without_command=True)
@@ -224,7 +228,7 @@ def set_config_value(ctx, key, value, dry_run, force):
             old_value = "<not set>"
 
         # Show what will change
-        click.secho(f"Configuration Change:", fg="cyan")
+        click.secho("Configuration Change:", fg="cyan")
         click.secho("=" * 21, fg="cyan")
         click.echo(f"Key: {key}")
         click.echo(f"Old value: {_format_value_for_display(old_value)}")

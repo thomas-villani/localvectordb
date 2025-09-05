@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/extractors/other_extractors.py
 """
 Extractors for miscellaneous file formats.
@@ -163,9 +163,10 @@ class EPubExtractor(BaseExtractor):
     def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
         """Extract text from EPUB files."""
         try:
+            import io
+
             import ebooklib
             from ebooklib import epub
-            import io
 
             # EPUB files are ZIP archives, need to handle as such
             with io.BytesIO(file_content) as file_buffer:
@@ -181,8 +182,8 @@ class EPubExtractor(BaseExtractor):
 
                         # Parse HTML content and extract text
                         try:
-                            from html import unescape
                             import re
+                            from html import unescape
 
                             content = item.get_content().decode('utf-8')
 

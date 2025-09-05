@@ -6,12 +6,12 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb_server/cli/_utils.py
 
 import json
 import os
-from typing import Any, get_type_hints, Union
+from typing import Any, Union, get_type_hints
 
 import click
 
@@ -191,7 +191,7 @@ def set_nested_value(config: "Config", key_path: str, value_str: str) -> None:
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             raise ValueError(f"Invalid metadata field configuration: {e}")
 
-        setattr(section_obj, 'default_metadata_schema', metadata_schema)
+        section_obj.default_metadata_schema = metadata_schema
         return
 
     # Normal nested access

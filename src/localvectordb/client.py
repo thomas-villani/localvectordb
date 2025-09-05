@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # src/localvectordb/client.py
 
 """Remote interface for LocalVectorDB over HTTP.
@@ -124,18 +124,27 @@ import asyncio
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Union, Literal, List, Optional, Dict, Any
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import httpx
 import numpy as np
 
-from localvectordb.core import MetadataField, MetadataFieldType, QueryResult, Document, BaseVectorDB, \
-    DocumentScoringMethod
+from localvectordb.core import (
+    BaseVectorDB,
+    Document,
+    DocumentScoringMethod,
+    MetadataField,
+    MetadataFieldType,
+    QueryResult,
+)
 from localvectordb.embeddings import EmbeddingProvider, HTTPEmbeddingProvider
 from localvectordb.exceptions import (
-    DatabaseNotFoundError, DuplicateDocumentIDError, EmbeddingError, BaseLocalVectorDBException, DatabaseError,
-    DocumentNotFoundError
+    BaseLocalVectorDBException,
+    DatabaseError,
+    DatabaseNotFoundError,
+    DocumentNotFoundError,
+    DuplicateDocumentIDError,
+    EmbeddingError,
 )
 
 logger = logging.getLogger(__name__)
@@ -1367,7 +1376,7 @@ class RemoteVectorDB(BaseVectorDB):
         if now - self._last_ping_timestamp < 60 and self._last_ping_status and not force:
             return self._last_ping_status
 
-        url = self._build_url(f"/api/v1/databases")
+        url = self._build_url("/api/v1/databases")
         response = self._make_request_with_retry("GET", url)
         databases = response.json().get("databases", [])
 

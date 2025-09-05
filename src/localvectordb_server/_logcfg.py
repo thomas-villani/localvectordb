@@ -12,12 +12,12 @@ import re
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from functools import wraps
 from typing import Optional
 
 import flask
-from flask import request, g, current_app
+from flask import current_app, g, request
 
 
 def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:

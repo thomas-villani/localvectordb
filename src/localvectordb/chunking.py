@@ -17,7 +17,7 @@ enabling perfect reconstruction and precise highlighting.
 
 import re
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 import tiktoken
 
@@ -992,7 +992,7 @@ class CodeBlockChunker(PositionTrackingChunker):
                 scores[lang] += len(matches)
 
         # Check for language-specific structural features
-        if '    ' in sample and not '{' in sample[:100]:
+        if '    ' in sample and '{' not in sample[:100]:
             scores['python'] += 5  # Python-style indentation is distinctive
 
         if '{' in sample and '}' in sample:
