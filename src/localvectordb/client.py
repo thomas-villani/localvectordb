@@ -210,7 +210,7 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
         """Get embedding dimension"""
         return self._dimension
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None):
+    async def _embed_single_batch(self, texts, client: Optional[httpx.AsyncClient] = None, **kwargs):
         if client is None:
             client = httpx.AsyncClient()
         headers = {
@@ -950,6 +950,78 @@ class RemoteVectorDB(BaseVectorDB):
             payload["semantic_dedup_threshold"] = semantic_dedup_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/query")
+        response = self._make_request_with_retry("POST", url, json=payload)
+        result = self._handle_response(response)
+
+        # Process results
+        raw_results = result.get("results", [])
+        return [QueryResult.from_dict(res) for res in raw_results]
+
+    def query_multi_column(
+            self,
+            query: str,
+            *,
+            columns: Optional[List[str]] = None,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List[QueryResult]:
+        """
+        Query across multiple columns (main content + embedding-enabled metadata fields)
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        columns : Optional[List[str]]
+            Specific columns to search. If None, searches all embedding-enabled fields
+            plus main content. Use 'content' for main document content.
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters for the scoring method
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results with column attribution
+        """
+        # Prepare request payload
+        payload = {
+            "query": query,
+            "search_type": search_type,
+            "return_type": return_type,
+            "k": k,
+            "score_threshold": score_threshold,
+            "vector_weight": vector_weight,
+            "document_scoring_method": document_scoring_method,
+            "document_scoring_options": document_scoring_options
+        }
+
+        if columns is not None:
+            payload["columns"] = columns
+
+        if filters is not None:
+            payload["filters"] = filters
+
+        url = self._build_url(f"/api/v1/{self.name}/query-multi-column")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1799,6 +1871,78 @@ class RemoteVectorDB(BaseVectorDB):
             payload["filters"] = filters
 
         url = self._build_url(f"/api/v1/{self.name}/query")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        # Process results
+        raw_results = result.get("results", [])
+        return [QueryResult.from_dict(res) for res in raw_results]
+
+    async def query_multi_column_async(
+            self,
+            query: str,
+            *,
+            columns: Optional[List[str]] = None,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List[QueryResult]:
+        """
+        Async query across multiple columns (main content + embedding-enabled metadata fields)
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        columns : Optional[List[str]]
+            Specific columns to search. If None, searches all embedding-enabled fields
+            plus main content. Use 'content' for main document content.
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters for the scoring method
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results with column attribution
+        """
+        # Prepare request payload
+        payload = {
+            "query": query,
+            "search_type": search_type,
+            "return_type": return_type,
+            "k": k,
+            "score_threshold": score_threshold,
+            "vector_weight": vector_weight,
+            "document_scoring_method": document_scoring_method,
+            "document_scoring_options": document_scoring_options
+        }
+
+        if columns is not None:
+            payload["columns"] = columns
+
+        if filters is not None:
+            payload["filters"] = filters
+
+        url = self._build_url(f"/api/v1/{self.name}/query-multi-column")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = await self._handle_response_async(response)
 

@@ -13,7 +13,7 @@ import os
 import re
 
 
-def get_system_version():
+def get_system_version() -> str:
     system_version = importlib.metadata.version("localvectordb")
     return system_version
 

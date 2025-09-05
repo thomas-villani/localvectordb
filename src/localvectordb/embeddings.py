@@ -313,7 +313,7 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
 
     @abstractmethod
-    async def _embed_single_batch(self, texts, **kwargs) -> List[List[float]]:
+    async def _embed_single_batch(self, texts, client: Optional[httpx.AsyncClient] = None, **kwargs) -> List[List[float]]:
         """Embed a batch using asynchronous httpx client.
 
         The async httpx client is passed in as the `client` kwarg."""
@@ -422,7 +422,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             self._dimension = self._get_model_dimension_api()
         return self._dimension
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient = None):
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient = None, **kwargs):
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
         if client is None:
             client = httpx.AsyncClient()
@@ -526,7 +526,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None):
+    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None, **kwargs):
         if client is None:
             client = httpx.AsyncClient()
 

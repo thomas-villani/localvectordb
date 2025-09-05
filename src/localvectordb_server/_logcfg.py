@@ -16,10 +16,11 @@ from datetime import datetime, UTC
 from functools import wraps
 from typing import Optional
 
+import flask
 from flask import request, g, current_app
 
 
-def configure_logging(app: "Flask", log_file: Optional[str] = None):
+def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:
     """Configure enhanced logging for the application
 
     Parameters

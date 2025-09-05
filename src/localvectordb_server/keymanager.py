@@ -84,7 +84,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from sqlite3 import Connection
+from typing import List, Optional, Dict, Any, Generator
 
 import bcrypt
 
@@ -182,7 +183,7 @@ class KeyManager:
         # Initialize database
         self._init_database()
 
-    def _init_database(self):
+    def _init_database(self) -> None:
         """Initialize the SQLite database with required schema"""
         with self._get_connection() as conn:
             # Create keys table
@@ -226,7 +227,7 @@ class KeyManager:
             conn.commit()
 
     @contextmanager
-    def _get_connection(self):
+    def _get_connection(self) -> Generator[Connection, Any, None]:
         """Get database connection with proper settings"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -235,7 +236,8 @@ class KeyManager:
         finally:
             conn.close()
 
-    def _generate_key_id(self) -> str:
+    @staticmethod
+    def _generate_key_id() -> str:
         """Generate a unique key ID"""
         # Use timestamp + random suffix for readability
         timestamp = datetime.now(UTC).strftime("%Y%m%d")
@@ -528,7 +530,7 @@ class KeyManager:
                 """, (now,))
 
             conn.commit()
-            count = cursor.rowcount
+            count = int(cursor.rowcount)
 
         if count > 0:
             action = "deactivated" if soft_delete else "deleted"

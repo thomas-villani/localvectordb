@@ -875,6 +875,115 @@ def hybrid_search(db_name):
         return search_handler(db_name, data)
 
 
+@api.route("/api/v1/<db_name>/query-multi-column", methods=["POST"])
+@require_api_key
+@handle_errors
+@log_performance("query_multi_column")
+def query_multi_column(db_name):
+    """Query across multiple columns (main content + embedding-enabled metadata fields)"""
+
+    with request_context("query_multi_column"):
+        if not request.is_json:
+            raise ValidationError("Request must contain JSON data")
+
+        data = request.get_json()
+        if not data:
+            raise ValidationError("Request body cannot be empty")
+
+        # Validate required fields
+        validate_required_fields(data, ['query'])
+
+        query_text = data["query"]
+        columns = data.get("columns")
+        search_type = data.get("search_type", "vector")
+        return_type = data.get("return_type", "documents")
+        k = data.get("k", 10)
+        score_threshold = data.get("score_threshold", 0.0)
+        filters = data.get("filters", data.get("metadata_filters"))
+        vector_weight = data.get("vector_weight", 0.7)
+        document_scoring_method = data.get("document_scoring_method", "frequency_boost")
+        document_scoring_options = data.get("document_scoring_options")
+
+        # Validate parameters
+        if not isinstance(query_text, str) or not query_text.strip():
+            raise ValidationError("Query must be a non-empty string", field="query")
+
+        if columns is not None:
+            if not isinstance(columns, list):
+                raise ValidationError("Columns must be a list of strings", field="columns")
+            for i, col in enumerate(columns):
+                if not isinstance(col, str):
+                    raise ValidationError(f"Column at index {i} must be a string", field=f"columns[{i}]")
+
+        if search_type not in ["vector", "keyword", "hybrid"]:
+            raise ValidationError("Search type must be 'vector', 'keyword', or 'hybrid'", field="search_type")
+
+        if return_type not in ["documents", "chunks"]:
+            raise ValidationError("Return type must be 'documents' or 'chunks'", field="return_type")
+
+        validate_field_type(data, "k", int)
+        if k < 1 or k > 1000:
+            raise ValidationError("k must be between 1 and 1000", field="k", value=k)
+
+        validate_field_type(data, "score_threshold", (int, float))
+        if score_threshold < 0 or score_threshold > 1:
+            raise ValidationError("Score threshold must be between 0 and 1", field="score_threshold", value=score_threshold)
+
+        validate_field_type(data, "vector_weight", (int, float))
+        if vector_weight < 0 or vector_weight > 1:
+            raise ValidationError("Vector weight must be between 0 and 1", field="vector_weight", value=vector_weight)
+
+        if filters is not None and not isinstance(filters, dict):
+            raise ValidationError("Filters must be a dictionary", field="filters")
+
+        try:
+            db = current_app.db_manager.get_db(db_name)
+
+            db_logger.log_query("query_multi_column",
+                                database_name=db_name,
+                                search_type=search_type,
+                                return_type=return_type,
+                                k=k,
+                                query_length=len(query_text),
+                                columns_count=len(columns) if columns else None)
+
+            results = db.query_multi_column(
+                query=query_text,
+                columns=columns,
+                search_type=search_type,
+                return_type=return_type,
+                k=k,
+                score_threshold=score_threshold,
+                filters=filters,
+                vector_weight=vector_weight,
+                document_scoring_method=document_scoring_method,
+                document_scoring_options=document_scoring_options
+            )
+
+            # Serialize results
+            serialized_results = [serialize_query_result(result) for result in results]
+
+            db_logger.log_query("query_multi_column_success",
+                                database_name=db_name,
+                                search_type=search_type,
+                                result_count=len(serialized_results))
+
+            return jsonify({
+                "results": serialized_results,
+                "search_type": search_type,
+                "return_type": return_type,
+                "total_results": len(serialized_results),
+                "columns_searched": columns,
+                "processing_info": {
+                    "document_scoring_method": document_scoring_method if return_type == 'documents' else None
+                }
+            })
+
+        except Exception as e:
+            db_logger.log_error("query_multi_column", e, database_name=db_name, search_type=search_type)
+            raise
+
+
 @api.route("/api/v1/<db_name>/filter", methods=["POST"])
 @require_api_key
 @handle_errors

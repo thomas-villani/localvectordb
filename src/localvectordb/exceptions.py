@@ -32,7 +32,7 @@ class DuplicateDocumentIDError(DatabaseError, ValueError):
 class DocumentNotFoundError(DatabaseError, KeyError):
     """Raised when one or more requested documents cannot be found"""
 
-    def __init__(self, message: str, missing_ids: Union[str, List[str]] = None):
+    def __init__(self, message: str, missing_ids: Union[str, List[str], None] = None):
         super().__init__(message)
         self.missing_ids = missing_ids if isinstance(missing_ids, list) else [missing_ids] if missing_ids else []
 
