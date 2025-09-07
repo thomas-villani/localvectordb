@@ -190,6 +190,22 @@ def create_app(
     app.register_blueprint(api)
     logger.info("API routes registered")
 
+    # Register inspector blueprint if enabled
+    inspector_enabled = getattr(config.server, 'inspector_enabled', True)
+    if inspector_enabled:
+        try:
+            from localvectordb_server.inspector import inspector
+            app.register_blueprint(inspector, url_prefix='/inspector')
+            if app.config.get("SECRET_KEY") is None:
+                app.config["SECRET_KEY"] = os.urandom(32)
+            logger.info("Inspector UI registered at /inspector")
+        except ImportError as e:
+            logger.warning(f"Inspector UI not available: {e}")
+        except Exception as e:
+            logger.error(f"Failed to register inspector UI: {e}")
+    else:
+        logger.info("Inspector UI disabled in configuration")
+
     # Store config for access elsewhere
     app.lvdb_config = config
 

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}LocalVectorDB Inspector{% endblock %}</title>
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="{{ url_for('inspector.static', filename='css/inspector.css') }}">
+    {% block extra_css %}{% endblock %}
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="{{ url_for('inspector.static', filename='img/favicon.ico') }}">
+</head>
+<body>
+    <!-- Navigation Header -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h1><a href="{{ url_for('inspector.dashboard') }}">LocalVectorDB Inspector</a></h1>
+            </div>
+            
+            {% if logged_in %}
+            <div class="nav-menu">
+                <a href="{{ url_for('inspector.dashboard') }}" class="nav-link {% if request.endpoint == 'inspector.dashboard' %}active{% endif %}">
+                    <span class="nav-icon">📊</span> Dashboard
+                </a>
+                <a href="{{ url_for('inspector.query_interface') }}" class="nav-link {% if request.endpoint == 'inspector.query_interface' %}active{% endif %}">
+                    <span class="nav-icon">🔍</span> Query
+                </a>
+                <a href="{{ url_for('inspector.embeddings_view') }}" class="nav-link {% if request.endpoint == 'inspector.embeddings_view' %}active{% endif %}">
+                    <span class="nav-icon">🎯</span> Embeddings
+                </a>
+                <a href="{{ url_for('inspector.admin_interface') }}" class="nav-link {% if request.endpoint == 'inspector.admin_interface' %}active{% endif %}">
+                    <span class="nav-icon">⚙️</span> Admin
+                </a>
+            </div>
+            
+            <div class="nav-user">
+                <span class="user-info">
+                    <span class="nav-icon">🔑</span> 
+                    {{ current_user }}
+                </span>
+                <a href="{{ url_for('inspector.logout') }}" class="logout-btn">Logout</a>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">
+                            <span class="alert-icon">
+                                {% if category == 'error' %}❌
+                                {% elif category == 'success' %}✅
+                                {% elif category == 'warning' %}⚠️
+                                {% else %}ℹ️{% endif %}
+                            </span>
+                            {{ message }}
+                            <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Page Content -->
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-container">
+            <div class="footer-info">
+                <p>&copy; 2025 LocalVectorDB Inspector. Built with Flask.</p>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/your-repo/localvectordb" target="_blank">GitHub</a>
+                <a href="/api/v1/health" target="_blank">API Health</a>
+                {% if logged_in %}
+                <a href="{{ url_for('inspector.api_system_stats') }}" target="_blank">System Stats</a>
+                {% endif %}
+            </div>
+        </div>
+    </footer>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <!-- Modal Container -->
+    <div id="modal-container" class="modal-container" style="display: none;">
+        <div class="modal-backdrop" onclick="closeModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Modal Title</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Modal content will be injected here -->
+            </div>
+            <div class="modal-footer" id="modal-footer">
+                <!-- Modal footer will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('inspector.static', filename='js/api-client.js') }}"></script>
+    <script src="{{ url_for('inspector.static', filename='js/inspector.js') }}"></script>
+
+    <!-- Main JavaScript -->
+    <script>
+        // Global utility functions
+        function showLoading() {
+            document.getElementById('loading-overlay').style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+
+        function showModal(title, body, footer = '') {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-body').innerHTML = body;
+            document.getElementById('modal-footer').innerHTML = footer;
+            document.getElementById('modal-container').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('modal-container').style.display = 'none';
+        }
+
+        function showAlert(message, type = 'info') {
+            const flashContainer = document.querySelector('.flash-messages') || createFlashContainer();
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.innerHTML = `
+                <span class="alert-icon">
+                    ${type === 'error' ? '❌' : 
+                      type === 'success' ? '✅' : 
+                      type === 'warning' ? '⚠️' : 'ℹ️'}
+                </span>
+                ${message}
+                <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
+            `;
+            flashContainer.appendChild(alert);
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                alert.style.opacity = '0';
+                setTimeout(() => alert.remove(), 300);
+            }, 5000);
+        }
+
+        function createFlashContainer() {
+            const container = document.createElement('div');
+            container.className = 'flash-messages';
+            document.querySelector('.main-content').prepend(container);
+            return container;
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            // Escape key to close modal
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+            
+            // Ctrl/Cmd + / to show help
+            if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+                e.preventDefault();
+                showModal('Keyboard Shortcuts', `
+                    <div class="shortcuts-list">
+                        <div class="shortcut"><kbd>Esc</kbd> Close modal/dialog</div>
+                        <div class="shortcut"><kbd>Ctrl+/</kbd> Show this help</div>
+                        <div class="shortcut"><kbd>Ctrl+1</kbd> Go to Dashboard</div>
+                        <div class="shortcut"><kbd>Ctrl+2</kbd> Go to Query</div>
+                        <div class="shortcut"><kbd>Ctrl+3</kbd> Go to Embeddings</div>
+                        <div class="shortcut"><kbd>Ctrl+4</kbd> Go to Admin</div>
+                    </div>
+                `);
+            }
+            
+            // Navigation shortcuts
+            {% if logged_in %}
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case '1':
+                        e.preventDefault();
+                        window.location.href = "{{ url_for('inspector.dashboard') }}";
+                        break;
+                    case '2':
+                        e.preventDefault();
+                        window.location.href = "{{ url_for('inspector.query_interface') }}";
+                        break;
+                    case '3':
+                        e.preventDefault();
+                        window.location.href = "{{ url_for('inspector.embeddings_view') }}";
+                        break;
+                    case '4':
+                        e.preventDefault();
+                        window.location.href = "{{ url_for('inspector.admin_interface') }}";
+                        break;
+                }
+            }
+            {% endif %}
+        });
+
+        // Initialize Inspector App
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof InspectorApp === 'function') {
+                window.InspectorApp = new InspectorApp();
+                window.InspectorApp.init({
+                    apiBaseUrl: '/api/v1',
+                    inspectorApiUrl: '/inspector/api',
+                    isAuthenticated: {{ 'true' if logged_in else 'false' }},
+                    requireApiKey: false
+                });
+            }
+            
+            // Auto-hide flash messages after 5 seconds
+            setTimeout(function() {
+                const alerts = document.querySelectorAll('.alert');
+                alerts.forEach(function(alert) {
+                    alert.style.opacity = '0';
+                    setTimeout(function() {
+                        alert.remove();
+                    }, 300);
+                });
+            }, 5000);
+        });
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

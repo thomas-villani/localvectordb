@@ -13,9 +13,10 @@
 This module provides factory functions that automatically choose between
 local and remote database implementations, with support for both sync and async variants.
 """
-
+import os.path
 from pathlib import Path
 from typing import Union
+from urllib.parse import urlparse, parse_qs
 
 from localvectordb.client import RemoteVectorDB
 from localvectordb.core import AnyVectorDB
@@ -45,7 +46,7 @@ def VectorDB(
     **kwargs : dict
         Additional arguments to pass to the appropriate constructor.
 
-        For LocalVectorDB, these include:
+        These include:
         - metadata_schema: Dict[str, MetadataField] - Schema for metadata fields
         - embedding_provider: str - Provider for embeddings ("ollama", "openai")
         - embedding_model: str - Model name for embeddings
@@ -59,16 +60,6 @@ def VectorDB(
 
         For RemoteVectorDB, these include:
         - api_key: str - API key for authentication
-        - create_if_not_exists: bool - Whether to create if not exists
-        - metadata_schema: Dict[str, MetadataField] - Schema for metadata fields
-        - embedding_provider: str - Provider for embeddings
-        - embedding_model: str - Model name for embeddings
-        - embedding_config: Dict[str, Any] - Config for embedding provider
-        - chunking_method: str - Method for chunking
-        - chunk_size: int - Maximum tokens per chunk
-        - chunk_overlap: int - Overlap between chunks
-        - enable_gpu: bool - Whether to use GPU on server
-        - enable_fts: bool - Whether to enable full-text search
         - timeout: float - Timeout for HTTP requests
         - max_retries: int - Number of retry attempts
         - retry_delay: float - Base delay between retries
@@ -162,3 +153,45 @@ def VectorDB(
 
         return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)
 
+def _fix_types(item):
+    if isinstance(item, list):
+        return [_fix_types(i) for i in item]
+    if isinstance(item, str):
+        if item.replace("-","").isdigit():
+            return int(item)
+        if item.replace(".", "").replace("-","").isdigit():
+            return float(item)
+        if item.lower() == "false":
+            return False
+        if item.lower() == "true":
+            return True
+    return item
+
+
+def from_uri(db_uri: str) -> AnyVectorDB:
+    parsed = urlparse(db_uri)
+    if parsed.scheme != "lvdb":
+        raise ValueError(f"Invalid database URI: scheme must be 'lvdb', found: '{parsed.scheme}'")
+
+    # The following should only be true if using absolute path
+    absolute_path = parsed.hostname is None
+
+    if absolute_path:
+        full_path, db_name = parsed.path.rsplit("/", 1)
+        if not os.path.exists(full_path):
+            raise ValueError(f"Invalid database URI: db folder not found: '{full_path}'")
+    else:
+        complete = parsed.netloc + parsed.path
+        full_path, db_name = complete.rsplit("/", 1)
+        if parsed.port or not os.path.exists(full_path):
+            full_path = "http://" + full_path
+
+    if not db_name:
+        raise ValueError("Must provide a valid database URI, expected database name specified as path.")
+
+    query_params = {}
+    if parsed.query:
+        parsed_query = parse_qs(parsed.query)
+        query_params = {k: _fix_types(v if len(v) > 1 else v[0]) for k, v in parsed_query.items()}
+
+    return VectorDB(db_name, full_path, **query_params)
