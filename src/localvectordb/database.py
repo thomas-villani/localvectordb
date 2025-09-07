@@ -2893,24 +2893,19 @@ class LocalVectorDB(BaseVectorDB):
             except Exception as e:
                 raise MetadataFilterError(f"Error building filter query: {str(e)}")
 
-        # Validate and add ORDER BY clause
+        # Build secure ORDER BY clause
         if order_by:
-            # Parse order_by to validate field names
-            order_parts = order_by.strip().split()
-            if len(order_parts) > 2:
-                raise MetadataFilterError("Invalid ORDER BY clause format")
-
-            field_name = order_parts[0]
-            direction = order_parts[1].upper() if len(order_parts) == 2 else 'ASC'
-
-            if direction not in ('ASC', 'DESC'):
-                raise MetadataFilterError("ORDER BY direction must be ASC or DESC")
-
-            # Validate field name
-            if field_name not in columns:
-                raise MetadataFilterError(f"Cannot order by field '{field_name}' - not in schema")
-
-            query_parts.append(f"ORDER BY {field_name} {direction}")
+            try:
+                # Create or reuse filter_builder for ORDER BY validation
+                if 'filter_builder' not in locals():
+                    filter_builder = FilterQueryBuilder(self.metadata_schema)
+                
+                # Build secure ORDER BY clause with proper validation and quoting
+                valid_columns = set(columns)  # Use the actual columns from this query
+                order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
+                query_parts.append(order_by_clause)
+            except Exception as e:
+                raise MetadataFilterError(f"Error building ORDER BY clause: {str(e)}")
 
         # Add LIMIT/OFFSET
         if limit:
@@ -4299,13 +4294,24 @@ class LocalVectorDB(BaseVectorDB):
         filter_builder = FilterQueryBuilder(self.metadata_schema)
         where_clause, params = filter_builder.build_where_clause(where)
 
-        # Build ORDER BY clause
+        # Build secure ORDER BY clause
         order_clause = ""
         if order_by:
-            # Basic validation for order_by
-            if not isinstance(order_by, str):
-                raise ValueError("order_by must be a string")
-            order_clause = f" ORDER BY {order_by}"
+            try:
+                # Validate that order_by is a string
+                if not isinstance(order_by, str):
+                    raise ValueError("order_by must be a string")
+                
+                # Build valid columns set (all document columns)
+                base_columns = self.schema.BASE_COLUMNS
+                metadata_columns = set(self.metadata_schema.keys())
+                valid_columns = set(base_columns).union(metadata_columns)
+                
+                # Use FilterQueryBuilder for secure ORDER BY construction
+                order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
+                order_clause = f" {order_by_clause}"
+            except Exception as e:
+                raise ValueError(f"Error building ORDER BY clause: {str(e)}")
 
         # Build LIMIT/OFFSET clause
         limit_clause = ""
@@ -4316,7 +4322,16 @@ class LocalVectorDB(BaseVectorDB):
 
         # Execute query asynchronously
         async with self.async_connection_pool.get_connection_context() as conn:
-            sql = f"SELECT * FROM documents WHERE {where_clause}{order_clause}{limit_clause}"
+            # Build complete SQL query
+            sql_parts = ["SELECT * FROM documents"]
+            if where_clause:
+                sql_parts.append(f"WHERE {where_clause}")
+            if order_clause:
+                sql_parts.append(order_clause.strip())
+            if limit_clause:
+                sql_parts.append(limit_clause.strip())
+            
+            sql = " ".join(sql_parts)
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
 

@@ -199,6 +199,12 @@ def create_app(
             if app.config.get("SECRET_KEY") is None:
                 app.config["SECRET_KEY"] = os.urandom(32)
             logger.info("Inspector UI registered at /inspector")
+
+            if not app.config_obj.server.require_api_key:
+                logger.warning("Inspector enabled without api-key protection.")
+                logger.warning("**The inspector is available and allows full database access to anyone with "
+                               "the url where the app is exposed.**")
+
         except ImportError as e:
             logger.warning(f"Inspector UI not available: {e}")
         except Exception as e:

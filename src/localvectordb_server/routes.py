@@ -27,6 +27,7 @@ from werkzeug.utils import secure_filename
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.utils import get_system_version
+from localvectordb._filters import FilterQueryBuilder
 from localvectordb_server._auth import require_api_key
 from localvectordb_server._cache import cache
 from localvectordb_server._checkdeps import check_ollama_service
@@ -1056,13 +1057,6 @@ def filter_documents(db_name):
             validate_field_type(data, "where", dict)
         if order_by is not None:
             validate_field_type(data, "order_by", str)
-            # Basic validation for ORDER BY to prevent injection
-            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(\s+(ASC|DESC))?$', order_by.strip(), re.IGNORECASE):
-                raise ValidationError(
-                    "Invalid order_by format. Use 'field_name' or 'field_name ASC/DESC'",
-                    field="order_by",
-                    value=order_by
-                )
         if limit is not None:
             validate_field_type(data, "limit", int)
             if limit < 1 or limit > 10000:
@@ -1074,6 +1068,27 @@ def filter_documents(db_name):
 
         try:
             db = current_app.db_manager.get_db(db_name)
+
+            # Perform secure ORDER BY validation with schema access
+            if order_by is not None:
+                try:
+                    # Create FilterQueryBuilder with the database's metadata schema
+                    filter_builder = FilterQueryBuilder(db.metadata_schema)
+                    
+                    # Build valid columns set (base columns + metadata columns)
+                    base_columns = db.schema.BASE_COLUMNS
+                    metadata_columns = set(db.metadata_schema.keys())
+                    valid_columns = set(base_columns).union(metadata_columns)
+                    
+                    # Validate the ORDER BY clause using secure builder
+                    # This will raise DatabaseError if invalid
+                    filter_builder.build_order_by_clause(order_by, valid_columns)
+                except Exception as e:
+                    raise ValidationError(
+                        f"Invalid ORDER BY clause: {str(e)}",
+                        field="order_by",
+                        value=order_by
+                    )
 
             db_logger.log_query("filter_documents",
                                 database_name=db_name,
