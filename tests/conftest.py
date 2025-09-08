@@ -13,6 +13,7 @@
 Enhanced pytest fixtures with better test isolation for LocalVectorDB.
 """
 import pytest
+import sys
 import tempfile
 import numpy as np
 import asyncio
@@ -25,6 +26,33 @@ from contextlib import contextmanager
 
 from localvectordb.core import MetadataField, MetadataFieldType, Document, Chunk, ChunkPosition
 from localvectordb.embeddings import MockEmbeddings
+
+
+@pytest.fixture(autouse=True)
+def global_cleanup():
+    """Global cleanup fixture to prevent test interference."""
+    # Store initial state
+    initial_modules = set(sys.modules.keys())
+    
+    # Import registry here to avoid circular imports
+    from localvectordb.embeddings import EmbeddingRegistry
+    initial_providers = EmbeddingRegistry._providers.copy()
+    
+    yield
+    
+    # Cleanup after test
+    # 1. Clean up EmbeddingRegistry state
+    EmbeddingRegistry._providers = initial_providers
+    
+    # 2. Remove dynamically loaded migration test modules
+    modules_to_remove = []
+    for module_name in sys.modules:
+        # Only remove migration modules that look like dynamically loaded test migrations
+        if ('migration_' in module_name and module_name not in initial_modules and
+            any(pattern in module_name for pattern in ['_1_1_0', '_1_2_0', '_1_3_0', '_1_4_0', '_2_0_0'])):
+            modules_to_remove.append(module_name)
+    for module_name in modules_to_remove:
+        del sys.modules[module_name]
 
 
 @pytest.fixture(scope="function", autouse=False)

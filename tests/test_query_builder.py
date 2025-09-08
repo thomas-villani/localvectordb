@@ -21,6 +21,9 @@ from localvectordb.query_builder import (
 from localvectordb.core import QueryResult, Document
 
 
+# EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
+
+
 class TestSearchClause:
     """Test SearchClause dataclass."""
 

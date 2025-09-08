@@ -13,6 +13,8 @@ from localvectordb.chunking import (
 from localvectordb.core import Chunk, ChunkPosition
 
 
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestPositionTrackingChunker:
     """Test base PositionTrackingChunker class."""
 
@@ -83,7 +85,8 @@ class TestPositionTrackingChunker:
         assert chunk.index == 1
         assert chunk.tokens == 4  # Mock returns word count
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestSentenceChunker:
     """Test SentenceChunker class."""
 
@@ -179,7 +182,8 @@ class TestSentenceChunker:
             total_length = sum(end - start for start, end, _ in sentences)
             assert total_length <= len(text)
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestTokenChunker:
     """Test TokenChunker class."""
 
@@ -243,7 +247,8 @@ class TestTokenChunker:
         assert pos >= 0
         assert pos <= len(text)
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestWordChunker:
     """Test WordChunker class."""
 
@@ -297,7 +302,8 @@ class TestWordChunker:
         # Should capture most of the original text
         assert len(all_content.strip()) > 0
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestLineChunker:
     """Test LineChunker class."""
 
@@ -357,7 +363,8 @@ class TestLineChunker:
         reconstructed = "".join(chunk.content for chunk in chunks)
         assert '\n' in reconstructed
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestCharChunker:
     """Test CharChunker class."""
 
@@ -411,7 +418,8 @@ class TestCharChunker:
             extracted = text[chunk.position.start:chunk.position.end]
             assert extracted == chunk.content
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestParagraphChunker:
     """Test ParagraphChunker class."""
 
@@ -459,7 +467,8 @@ class TestParagraphChunker:
         # Should split the long paragraph
         assert len(chunks) > 1
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestSectionChunker:
     """Test SectionChunker class."""
 
@@ -534,7 +543,8 @@ Content 3."""
         assert 1 in levels
         assert max(levels) >= 2
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestCodeBlockChunker:
     """Test CodeBlockChunker class."""
 
@@ -636,7 +646,8 @@ if (condition) {
         # Should identify function and if blocks
         assert len(blocks) >= 1
 
-
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestChunkerFactory:
     """Test ChunkerFactory class."""
 
@@ -720,6 +731,8 @@ class TestChunkerFactory:
         assert isinstance(methods, list)
 
 
+@pytest.mark.unit
+@pytest.mark.chunking
 class TestUtilityFunctions:
     """Test utility functions for chunk manipulation."""
 

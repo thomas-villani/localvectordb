@@ -38,6 +38,7 @@ from localvectordb_server.config import (
 )
 
 
+@pytest.mark.unit
 class TestEmbeddingSettings:
     """Test EmbeddingSettings configuration."""
 
@@ -151,6 +152,7 @@ class TestEmbeddingSettings:
         assert settings.provider == "openai"
 
 
+@pytest.mark.unit
 class TestDatabaseSettings:
     """Test DatabaseSettings configuration."""
 
@@ -217,6 +219,7 @@ class TestDatabaseSettings:
 
 
 
+@pytest.mark.unit
 class TestServerSettings:
     """Test ServerSettings configuration."""
 
@@ -298,6 +301,7 @@ class TestServerSettings:
             settings.validate()
 
 
+@pytest.mark.unit
 class TestConfig:
     """Test Config main configuration container."""
 
@@ -585,6 +589,7 @@ port = 9000
             Config.update_from_dict(base_config, update_map)
 
 
+@pytest.mark.unit
 class TestLoadConfig:
     """Test the load_config function."""
 
@@ -705,6 +710,7 @@ port = 5555
         assert isinstance(result, Config)
 
 
+@pytest.mark.unit
 class TestConfigErrorHandling:
     """Test error handling in configuration."""
 

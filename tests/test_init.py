@@ -9,6 +9,7 @@ import types
 import pytest
 
 
+@pytest.mark.unit
 class TestPackageImports:
     """Test package-level imports and public API."""
 
@@ -98,6 +99,7 @@ class TestPackageImports:
             pytest.skip("Version information not available")
 
 
+@pytest.mark.unit
 class TestPublicAPI:
     """Test the public API surface of the package."""
 
@@ -179,6 +181,8 @@ class TestPublicAPI:
             assert callable(getattr(EmbeddingRegistry, method_name))
 
 
+@pytest.mark.unit
+@pytest.mark.performance
 class TestImportPerformance:
     """Test import performance and lazy loading."""
 
@@ -211,6 +215,7 @@ class TestImportPerformance:
         assert VectorDB is not None
 
 
+@pytest.mark.unit
 class TestBackwardCompatibility:
     """Test backward compatibility of imports."""
 
@@ -244,6 +249,7 @@ class TestBackwardCompatibility:
         assert RemoteVectorDB.__doc__ is not None
 
 
+@pytest.mark.unit
 class TestImportErrorHandling:
     """Test graceful handling of import errors."""
 
@@ -269,6 +275,7 @@ class TestImportErrorHandling:
         assert localvectordb is not None
 
 
+@pytest.mark.unit
 class TestDocumentation:
     """Test that documentation is accessible."""
 
@@ -307,6 +314,7 @@ class TestDocumentation:
             pytest.fail(f"help() failed for VectorDB: {e}")
 
 
+@pytest.mark.unit
 class TestPackageStructure:
     """Test overall package structure and organization."""
 
@@ -373,6 +381,7 @@ class TestPackageStructure:
         assert len(unexpected_extra) == 0, f"Unexpected public items: {unexpected_extra}"
 
 
+@pytest.mark.unit
 class TestModuleInitialization:
     """Test module initialization behavior."""
 
@@ -381,36 +390,45 @@ class TestModuleInitialization:
         import sys
         import os
 
+        # Save the current state of localvectordb modules
+        saved_modules = {}
         modules_to_remove = [name for name in sys.modules if name.startswith("localvectordb")]
         for module in modules_to_remove:
+            saved_modules[module] = sys.modules[module]
             del sys.modules[module]
 
-        # Capture initial state
-        initial_env = dict(os.environ)
-        initial_modules = set(sys.modules.keys())
+        try:
+            # Capture initial state
+            initial_env = dict(os.environ)
+            initial_modules = set(sys.modules.keys())
 
-        # Import the package
-        import localvectordb
+            # Import the package
+            import localvectordb
 
-        # Check for unwanted side effects
-        final_env = dict(os.environ)
-        final_modules = set(sys.modules.keys())
+            # Check for unwanted side effects
+            final_env = dict(os.environ)
+            final_modules = set(sys.modules.keys())
 
-        # Environment shouldn't be modified (much)
-        env_changes = set(final_env.keys()) - set(initial_env.keys())
-        # Allow some common environment additions
-        allowed_env_changes = {'PYTHONPATH', 'PATH'}  # Common in test environments
-        unexpected_env_changes = env_changes - allowed_env_changes
+            # Environment shouldn't be modified (much)
+            env_changes = set(final_env.keys()) - set(initial_env.keys())
+            # Allow some common environment additions
+            allowed_env_changes = {'PYTHONPATH', 'PATH'}  # Common in test environments
+            unexpected_env_changes = env_changes - allowed_env_changes
 
-        # Don't be too strict about environment changes in test environments
-        assert len(unexpected_env_changes) == 0, f"Unexpected env changes: {unexpected_env_changes}"
+            # Don't be too strict about environment changes in test environments
+            assert len(unexpected_env_changes) == 0, f"Unexpected env changes: {unexpected_env_changes}"
 
-        # New modules should be reasonable
-        new_modules = final_modules - initial_modules
-        localvectordb_modules = [m for m in new_modules if m.startswith('localvectordb')]
+            # New modules should be reasonable
+            new_modules = final_modules - initial_modules
+            localvectordb_modules = [m for m in new_modules if m.startswith('localvectordb')]
 
-        # Should have imported localvectordb modules
-        assert len(localvectordb_modules) > 0
+            # Should have imported localvectordb modules
+            assert len(localvectordb_modules) > 0
+
+        finally:
+            # Restore the original state of modules
+            for module_name, module_obj in saved_modules.items():
+                sys.modules[module_name] = module_obj
 
     def test_repeated_imports(self):
         """Test that repeated imports work correctly."""

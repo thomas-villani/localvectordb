@@ -157,7 +157,7 @@ class LocalVectorDB(BaseVectorDB):
 
             # Database files
             self.db_path = str(self.base_path / f"{name}.sqlite")
-            self.index_path = str(self.base_path / f"{name}.faiss")
+            self.index_path = self.base_path / f"{name}.faiss"
 
             if not create_if_not_exists and not Path(self.db_path).exists():
                 raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
@@ -2882,6 +2882,8 @@ class LocalVectorDB(BaseVectorDB):
         query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
         params = []
 
+        filter_builder = None
+
         # Build WHERE clause using new filter system
         if where:
             try:
@@ -2897,7 +2899,7 @@ class LocalVectorDB(BaseVectorDB):
         if order_by:
             try:
                 # Create or reuse filter_builder for ORDER BY validation
-                if 'filter_builder' not in locals():
+                if filter_builder is None:
                     filter_builder = FilterQueryBuilder(self.metadata_schema)
 
                 # Build secure ORDER BY clause with proper validation and quoting

@@ -33,6 +33,7 @@ def create_mock_pooled_connection(mock_conn):
     mock_pooled.connection = mock_conn
     return mock_pooled
 
+@pytest.mark.unit
 class TestLocalVectorDBInitialization:
     """Test LocalVectorDB initialization."""
 
@@ -170,6 +171,7 @@ class TestLocalVectorDBInitialization:
             assert db.index == mock_index
 
 
+@pytest.mark.unit
 class TestLocalVectorDBUpsert:
     """Test LocalVectorDB upsert functionality."""
 
@@ -289,6 +291,7 @@ class TestLocalVectorDBUpsert:
             assert len(result) == 150
 
 
+@pytest.mark.unit
 class TestLocalVectorDBInsert:
     """Test LocalVectorDB insert functionality."""
 
@@ -398,7 +401,7 @@ class TestLocalVectorDBInsert:
             assert result == ["doc_1"]
             mock_pipeline.assert_called_once()
 
-
+@pytest.mark.unit
 class TestLocalVectorDBRetrieval:
     """Test LocalVectorDB retrieval functionality."""
 
@@ -541,6 +544,7 @@ class TestLocalVectorDBRetrieval:
         assert result is False
 
 
+@pytest.mark.unit
 class TestLocalVectorDBDeletion:
     """Test LocalVectorDB deletion functionality."""
 
@@ -985,7 +989,7 @@ class TestLocalVectorDBFilter:
 
         call_args = mock_conn.execute.call_args[0]
         sql_query = call_args[0]
-        assert "ORDER BY rating DESC" in sql_query
+        assert "ORDER BY \"rating\" DESC" in sql_query
 
     def test_filter_with_limit_offset(self, mock_db):
         """Test filtering with limit and offset."""

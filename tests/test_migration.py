@@ -13,6 +13,7 @@
 
 import json
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
@@ -24,167 +25,195 @@ from localvectordb.migration import Migration, MigrationEngine, MigrationScript
 from localvectordb.versioning import DatabaseVersion, VersionManager
 
 
-class SampleMigration_1_1_0(Migration):
-    """Test migration that adds user tracking fields."""
-    
-    version = "1.1.0"
-    description = "Add user tracking fields"
-    dependencies = []
-    
-    def get_schema_changes(self) -> Dict[str, Any]:
-        return {
-            'new_schema': {
-                'user_id': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="unknown"
-                ),
-                'priority': MetadataField(
-                    type=MetadataFieldType.INTEGER,
-                    indexed=True,
-                    required=False,
-                    default_value=0
-                )
-            },
-            'column_mapping': {},
-            'drop_columns': False
-        }
-    
-    def get_rollback_changes(self) -> Dict[str, Any]:
-        return {
-            'new_schema': {},  # Remove all fields
-            'column_mapping': {},
-            'drop_columns': True
-        }
+# IMPORTANT: Sample migration classes are now created dynamically in fixtures to avoid
+# module loading conflicts when tests run in the full suite. Previously, these were
+# defined as module-level classes, but this caused issues when tests ran in different
+# orders or with different pytest plugin configurations. The dynamic approach ensures
+# test isolation and consistent behavior regardless of test execution context.
 
 
-class SampleMigration_1_2_0(Migration):
-    """Test migration that renames and modifies fields."""
-    
-    version = "1.2.0"
-    description = "Rename user_id to author_id and add created_by"
-    dependencies = ["1.1.0"]
-    
-    def get_schema_changes(self) -> Dict[str, Any]:
-        return {
-            'new_schema': {
-                'author_id': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="unknown"
-                ),
-                'created_by': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="system"
-                ),
-                'priority': MetadataField(
-                    type=MetadataFieldType.INTEGER,
-                    indexed=True,
-                    required=False,
-                    default_value=1  # Changed default
-                )
-            },
-            'column_mapping': {
-                'user_id': 'author_id'
-            },
-            'drop_columns': False
-        }
-    
-    def get_rollback_changes(self) -> Dict[str, Any]:
-        return {
-            'new_schema': {
-                'user_id': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="unknown"
-                ),
-                'priority': MetadataField(
-                    type=MetadataFieldType.INTEGER,
-                    indexed=True,
-                    required=False,
-                    default_value=0
-                )
-            },
-            'column_mapping': {
-                'author_id': 'user_id'
-            },
-            'drop_columns': True  # Drop created_by field
-        }
+# Module cleanup now handled by global_cleanup fixture in conftest.py
 
 
-class SampleMigration_1_3_0(Migration):
-    """Test migration with prerequisites."""
+@pytest.fixture
+def sample_migration_1_1_0():
+    """Create SampleMigration_1_1_0 class dynamically."""
     
-    version = "1.3.0"
-    description = "Add status field (requires author_id)"
-    dependencies = ["1.2.0"]
+    class SampleMigration_1_1_0(Migration):
+        """Test migration that adds user tracking fields."""
+        
+        version = "1.1.0"
+        description = "Add user tracking fields"
+        dependencies = []
+        
+        def get_schema_changes(self) -> Dict[str, Any]:
+            return {
+                'new_schema': {
+                    'user_id': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="unknown"
+                    ),
+                    'priority': MetadataField(
+                        type=MetadataFieldType.INTEGER,
+                        indexed=True,
+                        required=False,
+                        default_value=0
+                    )
+                },
+                'column_mapping': {},
+                'drop_columns': False
+            }
+        
+        def get_rollback_changes(self) -> Dict[str, Any]:
+            return {
+                'new_schema': {},  # Remove all fields
+                'column_mapping': {},
+                'drop_columns': True
+            }
     
-    def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
-        return 'author_id' in current_schema
+    return SampleMigration_1_1_0
+
+
+@pytest.fixture
+def sample_migration_1_2_0():
+    """Create SampleMigration_1_2_0 class dynamically."""
     
-    def get_schema_changes(self) -> Dict[str, Any]:
-        # Get existing fields plus new status field
-        return {
-            'new_schema': {
-                'author_id': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="unknown"
-                ),
-                'created_by': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="system"
-                ),
-                'priority': MetadataField(
-                    type=MetadataFieldType.INTEGER,
-                    indexed=True,
-                    required=False,
-                    default_value=1
-                ),
-                'status': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=True,
-                    default_value="draft"
-                )
-            },
-            'column_mapping': {},
-            'drop_columns': False
-        }
+    class SampleMigration_1_2_0(Migration):
+        """Test migration that renames and modifies fields."""
+        
+        version = "1.2.0"
+        description = "Rename user_id to author_id and add created_by"
+        dependencies = ["1.1.0"]
+        
+        def get_schema_changes(self) -> Dict[str, Any]:
+            return {
+                'new_schema': {
+                    'author_id': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="unknown"
+                    ),
+                    'created_by': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="system"
+                    ),
+                    'priority': MetadataField(
+                        type=MetadataFieldType.INTEGER,
+                        indexed=True,
+                        required=False,
+                        default_value=1  # Changed default
+                    )
+                },
+                'column_mapping': {
+                    'user_id': 'author_id'
+                },
+                'drop_columns': False
+            }
+        
+        def get_rollback_changes(self) -> Dict[str, Any]:
+            return {
+                'new_schema': {
+                    'user_id': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="unknown"
+                    ),
+                    'priority': MetadataField(
+                        type=MetadataFieldType.INTEGER,
+                        indexed=True,
+                        required=False,
+                        default_value=0
+                    )
+                },
+                'column_mapping': {
+                    'author_id': 'user_id'
+                },
+                'drop_columns': True  # Drop created_by field
+            }
     
-    def get_rollback_changes(self) -> Dict[str, Any]:
-        return {
-            'new_schema': {
-                'author_id': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="unknown"
-                ),
-                'created_by': MetadataField(
-                    type=MetadataFieldType.TEXT,
-                    indexed=True,
-                    required=False,
-                    default_value="system"
-                ),
-                'priority': MetadataField(
-                    type=MetadataFieldType.INTEGER,
-                    indexed=True,
-                    required=False,
-                    default_value=1
-                )
-            },
-            'column_mapping': {},
-            'drop_columns': True
-        }
+    return SampleMigration_1_2_0
+
+
+@pytest.fixture
+def sample_migration_1_3_0():
+    """Create SampleMigration_1_3_0 class dynamically."""
+    
+    class SampleMigration_1_3_0(Migration):
+        """Test migration with prerequisites."""
+        
+        version = "1.3.0"
+        description = "Add status field (requires author_id)"
+        dependencies = ["1.2.0"]
+        
+        def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
+            return 'author_id' in current_schema
+        
+        def get_schema_changes(self) -> Dict[str, Any]:
+            # Get existing fields plus new status field
+            return {
+                'new_schema': {
+                    'author_id': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="unknown"
+                    ),
+                    'created_by': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="system"
+                    ),
+                    'priority': MetadataField(
+                        type=MetadataFieldType.INTEGER,
+                        indexed=True,
+                        required=False,
+                        default_value=1
+                    ),
+                    'status': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=True,
+                        default_value="draft"
+                    )
+                },
+                'column_mapping': {},
+                'drop_columns': False
+            }
+        
+        def get_rollback_changes(self) -> Dict[str, Any]:
+            return {
+                'new_schema': {
+                    'author_id': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="unknown"
+                    ),
+                    'created_by': MetadataField(
+                        type=MetadataFieldType.TEXT,
+                        indexed=True,
+                        required=False,
+                        default_value="system"
+                    ),
+                    'priority': MetadataField(
+                        type=MetadataFieldType.INTEGER,
+                        indexed=True,
+                        required=False,
+                        default_value=1
+                    )
+                },
+                'column_mapping': {},
+                'drop_columns': True
+            }
+    
+    return SampleMigration_1_3_0
 
 
 @pytest.fixture
@@ -233,7 +262,7 @@ from typing import Dict, Any
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
 
-class Migration_1_1_0(Migration):
+class MigrationDiscovery_1_1_0(Migration):
     version = "1.1.0"
     description = "Add user tracking fields"
     dependencies = []
@@ -273,7 +302,7 @@ from typing import Dict, Any
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
 
-class Migration_1_2_0(Migration):
+class MigrationDiscovery_1_2_0(Migration):
     version = "1.2.0"
     description = "Rename user_id to author_id and add created_by"
     dependencies = ["1.1.0"]
@@ -332,21 +361,22 @@ class Migration_1_2_0(Migration):
     yield engine
 
 
+@pytest.mark.unit
 class TestMigration:
     """Test cases for the Migration base class."""
     
-    def test_migration_creation(self, temp_db_path):
+    def test_migration_creation(self, temp_db_path, sample_migration_1_1_0):
         """Test creating a migration instance."""
-        migration = SampleMigration_1_1_0(temp_db_path)
+        migration = sample_migration_1_1_0(temp_db_path)
         
         assert migration.version == "1.1.0"
         assert migration.description == "Add user tracking fields"
         assert migration.dependencies == []
         assert migration.database_path == temp_db_path
     
-    def test_migration_schema_changes(self, temp_db_path):
+    def test_migration_schema_changes(self, temp_db_path, sample_migration_1_1_0):
         """Test getting schema changes from migration."""
-        migration = SampleMigration_1_1_0(temp_db_path)
+        migration = sample_migration_1_1_0(temp_db_path)
         changes = migration.get_schema_changes()
         
         assert 'new_schema' in changes
@@ -358,18 +388,18 @@ class TestMigration:
         assert user_id_field.indexed is True
         assert user_id_field.default_value == "unknown"
     
-    def test_migration_rollback_changes(self, temp_db_path):
+    def test_migration_rollback_changes(self, temp_db_path, sample_migration_1_1_0):
         """Test getting rollback changes from migration."""
-        migration = SampleMigration_1_1_0(temp_db_path)
+        migration = sample_migration_1_1_0(temp_db_path)
         rollback = migration.get_rollback_changes()
         
         assert 'new_schema' in rollback
         assert rollback['new_schema'] == {}  # Empty schema for rollback
         assert rollback['drop_columns'] is True
     
-    def test_migration_prerequisites(self, temp_db_path):
+    def test_migration_prerequisites(self, temp_db_path, sample_migration_1_3_0):
         """Test migration prerequisite validation."""
-        migration = SampleMigration_1_3_0(temp_db_path)
+        migration = sample_migration_1_3_0(temp_db_path)
         
         # Should fail without author_id field
         schema_without_author = {
@@ -384,6 +414,8 @@ class TestMigration:
         assert migration.validate_prerequisites(schema_with_author)
 
 
+@pytest.mark.integration
+@pytest.mark.database
 class TestMigrationEngine:
     """Test cases for the MigrationEngine class."""
     
@@ -537,7 +569,7 @@ from typing import List, Tuple
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
 
-class Migration_2_0_0(Migration):
+class MigrationPrereq_2_0_0(Migration):
     version = "2.0.0"
     description = "Bad migration"
     dependencies = ["1.5.0"]  # Non-existent version
@@ -572,6 +604,9 @@ class Migration_2_0_0(Migration):
         assert "Dict[str, Any]" in content
 
 
+@pytest.mark.integration
+@pytest.mark.database
+@pytest.mark.slow
 class TestMigrationIntegration:
     """Integration tests for the complete migration system."""
     
@@ -607,7 +642,7 @@ from typing import Dict, Any
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
 
-class Migration_1_1_0(Migration):
+class MigrationE2E_1_1_0(Migration):
     version = "1.1.0"
     description = "add metadata fields"
     dependencies = []
@@ -667,7 +702,7 @@ from typing import Dict, Any
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
 
-class Migration_1_1_0(Migration):
+class MigrationPopulate_1_1_0(Migration):
     version = "1.1.0"
     description = "add status field"
     dependencies = []

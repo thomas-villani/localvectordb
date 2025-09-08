@@ -7,13 +7,34 @@ with structured logging, error handling, and performance monitoring.
 """
 import logging
 import os
-from typing import Union
+from typing import Union, Optional
 
 from localvectordb.exceptions import ConfigurationError
 from localvectordb_server._dbmanager import DatabaseManager
 from localvectordb_server._error_handlers import register_error_handlers
 from localvectordb_server._logcfg import configure_logging, setup_request_logging
 from localvectordb_server.config import Config, load_config
+from localvectordb_server.keymanager import KeyManager
+from localvectordb_server._cache import cache
+from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    _FLASK_LIMITER_AVAILABLE = True
+except ImportError:
+    _FLASK_LIMITER_AVAILABLE = False
+    Limiter = None
+    get_remote_address = lambda: None
+
+try:
+    from flask_cors import CORS
+    _FLASK_CORS_AVAILABLE = True
+except ImportError:
+    CORS = None
+    _FLASK_CORS_AVAILABLE = False
 
 
 def create_app(
@@ -24,42 +45,42 @@ def create_app(
         **kwargs
         ):
     """Enhanced application factory function with improved logging and error handling"""
-    from flask import Flask
+
 
     app = Flask(__name__, instance_relative_config=False)
 
     # Start with default config
-    config = load_config(configuration)
+    _config = load_config(configuration)
 
     # Apply explicit CLI arguments
     if database_directory:
-        config.database.root_dir = database_directory
+        _config.database.root_dir = database_directory
 
     if debug:
         app.debug = True
-        config.server.log_level = "DEBUG"
+        _config.server.log_level = "DEBUG"
 
     if log_level and log_level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
-        config.server.log_level = log_level
+        _config.server.log_level = log_level
 
     # Handle other kwargs
     for key, value in kwargs.items():
         if key == 'host' and value:
-            config.server.host = value
+            _config.server.host = value
         elif key == 'port' and value:
-            config.server.port = value
+            _config.server.port = value
 
     # Apply config to Flask app
-    flask_config = config.to_flask_config()
+    flask_config = _config.to_flask_config()
 
     app.config.update(flask_config)
-    app.config_obj = config
+    app.config_obj = _config
 
     # Configure enhanced logging first
     log_file = None
-    if not debug and config.server.environment != 'development':
+    if not debug and _config.server.environment != 'development':
         # Set up log file in production
-        log_dir = os.path.join(config.database.root_dir, 'logs')
+        log_dir = os.path.join(_config.database.root_dir, 'logs')
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, 'localvectordb.log')
 
@@ -75,20 +96,18 @@ def create_app(
     logger.info("Starting LocalVectorDB Server initialization")
 
     # Make sure DB directory exists
-    if not os.path.exists(config.database.root_dir):
-        os.makedirs(config.database.root_dir)
-        logger.info(f"Created database directory: {config.database.root_dir}")
+    if not os.path.exists(_config.database.root_dir):
+        os.makedirs(_config.database.root_dir)
+        logger.info(f"Created database directory: {_config.database.root_dir}")
 
-    logger.info(f"Database Root Path: {os.path.abspath(config.database.root_dir)}")
+    logger.info(f"Database Root Path: {os.path.abspath(_config.database.root_dir)}")
 
     # Configure CORS if enabled
-    if config.server.cors_enabled:
-        try:
-            from flask_cors import CORS
-        except ImportError:
+    if _config.server.cors_enabled:
+        if not _FLASK_CORS_AVAILABLE:
             raise RuntimeError("CORS requires installation of `flask_cors`. Run `pip install flask_cors`")
 
-        origins = config.server.cors_allowed_origins
+        origins = _config.server.cors_allowed_origins
         if origins == "*":
             logger.warning("CORS enabled for all origins. This may be insecure in production.")
             CORS(
@@ -96,9 +115,9 @@ def create_app(
                 resources={
                     r"/api/*": {
                         "origins": "*",
-                        "methods": config.server.cors_allowed_methods,
-                        "allow_headers": config.server.cors_allowed_headers,
-                        "max_age": config.server.cors_max_age
+                        "methods": _config.server.cors_allowed_methods,
+                        "allow_headers": _config.server.cors_allowed_headers,
+                        "max_age": _config.server.cors_max_age
                     }
                 }
             )
@@ -109,9 +128,9 @@ def create_app(
                 resources={
                     r"/api/*": {
                         "origins": origins,
-                        "methods": config.server.cors_allowed_methods,
-                        "allow_headers": config.server.cors_allowed_headers,
-                        "max_age": config.server.cors_max_age
+                        "methods": _config.server.cors_allowed_methods,
+                        "allow_headers": _config.server.cors_allowed_headers,
+                        "max_age": _config.server.cors_max_age
                     }
                 }
             )
@@ -122,52 +141,44 @@ def create_app(
                 resources={
                     r"/api/*": {
                         "origins": [origins],
-                        "methods": config.server.cors_allowed_methods,
-                        "allow_headers": config.server.cors_allowed_headers,
-                        "max_age": config.server.cors_max_age
+                        "methods": _config.server.cors_allowed_methods,
+                        "allow_headers": _config.server.cors_allowed_headers,
+                        "max_age": _config.server.cors_max_age
                     }
                 }
             )
         else:
             raise ConfigurationError("CORS enabled but `cors_allowed_origins` is invalid or empty.")
 
-    if config.server.proxy_enabled:
+    if _config.server.proxy_enabled:
         logger.info("Enabling ProxyFix")
 
-        from werkzeug.middleware.proxy_fix import ProxyFix
-
-        if config.server.proxy_settings:
-            logger.debug(f"Proxy settings: {config.server.proxy_settings}")
-            app.wsgi_app = ProxyFix(app.wsgi_app, **config.server.proxy_settings)
+        if _config.server.proxy_settings:
+            logger.debug(f"Proxy settings: {_config.server.proxy_settings}")
+            app.wsgi_app = ProxyFix(app.wsgi_app, **_config.server.proxy_settings)
         else:  # Default config, single proxy, forward
             app.wsgi_app = ProxyFix(
                 app.wsgi_app,
                 x_for=1,  # Number of proxies setting X-Forwarded-For, one for single proxy
             )
 
-    if config.server.enable_rate_limiting:
-        try:
-            from flask_limiter import Limiter
-            from flask_limiter.util import get_remote_address
-
-            limiter = Limiter(
-                key_func=get_remote_address,
-                app=app,
-                default_limits=[config.server.rate_limit],
-                storage_uri=config.server.rate_limit_storage_uri
-            )
-            app.limiter = limiter
-            logger.info(f"Rate limiting enabled: {config.server.rate_limit}")
-
-        except ImportError:
+    if _config.server.enable_rate_limiting:
+        if not _FLASK_LIMITER_AVAILABLE:
             logger.error("Rate limiting requires flask-limiter. Install with: pip install flask-limiter")
             raise ConfigurationError("Rate limiting enabled but flask-limiter not installed")
 
-    # Initialize caching
-    from localvectordb_server._cache import cache
+        limiter = Limiter(
+            key_func=get_remote_address,
+            app=app,
+            default_limits=[_config.server.rate_limit],
+            storage_uri=_config.server.rate_limit_storage_uri
+        )
+        app.limiter = limiter
+        logger.info(f"Rate limiting enabled: {_config.server.rate_limit}")
 
-    if config.server.cache_enabled:
-        logger.info(f"Caching enabled with {config.server.cache_type}")
+    # Initialize caching
+    if _config.server.cache_enabled:
+        logger.info(f"Caching enabled with {_config.server.cache_type}")
     else:
         logger.info("Caching disabled")
         app.config["CACHE_TYPE"] = "NullCache"
@@ -182,8 +193,7 @@ def create_app(
         logger.error(f"Failed to initialize database manager: {e}", exc_info=True)
         raise ConfigurationError(f"Database manager initialization failed: {e}")
 
-    from localvectordb_server.keymanager import KeyManager
-    app.key_manager = KeyManager(config.server.key_database_path or os.path.join(config.database.root_dir, "api_keys.db"))
+    app.key_manager = KeyManager(_config.server.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db"))
 
     # Register blueprints
     from localvectordb_server.routes import api
@@ -191,11 +201,11 @@ def create_app(
     logger.info("API routes registered")
 
     # Register inspector blueprint if enabled
-    inspector_enabled = getattr(config.server, 'inspector_enabled', True)
+    inspector_enabled = getattr(_config.server, 'inspector_enabled', True)
     if inspector_enabled:
         try:
-            from localvectordb_server.inspector import inspector
-            app.register_blueprint(inspector, url_prefix='/inspector')
+            from localvectordb_server.inspector import inspector_bp
+            app.register_blueprint(inspector_bp, url_prefix='/inspector')
             if app.config.get("SECRET_KEY") is None:
                 app.config["SECRET_KEY"] = os.urandom(32)
             logger.info("Inspector UI registered at /inspector")
@@ -207,23 +217,23 @@ def create_app(
 
         except ImportError as e:
             logger.warning(f"Inspector UI not available: {e}")
+            inspector_bp = None
         except Exception as e:
             logger.error(f"Failed to register inspector UI: {e}")
     else:
         logger.info("Inspector UI disabled in configuration")
 
     # Store config for access elsewhere
-    app.lvdb_config = config
 
-    # Log final configuration summary
+    # Log final configuration
     logger.info("Server Application successfully initialized!")
     logger.info("Configuration summary:")
     logger.info(f"  - Debug mode: {app.debug}")
-    logger.info(f"  - Log level: {config.server.log_level}")
-    logger.info(f"  - Database path: {config.database.root_dir}")
-    logger.info(f"  - API authentication: {'enabled' if config.server.require_api_key else 'disabled'}")
-    logger.info(f"  - CORS: {'enabled' if config.server.cors_enabled else 'disabled'}")
-    logger.info(f"  - Rate limiting: {'enabled' if config.server.enable_rate_limiting else 'disabled'}")
+    logger.info(f"  - Log level: {_config.server.log_level}")
+    logger.info(f"  - Database path: {_config.database.root_dir}")
+    logger.info(f"  - API authentication: {'enabled' if _config.server.require_api_key else 'disabled'}")
+    logger.info(f"  - CORS: {'enabled' if _config.server.cors_enabled else 'disabled'}")
+    logger.info(f"  - Rate limiting: {'enabled' if _config.server.enable_rate_limiting else 'disabled'}")
 
     return app
 

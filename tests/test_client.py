@@ -61,6 +61,7 @@ def mock_httpx_client():
         yield mock_client
 
 
+@pytest.mark.client
 class TestRemoteVectorDBInitialization:
     """Test RemoteVectorDB initialization."""
 
@@ -138,6 +139,7 @@ class TestRemoteVectorDBInitialization:
         assert db.base_url == "http://localhost:5000"
 
 
+@pytest.mark.client
 class TestRemoteVectorDBDocumentOperations:
     """Test RemoteVectorDB document operations."""
 
@@ -363,6 +365,7 @@ class TestRemoteVectorDBDocumentOperations:
         assert result is False
 
 
+@pytest.mark.client
 class TestRemoteVectorDBQuery:
     """Test RemoteVectorDB query functionality."""
 
@@ -482,6 +485,7 @@ class TestRemoteVectorDBQuery:
         assert payload["offset"] == 5
 
 
+@pytest.mark.client
 class TestRemoteVectorDBProperties:
     """Test RemoteVectorDB properties and utility methods."""
 
@@ -530,6 +534,7 @@ class TestRemoteVectorDBProperties:
         mock_db.save()
 
 
+@pytest.mark.client
 class TestRemoteVectorDBLegacyMethods:
     """Test legacy method compatibility."""
 
@@ -577,6 +582,7 @@ class TestRemoteVectorDBLegacyMethods:
             )
 
 
+@pytest.mark.client
 class TestRemoteVectorDBErrorHandling:
     """Test RemoteVectorDB error handling."""
 
@@ -687,6 +693,7 @@ class TestRemoteVectorDBUtilityMethods:
         assert url == "http://localhost:5000/api/v1/test"
 
 
+@pytest.mark.client
 class TestDocumentClass:
     """Test Document dataclass for remote client."""
 
@@ -737,6 +744,7 @@ class TestDocumentClass:
         assert doc is None
 
 
+@pytest.mark.client
 class TestQueryResultClass:
     """Test QueryResult dataclass for remote client."""
 

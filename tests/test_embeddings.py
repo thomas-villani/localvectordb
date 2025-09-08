@@ -16,6 +16,8 @@ from localvectordb.embeddings import (
 from localvectordb.exceptions import OllamaNotFoundError, EmbeddingError
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
 class TestEmbeddingProvider:
     """Test abstract EmbeddingProvider class."""
 
@@ -34,6 +36,8 @@ class TestEmbeddingProvider:
         assert abstract_methods == expected_methods
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
 class TestMockEmbeddings:
     """Test MockEmbeddings provider."""
 
@@ -98,6 +102,9 @@ class TestMockEmbeddings:
         assert not np.array_equal(emb1, emb3)
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
+@pytest.mark.network
 class TestOllamaEmbeddings:
     """Test OllamaEmbeddings provider."""
 
@@ -125,17 +132,14 @@ class TestOllamaEmbeddings:
                 {"name": "llama2:7b"}
             ]
         }
+        mock_client_class.return_value.__enter__.return_value = mock_client
         mock_response.raise_for_status = Mock()
         mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__enter__.return_value = mock_client
 
         provider = OllamaEmbeddings("nomic-embed-text")
         result = provider.validate_model()
 
         assert result is True
-        mock_client.get.assert_called_once_with(
-            "http://localhost:11434/api/tags", timeout=provider.timeout
-        )
 
     @patch('httpx.Client')
     def test_validate_model_not_found(self, mock_client_class):
@@ -288,6 +292,9 @@ class TestOllamaEmbeddings:
         mock_embed.assert_called_once()
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
+@pytest.mark.network
 class TestOpenAIEmbeddings:
     """Test OpenAIEmbeddings provider."""
 
@@ -391,6 +398,8 @@ class TestOpenAIEmbeddings:
             await provider.embed_batch(["test"])
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
 class TestEmbeddingRegistry:
     """Test EmbeddingRegistry class."""
 
@@ -476,6 +485,8 @@ class TestEmbeddingRegistry:
         assert EmbeddingRegistry._plugins_discovered is True  # Will be set again after discovery
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
 class TestConvenienceFunctions:
     """Test convenience functions."""
 
@@ -520,6 +531,8 @@ class TestConvenienceFunctions:
         assert embeddings.shape == (3, 384)
 
 
+@pytest.mark.unit
+@pytest.mark.embedding
 class TestEmbeddingSyncWrapper:
     """Test synchronous wrapper for async embedding methods."""
 

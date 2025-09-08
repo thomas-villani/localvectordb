@@ -32,6 +32,9 @@ from localvectordb_server.keymanager import KeyManager
 from localvectordb_server._cache import cache
 
 
+# EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
+
+
 @pytest.fixture(scope="function")
 def temp_dir():
     """Create temporary directory for test data."""
@@ -190,7 +193,10 @@ class DatabaseManagerMock:
         db.embedding_provider = Mock()
         db.embedding_provider.provider_name = "mock"
         db.embedding_provider.model = "test-model"
-        db.embedding_provider.embed_sync.return_value = np.array([[0.1, 0.2, 0.3]])
+        # Make embed_sync return immediately with mock data
+        db.embedding_provider.embed_sync = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        db.embedding_provider.embed_documents = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        db.embedding_provider.embed_query = Mock(return_value=np.array([0.1, 0.2, 0.3]))
         db.embedding_dimension = 384
         db.chunking_method = "sentences"
         db.chunk_size = 500
@@ -315,6 +321,8 @@ class DatabaseManagerMock:
 
         return db
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestAuthenticationFlow:
     """Test full authentication flow with new KeyManager system."""
 
@@ -369,6 +377,9 @@ class TestAuthenticationFlow:
         # In a real scenario, we'd verify the timestamp was updated
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestDatabaseLifecycle:
     """Test complete database lifecycle with authentication."""
 
@@ -491,6 +502,8 @@ class TestDatabaseLifecycle:
         assert len(result["documents"]) >= 0
 
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestErrorHandlingIntegration:
     """Test error handling across multiple components."""
 
@@ -499,7 +512,6 @@ class TestErrorHandlingIntegration:
         # Try to access non-existent database
         response = integration_client.get('/api/v1/nonexistent_db/info', headers=valid_auth_headers)
 
-        print(response.text)
         assert response.status_code == 404
         result = json.loads(response.data)
         assert result["error"]["code"] == "DATABASE_NOT_FOUND"
@@ -557,6 +569,9 @@ class TestErrorHandlingIntegration:
             assert response.status_code == 401, f"Endpoint {method} {endpoint} should require authentication"
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestMultiDatabaseOperations:
     """Test operations across multiple databases."""
 
@@ -616,6 +631,9 @@ class TestMultiDatabaseOperations:
         assert len(result["results"]) == 0
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.embedding
 class TestEmbeddingIntegration:
     """Test embedding functionality integration."""
 
@@ -660,6 +678,8 @@ class TestEmbeddingIntegration:
             assert "embeddings" in result
 
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestHealthAndMonitoring:
     """Test health check and monitoring endpoints."""
 
@@ -689,6 +709,9 @@ class TestHealthAndMonitoring:
             assert result["ollama_available"] is False
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestKeyManagerIntegration:
     """Test integration with the new KeyManager system."""
 
@@ -734,6 +757,11 @@ class TestKeyManagerIntegration:
         assert integration_app.key_manager.validate_key(expired_key) is False
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
+@pytest.mark.embedding
+@pytest.mark.slow
 class TestCompleteWorkflow:
     """Test complete end-to-end workflows."""
 

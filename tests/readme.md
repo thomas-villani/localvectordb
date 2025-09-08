@@ -20,6 +20,7 @@ tests/
 ├── test_init.py            # Package import tests
 ├── test_integration.py     # Integration tests
 ├── test_performance.py     # Performance benchmarks
+├── ... maybe more?
 └── README.md               # This file
 ```
 

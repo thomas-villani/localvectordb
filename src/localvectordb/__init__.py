@@ -200,7 +200,10 @@ from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.factory import VectorDB
 from localvectordb.query_builder import QueryBuilder
+import localvectordb.versioning
+import localvectordb.backup
+import localvectordb.migration
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
-           "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions",
-           "QueryBuilder", "query_builder"]
+           "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup", "migration",
+           "versioning", "QueryBuilder", "query_builder", "localvectordb"]

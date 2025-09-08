@@ -130,6 +130,7 @@ def backup_manager(sample_database, backup_config, temp_dirs):
     )
 
 
+@pytest.mark.unit
 class TestBackupManager:
     """Test cases for BackupManager functionality."""
     
@@ -222,7 +223,7 @@ class TestBackupManager:
         )
         
         # Check document count
-        docs = restored_db_instance.get_all_documents()
+        docs = restored_db_instance.filter()
         assert len(docs) == 3
         
         restored_db_instance.close()
@@ -267,7 +268,7 @@ class TestBackupManager:
         remaining_ids = {b.backup_id for b in backups}
         assert recent_backup_id in remaining_ids
 
-
+@pytest.mark.unit
 class TestIncrementalBackup:
     """Test cases for incremental backup functionality."""
     
@@ -334,12 +335,12 @@ class TestIncrementalBackup:
             create_if_not_exists=False
         )
         
-        docs = restored_db.get_all_documents()
+        docs = restored_db.filter()
         assert len(docs) >= 5  # Original 3 + 2 incremental
         
         restored_db.close()
 
-
+@pytest.mark.unit
 class TestPointInTimeRecovery:
     """Test cases for point-in-time recovery functionality."""
     
@@ -478,6 +479,7 @@ class TestBackupConfiguration:
         assert not restored_faiss.exists()
 
 
+@pytest.mark.unit
 class TestErrorHandling:
     """Test cases for error handling and edge cases."""
     
@@ -562,8 +564,8 @@ class TestIntegration:
             create_if_not_exists=False
         )
         
-        original_docs = sample_database.get_all_documents()
-        restored_docs = restored_db.get_all_documents()
+        original_docs = sample_database.filter()
+        restored_docs = restored_db.filter()
         
         assert len(restored_docs) == len(original_docs)
         

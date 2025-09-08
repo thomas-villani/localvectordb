@@ -10,6 +10,7 @@ from localvectordb.factory import VectorDB
 from localvectordb.core import MetadataField, MetadataFieldType
 
 
+@pytest.mark.unit
 class TestVectorDBFactory:
     """Test VectorDB factory function."""
 
@@ -423,6 +424,7 @@ class TestVectorDBFactory:
             assert "connection_pool_size" not in call_kwargs
 
 
+@pytest.mark.unit
 class TestFactoryDocstringExamples:
     """Test that all examples from the factory docstring work correctly."""
 
@@ -501,6 +503,7 @@ class TestFactoryDocstringExamples:
             assert mock_remote.called
 
 
+@pytest.mark.unit
 class TestFactoryErrorCases:
     """Test error cases and edge conditions for the factory."""
 

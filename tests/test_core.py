@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from unittest.mock import Mock, patch
+import pytest
 
 from localvectordb.core import (
     MetadataField, MetadataFieldType, ChunkPosition, Chunk, Document,
@@ -13,6 +14,7 @@ from localvectordb.core import (
 )
 
 
+@pytest.mark.unit
 class TestMetadataFieldType:
     """Test MetadataFieldType enum."""
 
@@ -26,6 +28,7 @@ class TestMetadataFieldType:
         assert MetadataFieldType.JSON == "json"
 
 
+@pytest.mark.unit
 class TestMetadataField:
     """Test MetadataField dataclass."""
 
@@ -75,6 +78,7 @@ class TestMetadataField:
         assert field.required is True
 
 
+@pytest.mark.unit
 class TestChunkPosition:
     """Test ChunkPosition dataclass."""
 
@@ -104,6 +108,7 @@ class TestChunkPosition:
         assert pos.end_column == 40
 
 
+@pytest.mark.unit
 class TestChunk:
     """Test Chunk dataclass."""
 
@@ -180,6 +185,7 @@ class TestChunk:
         assert "This is a <<<chunk>>> in a document" == highlighted
 
 
+@pytest.mark.unit
 class TestDocument:
     """Test Document dataclass."""
 
@@ -233,6 +239,7 @@ class TestDocument:
         assert doc.updated_at == now
 
 
+@pytest.mark.unit
 class TestQueryResult:
     """Test QueryResult dataclass."""
 
@@ -297,6 +304,7 @@ class TestQueryResult:
         assert result.get_context("original text") is None
 
 
+@pytest.mark.unit
 class TestDatabaseSchema:
     """Test DatabaseSchema class."""
 
@@ -421,7 +429,7 @@ class TestDatabaseSchema:
 
 
 
-
+@pytest.mark.unit
 class TestConnectionPool:
     """Test ConnectionPool class."""
 
@@ -543,3 +551,5 @@ class TestConnectionPool:
         # Should have created connections for each thread
         assert len(results) == 5
         pool.close_all()
+
+# TODO: async stuff missing?

@@ -119,6 +119,7 @@ def auth_headers():
     return {'Authorization': 'Bearer test_api_key'}
 
 
+@pytest.mark.unit
 class TestHelperFunctions:
     """Test helper functions."""
 
@@ -239,6 +240,8 @@ class TestHelperFunctions:
                 parse_metadata_schema({"invalid": 123})
 
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestDatabaseManagementRoutes:
     """Test database management routes."""
 
@@ -429,6 +432,9 @@ class TestDatabaseManagementRoutes:
         assert result["status"] == "success"
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestDocumentManagementRoutes:
     """Test document management routes."""
 
@@ -606,6 +612,9 @@ class TestDocumentManagementRoutes:
         assert len(result["documents"]) == 1
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestSearchRoutes:
     """Test search routes."""
 
@@ -695,6 +704,9 @@ class TestSearchRoutes:
         assert response.status_code == 200
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestFilterRoutes:
     """Test filter routes."""
 
@@ -732,6 +744,7 @@ class TestFilterRoutes:
         response = client.post('/api/v1/test_db/filter',
                                data=json.dumps(data),
                                content_type='application/json')
+        print(response.text)
 
         assert response.status_code == 200
 
@@ -747,6 +760,9 @@ class TestFilterRoutes:
         assert response.status_code == 400
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
 class TestGlobalSearchRoutes:
     """Test global search routes."""
 
@@ -805,6 +821,8 @@ class TestGlobalSearchRoutes:
         assert "db1" in result["results"]
 
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestHealthRoutes:
     """Test health and system routes."""
 
@@ -820,6 +838,9 @@ class TestHealthRoutes:
             assert result["ollama_available"] is True
 
 
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.embedding
 class TestEmbeddingRoutes:
     """Test embedding routes."""
 
@@ -862,6 +883,8 @@ class TestEmbeddingRoutes:
             assert "embeddings" in result
 
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestErrorHandling:
     """Test error handling."""
 
@@ -917,6 +940,8 @@ class TestErrorHandling:
         assert "error" in result
 
 
+@pytest.mark.integration
+@pytest.mark.client
 class TestRequestValidation:
     """Test request validation."""
 

@@ -28,6 +28,7 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -943,6 +944,9 @@ class IncrementalBackupManager:
                 # Update last backup timestamp
                 self._update_last_backup_timestamp()
 
+                # Small delay to ensure file locks are released on Windows
+                time.sleep(0.1)
+
                 logger.info(f"Incremental backup completed: {backup_id}")
                 return backup_id
 
@@ -1067,23 +1071,24 @@ class IncrementalBackupManager:
         inc_db_path = temp_dir / f"{self.backup_manager.database_name}.sqlite"
 
         # Create incremental database with same schema
-        with sqlite3.connect(inc_db_path) as inc_conn:
+        inc_conn = sqlite3.connect(inc_db_path)
+        orig_conn = sqlite3.connect(self.database_path)
+        
+        try:
             # Copy schema from original database
-            with sqlite3.connect(self.database_path) as orig_conn:
-                # Get schema
-                cursor = orig_conn.execute("""
-                    SELECT sql FROM sqlite_master 
-                    WHERE type IN ('table', 'index', 'trigger') AND sql IS NOT NULL
-                    ORDER BY type DESC
-                """)
+            cursor = orig_conn.execute("""
+                SELECT sql FROM sqlite_master 
+                WHERE type IN ('table', 'index', 'trigger') AND sql IS NOT NULL
+                ORDER BY type DESC
+            """)
 
-                for row in cursor.fetchall():
-                    sql = row[0]
-                    try:
-                        inc_conn.execute(sql)
-                    except sqlite3.OperationalError:
-                        # Skip if already exists or is incompatible
-                        pass
+            for row in cursor.fetchall():
+                sql = row[0]
+                try:
+                    inc_conn.execute(sql)
+                except sqlite3.OperationalError:
+                    # Skip if already exists or is incompatible
+                    pass
 
             # Insert changed documents
             for doc in changes['changed_documents']:
@@ -1123,6 +1128,11 @@ class IncrementalBackupManager:
             """, ('parent_backup_timestamp', changes['parent_timestamp'].isoformat()))
 
             inc_conn.commit()
+            
+        finally:
+            # Explicitly close connections to release file locks on Windows
+            orig_conn.close()
+            inc_conn.close()
 
         logger.debug(f"Created incremental database: {inc_db_path}")
 
@@ -1267,6 +1277,9 @@ class IncrementalBackupManager:
                 # Move restored files to final location
                 self._finalize_incremental_restore(temp_dir, restore_location)
 
+                # Small delay to ensure file locks are released on Windows
+                time.sleep(0.1)
+
                 logger.info(f"Incremental restore completed: {restore_location}")
                 return restore_location
 
@@ -1332,16 +1345,24 @@ class IncrementalBackupManager:
         if not inc_db_path.exists():
             return  # No database changes
 
-        with sqlite3.connect(inc_db_path) as inc_conn, \
-             sqlite3.connect(working_db_path) as working_conn:
-
-            # Copy changed documents
-            cursor = inc_conn.execute("SELECT * FROM documents")
+        inc_conn = sqlite3.connect(inc_db_path)
+        working_conn = sqlite3.connect(working_db_path)
+        
+        try:
+            # Get documents table schema to handle all columns dynamically
+            cursor = inc_conn.execute("PRAGMA table_info(documents)")
+            column_info = cursor.fetchall()
+            column_names = [col[1] for col in column_info]  # col[1] is the column name
+            placeholders = ', '.join(['?' for _ in column_names])
+            column_names_str = ', '.join(column_names)
+            
+            # Copy changed documents with all columns
+            cursor = inc_conn.execute(f"SELECT {column_names_str} FROM documents")
             for row in cursor.fetchall():
-                working_conn.execute("""
+                working_conn.execute(f"""
                     INSERT OR REPLACE INTO documents 
-                    (id, content, content_hash, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    ({column_names_str})
+                    VALUES ({placeholders})
                 """, row)
 
             # Copy changed chunks
@@ -1361,6 +1382,14 @@ class IncrementalBackupManager:
                 """, row[1:])  # Skip the auto-increment ID
 
             working_conn.commit()
+            
+        finally:
+            # Explicitly close connections to release file locks on Windows
+            inc_conn.close()
+            working_conn.close()
+            
+            # Small delay to ensure file locks are released
+            time.sleep(0.1)
 
     def _apply_faiss_changes(self, inc_faiss_path: Path, working_dir: Path) -> None:
         """Apply FAISS index changes from incremental backup."""

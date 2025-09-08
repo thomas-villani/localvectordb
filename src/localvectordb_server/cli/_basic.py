@@ -69,7 +69,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
         )
 
         # Get final configuration
-        config = app.lvdb_config
+        config = app.config_obj
 
         if not disable_ollama_check:
             from localvectordb_server._checkdeps import check_ollama_installation, check_ollama_service

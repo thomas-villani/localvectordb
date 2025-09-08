@@ -73,6 +73,7 @@ def real_key_manager(temp_dir):
     yield manager
 
 
+@pytest.mark.unit
 class TestKeyRecord:
     """Test KeyRecord data class."""
 
@@ -199,6 +200,8 @@ class TestKeyRecord:
         assert key_record.last_used is None
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerInitialization:
     """Test KeyManager initialization."""
 
@@ -244,6 +247,8 @@ class TestKeyManagerInitialization:
         assert version == KeyManager.SCHEMA_VERSION
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerWithRealBcrypt:
     """Test KeyManager with real bcrypt operations."""
 
@@ -349,6 +354,8 @@ class TestKeyManagerWithRealBcrypt:
         assert manager.validate_key(key2.plain_key) is True
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerRetrieval:
     """Test KeyManager key retrieval functionality."""
 
@@ -434,6 +441,8 @@ class TestKeyManagerRetrieval:
         assert keys[0].id == valid_key.id
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerRevocation:
     """Test KeyManager key revocation functionality."""
 
@@ -494,6 +503,8 @@ class TestKeyManagerRevocation:
         assert result is None
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerExpiration:
     """Test KeyManager expiration and cleanup functionality."""
 
@@ -559,6 +570,8 @@ class TestKeyManagerExpiration:
         assert count == 0
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerStats:
     """Test KeyManager statistics functionality."""
 
@@ -617,6 +630,8 @@ class TestKeyManagerStats:
         assert stats['recently_used'] == 1
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerUtilities:
     """Test KeyManager utility functions."""
 
@@ -653,6 +668,8 @@ class TestKeyManagerUtilities:
 
 
 
+@pytest.mark.unit
+@pytest.mark.database
 class TestKeyManagerErrorHandling:
     """Test KeyManager error handling."""
 

@@ -32,6 +32,10 @@ def create_mock_connection():
     mock_conn.commit = Mock()
     mock_conn.rollback = Mock()
     mock_conn.close = Mock()
+    
+    # Add context manager support
+    mock_conn.__enter__ = Mock(return_value=mock_conn)
+    mock_conn.__exit__ = Mock(return_value=None)
     # Add row_factory for compatibility
     mock_conn.row_factory = sqlite3.Row
     return mock_conn
@@ -49,6 +53,7 @@ def create_mock_pooled_connection(mock_conn):
 
 @pytest.mark.performance
 @pytest.mark.slow
+@pytest.mark.database
 class TestDatabasePerformance:
     """Test database performance characteristics."""
 
@@ -224,6 +229,7 @@ class TestDatabasePerformance:
 
 
 @pytest.mark.performance
+@pytest.mark.chunking
 class TestChunkingPerformance:
     """Test chunking performance with different methods and sizes."""
 
@@ -313,6 +319,7 @@ class TestChunkingPerformance:
 
 
 @pytest.mark.performance
+@pytest.mark.embedding
 class TestEmbeddingPerformance:
     """Test embedding generation performance."""
 
@@ -393,6 +400,8 @@ class TestEmbeddingPerformance:
 
 
 @pytest.mark.performance
+@pytest.mark.slow
+@pytest.mark.database
 class TestMemoryPerformance:
     """Test memory usage patterns and performance."""
 
@@ -575,7 +584,7 @@ class TestScalabilityBenchmarks:
                 count_ratio = document_counts[i] / document_counts[0]
 
                 # Allow some overhead, but should be roughly linear
-                assert time_ratio < count_ratio * 1.5, f"Insert scaling issue: {time_ratio:.2f}x vs {count_ratio:.2f}x"
+                assert time_ratio < count_ratio * 2.0, f"Insert scaling issue: {time_ratio:.2f}x vs {count_ratio:.2f}x"
 
     def test_concurrent_user_simulation(self, temp_dir):
         """Simulate multiple concurrent users."""

@@ -14,6 +14,7 @@ from localvectordb.exceptions import (
 )
 
 
+@pytest.mark.unit
 class TestBaseLocalVectorDBException:
     """Test base exception class."""
 
@@ -39,6 +40,7 @@ class TestBaseLocalVectorDBException:
         assert str(exc) == "123"
 
 
+@pytest.mark.unit
 class TestDatabaseNotFoundError:
     """Test DatabaseNotFoundError exception."""
 
@@ -78,6 +80,7 @@ class TestDatabaseNotFoundError:
         assert "not found" in str(exc)
 
 
+@pytest.mark.unit
 class TestDuplicateDocumentIDError:
     """Test DuplicateDocumentIDError exception."""
 
@@ -115,6 +118,7 @@ class TestDuplicateDocumentIDError:
         assert "already exists" in str(exc)
 
 
+@pytest.mark.unit
 class TestOllamaNotFoundError:
     """Test OllamaNotFoundError exception."""
 
@@ -157,6 +161,7 @@ class TestOllamaNotFoundError:
             assert isinstance(exc, OllamaNotFoundError)
 
 
+@pytest.mark.unit
 class TestEmbeddingError:
     """Test EmbeddingError exception."""
 
@@ -200,6 +205,7 @@ class TestEmbeddingError:
             assert isinstance(exc, EmbeddingError)
 
 
+@pytest.mark.unit
 class TestConfigurationError:
     """Test ConfigurationError exception."""
 
@@ -243,6 +249,7 @@ class TestConfigurationError:
             assert isinstance(exc, ConfigurationError)
 
 
+@pytest.mark.unit
 class TestExceptionUsagePractices:
     """Test common usage patterns and best practices for exceptions."""
 
@@ -382,6 +389,7 @@ class TestExceptionUsagePractices:
         assert "Ollama service not running" in str(exc.__cause__.__cause__)
 
 
+@pytest.mark.unit
 class TestExceptionDocumentation:
     """Test that exceptions have proper docstrings and are well-documented."""
 

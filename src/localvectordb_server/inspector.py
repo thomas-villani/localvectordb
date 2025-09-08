@@ -25,7 +25,7 @@ from localvectordb_server._logcfg import log_performance
 logger = logging.getLogger(__name__)
 
 # Create inspector blueprint
-inspector = Blueprint(
+inspector_bp = Blueprint(
     'inspector',
     __name__,
     template_folder='templates',
@@ -75,7 +75,7 @@ def require_inspector_auth(f):
     return decorated_function
 
 
-@inspector.route('/')
+@inspector_bp.route('/')
 @require_inspector_auth
 @log_performance("inspector_dashboard")
 def dashboard():
@@ -121,7 +121,7 @@ def dashboard():
         return render_template('error.html', error=str(e))
 
 
-@inspector.route('/login', methods=['GET', 'POST'])
+@inspector_bp.route('/login', methods=['GET', 'POST'])
 def login():
     """Login page for API key authentication"""
     if not inspector_enabled():
@@ -148,7 +148,7 @@ def login():
     return render_template('login.html')
 
 
-@inspector.route('/logout')
+@inspector_bp.route('/logout')
 def logout():
     """Logout and clear session"""
     session.pop('inspector_api_key', None)
@@ -156,7 +156,7 @@ def logout():
     return redirect(url_for('inspector.login'))
 
 
-@inspector.route('/database/<db_name>')
+@inspector_bp.route('/database/<db_name>')
 @require_inspector_auth
 @log_performance("inspector_database")
 def database_detail(db_name):
@@ -198,7 +198,7 @@ def database_detail(db_name):
         return redirect(url_for('inspector.dashboard'))
 
 
-@inspector.route('/query')
+@inspector_bp.route('/query')
 @require_inspector_auth
 @log_performance("inspector_query")
 def query_interface():
@@ -220,7 +220,7 @@ def query_interface():
         return redirect(url_for('inspector.dashboard'))
 
 
-@inspector.route('/embeddings')
+@inspector_bp.route('/embeddings')
 @require_inspector_auth
 @log_performance("inspector_embeddings")
 def embeddings_view():
@@ -242,7 +242,7 @@ def embeddings_view():
         return redirect(url_for('inspector.dashboard'))
 
 
-@inspector.route('/admin')
+@inspector_bp.route('/admin')
 @require_inspector_auth
 @log_performance("inspector_admin")
 def admin_interface():
@@ -277,7 +277,7 @@ def admin_interface():
         return redirect(url_for('inspector.dashboard'))
 
 
-@inspector.route('/api/databases')
+@inspector_bp.route('/api/databases')
 @require_inspector_auth
 @handle_errors
 def api_databases():
@@ -312,7 +312,7 @@ def api_databases():
         return jsonify({'error': str(e)}), 500
 
 
-@inspector.route('/api/system/stats')
+@inspector_bp.route('/api/system/stats')
 @require_inspector_auth
 @handle_errors
 def api_system_stats():
@@ -330,7 +330,7 @@ def api_system_stats():
         return jsonify({'error': str(e)}), 500
 
 
-@inspector.route('/api/database/<db_name>/upload', methods=['POST'])
+@inspector_bp.route('/api/database/<db_name>/upload', methods=['POST'])
 @require_inspector_auth
 @handle_errors
 def api_upload_document(db_name):
@@ -404,7 +404,7 @@ def api_upload_document(db_name):
 
 
 # Error handlers for inspector blueprint
-@inspector.errorhandler(404)
+@inspector_bp.errorhandler(404)
 def inspector_not_found(e):
     """Custom 404 handler for inspector"""
     return render_template('error.html',
@@ -412,7 +412,7 @@ def inspector_not_found(e):
                          message="The requested inspector page was not found."), 404
 
 
-@inspector.errorhandler(500)
+@inspector_bp.errorhandler(500)
 def inspector_server_error(e):
     """Custom 500 handler for inspector"""
     logger.error(f"Inspector server error: {e}")
@@ -422,7 +422,7 @@ def inspector_server_error(e):
 
 
 # Template context processor to inject common variables
-@inspector.context_processor
+@inspector_bp.context_processor
 def inject_inspector_context():
     """Inject common context variables into all inspector templates"""
     config = getattr(current_app, 'config_obj', None)

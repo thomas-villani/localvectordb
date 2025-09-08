@@ -25,7 +25,7 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.core import MetadataField, MetadataFieldType, DatabaseSchema
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key
 from localvectordb_server._cache import cache
@@ -1075,7 +1075,7 @@ def filter_documents(db_name):
                     filter_builder = FilterQueryBuilder(db.metadata_schema)
 
                     # Build valid columns set (base columns + metadata columns)
-                    base_columns = db.schema.BASE_COLUMNS
+                    base_columns = DatabaseSchema.BASE_COLUMNS
                     metadata_columns = set(db.metadata_schema.keys())
                     valid_columns = set(base_columns).union(metadata_columns)
 
