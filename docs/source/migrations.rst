@@ -303,7 +303,7 @@ Change metadata field types with validation:
             ]
 
 Complex Schema Changes
-^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
 
 Multiple field operations in one migration:
 
@@ -456,7 +456,7 @@ Examples:
 - ``1.1.0`` → ``1.1.1``: Fixed metadata field definitions or constraints
 
 Version Tracking
-^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^
 
 Database version is tracked using:
 

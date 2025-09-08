@@ -35,6 +35,7 @@ scale to distributed deployments without changing your code.
    querybuilder
    server/index
    cli
+   mcp
    modules/index
    recipes
    tutorials/index
