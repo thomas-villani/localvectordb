@@ -14,15 +14,11 @@ LocalVectorDB Inspector UI
 Web-based interface for inspecting LocalVectorDB databases, testing queries,
 visualizing embeddings, and managing the system.
 """
-import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
 
-from flask import Blueprint, current_app, render_template, request, redirect, url_for, flash, session, jsonify
-from werkzeug.exceptions import Forbidden
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
-from localvectordb_server._auth import require_api_key
 from localvectordb_server._error_handlers import handle_errors
 from localvectordb_server._logcfg import log_performance
 
@@ -30,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 # Create inspector blueprint
 inspector = Blueprint(
-    'inspector', 
-    __name__, 
+    'inspector',
+    __name__,
     template_folder='templates',
     static_folder='static',
     static_url_path='/inspector/static'
@@ -52,7 +48,7 @@ def require_inspector_auth(f):
     def decorated_function(*args, **kwargs):
         if not inspector_enabled():
             return render_template('inspector_disabled.html'), 503
-            
+
         # Check if API key authentication is required
         config = getattr(current_app, 'config_obj', None)
         if config and config.server.require_api_key:
@@ -60,7 +56,7 @@ def require_inspector_auth(f):
             api_key = session.get('inspector_api_key') or request.args.get('api_key')
             if not api_key:
                 return redirect(url_for('inspector.login'))
-            
+
             # Validate API key
             try:
                 key_manager = getattr(current_app, 'key_manager', None)
@@ -73,7 +69,7 @@ def require_inspector_auth(f):
                 logger.error(f"API key validation error: {e}")
                 flash('Authentication error', 'error')
                 return redirect(url_for('inspector.login'))
-                
+
         return f(*args, **kwargs)
     decorated_function.__name__ = f.__name__
     return decorated_function
@@ -90,10 +86,10 @@ def dashboard():
         if not db_manager:
             flash('Database manager not available', 'error')
             return render_template('error.html', error="Database manager not available")
-        
+
         # Get list of databases
         databases = db_manager.list_databases()
-        
+
         # Get database statistics
         db_stats = []
         for db_name in databases:
@@ -110,15 +106,15 @@ def dashboard():
                     'documents': 0,
                     'chunks': 0
                 })
-        
+
         # Get system information
         manager_stats = db_manager.get_manager_stats()
-        
-        return render_template('dashboard.html', 
+
+        return render_template('dashboard.html',
                              databases=db_stats,
                              system_stats=manager_stats,
                              total_databases=len(databases))
-                             
+
     except Exception as e:
         logger.error(f"Error in dashboard: {e}")
         flash(f'Error loading dashboard: {str(e)}', 'error')
@@ -130,13 +126,13 @@ def login():
     """Login page for API key authentication"""
     if not inspector_enabled():
         return render_template('inspector_disabled.html'), 503
-        
+
     if request.method == 'POST':
         api_key = request.form.get('api_key')
         if not api_key:
             flash('API key is required', 'error')
             return render_template('login.html')
-            
+
         # Validate API key
         try:
             key_manager = getattr(current_app, 'key_manager', None)
@@ -148,7 +144,7 @@ def login():
         except Exception as e:
             logger.error(f"Login error: {e}")
             flash('Authentication error', 'error')
-            
+
     return render_template('login.html')
 
 
@@ -170,14 +166,14 @@ def database_detail(db_name):
         if not db_manager:
             flash('Database manager not available', 'error')
             return redirect(url_for('inspector.dashboard'))
-        
+
         # Get database instance
         db = db_manager.get_db(db_name)
-        
+
         # Get database statistics and metadata
         stats = db.get_stats()
         schema_info = db.get_metadata_schema_info()
-        
+
         # Get configuration
         config_info = {
             'name': db.name,
@@ -189,13 +185,13 @@ def database_detail(db_name):
             'chunk_overlap': db.chunk_overlap,
             'fts_enabled': db.fts_enabled
         }
-        
+
         return render_template('database.html',
                              db_name=db_name,
                              stats=stats,
                              schema_info=schema_info,
                              config=config_info)
-                             
+
     except Exception as e:
         logger.error(f"Error in database detail for {db_name}: {e}")
         flash(f'Error loading database {db_name}: {str(e)}', 'error')
@@ -212,12 +208,12 @@ def query_interface():
         if not db_manager:
             flash('Database manager not available', 'error')
             return redirect(url_for('inspector.dashboard'))
-        
+
         # Get list of databases for query testing
         databases = db_manager.list_databases()
-        
+
         return render_template('query.html', databases=databases)
-                             
+
     except Exception as e:
         logger.error(f"Error in query interface: {e}")
         flash(f'Error loading query interface: {str(e)}', 'error')
@@ -234,12 +230,12 @@ def embeddings_view():
         if not db_manager:
             flash('Database manager not available', 'error')
             return redirect(url_for('inspector.dashboard'))
-        
+
         # Get list of databases for embedding analysis
         databases = db_manager.list_databases()
-        
+
         return render_template('embeddings.html', databases=databases)
-                             
+
     except Exception as e:
         logger.error(f"Error in embeddings view: {e}")
         flash(f'Error loading embeddings view: {str(e)}', 'error')
@@ -256,11 +252,11 @@ def admin_interface():
         if not db_manager:
             flash('Database manager not available', 'error')
             return redirect(url_for('inspector.dashboard'))
-        
+
         # Get system statistics and configuration
         manager_stats = db_manager.get_manager_stats()
         config = getattr(current_app, 'config_obj', None)
-        
+
         # Get API keys information (if available)
         api_keys_info = []
         key_manager = getattr(current_app, 'key_manager', None)
@@ -269,12 +265,12 @@ def admin_interface():
                 api_keys_info = key_manager.list_keys()
             except Exception as e:
                 logger.error(f"Error getting API keys: {e}")
-        
+
         return render_template('admin.html',
                              manager_stats=manager_stats,
                              config=config,
                              api_keys=api_keys_info)
-                             
+
     except Exception as e:
         logger.error(f"Error in admin interface: {e}")
         flash(f'Error loading admin interface: {str(e)}', 'error')
@@ -290,10 +286,10 @@ def api_databases():
         db_manager = getattr(current_app, 'db_manager', None)
         if not db_manager:
             return jsonify({'error': 'Database manager not available'}), 500
-        
+
         databases = db_manager.list_databases()
         db_stats = []
-        
+
         for db_name in databases:
             try:
                 db = db_manager.get_db(db_name)
@@ -308,9 +304,9 @@ def api_databases():
                     'documents': 0,
                     'chunks': 0
                 })
-        
+
         return jsonify({'databases': db_stats})
-        
+
     except Exception as e:
         logger.error(f"Error in api_databases: {e}")
         return jsonify({'error': str(e)}), 500
@@ -325,10 +321,10 @@ def api_system_stats():
         db_manager = getattr(current_app, 'db_manager', None)
         if not db_manager:
             return jsonify({'error': 'Database manager not available'}), 500
-        
+
         stats = db_manager.get_manager_stats()
         return jsonify(stats)
-        
+
     except Exception as e:
         logger.error(f"Error in api_system_stats: {e}")
         return jsonify({'error': str(e)}), 500
@@ -343,25 +339,25 @@ def api_upload_document(db_name):
         db_manager = getattr(current_app, 'db_manager', None)
         if not db_manager:
             return jsonify({'error': 'Database manager not available'}), 500
-        
+
         # Check if database exists
         if db_name not in db_manager.list_databases():
             return jsonify({'error': f'Database {db_name} not found'}), 404
-        
+
         # Get the database instance
         db = db_manager.get_database(db_name)
-        
+
         # Check for file in request
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
-        
+
         file = request.files['file']
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
-        
+
         # Read file content
         file_content = file.read()
-        
+
         # Try to decode as text
         try:
             content = file_content.decode('utf-8')
@@ -369,31 +365,31 @@ def api_upload_document(db_name):
             # For binary files, we might need special handling
             # For now, return an error
             return jsonify({'error': 'File must be text-based'}), 400
-        
+
         # Get optional document ID from form
         doc_id = request.form.get('doc_id', None)
-        
+
         # Get metadata from form (if any)
         metadata = {}
         for key in request.form:
             if key.startswith('metadata_'):
                 field_name = key[9:]  # Remove 'metadata_' prefix
                 metadata[field_name] = request.form[key]
-        
+
         # Add file-related metadata
         metadata['source_file'] = file.filename
         metadata['uploaded_via'] = 'inspector'
         metadata['upload_timestamp'] = datetime.now().isoformat()
-        
+
         # Add document to database
         if doc_id:
             db.add(content, id=doc_id, metadata=metadata if metadata else None)
         else:
             doc_id = db.add(content, metadata=metadata if metadata else None)
-        
+
         # Get the added document to return info
         added_doc = db.get(doc_id)
-        
+
         return jsonify({
             'success': True,
             'document_id': doc_id,
@@ -401,7 +397,7 @@ def api_upload_document(db_name):
             'content_length': len(content),
             'filename': file.filename
         })
-        
+
     except Exception as e:
         logger.error(f"Error uploading document to {db_name}: {e}")
         return jsonify({'error': str(e)}), 500
@@ -411,8 +407,8 @@ def api_upload_document(db_name):
 @inspector.errorhandler(404)
 def inspector_not_found(e):
     """Custom 404 handler for inspector"""
-    return render_template('error.html', 
-                         error="Page not found", 
+    return render_template('error.html',
+                         error="Page not found",
                          message="The requested inspector page was not found."), 404
 
 

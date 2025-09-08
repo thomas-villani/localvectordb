@@ -27,7 +27,6 @@ from localvectordb import VectorDB
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import (
-    DatabaseError,
     DatabaseNotFoundError,
     DocumentNotFoundError,
 )
@@ -42,26 +41,26 @@ mcp_manager: Optional['MCPManager'] = None
 
 class MCPManager:
     """Simple manager for MCP database operations using VectorDB factory"""
-    
+
     def __init__(self, config: MCPConfig):
         self.config = config
         self.databases = {}  # Cache for database instances
         self._lock = asyncio.Lock()
-        
+
     async def get_database(self, name: str):
         """Get database instance using factory pattern - auto-detects local/remote"""
         async with self._lock:
             if name not in self.databases:
                 # Get path or URL for this database
                 db_path = self.config.get_database_path(name)
-                
+
                 # Prepare kwargs - merge defaults with any remote settings
                 kwargs = self.config.db_defaults.copy()
-                
+
                 # If it's a URL, add remote defaults
                 if db_path.startswith(('http://', 'https://')):
                     kwargs.update(self.config.remote_defaults)
-                
+
                 # Create database using factory
                 try:
                     self.databases[name] = VectorDB(
@@ -73,16 +72,16 @@ class MCPManager:
                 except Exception as e:
                     logger.error(f"Failed to connect to database '{name}': {e}")
                     raise DatabaseNotFoundError(f"Database '{name}' not found at {db_path}")
-                    
+
             return self.databases[name]
-    
+
     async def list_databases(self) -> List[str]:
         """List available databases"""
         databases = []
-        
+
         # Add explicitly mapped databases
         databases.extend(self.config.databases_map.keys())
-        
+
         # Add databases from root directory if it exists
         root_path = Path(self.config.databases_root)
         if root_path.exists() and root_path.is_dir():
@@ -91,9 +90,9 @@ class MCPManager:
                 db_name = db_file.stem
                 if db_name not in databases:
                     databases.append(db_name)
-        
+
         return sorted(databases)
-    
+
     async def create_database(
         self,
         name: str,
@@ -102,10 +101,10 @@ class MCPManager:
     ):
         """Create a new database (write mode only)"""
         self.config.check_write_permission("create_database")
-        
+
         # Get path for new database
         db_path = self.config.get_database_path(name)
-        
+
         # Parse metadata schema if provided
         parsed_schema = None
         if metadata_schema:
@@ -124,11 +123,11 @@ class MCPManager:
                         indexed=field_config.get("indexed", False),
                         required=field_config.get("required", False)
                     )
-        
+
         # Merge defaults with provided kwargs
         db_kwargs = self.config.db_defaults.copy()
         db_kwargs.update(kwargs)
-        
+
         # Create database
         db = VectorDB(
             name=name,
@@ -137,17 +136,17 @@ class MCPManager:
             create_if_not_exists=True,
             **db_kwargs
         )
-        
+
         # Cache it
         async with self._lock:
             self.databases[name] = db
-            
+
         return db
-    
+
     async def delete_database(self, name: str):
         """Delete a database (write mode only)"""
         self.config.check_write_permission("delete_database")
-        
+
         # Remove from cache
         async with self._lock:
             if name in self.databases:
@@ -156,7 +155,7 @@ class MCPManager:
                 if hasattr(db, 'close'):
                     db.close()
                 del self.databases[name]
-        
+
         # Delete files if it's a local database
         db_path = self.config.get_database_path(name)
         if not db_path.startswith(('http://', 'https://')):
@@ -164,12 +163,12 @@ class MCPManager:
             db_file = Path(db_path) / f"{name}.sqlite"
             if db_file.exists():
                 db_file.unlink()
-            
+
             # Delete FAISS index
             faiss_file = Path(db_path) / f"{name}.faiss"
             if faiss_file.exists():
                 faiss_file.unlink()
-    
+
     async def cleanup(self):
         """Cleanup resources on shutdown"""
         async with self._lock:
@@ -182,31 +181,32 @@ class MCPManager:
 # Create lifespan context manager for initialization
 from contextlib import asynccontextmanager
 
+
 @asynccontextmanager
 async def lifespan(mcp):
     """Lifespan context manager for MCP server initialization and cleanup"""
     global mcp_manager
-    
+
     # Configure logging to stderr
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # Load configuration
     config = MCPConfig.load()
-    
+
     # Set log level
     logging.getLogger().setLevel(getattr(logging, config.log_level))
-    
+
     # Initialize manager
     mcp_manager = MCPManager(config)
-    
+
     # Dynamically register tools based on configuration
     enabled_tools = config.get_enabled_tools()
     registered_count = 0
-    
+
     for tool_name, tool_info in TOOL_REGISTRY.items():
         # Check if tool should be enabled
         if tool_name in enabled_tools:
@@ -214,7 +214,7 @@ async def lifespan(mcp):
             if not tool_info['read_only'] and config.mode == "read-only":
                 logger.debug(f"Skipping write tool '{tool_name}' in read-only mode")
                 continue
-            
+
             # Register the tool with MCP using the decorator
             if not tool_info['registered']:
                 decorated_func = mcp.tool()(tool_info['function'])
@@ -224,13 +224,13 @@ async def lifespan(mcp):
                 logger.debug(f"Registered tool: {tool_name}")
         else:
             logger.debug(f"Tool '{tool_name}' not in enabled tools list")
-    
+
     logger.info(f"LocalVectorDB MCP Server started in {config.mode} mode")
     logger.info(f"Database root: {config.databases_root}")
     logger.info(f"Registered {registered_count} tools out of {len(TOOL_REGISTRY)} available")
-    
+
     yield  # Server runs here
-    
+
     # Cleanup on shutdown
     if mcp_manager:
         await mcp_manager.cleanup()
@@ -295,10 +295,10 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
     """
     try:
         db = await mcp_manager.get_database(database_name)
-        
+
         # Get stats
         stats = db.get_stats()
-        
+
         # Get configuration info
         info = {
             "name": db.name,
@@ -313,7 +313,7 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
                 "fts_enabled": db.fts_enabled if hasattr(db, 'fts_enabled') else False
             }
         }
-        
+
         # Add metadata schema if available
         if hasattr(db, 'metadata_schema') and db.metadata_schema:
             info["metadata_schema"] = {
@@ -324,9 +324,9 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
                 }
                 for field_name, field in db.metadata_schema.items()
             }
-        
+
         return info
-        
+
     except DatabaseNotFoundError as e:
         return {"error": str(e), "error_code": "DATABASE_NOT_FOUND"}
     except Exception as e:
@@ -369,7 +369,7 @@ async def query_database(
     """
     try:
         db = await mcp_manager.get_database(database_name)
-        
+
         # Use async query if available
         if hasattr(db, 'query_async'):
             results = await db.query_async(
@@ -398,7 +398,7 @@ async def query_database(
                 semantic_dedup_threshold=semantic_dedup_threshold,
                 document_scoring_method=document_scoring_method
             )
-        
+
         # Serialize results
         serialized_results = []
         for result in results:
@@ -419,14 +419,14 @@ async def query_database(
                     "end_char": result.position.end_char
                 }
             serialized_results.append(data)
-        
+
         return {
             "results": serialized_results,
             "search_type": search_type,
             "return_type": return_type,
             "total_results": len(serialized_results)
         }
-        
+
     except DatabaseNotFoundError as e:
         return {"error": str(e), "error_code": "DATABASE_NOT_FOUND"}
     except Exception as e:
@@ -455,7 +455,7 @@ async def filter_documents(
     """
     try:
         db = await mcp_manager.get_database(database_name)
-        
+
         # Use filter method
         if hasattr(db, 'filter_async'):
             documents = await db.filter_async(
@@ -469,7 +469,7 @@ async def filter_documents(
                 limit=limit,
                 offset=offset
             )
-        
+
         # Serialize documents
         serialized_docs = []
         for doc in documents:
@@ -480,13 +480,13 @@ async def filter_documents(
                 "created_at": doc.created_at.isoformat() if doc.created_at else None,
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None
             })
-        
+
         return {
             "documents": serialized_docs,
             "count": len(serialized_docs),
             "filters": filters
         }
-        
+
     except Exception as e:
         logger.error(f"Error filtering documents: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -509,19 +509,19 @@ async def get_document(
     """
     try:
         db = await mcp_manager.get_database(database_name)
-        
+
         # Get document
         if hasattr(db, 'get_async'):
             doc = await db.get_async(document_id)
         else:
             doc = db.get(document_id)
-        
+
         if doc is None:
             return {
                 "error": f"Document '{document_id}' not found",
                 "error_code": "DOCUMENT_NOT_FOUND"
             }
-        
+
         return {
             "id": doc.id,
             "content": doc.content,
@@ -530,7 +530,7 @@ async def get_document(
             "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             "content_hash": doc.content_hash if hasattr(doc, 'content_hash') else None
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting document: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -553,19 +553,19 @@ async def check_documents_exist(
     """
     try:
         db = await mcp_manager.get_database(database_name)
-        
+
         # Check existence
         if hasattr(db, 'exists_async'):
             exists_map = await db.exists_async(document_ids)
         else:
             exists_map = db.exists(document_ids)
-        
+
         return {
             "exists": exists_map,
             "total_checked": len(document_ids),
             "total_found": sum(exists_map.values())
         }
-        
+
     except Exception as e:
         logger.error(f"Error checking document existence: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -584,7 +584,7 @@ async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
     """
     try:
         db = await mcp_manager.get_database(database_name)
-        
+
         if hasattr(db, 'metadata_schema') and db.metadata_schema:
             schema = {}
             for field_name, field in db.metadata_schema.items():
@@ -596,7 +596,7 @@ async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
             return {"schema": schema}
         else:
             return {"schema": {}, "message": "No metadata schema defined"}
-            
+
     except Exception as e:
         logger.error(f"Error getting metadata schema: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -653,7 +653,7 @@ async def create_database(
     """
     try:
         mcp_manager.config.check_write_permission("create_database")
-        
+
         # Build kwargs from provided parameters
         kwargs = {}
         if embedding_provider:
@@ -666,14 +666,14 @@ async def create_database(
             kwargs["chunk_size"] = chunk_size
         if chunk_overlap:
             kwargs["chunk_overlap"] = chunk_overlap
-        
+
         # Create database
         db = await mcp_manager.create_database(
             name=name,
             metadata_schema=metadata_schema,
             **kwargs
         )
-        
+
         return {
             "message": f"Successfully created database '{name}'",
             "status": "success",
@@ -686,7 +686,7 @@ async def create_database(
                 "chunk_overlap": kwargs.get("chunk_overlap", mcp_manager.config.db_defaults["chunk_overlap"])
             }
         }
-        
+
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
     except Exception as e:
@@ -707,14 +707,14 @@ async def delete_database(name: str) -> Dict[str, Any]:
     """
     try:
         mcp_manager.config.check_write_permission("delete_database")
-        
+
         await mcp_manager.delete_database(name)
-        
+
         return {
             "message": f"Successfully deleted database '{name}'",
             "status": "success"
         }
-        
+
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
     except Exception as e:
@@ -747,7 +747,7 @@ async def upsert_documents(
     """
     try:
         mcp_manager.config.check_write_permission("upsert_documents")
-        
+
         # Normalize inputs
         if isinstance(documents, str):
             documents = [documents]
@@ -755,10 +755,10 @@ async def upsert_documents(
             metadata = [metadata]
         if ids and isinstance(ids, str):
             ids = [ids]
-        
+
         # Get database
         db = await mcp_manager.get_database(database_name)
-        
+
         # Upsert documents
         if hasattr(db, 'upsert_async'):
             result_ids = await db.upsert_async(
@@ -776,13 +776,13 @@ async def upsert_documents(
                 batch_size=batch_size,
                 similarity_threshold=similarity_threshold
             )
-        
+
         return {
             "message": f"Successfully processed {len(documents)} documents",
             "ids": result_ids,
             "status": "success"
         }
-        
+
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
     except Exception as e:
@@ -811,9 +811,9 @@ async def update_document(
     """
     try:
         mcp_manager.config.check_write_permission("update_document")
-        
+
         db = await mcp_manager.get_database(database_name)
-        
+
         # Update document
         if hasattr(db, 'update_async'):
             await db.update_async(
@@ -827,12 +827,12 @@ async def update_document(
                 content=content,
                 metadata=metadata
             )
-        
+
         return {
             "message": f"Successfully updated document '{document_id}'",
             "status": "success"
         }
-        
+
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
     except DocumentNotFoundError as e:
@@ -859,27 +859,27 @@ async def delete_document(
     """
     try:
         mcp_manager.config.check_write_permission("delete_document")
-        
+
         db = await mcp_manager.get_database(database_name)
-        
+
         # Delete document
         if hasattr(db, 'delete_async'):
             deleted_count = await db.delete_async(document_id)
         else:
             deleted_count = db.delete(document_id)
-        
+
         if deleted_count == 0:
             return {
                 "error": f"Document '{document_id}' not found",
                 "error_code": "DOCUMENT_NOT_FOUND"
             }
-        
+
         return {
             "message": f"Successfully deleted document '{document_id}'",
             "status": "success",
             "deleted_count": deleted_count
         }
-        
+
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
     except Exception as e:
@@ -904,9 +904,9 @@ async def update_metadata_schema(
     """
     try:
         mcp_manager.config.check_write_permission("update_metadata_schema")
-        
+
         db = await mcp_manager.get_database(database_name)
-        
+
         # Parse metadata schema
         parsed_schema = {}
         for field_name, field_config in metadata_schema.items():
@@ -921,7 +921,7 @@ async def update_metadata_schema(
                     indexed=field_config.get("indexed", False),
                     required=field_config.get("required", False)
                 )
-        
+
         # Update schema
         if hasattr(db, 'update_metadata_schema_async'):
             await db.update_metadata_schema_async(parsed_schema)
@@ -932,12 +932,12 @@ async def update_metadata_schema(
                 "error": "Database does not support metadata schema updates",
                 "error_code": "NOT_SUPPORTED"
             }
-        
+
         return {
             "message": f"Successfully updated metadata schema for database '{database_name}'",
             "status": "success"
         }
-        
+
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
     except Exception as e:
@@ -961,7 +961,7 @@ async def run_mcp_server(mode: str = "read-only"):
     """Run the stdio MCP server"""
     # Set mode in environment for initialization
     os.environ["LVDB_MCP_MODE"] = mode
-    
+
     # Run FastMCP server with stdio
     await mcp.run_stdio_async()
 

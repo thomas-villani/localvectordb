@@ -540,7 +540,7 @@ class TestCodeBlockChunker:
 
     def test_create_chunker(self):
         """Test creating code block chunker."""
-        chunker = CodeBlockChunker(max_tokens=100, overlap_lines=2, language="python")
+        chunker = CodeBlockChunker(max_tokens=100, overlap=2, language="python")
         assert chunker.max_tokens == 100
         assert chunker.overlap == 2
         assert chunker.language == "python"
@@ -574,7 +574,7 @@ let result = hello();"""
 
     def test_chunk_python_code(self):
         """Test chunking Python code."""
-        chunker = CodeBlockChunker(max_tokens=20, language="python", overlap_lines=0)
+        chunker = CodeBlockChunker(max_tokens=20, language="python", overlap=0)
         code = """def function1():
     print("Function 1")
     return 1

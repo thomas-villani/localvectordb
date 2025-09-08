@@ -16,7 +16,7 @@ local and remote database implementations, with support for both sync and async 
 import os.path
 from pathlib import Path
 from typing import Union
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from localvectordb.client import RemoteVectorDB
 from localvectordb.core import AnyVectorDB

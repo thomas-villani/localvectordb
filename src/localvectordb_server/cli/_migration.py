@@ -22,18 +22,15 @@ These commands focus on evolving the metadata schema using LocalVectorDB's
 built-in DatabaseSchema functionality rather than raw SQL operations.
 """
 
-import os
 from datetime import datetime
 from pathlib import Path
 
 import click
 
-from localvectordb.backup import BackupManager, BackupConfig
+from localvectordb.backup import BackupConfig, BackupManager
 from localvectordb.migration import MigrationEngine
 from localvectordb.versioning import DatabaseVersion
-from localvectordb_server.cli._utils import (
-    EXIT_CODE_ERROR, format_table, print_json_output
-)
+from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
 
 
 @click.group('migrate')
@@ -78,85 +75,85 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
         lvdb migrate status mydb
         lvdb migrate status mydb --migrations-dir ./custom_migrations --json
     """
-    
+
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
         click.secho("Database folder not specified", fg="red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
-    
+
     try:
         # Set up database paths
         db_path = Path(db_folder) / f"{database_name}.sqlite"
-        
+
         if not db_path.exists():
-            click.secho(f"Database '{database_name}' not found in {db_folder}", 
+            click.secho(f"Database '{database_name}' not found in {db_folder}",
                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
-        
+
         # Set up migrations directory
         if not migrations_dir:
             migrations_dir = "./migrations"
         migrations_dir = Path(migrations_dir)
-        
+
         # Create migration engine
         migration_engine = MigrationEngine(
             database_path=db_path,
             migrations_directory=migrations_dir
         )
-        
+
         # Get migration status
         status = migration_engine.get_migration_status()
-        
+
         if output_json:
             print_json_output(status)
-        
+
         else:
             click.secho(f"Migration Status for '{database_name}'", fg="blue", bold=True)
             click.echo()
-            
+
             click.secho("Current State:", fg="cyan")
             click.echo(f"  Database Version: {status['current_version']}")
             click.echo(f"  Latest Available: {status['latest_available_version'] or 'None'}")
             click.echo(f"  Applied Migrations: {status['applied_migrations_count']}")
             click.echo(f"  Pending Migrations: {status['pending_migrations_count']}")
             click.echo()
-            
+
             # Show applied migrations
             if status['applied_migrations']:
                 click.secho("Applied Migrations:", fg="green")
                 for migration in status['applied_migrations'][-5:]:  # Show last 5
                     applied_at = datetime.fromisoformat(migration['applied_at'])
                     click.echo(f"  ✓ {migration['version']} - {applied_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                
+
                 if len(status['applied_migrations']) > 5:
                     click.echo(f"  ... and {len(status['applied_migrations']) - 5} more")
                 click.echo()
-            
+
             # Show pending migrations
             if status['pending_migrations']:
                 click.secho("Pending Migrations:", fg="yellow")
                 for version in status['pending_migrations']:
                     click.echo(f"  ○ {version}")
                 click.echo()
-            
+
             # Show overall status
             if status['pending_migrations_count'] == 0:
                 click.secho("✓ Database is up to date", fg="green")
             else:
                 click.secho(f"⚠ {status['pending_migrations_count']} migration(s) pending", fg="yellow")
-    
+
     except Exception as e:
         result = {
             'success': False,
             'error': str(e),
             'database': database_name
         }
-        
+
         if output_json:
             print_json_output(result)
         else:
             click.secho(f"✗ Error getting migration status: {e}", fg="red", err=True)
-        
+
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
@@ -177,7 +174,7 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
 @click.option('--json', 'output_json', is_flag=True,
               help='Output result in JSON format')
 @click.pass_context
-def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, 
+def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
                      backup_location, dry_run, output_json):
     """
     Apply pending migrations to a database.
@@ -193,27 +190,27 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
         lvdb migrate apply mydb --to-version 1.2.0
         lvdb migrate apply mydb --dry-run --no-backup
     """
-    
+
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
         click.secho("Database folder not specified", fg="red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
-    
+
     try:
         # Set up database paths
         db_path = Path(db_folder) / f"{database_name}.sqlite"
         faiss_path = Path(db_folder) / f"{database_name}.faiss"
-        
+
         if not db_path.exists():
-            click.secho(f"Database '{database_name}' not found in {db_folder}", 
+            click.secho(f"Database '{database_name}' not found in {db_folder}",
                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
-        
+
         # Set up migrations directory
         if not migrations_dir:
             migrations_dir = "./migrations"
         migrations_dir = Path(migrations_dir)
-        
+
         # Create backup manager if needed
         backup_manager = None
         if backup:
@@ -221,7 +218,7 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
                 backup_location=Path(backup_location) if backup_location else Path("./backups")
             )
             backup_manager = BackupManager(db_path, faiss_path, backup_config)
-        
+
         # Create migration engine
         migration_engine = MigrationEngine(
             database_path=db_path,
@@ -229,61 +226,61 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
             backup_manager=backup_manager,
             auto_backup=backup
         )
-        
+
         # Apply migrations
         result = migration_engine.migrate(
             target_version=to_version,
             dry_run=dry_run,
             create_backup=backup
         )
-        
+
         if output_json:
             print_json_output(result)
-        
+
         else:
             if result['success']:
                 if dry_run:
-                    click.secho(f"✓ Migration validation passed", fg="green")
+                    click.secho("✓ Migration validation passed", fg="green")
                     if 'pending_migrations' in result:
                         click.echo(f"  Would apply {len(result['pending_migrations'])} migration(s):")
                         for version in result['pending_migrations']:
                             click.echo(f"    - {version}")
                 else:
-                    click.secho(f"✓ Migration completed successfully", fg="green")
+                    click.secho("✓ Migration completed successfully", fg="green")
                     click.echo(f"  Applied {len(result.get('applied_migrations', []))} migration(s)")
-                    
+
                     if result.get('backup_id'):
                         click.echo(f"  Backup created: {result['backup_id'][:8]}")
-                    
+
                     if result.get('applied_migrations'):
                         for version in result['applied_migrations']:
                             click.echo(f"    ✓ {version}")
-            
+
             else:
-                click.secho(f"✗ Migration failed", fg="red")
+                click.secho("✗ Migration failed", fg="red")
                 if result.get('error'):
                     click.echo(f"  Error: {result['error']}")
-                
+
                 if result.get('migration_errors'):
                     click.echo("  Migration errors:")
                     for error in result['migration_errors']:
                         click.secho(f"    - {error}", fg="red")
-                
+
                 if result.get('backup_id'):
                     click.echo(f"  Backup available for rollback: {result['backup_id'][:8]}")
-    
+
     except Exception as e:
         result = {
             'success': False,
             'error': str(e),
             'database': database_name
         }
-        
+
         if output_json:
             print_json_output(result)
         else:
             click.secho(f"✗ Migration error: {e}", fg="red", err=True)
-        
+
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
@@ -303,7 +300,7 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
 @click.option('--json', 'output_json', is_flag=True,
               help='Output result in JSON format')
 @click.pass_context
-def rollback_migrations(ctx, database_name, target_version, migrations_dir, 
+def rollback_migrations(ctx, database_name, target_version, migrations_dir,
                         backup, backup_location, dry_run, output_json):
     """
     Rollback database to a previous version.
@@ -317,34 +314,34 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
         lvdb migrate rollback mydb 1.1.0
         lvdb migrate rollback mydb 1.0.0 --dry-run --no-backup
     """
-    
+
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
         click.secho("Database folder not specified", fg="red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
-    
+
     try:
         # Validate target version format
         try:
             DatabaseVersion(target_version)
-        except ValueError as e:
+        except ValueError:
             click.secho(f"✗ Invalid target version format: {target_version}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
-        
+
         # Set up database paths
         db_path = Path(db_folder) / f"{database_name}.sqlite"
         faiss_path = Path(db_folder) / f"{database_name}.faiss"
-        
+
         if not db_path.exists():
-            click.secho(f"Database '{database_name}' not found in {db_folder}", 
+            click.secho(f"Database '{database_name}' not found in {db_folder}",
                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
-        
+
         # Set up migrations directory
         if not migrations_dir:
             migrations_dir = "./migrations"
         migrations_dir = Path(migrations_dir)
-        
+
         # Create backup manager if needed
         backup_manager = None
         if backup:
@@ -352,7 +349,7 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
                 backup_location=Path(backup_location) if backup_location else Path("./backups")
             )
             backup_manager = BackupManager(db_path, faiss_path, backup_config)
-        
+
         # Create migration engine
         migration_engine = MigrationEngine(
             database_path=db_path,
@@ -360,50 +357,50 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
             backup_manager=backup_manager,
             auto_backup=backup
         )
-        
+
         # Perform rollback
         result = migration_engine.rollback(
             target_version=target_version,
             dry_run=dry_run,
             create_backup=backup
         )
-        
+
         if output_json:
             print_json_output(result)
-        
+
         else:
             if result['success']:
                 if dry_run:
-                    click.secho(f"✓ Rollback validation passed", fg="green")
+                    click.secho("✓ Rollback validation passed", fg="green")
                     if 'migrations_to_rollback' in result:
                         click.echo(f"  Would rollback {len(result['migrations_to_rollback'])} migration(s)")
                         for version in result['migrations_to_rollback']:
                             click.echo(f"    - {version}")
                 else:
-                    click.secho(f"✓ Rollback completed successfully", fg="green")
+                    click.secho("✓ Rollback completed successfully", fg="green")
                     click.echo(f"  Rolled back {len(result.get('rolled_back_migrations', []))} migration(s)")
                     click.echo(f"  Database version: {target_version}")
-                    
+
                     if result.get('backup_id'):
                         click.echo(f"  Backup created: {result['backup_id'][:8]}")
-                    
+
                     if result.get('rolled_back_migrations'):
                         for version in result['rolled_back_migrations']:
                             click.echo(f"    ✓ {version}")
-            
+
             else:
-                click.secho(f"✗ Rollback failed", fg="red")
+                click.secho("✗ Rollback failed", fg="red")
                 if result.get('error'):
                     click.echo(f"  Error: {result['error']}")
-                
+
                 if result.get('rollback_errors'):
                     click.echo("  Rollback errors:")
                     for error in result['rollback_errors']:
                         click.secho(f"    - {error}", fg="red")
-                
+
                 if result.get('backup_id'):
                     click.echo(f"  Backup available: {result['backup_id'][:8]}")
-    
+
     except Exception as e:
         result = {
             'success': False,
@@ -411,12 +408,12 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
             'database': database_name,
             'target_version': target_version
         }
-        
+
         if output_json:
             print_json_output(result)
         else:
             click.secho(f"✗ Rollback error: {e}", fg="red", err=True)
-        
+
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
@@ -452,24 +449,24 @@ def create_migration(description, version, migrations_dir, template, output_json
         lvdb migrate create "add user table" --version 1.2.0 --template schema
         lvdb migrate create "migrate old data format" --version 1.2.1 --template data
     """
-    
+
     try:
         # Validate version format
         try:
             DatabaseVersion(version)
-        except ValueError as e:
+        except ValueError:
             error = f"Invalid version format: {version}. Use semantic versioning (e.g., '1.2.0')"
             if output_json:
                 print_json_output({'success': False, 'error': error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
-        
+
         # Set up migrations directory
         if not migrations_dir:
             migrations_dir = "./migrations"
         migrations_dir = Path(migrations_dir)
-        
+
         # Create dummy migration engine to access template functionality
         # We use a dummy path since we're just creating templates
         dummy_db_path = Path("/tmp/dummy.sqlite")
@@ -477,14 +474,14 @@ def create_migration(description, version, migrations_dir, template, output_json
             database_path=dummy_db_path,
             migrations_directory=migrations_dir
         )
-        
+
         # Create migration template
         migration_file = migration_engine.create_migration_template(
             version=version,
             description=description,
             template_type=template
         )
-        
+
         result = {
             'success': True,
             'migration_file': str(migration_file),
@@ -493,11 +490,11 @@ def create_migration(description, version, migrations_dir, template, output_json
             'template_type': template,
             'migrations_directory': str(migrations_dir)
         }
-        
+
         if output_json:
             print_json_output(result)
         else:
-            click.secho(f"✓ Migration template created successfully", fg="green")
+            click.secho("✓ Migration template created successfully", fg="green")
             click.echo(f"  File: {migration_file}")
             click.echo(f"  Version: {version}")
             click.echo(f"  Description: {description}")
@@ -505,9 +502,9 @@ def create_migration(description, version, migrations_dir, template, output_json
             click.echo()
             click.secho("Next steps:", fg="cyan")
             click.echo(f"  1. Edit {migration_file} to implement your migration")
-            click.echo(f"  2. Test the migration with: lvdb migrate apply <database> --dry-run")
-            click.echo(f"  3. Apply the migration with: lvdb migrate apply <database>")
-    
+            click.echo("  2. Test the migration with: lvdb migrate apply <database> --dry-run")
+            click.echo("  3. Apply the migration with: lvdb migrate apply <database>")
+
     except Exception as e:
         result = {
             'success': False,
@@ -515,12 +512,12 @@ def create_migration(description, version, migrations_dir, template, output_json
             'version': version,
             'description': description
         }
-        
+
         if output_json:
             print_json_output(result)
         else:
             click.secho(f"✗ Migration creation failed: {e}", fg="red", err=True)
-        
+
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
@@ -545,31 +542,31 @@ def list_migrations(migrations_dir, show_dependencies, output_json):
         lvdb migrate list
         lvdb migrate list --show-dependencies --json
     """
-    
+
     try:
         # Set up migrations directory
         if not migrations_dir:
             migrations_dir = "./migrations"
         migrations_dir = Path(migrations_dir)
-        
+
         if not migrations_dir.exists():
             if output_json:
                 print_json_output({'migrations': [], 'message': 'Migrations directory not found'})
             else:
                 click.echo(f"Migrations directory not found: {migrations_dir}")
             return
-        
+
         # Create dummy migration engine to discover migrations
         dummy_db_path = Path("/tmp/dummy.sqlite")
         migration_engine = MigrationEngine(
             database_path=dummy_db_path,
             migrations_directory=migrations_dir
         )
-        
+
         # Discover migrations
         migrations = migration_engine.discover_migrations()
         migration_order = migration_engine.get_migration_order()
-        
+
         if output_json:
             migration_list = []
             for version in migration_order:
@@ -581,26 +578,26 @@ def list_migrations(migrations_dir, show_dependencies, output_json):
                     'file_path': str(migration_script.file_path),
                     'checksum': migration_script.checksum
                 })
-            
+
             print_json_output({
                 'migrations': migration_list,
                 'total_count': len(migration_list),
                 'migrations_directory': str(migrations_dir)
             })
-        
+
         else:
             if not migrations:
                 click.echo(f"No migrations found in {migrations_dir}")
                 return
-            
+
             click.secho(f"Available Migrations in {migrations_dir}:", fg="blue", bold=True)
             click.echo()
-            
+
             # Format as table
             headers = ['Version', 'Description', 'File']
             if show_dependencies:
                 headers.append('Dependencies')
-            
+
             rows = []
             for version in migration_order:
                 migration_script = migrations[version]
@@ -609,21 +606,21 @@ def list_migrations(migrations_dir, show_dependencies, output_json):
                     migration_script.description[:50] + ("..." if len(migration_script.description) > 50 else ""),
                     migration_script.file_path.name
                 ]
-                
+
                 if show_dependencies:
                     deps = ', '.join(migration_script.dependencies) if migration_script.dependencies else '-'
                     row.append(deps)
-                
+
                 rows.append(row)
-            
+
             click.echo(format_table(headers, rows))
             click.echo()
             click.echo(f"Total: {len(migrations)} migration(s)")
-    
+
     except Exception as e:
         if output_json:
             print_json_output({'error': str(e), 'migrations': []})
         else:
             click.secho(f"✗ Error listing migrations: {e}", fg="red", err=True)
-        
+
         raise click.exceptions.Exit(EXIT_CODE_ERROR)

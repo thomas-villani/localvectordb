@@ -169,36 +169,36 @@ class BackupSettings(BaseSettings):
     max_backups: int = 50  # Maximum number of backups to keep per database
     compression_type: Literal["gzip", "lzma", "none"] = "gzip"
     compression_level: int = 6  # 1-9 for gzip, 0-9 for lzma
-    
+
     # Auto-backup settings
     auto_backup_enabled: bool = False
     auto_backup_interval_hours: int = 24  # Daily backups
     auto_backup_type: Literal["full", "incremental"] = "incremental"
-    
+
     # Performance settings
     backup_chunk_size: int = 1024 * 1024  # 1MB chunks for streaming
     verify_backups: bool = True  # Verify backup integrity after creation
-    
+
     def validate(self):
         if self.retention_days < 0:
             raise ConfigurationError("retention_days must be non-negative")
-        
+
         if self.max_backups <= 0:
             raise ConfigurationError("max_backups must be positive")
-            
+
         if self.compression_level < 0 or self.compression_level > 9:
             raise ConfigurationError("compression_level must be between 0 and 9")
-            
+
         if self.auto_backup_interval_hours <= 0:
             raise ConfigurationError("auto_backup_interval_hours must be positive")
-            
+
         if self.backup_chunk_size <= 0:
             raise ConfigurationError("backup_chunk_size must be positive")
-            
+
         # Validate paths
         if not isinstance(self.default_location, str) or not self.default_location:
             raise ConfigurationError("default_location must be a non-empty string")
-            
+
         return True
 
 
@@ -209,24 +209,24 @@ class MigrationSettings(BaseSettings):
     migration_dir: str = "./migrations"
     auto_migrate: bool = False  # Automatically apply pending migrations on startup
     backup_before_migration: bool = True  # Create backup before applying migrations
-    
+
     # Safety settings
     require_confirmation: bool = True  # Require confirmation for destructive operations
     allow_destructive_migrations: bool = False  # Allow migrations that could lose data
     max_rollback_steps: int = 10  # Maximum number of migration steps to rollback
-    
+
     # Template settings
     migration_template_author: Optional[str] = None  # Default author for new migrations
     migration_template_format: Literal["python", "sql"] = "python"
-    
+
     def validate(self):
         if self.max_rollback_steps < 0:
             raise ConfigurationError("max_rollback_steps must be non-negative")
-            
+
         # Validate paths
         if not isinstance(self.migration_dir, str) or not self.migration_dir:
             raise ConfigurationError("migration_dir must be a non-empty string")
-            
+
         return True
 
 

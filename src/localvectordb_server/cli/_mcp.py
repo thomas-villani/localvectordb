@@ -29,7 +29,7 @@ def mcp_commands():
 
 
 @mcp_commands.command()
-@click.option('--mode', type=click.Choice(['read-only', 'read-write']), 
+@click.option('--mode', type=click.Choice(['read-only', 'read-write']),
               default='read-only', help='Server mode (default: read-only)')
 @click.option('--config', help='Configuration file path (TOML format)')
 @click.option('--databases-root', help='Root directory for databases')
@@ -39,17 +39,17 @@ def mcp_commands():
 def serve(mode, config, databases_root, databases_map, log_level):
     """Start the MCP server (stdio-based for Claude Desktop)"""
     import os
-    
+
     # Set environment variables
     os.environ['LVDB_MCP_MODE'] = mode
     os.environ['LVDB_MCP_LOG_LEVEL'] = log_level
-    
+
     if config:
         os.environ['LVDB_MCP_CONFIG'] = config
-    
+
     if databases_root:
         os.environ['LVDB_MCP_DATABASES_ROOT'] = databases_root
-        
+
     if databases_map:
         try:
             # Parse JSON and convert to environment variable format
@@ -57,18 +57,18 @@ def serve(mode, config, databases_root, databases_map, log_level):
             env_format = ",".join(f"{k}={v}" for k, v in mapping.items())
             os.environ['LVDB_MCP_DATABASES_MAP'] = env_format
         except json.JSONDecodeError:
-            click.echo(f"Error: Invalid JSON for databases-map", err=True)
+            click.echo("Error: Invalid JSON for databases-map", err=True)
             raise click.Abort()
-    
+
     # Configure logging (to stderr so it doesn't interfere with stdio)
     logging.basicConfig(
         level=getattr(logging, log_level),
         stream=sys.stderr,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     click.echo(f"Starting LocalVectorDB MCP server in {mode} mode...", err=True)
-    
+
     # Import and run server
     from localvectordb_server.mcp.server import run_mcp_server
     asyncio.run(run_mcp_server(mode=mode))
@@ -83,22 +83,22 @@ def status(config):
         if config:
             import os
             os.environ['LVDB_MCP_CONFIG'] = config
-        
+
         config_obj = MCPConfig.load(config_path=config)
-        
+
         click.echo("LocalVectorDB MCP Server Status")
         click.echo("=" * 40)
         click.echo(f"Mode: {config_obj.mode}")
         click.echo(f"Database root: {config_obj.databases_root}")
         click.echo(f"Log level: {config_obj.log_level}")
         click.echo(f"Max concurrent operations: {config_obj.max_concurrent_operations}")
-        
+
         # Check database mappings
         if config_obj.databases_map:
-            click.echo(f"\nDatabase Mappings:")
+            click.echo("\nDatabase Mappings:")
             for name, path in config_obj.databases_map.items():
                 click.echo(f"  - {name}: {path}")
-        
+
         # Check if database directory exists
         db_path = Path(config_obj.databases_root)
         if db_path.exists():
@@ -110,7 +110,7 @@ def status(config):
                 click.echo(f"  ... and {len(databases) - 5} more")
         else:
             click.echo(f"\nWarning: Database directory does not exist: {db_path}")
-        
+
         # Show enabled tools
         enabled_tools = config_obj.get_enabled_tools()
         click.echo(f"\nEnabled tools ({len(enabled_tools)}):")
@@ -118,42 +118,42 @@ def status(config):
             click.echo(f"  - {tool}")
         if len(enabled_tools) > 10:
             click.echo(f"  ... and {len(enabled_tools) - 10} more")
-            
+
     except Exception as e:
         click.echo(f"Error checking status: {e}", err=True)
         raise click.Abort()
 
 
 @mcp_commands.command()
-@click.option('--mode', type=click.Choice(['read-only', 'read-write']), 
+@click.option('--mode', type=click.Choice(['read-only', 'read-write']),
               default='read-only', help='Server mode to test')
 @click.option('--config', help='Configuration file path')
 def test(mode, config):
     """Test MCP server functionality"""
     click.echo(f"Testing MCP server in {mode} mode...")
-    
+
     try:
         import os
-        
+
         # Set environment
         os.environ['LVDB_MCP_MODE'] = mode
         if config:
             os.environ['LVDB_MCP_CONFIG'] = config
-        
+
         # Test configuration loading
         config_obj = MCPConfig.load(config_path=config)
         click.echo("Configuration loaded successfully")
-        
+
         # Test manager initialization
         from localvectordb_server.mcp.server import MCPManager
-        
+
         async def test_manager():
             manager = MCPManager(config_obj)
-            
+
             # Test basic operations
             databases = await manager.list_databases()
             click.echo(f"Found {len(databases)} databases")
-            
+
             # Test permission checking
             if mode == "read-only":
                 try:
@@ -163,13 +163,13 @@ def test(mode, config):
                     click.echo("Read-only permissions working correctly")
             else:
                 click.echo("Read-write mode enabled")
-            
+
             await manager.cleanup()
             click.echo("Cleanup completed")
-        
+
         asyncio.run(test_manager())
         click.echo("All tests passed!")
-        
+
     except Exception as e:
         click.echo(f"Test failed: {e}", err=True)
         raise click.Abort()
@@ -180,7 +180,7 @@ def tools():
     """List available MCP tools"""
     click.echo("Available MCP Tools")
     click.echo("=" * 40)
-    
+
     read_tools = [
         ("list_databases", "List all available databases"),
         ("get_database_info", "Get database statistics and configuration"),
@@ -191,7 +191,7 @@ def tools():
         ("get_metadata_schema", "Get database metadata schema"),
         ("get_system_info", "Get system information"),
     ]
-    
+
     write_tools = [
         ("create_database", "Create a new database"),
         ("delete_database", "Delete a database"),
@@ -201,12 +201,12 @@ def tools():
         ("update_metadata_schema", "Update database schema"),
         ("get_embeddings", "Generate embeddings"),
     ]
-    
+
     click.echo("\nRead-Only Tools (available in both modes):")
     for tool_name, description in read_tools:
         click.echo(f"  {tool_name}")
         click.echo(f"    {description}")
-    
+
     click.echo("\nWrite Tools (read-write mode only):")
     for tool_name, description in write_tools:
         click.echo(f"  {tool_name}")
@@ -272,7 +272,7 @@ timeout = 30
 max_retries = 3
 retry_delay = 1.0
 """
-    
+
     if output == '-':
         click.echo(example_config)
     else:

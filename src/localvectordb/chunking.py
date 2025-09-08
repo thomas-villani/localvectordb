@@ -17,7 +17,7 @@ enabling perfect reconstruction and precise highlighting.
 
 import re
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple, Type
+from typing import List, Optional, Tuple, Type, Union
 
 import tiktoken
 
@@ -27,7 +27,7 @@ from localvectordb.core import Chunk, ChunkPosition
 class PositionTrackingChunker(ABC):
     """Base class for chunkers that track exact positions"""
 
-    def __init__(self, max_tokens: int = 500, overlap: int = 0):
+    def __init__(self, max_tokens: int = 500, overlap: int = 0, **kwargs):
         self.max_tokens = max_tokens
         self.overlap = overlap
         self.encoding = tiktoken.get_encoding("cl100k_base")
@@ -82,13 +82,10 @@ class PositionTrackingChunker(ABC):
 
 class SentenceChunker(PositionTrackingChunker):
     """Chunk by sentences while preserving boundaries"""
-
-    def __init__(self, max_tokens: int = 500, overlap: int = 0):
-        super().__init__(max_tokens, overlap)
-        self.sentence_pattern = re.compile(
-            r'(?<=[.!?])\s+|(?<=[.!?]")(?=\s+[A-Z])|(?<=[.!?])\n+',
-            re.MULTILINE
-        )
+    sentence_pattern = re.compile(
+        r'(?<=[.!?])\s+|(?<=[.!?]")(?=\s+[A-Z])|(?<=[.!?])\n+',
+        re.MULTILINE
+    )
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by sentences"""
@@ -312,9 +309,6 @@ class TokenChunker(PositionTrackingChunker):
 class WordChunker(PositionTrackingChunker):
     """Chunk by word boundaries while preserving all whitespace"""
 
-    def __init__(self, max_tokens: int = 500, overlap: int = 0):
-        super().__init__(max_tokens, overlap)
-
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by word boundaries while preserving whitespace"""
         if not text.strip():
@@ -388,9 +382,6 @@ class WordChunker(PositionTrackingChunker):
 
 class LineChunker(PositionTrackingChunker):
     """Chunk by line boundaries"""
-
-    def __init__(self, max_tokens: int = 500, overlap: int = 0):
-        super().__init__(max_tokens, overlap)
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by line boundaries"""
@@ -484,9 +475,6 @@ class LineChunker(PositionTrackingChunker):
 class CharChunker(PositionTrackingChunker):
     """Chunk by character boundaries with exact position tracking"""
 
-    def __init__(self, max_tokens: int = 500, overlap: int = 0):
-        super().__init__(max_tokens, overlap)
-
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by character boundaries"""
         if not text.strip():
@@ -535,11 +523,7 @@ class CharChunker(PositionTrackingChunker):
 
 class ParagraphChunker(PositionTrackingChunker):
     """Chunk by paragraph boundaries"""
-
-    def __init__(self, max_tokens: int = 500, overlap: int = 0):
-        super().__init__(max_tokens, overlap)
-        # Match paragraph separators (double newlines or more)
-        self.paragraph_pattern = re.compile(r'\n\s*\n', re.MULTILINE)
+    paragraph_pattern = re.compile(r'\n\s*\n', re.MULTILINE)
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by paragraph boundaries"""
@@ -648,13 +632,14 @@ class ParagraphChunker(PositionTrackingChunker):
 
 class SectionChunker(PositionTrackingChunker):
     """Chunk by section headers (markdown-style)"""
+    header_pattern = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 
     def __init__(self, max_tokens: int = 500, overlap: int = 0):
+        if overlap != 0:
+            raise ValueError("`overlap` must be 0 for SectionChunker")
         # Sections typically don't overlap as they're logical units
         # Force overlap to 0
         super().__init__(max_tokens, 0)
-        # Match markdown headers (# ## ### etc.) at start of line
-        self.header_pattern = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by section headers"""
@@ -864,8 +849,8 @@ class SectionChunker(PositionTrackingChunker):
 class CodeBlockChunker(PositionTrackingChunker):
     """Chunk code while preserving logical code blocks"""
 
-    def __init__(self, max_tokens: int = 500, overlap_lines: int = 0, language: Optional[str] = None):
-        super().__init__(max_tokens, overlap_lines)
+    def __init__(self, max_tokens: int = 500, overlap: int = 0, language: Optional[str] = None, **kwargs):
+        super().__init__(max_tokens, overlap, **kwargs)
         self.language = language
 
     def chunk(self, text: str) -> List[Chunk]:
@@ -1318,12 +1303,17 @@ class ChunkerFactory:
     @classmethod
     def create_chunker(
             cls,
-            method: str,
+            method: Union[str, Type[PositionTrackingChunker]],
             max_tokens: int = 500,
             overlap: int = 0,
             **kwargs
     ) -> PositionTrackingChunker:
         """Create a chunker instance"""
+        if isinstance(method, type) and hasattr(method, "chunk"):
+            return method(max_tokens, overlap=overlap)
+        elif not isinstance(method, str):
+            raise TypeError("Error creating chunker: `method` must be `str` or `PositionTrackingChunker`, "
+                            f"found: {type(method)}")
         if method not in cls.CHUNKERS:
             available = ', '.join(cls.CHUNKERS.keys())
             raise ValueError(f"Unknown chunking method: {method}. Available: {available}")
@@ -1346,7 +1336,7 @@ class ChunkerFactory:
         elif method == 'paragraphs':
             return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'code-blocks':
-            return chunker_class(max_tokens, overlap_lines=overlap, **kwargs)
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == 'sections':
             # Sections typically don't overlap
             return chunker_class(max_tokens, overlap=0, **kwargs)

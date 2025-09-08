@@ -17,7 +17,6 @@ input validation, and performance monitoring.
 import json
 import logging
 import mimetypes
-import re
 from datetime import UTC, datetime
 from math import ceil
 from typing import Any, Dict
@@ -25,9 +24,9 @@ from typing import Any, Dict
 from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
+from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.utils import get_system_version
-from localvectordb._filters import FilterQueryBuilder
 from localvectordb_server._auth import require_api_key
 from localvectordb_server._cache import cache
 from localvectordb_server._checkdeps import check_ollama_service
@@ -1074,12 +1073,12 @@ def filter_documents(db_name):
                 try:
                     # Create FilterQueryBuilder with the database's metadata schema
                     filter_builder = FilterQueryBuilder(db.metadata_schema)
-                    
+
                     # Build valid columns set (base columns + metadata columns)
                     base_columns = db.schema.BASE_COLUMNS
                     metadata_columns = set(db.metadata_schema.keys())
                     valid_columns = set(base_columns).union(metadata_columns)
-                    
+
                     # Validate the ORDER BY clause using secure builder
                     # This will raise DatabaseError if invalid
                     filter_builder.build_order_by_clause(order_by, valid_columns)

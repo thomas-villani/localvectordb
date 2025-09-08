@@ -26,14 +26,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Type, Union, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, Generator, List, Literal, Optional, Tuple, Type, Union
 
 import aiosqlite
 from aiosqlite import Connection
 
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import ConnectionPoolError
-from localvectordb.versioning import VersionManager, DatabaseVersion
+from localvectordb.versioning import DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +66,17 @@ Document scoring methods for aggregating chunk scores:
 """
 
 
-def _adapt_datetime_with_tz(dt):
+def _adapt_datetime_with_tz(dt) -> str:
     return dt.isoformat()
 
-def _convert_datetime_with_tz(dt):
+def _convert_datetime_with_tz(dt) -> datetime:
     s = dt.decode("utf-8")
     return datetime.fromisoformat(s)
 
-def _adapt_json(json_data):
+def _adapt_json(json_data) -> str:
     return json.dumps(json_data)
 
-def _convert_json(json_data):
+def _convert_json(json_data) -> dict | list:
     return json.loads(json_data.decode("utf-8"))
 
 sqlite3.register_adapter(datetime, _adapt_datetime_with_tz)
@@ -140,7 +140,7 @@ class MetadataField:
     embedding_enabled: bool = False
     fts_enabled: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """
         Post-initialization processing to resolve type into MetadataFieldType.
 
@@ -276,7 +276,7 @@ class Chunk:
     faiss_id: Optional[int] = None  # Maps to FAISS index position
     content_hash: Optional[str] = None  # SHA-256 hash of content
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.content_hash is None:
             self.content_hash = self.calculate_content_hash()
 
@@ -318,7 +318,7 @@ class Document:
     content_hash: Optional[str] = None
     chunks: Optional[List[Chunk]] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.content_hash is None:
             self.content_hash = self._calculate_hash()
 
@@ -332,7 +332,7 @@ class Document:
         return new_hash != self.content_hash
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'Document':
+    def from_dict(cls, data: dict) -> Optional['Document']:
         """Create a Document from a dictionary response"""
         if not data:
             return None
@@ -578,20 +578,20 @@ class BaseVectorDB(ABC):
 
     # Database lifecycle
     @abstractmethod
-    def save(self):
+    def save(self) -> None:
         """Save the database."""
         pass
 
     @abstractmethod
-    def close(self):
+    def close(self) -> None:
         """Close the database."""
         pass
 
     # Context manager support
-    def __enter__(self):
+    def __enter__(self) -> "BaseVectorDB":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
     def query_builder(self) -> "QueryBuilder":
@@ -643,7 +643,7 @@ class BaseVectorDB(ABC):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            **kwargs
+            **kwargs: Any
     ) -> List[str]:
         """Insert or update documents in the database asynchronously."""
         pass
@@ -657,7 +657,7 @@ class BaseVectorDB(ABC):
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
-            **kwargs
+            **kwargs: Any
     ) -> List[str]:
         """Insert new documents into the database asynchronously."""
         pass
@@ -718,12 +718,12 @@ class BaseVectorDB(ABC):
         pass
 
     @abstractmethod
-    async def save_async(self):
+    async def save_async(self) -> None:
         """Save the database asynchronously."""
         pass
 
     @abstractmethod
-    async def close_async(self):
+    async def close_async(self) -> None:
         """Close the database asynchronously."""
         pass
 
@@ -743,10 +743,10 @@ class BaseVectorDB(ABC):
         pass
 
     # Async context manager support
-    async def __aenter__(self):
+    async def __aenter__(self) -> "BaseVectorDB":
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.close_async()
 
 # Type alias for better readability
@@ -936,7 +936,7 @@ class DatabaseSchema:
         "id", "content", "content_hash", "created_at", "updated_at"
     }
 
-    def __init__(self, db_path: Union[str, Path], read_write_lock):
+    def __init__(self, db_path: Union[str, Path], read_write_lock: "ReadWriteLock"):
         self.db_path = Path(db_path)
         self.metadata_fields: Dict[str, MetadataField] = {}
         self._read_write_lock: ReadWriteLock = read_write_lock
@@ -1138,10 +1138,10 @@ class DatabaseSchema:
         """
         try:
             version_manager = VersionManager(self.db_path)
-            
+
             # Check if this is a new database or needs version initialization
             current_version = version_manager.get_database_version(conn)
-            
+
             if current_version == DatabaseVersion("0.0.0"):
                 # New database - initialize with current schema version
                 logger.info("Initializing version tracking for new database")
@@ -1149,7 +1149,7 @@ class DatabaseSchema:
             else:
                 # Existing database - ensure version tracking is up to date
                 logger.debug(f"Database version: {current_version}")
-                
+
                 # Check if migration_log table exists (might be an older database)
                 cursor = conn.execute("""
                     SELECT name FROM sqlite_master 
@@ -1164,7 +1164,7 @@ class DatabaseSchema:
                         checksum=None,
                         conn=conn
                     )
-        
+
         except Exception as e:
             logger.warning(f"Could not initialize version tracking: {e}")
             # Don't fail database initialization for version tracking issues
@@ -1494,7 +1494,7 @@ class DatabaseSchema:
                                                     logger.debug(f"Dropped FTS triggers and table for '{field_name}'")
                                                 except Exception as e:
                                                     logger.warning(f"Failed to drop FTS components for '{field_name}': {e}")
-                                            
+
                                             # Drop any indexes on this column
                                             index_name = f'idx_documents_{field_name}'
                                             try:
@@ -1502,7 +1502,7 @@ class DatabaseSchema:
                                                 logger.debug(f"Dropped index {index_name} before dropping column")
                                             except Exception:
                                                 pass  # Index might not exist, that's okay
-                                            
+
                                             # Now drop the column
                                             conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
                                             changes['dropped_columns'].append(field_name)
@@ -1732,7 +1732,7 @@ class DatabaseSchema:
         }
 
     # Async methods for DatabaseSchema
-    async def initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None):
+    async def initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None) -> None:
         """Initialize database schema asynchronously"""
 
         # Determine if we need to manage the connection lifecycle
@@ -1762,7 +1762,7 @@ class DatabaseSchema:
             if owns_connection and db_connection:
                 await db_connection.close()
 
-    async def _setup_metadata_schema_async(self, conn, schema: Dict[str, MetadataField]):
+    async def _setup_metadata_schema_async(self, conn, schema: Dict[str, MetadataField]) -> None:
         """Set up metadata schema and add columns to documents table asynchronously"""
 
         # Validate that no metadata field names conflict with reserved columns
@@ -1811,7 +1811,7 @@ class DatabaseSchema:
         self.metadata_fields = schema
 
     @staticmethod
-    async def _add_metadata_column_async(conn, field_name: str, field_def: MetadataField):
+    async def _add_metadata_column_async(conn, field_name: str, field_def: MetadataField) -> None:
         """Add a metadata column to the documents table asynchronously"""
         # Map field types to SQLite types
         sqlite_type_map = {
@@ -1849,7 +1849,7 @@ class DatabaseSchema:
                 index_name = f'idx_documents_{field_name}'
                 await conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
 
-    async def load_metadata_schema_async(self, db_connection=None) -> Dict[str, MetadataField]:
+    async def load_metadata_schema_async(self, db_connection: Optional[aiosqlite.Connection] = None) -> Dict[str, MetadataField]:
         """Load metadata schema from database asynchronously"""
 
         # Determine if we need to manage the connection lifecycle
@@ -1891,7 +1891,7 @@ class DatabaseSchema:
     async def update_metadata_schema_async(
             self,
             new_schema: Dict[str, MetadataField],
-            db_connection=None,
+            db_connection: Optional[aiosqlite.Connection] = None,
             drop_columns: bool = False,
             column_mapping: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
@@ -2124,7 +2124,7 @@ class DatabaseSchema:
 
     async def _perform_column_remapping_async(
             self,
-            conn,
+            conn: aiosqlite.Connection,
             column_mapping: Dict[str, str],
             new_schema: Dict[str, MetadataField],
             current_schema: Dict[str, MetadataField]
@@ -2288,7 +2288,7 @@ class PooledConnection:
         self.pool = pool
         self._closed = False
 
-    def __getattr__(self, name) -> Any:
+    def __getattr__(self, name: str) -> Any:
         """Delegate all other attributes to the underlying connection"""
         return getattr(self.connection, name)
 
@@ -2435,7 +2435,7 @@ class AsyncConnectionPool:
         return conn
 
     @property
-    def closed(self):
+    def closed(self) -> bool:
         return self._created_connections == 0
 
     async def get_connection(self) -> aiosqlite.Connection:

@@ -40,7 +40,7 @@ import faiss
 import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
-from localvectordb.chunking import ChunkerFactory
+from localvectordb.chunking import ChunkerFactory, PositionTrackingChunker
 from localvectordb.core import (
     AsyncConnectionPool,
     BaseVectorDB,
@@ -125,14 +125,14 @@ class LocalVectorDB(BaseVectorDB):
             embedding_config: Optional[Dict[str, Any]] = None,
 
             # Chunking configuration
-            chunking_method: str = "sentences",
+            chunking_method: Union[str, PositionTrackingChunker] = "sentences",
             chunk_size: int = 500,
             chunk_overlap: int = 1,
 
             # Index type
             faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
-            faiss_index_hnsw_flat_neighbors: int = None,  # Only used for IndexHNSWFlat
-            faiss_index_lsh_bits: int = None,
+            faiss_index_hnsw_flat_neighbors: Optional[int] = None,  # Only used for IndexHNSWFlat
+            faiss_index_lsh_bits: Optional[int] = None,
 
             # Performance settings
             enable_gpu: bool = False,
@@ -156,17 +156,17 @@ class LocalVectorDB(BaseVectorDB):
             self.base_path.mkdir(parents=True, exist_ok=True)
 
             # Database files
-            self.db_path = self.base_path / f"{name}.sqlite"
-            self.index_path = self.base_path / f"{name}.faiss"
+            self.db_path = str(self.base_path / f"{name}.sqlite")
+            self.index_path = str(self.base_path / f"{name}.faiss")
 
-            if not create_if_not_exists and not self.db_path.exists():
+            if not create_if_not_exists and not Path(self.db_path).exists():
                 raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
 
         # Configuration
         if isinstance(metadata_schema, str):
             self._metadata_schema = get_common_metadata_schemas(metadata_schema)
         else:
-            self._metadata_schema = metadata_schema or {}
+            self._metadata_schema: Dict[str, MetadataField] = metadata_schema or {}
         self.doc_id_pattern = doc_id_pattern
 
         # Chunking setup
@@ -204,7 +204,7 @@ class LocalVectorDB(BaseVectorDB):
             self.schema.initialize(self._metadata_schema, db_connection=conn)
 
             # Load existing metadata schema if database already exists
-            if not self.is_memory_only and self.db_path.exists():
+            if not self.is_memory_only and Path(self.db_path).exists():
                 existing_schema = self.schema.load_metadata_schema(db_connection=conn)
                 self._metadata_schema.update(existing_schema)
 
@@ -222,10 +222,10 @@ class LocalVectorDB(BaseVectorDB):
         # Save configuration
         self._save_config()
 
-    def __enter__(self):
+    def __enter__(self) -> 'LocalVectorDB':
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
     @property
@@ -261,10 +261,10 @@ class LocalVectorDB(BaseVectorDB):
         return self._metadata_schema.copy()
 
     @property
-    def closed(self):
+    def closed(self) -> bool:
         return self.connection_pool.closed
 
-    def ping(self):
+    def ping(self) -> bool:
         return not self.closed
 
     def _check_fts5_availability(self) -> bool:
@@ -282,7 +282,7 @@ class LocalVectorDB(BaseVectorDB):
             logger.error(f"Error checking FTS5 availability: {e}")
             return False
 
-    def _init_fts(self):
+    def _init_fts(self) -> None:
         """Initialize Full-Text Search (FTS5) if available"""
         if not self._check_fts5_availability():
             self._fts_enabled = False
@@ -2899,7 +2899,7 @@ class LocalVectorDB(BaseVectorDB):
                 # Create or reuse filter_builder for ORDER BY validation
                 if 'filter_builder' not in locals():
                     filter_builder = FilterQueryBuilder(self.metadata_schema)
-                
+
                 # Build secure ORDER BY clause with proper validation and quoting
                 valid_columns = set(columns)  # Use the actual columns from this query
                 order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
@@ -4301,12 +4301,12 @@ class LocalVectorDB(BaseVectorDB):
                 # Validate that order_by is a string
                 if not isinstance(order_by, str):
                     raise ValueError("order_by must be a string")
-                
+
                 # Build valid columns set (all document columns)
                 base_columns = self.schema.BASE_COLUMNS
                 metadata_columns = set(self.metadata_schema.keys())
                 valid_columns = set(base_columns).union(metadata_columns)
-                
+
                 # Use FilterQueryBuilder for secure ORDER BY construction
                 order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
                 order_clause = f" {order_by_clause}"
@@ -4330,7 +4330,7 @@ class LocalVectorDB(BaseVectorDB):
                 sql_parts.append(order_clause.strip())
             if limit_clause:
                 sql_parts.append(limit_clause.strip())
-            
+
             sql = " ".join(sql_parts)
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()

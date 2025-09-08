@@ -19,7 +19,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 import httpx
 import numpy as np
@@ -38,7 +38,7 @@ class EmbeddingProvider(ABC):
                  max_retries: int = 3,
                  retry_delay: float = 1.0,
                  max_concurrent_requests: int = 5,
-                 **kwargs):
+                 **kwargs: Any) -> None:
         self.model = model
         self.config = kwargs
 
@@ -46,7 +46,7 @@ class EmbeddingProvider(ABC):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.max_concurrent_requests = max_concurrent_requests
-        self._dimension = None
+        self._dimension: Optional[int] = None
 
     @property
     def async_supported(self) -> bool:
@@ -55,7 +55,7 @@ class EmbeddingProvider(ABC):
     async def embed_batch(self,
                           texts: List[str],
                           batch_size: Optional[int] = None,
-                          progress_callback: Optional[callable] = None) -> np.ndarray:
+                          progress_callback: Optional[Callable] = None) -> np.ndarray:
         """Generate embeddings with automatic retry handling."""
 
         for attempt in range(self.max_retries + 1):
@@ -141,7 +141,7 @@ class EmbeddingProvider(ABC):
                 batch_texts: List[str],
                 _start_index: int,
                 _batch_num: int
-        ):
+        ) -> tuple[int, List[List[float]]]:
             """Process batch and update progress"""
             nonlocal completed_batches
 
@@ -179,11 +179,11 @@ class EmbeddingProvider(ABC):
         return final_embeddings
 
     @abstractmethod
-    async def _embed_single_batch(self, texts, **kwargs) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
         """Embed a single batch"""
         pass
 
-    async def embed_async(self, texts: List[str], batch_size: Optional[int] = None):
+    async def embed_async(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
         """Generate embeddings for a list of texts."""
         return await self.embed_batch(texts, batch_size)
 
@@ -281,7 +281,7 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
                 _client: httpx.AsyncClient,
                 _start_index: int,
                 _batch_num: int
-        ):
+        ) -> tuple[int, List[List[float]]]:
             """Process batch and update progress"""
             nonlocal completed_batches
 
@@ -321,7 +321,7 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
 
     @abstractmethod
-    async def _embed_single_batch(self, texts, client: Optional[httpx.AsyncClient] = None, **kwargs) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
         """Embed a batch using asynchronous httpx client.
 
         The async httpx client is passed in as the `client` kwarg."""
@@ -348,13 +348,13 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         How many requests to make concurrently to the ollama server.
     """
 
-    _model_info_cache = {}
+    _model_info_cache: Dict[str, List[Dict]] = {}
 
-    def __init__(self, model: str, base_url: str = None, timeout=300, max_retries=3, retry_delay=1.0,
-                 max_concurrent_requests=3):
+    def __init__(self, model: str, base_url: Optional[str] = None, timeout: int = 300, max_retries: int = 3, retry_delay: float = 1.0,
+                 max_concurrent_requests: int = 3) -> None:
         super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
-        base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        self.base_url = base_url.rstrip('/')
+        effective_base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.base_url = (effective_base_url or "http://localhost:11434").rstrip('/')
         self._validated = False
 
     @property
@@ -365,7 +365,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     def max_batch_size(self) -> int:
         return 64  # Ollama's typical batch size
 
-    def _get_model_info(self, force=False) -> list[dict]:
+    def _get_model_info(self, force: bool = False) -> List[Dict]:
         if not self._model_info_cache or not self._model_info_cache.get(self.base_url) or force:
             with httpx.Client() as client:
                 response = client.get(f"{self.base_url}/api/tags", timeout=self.timeout)
@@ -376,14 +376,14 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
 
                 self._model_info_cache[self.base_url] = models
 
-        return self._model_info_cache.get(self.base_url, {})
+        return self._model_info_cache.get(self.base_url, [])
 
     def validate_model(self) -> bool:
         """Check if the model is available in Ollama"""
         if self._validated:
             return True
 
-        def _check_it(_models) -> bool:
+        def _check_it(_models: List[Dict]) -> bool:
             for model_info in _models:
                 if model_info["name"].startswith(self.model):
                     return True
@@ -427,10 +427,11 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     def get_dimension(self) -> int:
         """Get embedding dimension by making a test call"""
         if self._dimension is None:
-            self._dimension = self._get_model_dimension_api()
+            dimension = self._get_model_dimension_api()
+            self._dimension = dimension
         return self._dimension
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient = None, **kwargs) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
         if client is None:
             client = httpx.AsyncClient()
@@ -454,7 +455,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         if not embeddings:
             raise RuntimeError("No embeddings returned from Ollama")
 
-        return embeddings
+        return embeddings  # type: ignore[no-any-return]
 
 
 class OpenAIEmbeddings(HTTPEmbeddingProvider):
@@ -478,8 +479,8 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         How many requests to make concurrently to the OpenAI server.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, timeout=90, max_retries=3, retry_delay=1.0,
-                 max_concurrent_requests=5):
+    def __init__(self, model: str, api_key: Optional[str] = None, timeout: int = 90, max_retries: int = 3, retry_delay: float = 1.0,
+                 max_concurrent_requests: int = 5) -> None:
         super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
 
         if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
@@ -534,7 +535,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
-    async def _embed_single_batch(self, texts, client: httpx.AsyncClient=None, **kwargs) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
         if client is None:
             client = httpx.AsyncClient()
 
@@ -565,9 +566,9 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
 class MockEmbeddings(EmbeddingProvider):
     """Mock embedding provider for testing"""
 
-    def __init__(self, model: str, dimension: int = 384, timeout=90, max_retries=3, retry_delay=1.0, **kwargs):
+    def __init__(self, model: str, dimension: int = 384, timeout: int = 90, max_retries: int = 3, retry_delay: float = 1.0, **kwargs: Any) -> None:
         super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
-        self._dimension = dimension
+        self._dimension: int = dimension
         self.number_of_calls = 0
 
     @property
@@ -584,7 +585,7 @@ class MockEmbeddings(EmbeddingProvider):
     def get_dimension(self) -> int:
         return self._dimension
 
-    async def _embed_single_batch(self, texts, **kwargs) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
         if not texts:
             return [[]]
 
@@ -592,10 +593,10 @@ class MockEmbeddings(EmbeddingProvider):
         for text in texts:
             # Simple hash-based embedding
             np.random.seed(hash(text) % (2 ** 31))
-            embedding = np.random.normal(0, 1, self._dimension)
+            embedding_array = np.random.normal(0, 1, self._dimension)
             # Normalize
-            embedding = embedding / np.linalg.norm(embedding)
-            embeddings.append(embedding.tolist())
+            embedding_array = embedding_array / np.linalg.norm(embedding_array)
+            embeddings.append(embedding_array.tolist())
 
         self.number_of_calls += 1
 
@@ -610,12 +611,12 @@ class EmbeddingRegistry:
     _plugins_discovered = False
 
     @classmethod
-    def register(cls, name: str, provider_class: Type[EmbeddingProvider]):
+    def register(cls, name: str, provider_class: Type[EmbeddingProvider]) -> None:
         """Register a new embedding provider"""
         cls._providers[name.lower()] = provider_class
 
     @classmethod
-    def _discover_plugins(cls):
+    def _discover_plugins(cls) -> None:
         """Discover embedding provider plugins using entry points"""
         if cls._plugins_discovered:
             return
@@ -654,7 +655,7 @@ class EmbeddingRegistry:
         cls,
         provider_name: str,
         model: str,
-        **kwargs
+        **kwargs: Any
     ) -> EmbeddingProvider:
         """Create an embedding provider instance"""
         provider_class = cls.get(provider_name)
@@ -667,7 +668,7 @@ class EmbeddingRegistry:
         return list(cls._providers.keys())
 
     @classmethod
-    def refresh_plugins(cls):
+    def refresh_plugins(cls) -> None:
         """Force re-discovery of plugins (useful for testing)"""
         cls._plugins_discovered = False
         cls._discover_plugins()
@@ -683,7 +684,7 @@ EmbeddingRegistry.register("mock", MockEmbeddings)
 def create_embedding_provider(
     provider: str,
     model: str,
-    **kwargs
+    **kwargs: Any
 ) -> EmbeddingProvider:
     """Create an embedding provider instance"""
     return EmbeddingRegistry.create_provider(provider, model, **kwargs)
@@ -699,7 +700,7 @@ async def embed_texts(
     provider: str,
     model: str,
     batch_size: Optional[int] = None,
-    **provider_kwargs
+    **provider_kwargs: Any
 ) -> np.ndarray:
     """Convenience function to embed texts"""
     embedding_provider = create_embedding_provider(provider, model, **provider_kwargs)
@@ -711,7 +712,7 @@ def embed_texts_sync(
     provider: str,
     model: str,
     batch_size: Optional[int] = None,
-    **provider_kwargs
+    **provider_kwargs: Any
 ) -> np.ndarray:
     """Synchronous convenience function to embed texts"""
     embedding_provider = create_embedding_provider(provider, model, **provider_kwargs)

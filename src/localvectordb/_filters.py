@@ -458,32 +458,32 @@ class FilterQueryBuilder:
         """
         if not order_by or not order_by.strip():
             raise DatabaseError("ORDER BY clause cannot be empty")
-            
+
         # Parse the order_by string
         order_parts = order_by.strip().split()
         if len(order_parts) == 0 or len(order_parts) > 2:
             raise DatabaseError("Invalid ORDER BY format. Use 'field_name' or 'field_name ASC/DESC'")
-            
+
         field_name = order_parts[0].strip()
         direction = order_parts[1].upper() if len(order_parts) == 2 else 'ASC'
-        
+
         # Validate direction
         if direction not in ('ASC', 'DESC'):
             raise DatabaseError("ORDER BY direction must be ASC or DESC")
-            
+
         # Validate field name format (prevent injection)
         if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', field_name):
             raise DatabaseError(f"Invalid field name format: {field_name}")
-            
+
         # Determine valid columns
         if valid_columns is None:
             valid_columns = set(self.RESERVED_COLUMNS)
             valid_columns.update(self.metadata_schema.keys())
-            
+
         # Validate field exists in schema
         if field_name not in valid_columns:
             raise DatabaseError(f"Field '{field_name}' not found in schema. Valid fields: {sorted(valid_columns)}")
-            
+
         # Quote the field name for SQL safety and return
         quoted_field = f'"{field_name}"'
         return f"ORDER BY {quoted_field} {direction}"

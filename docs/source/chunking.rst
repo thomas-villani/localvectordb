@@ -136,7 +136,7 @@ Intelligent code-aware chunking that preserves logical code structure.
        "code_db",
        chunking_method="code-blocks",
        chunk_size=800,
-       overlap_lines=2  # Number of lines to overlap
+       overlap=2  # Number of lines to overlap
    )
 
 **Features**:
@@ -290,7 +290,7 @@ Source Code Repositories
        "source_code",
        chunking_method="code-blocks",
        chunk_size=500,
-       overlap_lines=2,
+       overlap=2,
        metadata_schema={
            'file_path': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'language': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
