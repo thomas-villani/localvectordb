@@ -13,11 +13,9 @@ API Documentation
    localvectordb.factory
    localvectordb.client
    localvectordb.backup
-   localvectordb.migrations
+   localvectordb.migration
    localvectordb.versioning
    localvectordb.utils
-   localvectordb.async_database
-   localvectordb.async_client
    localvectordb_server.routes
    localvectordb_server.config
    localvectordb_server.cli

@@ -310,7 +310,7 @@ Multi-Column Search (Advanced)
 Multi-column search is LocalVectorDB's most powerful feature, allowing you to search across both document content and metadata fields simultaneously.
 
 Enabling Multi-Column Search
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 First, enable embeddings on metadata fields in your schema:
 
@@ -355,14 +355,16 @@ Using Multi-Column Search
        print(f"Found in {column} (score: {score:.3f}): {result.content[:100]}...")
 
 Advanced Search Examples
-^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^
+There are many options to give fine-tuned control over search results. In particular, there are a number of options
+for the ``document_scoring_method`` that can be employed to control how the overall score of a document is calculated
+from the scores of the chunks. :doc:`Learn more about document_scoring_method options<document-scoring>`.
 
 .. code-block:: python
 
    # Scientific paper search across multiple fields
-   paper_results = await db.query_multi_column_async(
+   paper_results = await db.query_async(
        "deep learning transformers",
-       columns=["content", "title", "abstract", "keywords"],
        search_type="hybrid",           # Combine vector and keyword search
        k=20,
        filters={                       # Filter by metadata
