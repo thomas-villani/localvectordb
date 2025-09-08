@@ -70,6 +70,11 @@ def get_stdin_input(input_required=True, err_msg=None):
     return data_from_stdin
 
 
+def print_json_output(data: Any):
+    """Print data in JSON format with proper formatting."""
+    click.echo(json.dumps(data, indent=2, default=str))
+
+
 def print_db_stats(db: LocalVectorDB):
     """Print database statistics for v1.0"""
     try:

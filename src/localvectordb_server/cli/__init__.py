@@ -24,6 +24,8 @@ Main Components:
     - delete: Delete an existing database
     - rename: Rename a database
     - db: Commands for interacting with a specific database
+    - backup: Backup and restore operations (create, list, restore, verify, cleanup, pitr)
+    - migrate: Database migration and schema evolution (status, apply, rollback, create, list)
 
 Examples:
 
@@ -69,6 +71,20 @@ Examples:
     Manage database interactively::
 
         $ lvdb db mydatabase shell
+
+    Create and manage backups::
+
+        $ lvdb backup create mydatabase --type full
+        $ lvdb backup list --database mydatabase
+        $ lvdb backup restore backup-id --to-location ./restored
+        $ lvdb backup pitr "2024-01-15 14:30:00" --to-location ./pitr-restored
+
+    Manage database migrations::
+
+        $ lvdb migrate status mydatabase
+        $ lvdb migrate create "add new field" --version 1.2.0
+        $ lvdb migrate apply mydatabase --to-version 1.2.0
+        $ lvdb migrate rollback mydatabase 1.1.0
 
 Notes:
 
@@ -130,10 +146,12 @@ def cli(ctx, config, db_folder):
 
 
 from localvectordb_server.cli._auth import auth
+from localvectordb_server.cli._backup import backup_group
 from localvectordb_server.cli._basic import create_vector_database, delete_database, list_databases, serve
 from localvectordb_server.cli._config import config_group
 from localvectordb_server.cli._db import db_group
 from localvectordb_server.cli._mcp import mcp_commands
+from localvectordb_server.cli._migration import migrate_group
 
 cli.add_command(serve)
 cli.add_command(create_vector_database)
@@ -142,6 +160,8 @@ cli.add_command(delete_database)
 cli.add_command(db_group)
 cli.add_command(config_group)
 cli.add_command(auth)
+cli.add_command(backup_group)
+cli.add_command(migrate_group)
 cli.add_command(mcp_commands)
 
 __all__ = ["cli"]

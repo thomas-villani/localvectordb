@@ -33,6 +33,7 @@ from aiosqlite import Connection
 
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.exceptions import ConnectionPoolError
+from localvectordb.versioning import VersionManager, DatabaseVersion
 
 logger = logging.getLogger(__name__)
 
@@ -881,18 +882,41 @@ class DatabaseSchema:
         UNIQUE(document_id, field_name, chunk_index)
     )"""
 
+    BASE_MIGRATION_LOG_SCHEMA = """CREATE TABLE IF NOT EXISTS migration_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        version TEXT NOT NULL,
+        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        rollback_script TEXT,
+        checksum TEXT
+    )"""
+
+    BASE_BACKUP_LOG_SCHEMA = """CREATE TABLE IF NOT EXISTS backup_log (
+        id TEXT PRIMARY KEY,
+        backup_type TEXT CHECK(backup_type IN ('full', 'incremental')) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        database_version TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        parent_backup_id TEXT REFERENCES backup_log(id),
+        metadata TEXT,
+        size_bytes INTEGER,
+        compression_algorithm TEXT
+    )"""
+
     BASE_SCHEMA = {
         "documents": BASE_DOCUMENTS_SCHEMA,
         "chunks": BASE_CHUNKS_SCHEMA,
         "metadata_schema": BASE_METADATA_SCHEMA,
         "column_embeddings": BASE_COLUMN_EMBEDDINGS_SCHEMA,
+        "migration_log": BASE_MIGRATION_LOG_SCHEMA,
+        "backup_log": BASE_BACKUP_LOG_SCHEMA,
         "config": """CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )"""
     }
 
-    # Updated base indexes to include content_hash and column_embeddings
+    # Updated base indexes to include content_hash, column_embeddings, migration_log, and backup_log
     BASE_INDEXES = [
         "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)",
         "CREATE INDEX IF NOT EXISTS idx_chunks_faiss_id ON chunks(faiss_id)",
@@ -900,7 +924,12 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)",
         "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON column_embeddings(document_id, field_name)",
-        "CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)"
+        "CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)",
+        "CREATE INDEX IF NOT EXISTS idx_migration_log_version ON migration_log(version)",
+        "CREATE INDEX IF NOT EXISTS idx_migration_log_applied_at ON migration_log(applied_at)",
+        "CREATE INDEX IF NOT EXISTS idx_backup_log_created_at ON backup_log(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_backup_log_type ON backup_log(backup_type)",
+        "CREATE INDEX IF NOT EXISTS idx_backup_log_parent ON backup_log(parent_backup_id)"
     ]
 
     BASE_COLUMNS = {
@@ -932,6 +961,9 @@ class DatabaseSchema:
                 # Set up metadata schema if provided
                 if metadata_schema:
                     self._setup_metadata_schema(conn, metadata_schema)
+
+                # Initialize version tracking for new databases
+                self._initialize_version_tracking(conn)
 
                 conn.commit()
 
@@ -1096,6 +1128,46 @@ class DatabaseSchema:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)")
 
             conn.commit()
+
+    def _initialize_version_tracking(self, conn: sqlite3.Connection):
+        """
+        Initialize version tracking for new databases.
+        
+        Sets up PRAGMA user_version and records initial state in migration_log.
+        For existing databases, checks and updates version tracking as needed.
+        """
+        try:
+            version_manager = VersionManager(self.db_path)
+            
+            # Check if this is a new database or needs version initialization
+            current_version = version_manager.get_database_version(conn)
+            
+            if current_version == DatabaseVersion("0.0.0"):
+                # New database - initialize with current schema version
+                logger.info("Initializing version tracking for new database")
+                version_manager.initialize_version_tracking(conn)
+            else:
+                # Existing database - ensure version tracking is up to date
+                logger.debug(f"Database version: {current_version}")
+                
+                # Check if migration_log table exists (might be an older database)
+                cursor = conn.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='migration_log'
+                """)
+                if not cursor.fetchone():
+                    # Old database without migration_log - record current state
+                    logger.info("Adding migration tracking to existing database")
+                    version_manager.record_migration(
+                        str(current_version),
+                        rollback_script=None,
+                        checksum=None,
+                        conn=conn
+                    )
+        
+        except Exception as e:
+            logger.warning(f"Could not initialize version tracking: {e}")
+            # Don't fail database initialization for version tracking issues
 
     def load_metadata_schema(self, db_connection=None) -> Dict[str, MetadataField]:
         """Load metadata schema from database"""
@@ -1388,16 +1460,17 @@ class DatabaseSchema:
                     # STEP 3: Handle removed fields (after remapping)
                     for field_name in current_schema:
                         if field_name not in new_schema:
-                            # Skip fields that were remapped (they're not really being removed)
-                            if column_mapping and field_name in column_mapping:
-                                continue
-
                             try:
-                                # Remove from schema table
+                                # Remove from schema table (even if it was remapped)
                                 conn.execute("DELETE FROM metadata_schema WHERE field_name = ?", (field_name,))
                                 changes['removed_fields'].append(field_name)
 
                                 logger.info(f"Removed {field_name} from metadata_schema")
+
+                                # Skip dropping the actual column if it was remapped
+                                if column_mapping and field_name in column_mapping:
+                                    logger.info(f"Skipping column drop for '{field_name}' as it was remapped to '{column_mapping[field_name]}'")
+                                    continue
 
                                 # Optionally drop the actual column
                                 if drop_columns:
@@ -1407,7 +1480,30 @@ class DatabaseSchema:
                                         existing_columns = {row[1] for row in cursor.fetchall()}
 
                                         if field_name in existing_columns:
-                                            # Drop the column
+                                            # First drop any FTS triggers and tables
+                                            current_field = current_schema.get(field_name)
+                                            if current_field and getattr(current_field, 'fts_enabled', False):
+                                                fts_table_name = f'fts_{field_name}'
+                                                try:
+                                                    # Drop FTS triggers
+                                                    conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_insert')
+                                                    conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_update')
+                                                    conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_delete')
+                                                    # Drop FTS table
+                                                    conn.execute(f'DROP TABLE IF EXISTS {fts_table_name}')
+                                                    logger.debug(f"Dropped FTS triggers and table for '{field_name}'")
+                                                except Exception as e:
+                                                    logger.warning(f"Failed to drop FTS components for '{field_name}': {e}")
+                                            
+                                            # Drop any indexes on this column
+                                            index_name = f'idx_documents_{field_name}'
+                                            try:
+                                                conn.execute(f'DROP INDEX IF EXISTS {index_name}')
+                                                logger.debug(f"Dropped index {index_name} before dropping column")
+                                            except Exception:
+                                                pass  # Index might not exist, that's okay
+                                            
+                                            # Now drop the column
                                             conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
                                             changes['dropped_columns'].append(field_name)
                                             logger.info(f"Dropped column '{field_name}' from documents table")

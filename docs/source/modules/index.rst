@@ -12,6 +12,9 @@ API Documentation
    localvectordb.query_builder
    localvectordb.factory
    localvectordb.client
+   localvectordb.backup
+   localvectordb.migrations
+   localvectordb.versioning
    localvectordb.utils
    localvectordb.async_database
    localvectordb.async_client

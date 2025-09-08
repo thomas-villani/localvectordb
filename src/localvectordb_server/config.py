@@ -161,6 +161,76 @@ class DatabaseSettings(BaseSettings):
 
 
 @dataclass
+class BackupSettings(BaseSettings):
+    """Settings for database backup operations."""
+    enabled: bool = True
+    default_location: str = "./backups"
+    retention_days: int = 30  # Keep backups for 30 days
+    max_backups: int = 50  # Maximum number of backups to keep per database
+    compression_type: Literal["gzip", "lzma", "none"] = "gzip"
+    compression_level: int = 6  # 1-9 for gzip, 0-9 for lzma
+    
+    # Auto-backup settings
+    auto_backup_enabled: bool = False
+    auto_backup_interval_hours: int = 24  # Daily backups
+    auto_backup_type: Literal["full", "incremental"] = "incremental"
+    
+    # Performance settings
+    backup_chunk_size: int = 1024 * 1024  # 1MB chunks for streaming
+    verify_backups: bool = True  # Verify backup integrity after creation
+    
+    def validate(self):
+        if self.retention_days < 0:
+            raise ConfigurationError("retention_days must be non-negative")
+        
+        if self.max_backups <= 0:
+            raise ConfigurationError("max_backups must be positive")
+            
+        if self.compression_level < 0 or self.compression_level > 9:
+            raise ConfigurationError("compression_level must be between 0 and 9")
+            
+        if self.auto_backup_interval_hours <= 0:
+            raise ConfigurationError("auto_backup_interval_hours must be positive")
+            
+        if self.backup_chunk_size <= 0:
+            raise ConfigurationError("backup_chunk_size must be positive")
+            
+        # Validate paths
+        if not isinstance(self.default_location, str) or not self.default_location:
+            raise ConfigurationError("default_location must be a non-empty string")
+            
+        return True
+
+
+@dataclass
+class MigrationSettings(BaseSettings):
+    """Settings for database migration operations."""
+    enabled: bool = True
+    migration_dir: str = "./migrations"
+    auto_migrate: bool = False  # Automatically apply pending migrations on startup
+    backup_before_migration: bool = True  # Create backup before applying migrations
+    
+    # Safety settings
+    require_confirmation: bool = True  # Require confirmation for destructive operations
+    allow_destructive_migrations: bool = False  # Allow migrations that could lose data
+    max_rollback_steps: int = 10  # Maximum number of migration steps to rollback
+    
+    # Template settings
+    migration_template_author: Optional[str] = None  # Default author for new migrations
+    migration_template_format: Literal["python", "sql"] = "python"
+    
+    def validate(self):
+        if self.max_rollback_steps < 0:
+            raise ConfigurationError("max_rollback_steps must be non-negative")
+            
+        # Validate paths
+        if not isinstance(self.migration_dir, str) or not self.migration_dir:
+            raise ConfigurationError("migration_dir must be a non-empty string")
+            
+        return True
+
+
+@dataclass
 class ServerSettings(BaseSettings):
     """Settings related to the flask API server"""
     debug: bool = False
@@ -305,12 +375,16 @@ class Config:
     database: DatabaseSettings = field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
+    backup: BackupSettings = field(default_factory=BackupSettings)
+    migration: MigrationSettings = field(default_factory=MigrationSettings)
 
     def validate(self):
         return (
                 self.database.validate() and
                 self.embedding.validate() and
-                self.server.validate()
+                self.server.validate() and
+                self.backup.validate() and
+                self.migration.validate()
         )
 
     @classmethod
@@ -372,6 +446,18 @@ class Config:
                 elif hasattr(config.server, key):
                     setattr(config.server, key, value)
 
+        # Process backup settings
+        if 'backup' in data and isinstance(data['backup'], dict):
+            for key, value in data['backup'].items():
+                if hasattr(config.backup, key):
+                    setattr(config.backup, key, value)
+
+        # Process migration settings
+        if 'migration' in data and isinstance(data['migration'], dict):
+            for key, value in data['migration'].items():
+                if hasattr(config.migration, key):
+                    setattr(config.migration, key, value)
+
         return config
 
     @classmethod
@@ -416,6 +502,8 @@ class Config:
             'database': config.database,
             'embedding': config.embedding,
             'server': config.server,
+            'backup': config.backup,
+            'migration': config.migration,
         }
 
         for section_name, section_obj in sections.items():
@@ -451,7 +539,7 @@ class Config:
             name = env_name[len(prefix):].lower()
             parts = name.split('_', 2)  # Allow for deeper nesting
 
-            if len(parts) >= 2 and parts[0] in ['database', 'embedding', 'server']:
+            if len(parts) >= 2 and parts[0] in ['database', 'embedding', 'server', 'backup', 'migration']:
                 section_name = parts[0]
                 key = '_'.join(parts[1:])
                 section_obj = getattr(config, section_name)
@@ -566,8 +654,12 @@ class Config:
                 cfg_obj = new_cfg.embedding
             elif key == "server":
                 cfg_obj = new_cfg.server
+            elif key == "backup":
+                cfg_obj = new_cfg.backup
+            elif key == "migration":
+                cfg_obj = new_cfg.migration
             else:
-                raise KeyError(f"Expected keys: 'database', 'embedding', 'server', found: {key}")
+                raise KeyError(f"Expected keys: 'database', 'embedding', 'server', 'backup', 'migration', found: {key}")
 
             for cfg_key, cfg_value in values.items():
                 if hasattr(cfg_obj, cfg_key):
@@ -591,6 +683,14 @@ class Config:
         # Embedding settings with EMBEDDING_ prefix
         for key, value in asdict(self.embedding).items():
             result[f"EMBEDDING_{key.upper()}"] = value
+
+        # Backup settings with BACKUP_ prefix
+        for key, value in asdict(self.backup).items():
+            result[f"BACKUP_{key.upper()}"] = value
+
+        # Migration settings with MIGRATION_ prefix
+        for key, value in asdict(self.migration).items():
+            result[f"MIGRATION_{key.upper()}"] = value
 
 
         cache_options = None
@@ -716,6 +816,30 @@ class Config:
 
         lines.append("\n")
 
+        # Backup section
+        lines.append("[backup]\n")
+        for key, value in asdict(self.backup).items():
+            if isinstance(value, str):
+                lines.append(f'{key} = "{value}"\n')
+            elif isinstance(value, bool):
+                lines.append(f'{key} = {str(value).lower()}\n')
+            elif value is not None:
+                lines.append(f'{key} = {value}\n')
+        lines.append("\n")
+
+        # Migration section
+        lines.append("[migration]\n")
+        for key, value in asdict(self.migration).items():
+            if value is None:
+                continue
+            elif isinstance(value, str):
+                lines.append(f'{key} = "{value}"\n')
+            elif isinstance(value, bool):
+                lines.append(f'{key} = {str(value).lower()}\n')
+            else:
+                lines.append(f'{key} = {value}\n')
+        lines.append("\n")
+
         # Security subsection
         if security_config:
             lines.append("[server.security]\n")
@@ -740,7 +864,9 @@ class Config:
         return {
             "database": asdict(self.database),
             "embedding": asdict(self.embedding),
-            "server": asdict(self.server)
+            "server": asdict(self.server),
+            "backup": asdict(self.backup),
+            "migration": asdict(self.migration)
         }
 
     def apply_common_schema(self, schema_name: str):
@@ -810,6 +936,8 @@ class Config:
         merge_dataclass(self.database, other.database, result.database)
         merge_dataclass(self.embedding, other.embedding, result.embedding)
         merge_dataclass(self.server, other.server, result.server)
+        merge_dataclass(self.backup, other.backup, result.backup)
+        merge_dataclass(self.migration, other.migration, result.migration)
 
         return result
 
