@@ -52,7 +52,7 @@ Let's start by creating our vector database with a proper metadata schema for do
 
 .. code-block:: python
 
-   from localvectordb import LocalVectorDB
+   from localvectordb import VectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
    from pathlib import Path
    import logging
@@ -85,7 +85,7 @@ Let's start by creating our vector database with a proper metadata schema for do
    }
 
    # Create the database
-   db = LocalVectorDB(
+   db = VectorDB(
        name="rag_knowledge_base",
        base_path="./vector_storage",
        metadata_schema=metadata_schema,
@@ -678,7 +678,7 @@ Here's the complete script you can run:
    from pathlib import Path
    from typing import List, Dict, Any, Optional
 
-   from localvectordb import LocalVectorDB
+   from localvectordb import VectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
 
    # Configure logging

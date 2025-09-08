@@ -1873,3 +1873,476 @@ Debug Mode
 
    # Check server logs
    tail -f server.log
+
+Backup and Restore Operations
+-----------------------------
+
+The LocalVectorDB CLI provides comprehensive backup and restore capabilities for database protection and disaster recovery.
+
+Create Backups
+^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Create full backup
+   lvdb backup create my_database --type full
+
+   # Create incremental backup
+   lvdb backup create my_database --type incremental
+
+   # Create backup with compression
+   lvdb backup create my_database --type full --compression gzip
+
+   # Create backup with custom location
+   lvdb backup create my_database --type full --output-dir /backups/localvectordb
+
+   # Create backup with description
+   lvdb backup create my_database --type full --description "Pre-migration backup"
+
+**Options**:
+
+- ``--type, -t``: Backup type (full, incremental)
+- ``--compression, -c``: Compression algorithm (none, gzip, lzma, zstd)
+- ``--output-dir, -o``: Directory to store backup files
+- ``--description, -d``: Description for the backup
+- ``--verify``: Verify backup integrity after creation
+
+List Backups
+^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # List all backups
+   lvdb backup list
+
+   # List backups for specific database
+   lvdb backup list --database my_database
+
+   # List with detailed information
+   lvdb backup list --details
+
+   # List in JSON format
+   lvdb backup list --format json
+
+**Example Output**:
+
+.. code-block:: console
+
+   Backups for database: my_database
+   =====================================
+
+   ID                    Type        Created              Size      Status    Description
+   -----------------------------------------------------------------------------------------
+   backup_20241201_001   FULL        2024-12-01 10:30:00  125.4 MB  VALID     Pre-migration backup
+   backup_20241201_002   INCREMENTAL 2024-12-01 15:45:00  8.2 MB    VALID     After document updates
+   backup_20241202_001   FULL        2024-12-02 09:00:00  127.1 MB  VALID     Daily backup
+
+Restore Backups
+^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Restore specific backup
+   lvdb backup restore backup_20241201_001 --to-location ./restored_database
+
+   # Restore latest backup for database
+   lvdb backup restore --database my_database --latest --to-location ./restored
+
+   # Restore with verification
+   lvdb backup restore backup_20241201_001 --to-location ./restored --verify
+
+   # Force restore (overwrite existing)
+   lvdb backup restore backup_20241201_001 --to-location ./restored --force
+
+**Options**:
+
+- ``--to-location, -l``: Directory where database should be restored
+- ``--database, -d``: Database name (when using --latest)
+- ``--latest``: Restore the most recent backup
+- ``--verify``: Verify backup integrity before restoration
+- ``--force, -f``: Overwrite existing database at restore location
+
+Verify Backups
+^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Verify specific backup
+   lvdb backup verify backup_20241201_001
+
+   # Verify all backups for database
+   lvdb backup verify --database my_database
+
+   # Verify and repair if possible
+   lvdb backup verify backup_20241201_001 --repair
+
+**Example Output**:
+
+.. code-block:: console
+
+   Verifying backup: backup_20241201_001
+   =====================================
+
+   ✓ Backup metadata valid
+   ✓ File integrity checksums match
+   ✓ Database schema valid
+   ✓ FAISS index accessible
+   ✓ SQLite database accessible
+
+   Backup verification: PASSED
+
+Clean Up Backups
+^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Clean up old backups (interactive)
+   lvdb backup cleanup --database my_database
+
+   # Keep only last 5 backups
+   lvdb backup cleanup --database my_database --keep 5
+
+   # Clean up backups older than 30 days
+   lvdb backup cleanup --database my_database --older-than 30
+
+   # Clean up with confirmation
+   lvdb backup cleanup --database my_database --keep 3 --confirm
+
+**Options**:
+
+- ``--database, -d``: Database name to clean up backups for
+- ``--keep, -k``: Number of most recent backups to keep
+- ``--older-than, -o``: Remove backups older than specified days
+- ``--confirm, -y``: Skip confirmation prompts
+- ``--dry-run, -n``: Show what would be removed without deleting
+
+Point-in-Time Recovery
+^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Restore database to specific point in time
+   lvdb backup pitr "2024-12-01 14:30:00" --database my_database --to-location ./pitr_restored
+
+   # Point-in-time recovery with timezone
+   lvdb backup pitr "2024-12-01 14:30:00 UTC" --database my_database --to-location ./restored
+
+   # List available recovery points
+   lvdb backup pitr --list --database my_database
+
+**Options**:
+
+- ``--database, -d``: Database name for recovery
+- ``--to-location, -l``: Directory where database should be restored
+- ``--list``: Show available recovery points
+- ``--verify``: Verify backup chain before recovery
+
+**Example PITR Session**:
+
+.. code-block:: console
+
+   $ lvdb backup pitr "2024-12-01 14:30:00" --database research_papers --to-location ./recovered
+
+   Point-in-Time Recovery
+   ======================
+   Target time: 2024-12-01 14:30:00 UTC
+   Database: research_papers
+   Restore location: ./recovered
+
+   Recovery plan:
+     Base backup: backup_20241201_001 (2024-12-01 10:00:00)
+     Incremental backups: 2
+       - backup_20241201_inc_001 (2024-12-01 12:00:00)
+       - backup_20241201_inc_002 (2024-12-01 14:15:00)
+
+   Proceed with recovery? [y/N]: y
+
+   Restoring base backup...
+   Applying incremental backup 1...
+   Applying incremental backup 2...
+   Stopping at target time: 2024-12-01 14:30:00
+
+   ✓ Point-in-time recovery completed successfully!
+
+Database Migration and Schema Evolution
+----------------------------------------
+
+The LocalVectorDB CLI provides powerful migration capabilities for evolving database schemas and managing version upgrades.
+
+Migration Status
+^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Check migration status for database
+   lvdb migrate status my_database
+
+   # Show detailed migration information
+   lvdb migrate status my_database --details
+
+   # JSON output for automation
+   lvdb migrate status my_database --format json
+
+**Example Output**:
+
+.. code-block:: console
+
+   Migration Status: my_database
+   =============================
+
+   Current Version: 1.1.0
+   Target Version: 1.2.0
+   Pending Migrations: 2
+
+   Available Migrations:
+   ---------------------
+   Version   Status    Description                    Created
+   ---------------------------------------------------------------
+   1.1.1     PENDING   Add citation_count field       2024-11-15
+   1.2.0     PENDING   Add full-text search indices   2024-11-20
+
+   Migration Path:
+     1.1.0 → 1.1.1 → 1.2.0
+
+Apply Migrations
+^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Apply all pending migrations
+   lvdb migrate apply my_database
+
+   # Apply migrations to specific version
+   lvdb migrate apply my_database --to-version 1.2.0
+
+   # Apply with automatic backup
+   lvdb migrate apply my_database --backup
+
+   # Dry run to preview changes
+   lvdb migrate apply my_database --dry-run
+
+   # Force apply without confirmations
+   lvdb migrate apply my_database --force
+
+**Options**:
+
+- ``--to-version, -v``: Target version to migrate to
+- ``--backup, -b``: Create backup before applying migrations
+- ``--dry-run, -n``: Show what would be changed without applying
+- ``--force, -f``: Skip confirmation prompts
+- ``--rollback-on-error``: Automatically rollback on migration failure
+
+**Example Migration Session**:
+
+.. code-block:: console
+
+   $ lvdb migrate apply research_papers --backup
+
+   Migration Plan: research_papers
+   ===============================
+
+   Current Version: 1.1.0
+   Target Version: 1.2.0
+
+   Migrations to Apply:
+     1. v1.1.1: Add citation_count field
+     2. v1.2.0: Add full-text search indices
+
+   Creating backup before migration...
+   ✓ Backup created: backup_20241201_premigration
+
+   Apply these migrations? [y/N]: y
+
+   Applying migration v1.1.1...
+   ✓ Added citation_count field (default: 0)
+   ✓ Updated 1,247 existing records
+
+   Applying migration v1.2.0...
+   ✓ Created full-text search indices
+   ✓ Rebuilt search index
+
+   ✓ Migration completed successfully!
+   Database version: 1.1.0 → 1.2.0
+
+Rollback Migrations
+^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Rollback to previous version
+   lvdb migrate rollback my_database
+
+   # Rollback to specific version
+   lvdb migrate rollback my_database 1.1.0
+
+   # Rollback with backup
+   lvdb migrate rollback my_database 1.1.0 --backup
+
+   # Force rollback without confirmation
+   lvdb migrate rollback my_database 1.1.0 --force
+
+**Options**:
+
+- ``--backup, -b``: Create backup before rollback
+- ``--force, -f``: Skip confirmation prompts
+- ``--verify``: Verify database integrity after rollback
+
+Create Migration Templates
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Create new migration template
+   lvdb migrate create "add priority field" --version 1.3.0
+
+   # Create migration with description
+   lvdb migrate create "optimize search performance" --version 1.3.1 --description "Add database indices for faster queries"
+
+   # Create migration in specific directory
+   lvdb migrate create "schema update" --version 1.4.0 --output-dir ./migrations
+
+**Example Generated Migration**:
+
+.. code-block:: python
+
+   """
+   Migration: Add priority field
+   Version: 1.3.0
+   Created: 2024-12-01 10:30:00
+   """
+
+   from localvectordb.migration import Migration, MigrationStep
+   from localvectordb.core import MetadataField
+
+   class AddPriorityFieldMigration(Migration):
+       version = "1.3.0"
+       description = "Add priority field"
+       
+       def up(self, db):
+           # Add priority field
+           priority_field = MetadataField(
+               name="priority",
+               field_type="integer",
+               indexed=True,
+               default_value=1
+           )
+           db.schema.add_field(priority_field)
+       
+       def down(self, db):
+           # Remove priority field
+           db.schema.remove_field("priority")
+
+List Migrations
+^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # List all available migrations
+   lvdb migrate list
+
+   # List migrations for specific database
+   lvdb migrate list --database my_database
+
+   # Show migration details
+   lvdb migrate list --details
+
+**Example Output**:
+
+.. code-block:: console
+
+   Available Migrations
+   ====================
+
+   Version   Status      Database        Description                     Created
+   -------------------------------------------------------------------------------
+   1.1.1     APPLIED     research_papers Add citation_count field        2024-11-15
+   1.2.0     APPLIED     research_papers Add full-text search indices    2024-11-20
+   1.2.1     PENDING     research_papers Fix metadata indexing           2024-11-25
+   1.3.0     PENDING     -               Add priority field              2024-12-01
+
+MCP Server Integration
+----------------------
+
+The LocalVectorDB CLI provides Model Context Protocol (MCP) server capabilities for integration with AI assistants and tools.
+
+Start MCP Server
+^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Start MCP server in read-only mode (default)
+   lvdb mcp serve
+
+   # Start in read-write mode
+   lvdb mcp serve --mode read-write
+
+   # Start with specific configuration
+   lvdb mcp serve --config /path/to/mcp-config.toml
+
+   # Start with custom database root
+   lvdb mcp serve --databases-root /data/vector_databases
+
+   # Start with database mapping
+   lvdb mcp serve --databases-map '{"papers": "/data/research", "docs": "http://remote-server:5000/docs"}'
+
+   # Start with debug logging
+   lvdb mcp serve --log-level DEBUG
+
+**Options**:
+
+- ``--mode``: Server mode (read-only, read-write)
+- ``--config``: Path to MCP configuration file (TOML format)
+- ``--databases-root``: Root directory for local databases
+- ``--databases-map``: JSON mapping of database names to paths/URLs
+- ``--log-level``: Logging level (DEBUG, INFO, WARNING, ERROR)
+
+**MCP Configuration File Example**:
+
+.. code-block:: toml
+
+   # mcp-config.toml
+   mode = "read-write"
+   log_level = "INFO"
+   
+   [databases]
+   # Local databases
+   research = "/data/research_papers"
+   documentation = "/data/docs"
+   
+   # Remote databases
+   shared_knowledge = "http://knowledge-server:5000/shared"
+   
+   [security]
+   read_only_databases = ["shared_knowledge"]
+   require_auth = true
+
+**Claude Desktop Integration**:
+
+To use with Claude Desktop, add this to your Claude Desktop configuration:
+
+.. code-block:: json
+
+   {
+     "mcpServers": {
+       "localvectordb": {
+         "command": "lvdb",
+         "args": ["mcp", "serve", "--mode", "read-write"],
+         "env": {
+           "LVDB_MCP_CONFIG": "/path/to/your/mcp-config.toml"
+         }
+       }
+     }
+   }
+
+**Available MCP Tools**:
+
+When running as an MCP server, LocalVectorDB provides these tools to AI assistants:
+
+- ``search_database``: Search documents in a database
+- ``get_document``: Retrieve specific document by ID
+- ``list_documents``: List document IDs in a database  
+- ``add_document``: Add new document (read-write mode only)
+- ``update_document``: Update existing document (read-write mode only)
+- ``delete_document``: Remove document (read-write mode only)
+- ``get_database_info``: Get database statistics and configuration
+- ``list_databases``: List available databases

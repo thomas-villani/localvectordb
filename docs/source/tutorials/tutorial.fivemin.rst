@@ -46,12 +46,13 @@ Create a new Python file called ``quick_start.py`` and copy this code:
 
 .. code-block:: python
 
-   from localvectordb import LocalVectorDB
+   from localvectordb import VectorDB
 
    # Create a database (this creates files in ./my_first_db/)
    print("Creating database...")
-   db = LocalVectorDB(
+   db = VectorDB(
        name="my_first_db",
+       base_path="./my_first_db",
        embedding_provider="ollama",  # Uses local Ollama
        embedding_model="nomic-embed-text"
    )

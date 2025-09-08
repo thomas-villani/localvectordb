@@ -89,7 +89,7 @@ Create a new vector database with optional configuration.
            },
            "embedding": {
                "model": "nomic-embed-text"
-           }
+           },
            "database": {
                "chunk_size": 600
            }

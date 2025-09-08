@@ -247,12 +247,16 @@ Perfect reconstruction capabilities:
    # Reconstruct original document
    original_text = reconstruct_document(chunks, original_length=len(original_doc))
 
-   # Find specific positions
-   from localvectordb.chunking import find_chunk_containing_position
-
-   chunk = find_chunk_containing_position(chunks, character_position=150)
-   if chunk:
-       print(f"Character 150 is in chunk {chunk.index}")
+   # Find specific chunk by iterating through chunks
+   target_position = 150
+   found_chunk = None
+   for chunk in chunks:
+       if chunk.position.start <= target_position < chunk.position.end:
+           found_chunk = chunk
+           break
+   
+   if found_chunk:
+       print(f"Character {target_position} is in chunk {found_chunk.index}")
 
 Chunking Strategies by Content Type
 -----------------------------------
