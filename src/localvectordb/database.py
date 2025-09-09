@@ -41,6 +41,7 @@ import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
 from localvectordb.chunking import ChunkerFactory, PositionTrackingChunker
+from localvectordb.extractors import ExtractorRegistry
 from localvectordb.core import (
     BaseVectorDB,
     Chunk,
@@ -534,6 +535,117 @@ class LocalVectorDB(BaseVectorDB):
 
             return result_ids
 
+    def upsert_from_file(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            queue_size: int = 3,
+            extractor_kwargs: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Insert or update documents from files using file extraction.
+
+        Uses the ExtractorRegistry to automatically extract text from files based on
+        file extension and MIME type, then calls the regular upsert method.
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and upsert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : Optional[float]
+            Skip adding chunks that are more similar than this value
+        queue_size : int, default=3
+            Number of items allowed on the queue for the pipeline
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file and no fallback is available
+        """
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Extract text from files
+        documents = []
+        merged_metadata = []
+        final_ids = []
+        extractor_kwargs = extractor_kwargs or {}
+
+        for i, file_path in enumerate(file_paths):
+            # Check file exists
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+            # Read file content
+            file_content = file_path.read_bytes()
+            filename = file_path.name
+
+            # Extract text using ExtractorRegistry
+            extraction_result = ExtractorRegistry.extract_text(
+                file_content, filename, **extractor_kwargs
+            )
+
+            if not extraction_result.success:
+                raise ValueError(f"Failed to extract text from {file_path}: {extraction_result.error}")
+
+            documents.append(extraction_result.text)
+
+            # Merge metadata
+            doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
+            if metadata is not None and i < len(metadata):
+                doc_metadata.update(metadata[i])
+            merged_metadata.append(doc_metadata)
+
+            # Generate ID if not provided
+            if ids is not None and i < len(ids):
+                doc_id = ids[i]
+            else:
+                # Use filename without extension as ID
+                doc_id = file_path.stem
+            final_ids.append(doc_id)
+
+        # Call regular upsert method
+        return self.upsert(
+            documents=documents,
+            metadata=merged_metadata,
+            ids=final_ids,
+            batch_size=batch_size,
+            similarity_threshold=similarity_threshold,
+            queue_size=queue_size
+        )
+
     def upsert_from_chunks(
             self,
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
@@ -999,6 +1111,123 @@ class LocalVectorDB(BaseVectorDB):
             self._save_internal()
 
             return result_ids
+
+    def insert_from_file(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            queue_size: int = 3,
+            extractor_kwargs: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Insert new documents from files using file extraction.
+
+        Uses the ExtractorRegistry to automatically extract text from files based on
+        file extension and MIME type, then calls the regular insert method.
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and insert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts, by default "raise"
+        queue_size : int, default=3
+            Number of items allowed on the queue for the pipeline
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file and no fallback is available
+        DuplicateDocumentIDError
+            If errors="raise" and document ID conflicts occur
+        """
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Extract text from files
+        documents = []
+        merged_metadata = []
+        final_ids = []
+        extractor_kwargs = extractor_kwargs or {}
+
+        for i, file_path in enumerate(file_paths):
+            # Check file exists
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+            # Read file content
+            file_content = file_path.read_bytes()
+            filename = file_path.name
+
+            # Extract text using ExtractorRegistry
+            extraction_result = ExtractorRegistry.extract_text(
+                file_content, filename, **extractor_kwargs
+            )
+
+            if not extraction_result.success:
+                raise ValueError(f"Failed to extract text from {file_path}: {extraction_result.error}")
+
+            documents.append(extraction_result.text)
+
+            # Merge metadata
+            doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
+            if metadata is not None and i < len(metadata):
+                doc_metadata.update(metadata[i])
+            merged_metadata.append(doc_metadata)
+
+            # Generate ID if not provided
+            if ids is not None and i < len(ids):
+                doc_id = ids[i]
+            else:
+                # Use filename without extension as ID
+                doc_id = file_path.stem
+            final_ids.append(doc_id)
+
+        # Call regular insert method
+        return self.insert(
+            documents=documents,
+            metadata=merged_metadata,
+            ids=final_ids,
+            batch_size=batch_size,
+            similarity_threshold=similarity_threshold,
+            errors=errors,
+            queue_size=queue_size
+        )
 
     def insert_from_chunks(
             self,
@@ -4360,6 +4589,134 @@ class LocalVectorDB(BaseVectorDB):
 
         return result_ids
 
+    async def upsert_from_file_async(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
+            extractor_kwargs: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Async insert or update documents from files using file extraction.
+
+        Uses the ExtractorRegistry to automatically extract text from files based on
+        file extension and MIME type, then calls the regular upsert_async method.
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and upsert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing
+        similarity_threshold : Optional[float]
+            Skip adding chunks that are more similar than this value
+        max_concurrent_chunks : int, default=3
+            Maximum concurrent chunking operations
+        max_concurrent_embeddings : int, default=2
+            Maximum concurrent embedding operations
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file and no fallback is available
+        """
+        # File I/O operations run in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Extract text from files in executor
+        async def extract_file_text(file_path: Path, index: int):
+            def _extract():
+                # Check file exists
+                if not file_path.exists():
+                    raise FileNotFoundError(f"File not found: {file_path}")
+
+                # Read file content
+                file_content = file_path.read_bytes()
+                filename = file_path.name
+
+                # Extract text using ExtractorRegistry
+                extraction_result = ExtractorRegistry.extract_text(
+                    file_content, filename, **(extractor_kwargs or {})
+                )
+
+                if not extraction_result.success:
+                    raise ValueError(f"Failed to extract text from {file_path}: {extraction_result.error}")
+
+                return extraction_result
+
+            return await loop.run_in_executor(None, _extract)
+
+        # Extract all files concurrently
+        extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
+        extraction_results = await asyncio.gather(*extraction_tasks)
+
+        # Process extraction results
+        documents = []
+        merged_metadata = []
+        final_ids = []
+
+        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results)):
+            documents.append(extraction_result.text)
+
+            # Merge metadata
+            doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
+            if metadata is not None and i < len(metadata):
+                doc_metadata.update(metadata[i])
+            merged_metadata.append(doc_metadata)
+
+            # Generate ID if not provided
+            if ids is not None and i < len(ids):
+                doc_id = ids[i]
+            else:
+                # Use filename without extension as ID
+                doc_id = file_path.stem
+            final_ids.append(doc_id)
+
+        # Call regular upsert_async method
+        return await self.upsert_async(
+            documents=documents,
+            metadata=merged_metadata,
+            ids=final_ids,
+            batch_size=batch_size,
+            similarity_threshold=similarity_threshold,
+            max_concurrent_chunks=max_concurrent_chunks,
+            max_concurrent_embeddings=max_concurrent_embeddings
+        )
+
     async def upsert_from_chunks_async(
             self,
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
@@ -4543,6 +4900,140 @@ class LocalVectorDB(BaseVectorDB):
         await loop.run_in_executor(None, self._save_internal)
 
         return result_ids
+
+    async def insert_from_file_async(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
+            extractor_kwargs: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Async insert new documents from files using file extraction.
+
+        Uses the ExtractorRegistry to automatically extract text from files based on
+        file extension and MIME type, then calls the regular insert_async method.
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and insert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts, by default "raise"
+        max_concurrent_chunks : int, default=3
+            Maximum concurrent chunking operations
+        max_concurrent_embeddings : int, default=2
+            Maximum concurrent embedding operations
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file and no fallback is available
+        DuplicateDocumentIDError
+            If errors="raise" and document ID conflicts occur
+        """
+        # File I/O operations run in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Extract text from files in executor
+        async def extract_file_text(file_path: Path, index: int):
+            def _extract():
+                # Check file exists
+                if not file_path.exists():
+                    raise FileNotFoundError(f"File not found: {file_path}")
+
+                # Read file content
+                file_content = file_path.read_bytes()
+                filename = file_path.name
+
+                # Extract text using ExtractorRegistry
+                extraction_result = ExtractorRegistry.extract_text(
+                    file_content, filename, **(extractor_kwargs or {})
+                )
+
+                if not extraction_result.success:
+                    raise ValueError(f"Failed to extract text from {file_path}: {extraction_result.error}")
+
+                return extraction_result
+
+            return await loop.run_in_executor(None, _extract)
+
+        # Extract all files concurrently
+        extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
+        extraction_results = await asyncio.gather(*extraction_tasks)
+
+        # Process extraction results
+        documents = []
+        merged_metadata = []
+        final_ids = []
+
+        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results)):
+            documents.append(extraction_result.text)
+
+            # Merge metadata
+            doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
+            if metadata is not None and i < len(metadata):
+                doc_metadata.update(metadata[i])
+            merged_metadata.append(doc_metadata)
+
+            # Generate ID if not provided
+            if ids is not None and i < len(ids):
+                doc_id = ids[i]
+            else:
+                # Use filename without extension as ID
+                doc_id = file_path.stem
+            final_ids.append(doc_id)
+
+        # Call regular insert_async method
+        return await self.insert_async(
+            documents=documents,
+            metadata=merged_metadata,
+            ids=final_ids,
+            batch_size=batch_size,
+            similarity_threshold=similarity_threshold,
+            errors=errors,
+            max_concurrent_chunks=max_concurrent_chunks,
+            max_concurrent_embeddings=max_concurrent_embeddings
+        )
 
     async def insert_from_chunks_async(
             self,
@@ -5304,7 +5795,7 @@ class LocalVectorDB(BaseVectorDB):
         # Build dynamic INSERT statement based on metadata schema
         base_columns = self.schema.BASE_COLUMNS
         metadata_columns = list(self.metadata_schema.keys())
-        all_columns = base_columns + metadata_columns
+        all_columns = list(base_columns) + metadata_columns
 
         placeholders = ['?'] * len(all_columns)
 

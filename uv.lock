@@ -716,19 +716,33 @@ dependencies = [
     { name = "tiktoken" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 dev = [
+    { name = "bcrypt" },
+    { name = "beautifulsoup4" },
+    { name = "cachelib" },
+    { name = "ebooklib" },
+    { name = "flask" },
+    { name = "flask-caching" },
+    { name = "flask-cors" },
+    { name = "flask-limiter" },
     { name = "freezegun" },
-    { name = "localvectordb" },
+    { name = "lxml" },
     { name = "mypy" },
+    { name = "openpyxl" },
+    { name = "pdfplumber" },
+    { name = "pypdf" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-xdist" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
     { name = "ruff" },
     { name = "sphinx" },
     { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-copybutton" },
     { name = "sphinx-rtd-theme" },
+    { name = "striprtf" },
 ]
 file-extraction = [
     { name = "beautifulsoup4" },
@@ -774,66 +788,48 @@ server = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.21.0" },
+    { name = "aiosqlite", marker = "extra == 'mcp'", specifier = ">=0.21.0" },
+    { name = "bcrypt", marker = "extra == 'server'", specifier = ">=4.3.0" },
+    { name = "beautifulsoup4", marker = "extra == 'file-extraction'", specifier = ">=4.13.4" },
+    { name = "beautifulsoup4", marker = "extra == 'file-extraction-web'", specifier = ">=4.13.4" },
+    { name = "cachelib", marker = "extra == 'server'", specifier = ">=0.13.0" },
+    { name = "ebooklib", marker = "extra == 'file-extraction'", specifier = ">=0.19" },
+    { name = "ebooklib", marker = "extra == 'file-extraction-rtf-epub'", specifier = ">=0.19" },
     { name = "faiss-cpu", specifier = ">=1.11.0" },
+    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.12.2" },
+    { name = "flask", marker = "extra == 'server'", specifier = ">=3.1.1" },
+    { name = "flask-caching", marker = "extra == 'server'", specifier = ">=2.3.1" },
+    { name = "flask-cors", marker = "extra == 'server'", specifier = ">=6.0.0" },
+    { name = "flask-limiter", marker = "extra == 'server'", specifier = ">=3.12" },
+    { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.5.2" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "localvectordb", extras = ["file-extraction"], marker = "extra == 'dev'" },
+    { name = "localvectordb", extras = ["server"], marker = "extra == 'dev'" },
+    { name = "lxml", marker = "extra == 'file-extraction'", specifier = ">=5.4.0" },
+    { name = "lxml", marker = "extra == 'file-extraction-web'", specifier = ">=5.4.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.17.1" },
     { name = "numpy", specifier = ">=2.2.6" },
+    { name = "openpyxl", marker = "extra == 'file-extraction'", specifier = ">=3.1.5" },
+    { name = "openpyxl", marker = "extra == 'file-extraction-office'", specifier = ">=3.1.5" },
+    { name = "pdfplumber", marker = "extra == 'file-extraction'", specifier = ">=0.11.6" },
+    { name = "pdfplumber", marker = "extra == 'file-extraction-pdf'", specifier = ">=0.11.6" },
+    { name = "pypdf", marker = "extra == 'file-extraction'", specifier = ">=3.1.0" },
+    { name = "pypdf2", marker = "extra == 'file-extraction-pdf'", specifier = ">=3.0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.7.0" },
+    { name = "python-docx", marker = "extra == 'file-extraction'", specifier = ">=1.1.2" },
+    { name = "python-docx", marker = "extra == 'file-extraction-office'", specifier = ">=1.1.2" },
+    { name = "python-pptx", marker = "extra == 'file-extraction'", specifier = ">=1.0.2" },
+    { name = "python-pptx", marker = "extra == 'file-extraction-office'", specifier = ">=1.0.2" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.12" },
+    { name = "sphinx", marker = "extra == 'dev'", specifier = ">=8.2.3" },
+    { name = "sphinx-autodoc-typehints", marker = "extra == 'dev'", specifier = ">=3.2.0" },
+    { name = "sphinx-copybutton", marker = "extra == 'dev'", specifier = ">=0.5.2" },
+    { name = "sphinx-rtd-theme", marker = "extra == 'dev'", specifier = ">=3.0.2" },
+    { name = "striprtf", marker = "extra == 'file-extraction'", specifier = ">=0.0.29" },
+    { name = "striprtf", marker = "extra == 'file-extraction-rtf-epub'", specifier = ">=0.0.29" },
     { name = "tiktoken", specifier = ">=0.9.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "freezegun", specifier = ">=1.5.2" },
-    { name = "localvectordb", extras = ["file-extraction"] },
-    { name = "localvectordb", extras = ["server"] },
-    { name = "mypy", specifier = ">=1.17.1" },
-    { name = "pytest", specifier = ">=8.4.0" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "pytest-xdist", specifier = ">=3.7.0" },
-    { name = "ruff", specifier = ">=0.12.12" },
-    { name = "sphinx", specifier = ">=8.2.3" },
-    { name = "sphinx-autodoc-typehints", specifier = ">=3.2.0" },
-    { name = "sphinx-copybutton", specifier = ">=0.5.2" },
-    { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
-]
-file-extraction = [
-    { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "ebooklib", specifier = ">=0.19" },
-    { name = "lxml", specifier = ">=5.4.0" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "pdfplumber", specifier = ">=0.11.6" },
-    { name = "pypdf", specifier = ">=3.1.0" },
-    { name = "python-docx", specifier = ">=1.1.2" },
-    { name = "python-pptx", specifier = ">=1.0.2" },
-    { name = "striprtf", specifier = ">=0.0.29" },
-]
-file-extraction-office = [
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "python-docx", specifier = ">=1.1.2" },
-    { name = "python-pptx", specifier = ">=1.0.2" },
-]
-file-extraction-pdf = [
-    { name = "pdfplumber", specifier = ">=0.11.6" },
-    { name = "pypdf2", specifier = ">=3.0.1" },
-]
-file-extraction-rtf-epub = [
-    { name = "ebooklib", specifier = ">=0.19" },
-    { name = "striprtf", specifier = ">=0.0.29" },
-]
-file-extraction-web = [
-    { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "lxml", specifier = ">=5.4.0" },
-]
-mcp = [
-    { name = "aiosqlite", specifier = ">=0.21.0" },
-    { name = "fastmcp", specifier = ">=2.12.2" },
-]
-server = [
-    { name = "bcrypt", specifier = ">=4.3.0" },
-    { name = "cachelib", specifier = ">=0.13.0" },
-    { name = "flask", specifier = ">=3.1.1" },
-    { name = "flask-caching", specifier = ">=2.3.1" },
-    { name = "flask-cors", specifier = ">=6.0.0" },
-    { name = "flask-limiter", specifier = ">=3.12" },
 ]
 
 [[package]]

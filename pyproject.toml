@@ -25,17 +25,17 @@ ollama = "localvectordb.embeddings:OllamaEmbeddings"
 openai = "localvectordb.embeddings:OpenAIEmbeddings"
 mock = "localvectordb.embeddings:MockEmbeddings"
 
-[project.entry-points."localvectordb_server.file_extractors"]
-docx = "localvectordb_server.extractors.office_extractors:DocxExtractor"
-pptx = "localvectordb_server.extractors.office_extractors:PptxExtractor"
-xlsx = "localvectordb_server.extractors.office_extractors:XlsxExtractor"
-html = "localvectordb_server.extractors.web_extractors:HTMLExtractor"
-xml = "localvectordb_server.extractors.web_extractors:XMLExtractor"
-text = "localvectordb_server.extractors.text_extractors:TextFileExtractor"
-pypdf = "localvectordb_server.extractors.pdf_extractors:PyPDFExtractor"
-pdfplumber = "localvectordb_server.extractors.pdf_extractors:PDFPlumberExtractor"
-epub = "localvectordb_server.extractors.other_extractors:EPubExtractor"
-rtf = "localvectordb_server.extractors.other_extractors:RTFExtractor"
+[project.entry-points."localvectordb.file_extractors"]
+docx = "localvectordb.extractors.office_extractors:DocxExtractor"
+pptx = "localvectordb.extractors.office_extractors:PptxExtractor"
+xlsx = "localvectordb.extractors.office_extractors:XlsxExtractor"
+html = "localvectordb.extractors.web_extractors:HTMLExtractor"
+xml = "localvectordb.extractors.web_extractors:XMLExtractor"
+text = "localvectordb.extractors.text_extractors:TextFileExtractor"
+pypdf = "localvectordb.extractors.pdf_extractors:PyPDFExtractor"
+pdfplumber = "localvectordb.extractors.pdf_extractors:PDFPlumberExtractor"
+epub = "localvectordb.extractors.other_extractors:EPubExtractor"
+rtf = "localvectordb.extractors.other_extractors:RTFExtractor"
 
 [project.scripts]
 lvdb = "localvectordb_server.cli:cli"
@@ -44,7 +44,7 @@ lvdb = "localvectordb_server.cli:cli"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[dependency-groups]
+[project.optional-dependencies]
 server = [
     "bcrypt>=4.3.0",
     "cachelib>=0.13.0",
