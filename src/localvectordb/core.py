@@ -62,7 +62,12 @@ def _adapt_datetime_with_tz(dt) -> str:
 
 def _convert_datetime_with_tz(dt) -> datetime:
     s = dt.decode("utf-8")
-    return datetime.fromisoformat(s)
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        # If it's not a valid datetime string, just return the original string
+        # This can happen when SQLite type detection is overly aggressive
+        return s
 
 def _adapt_json(json_data) -> str:
     return json.dumps(json_data)

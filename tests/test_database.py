@@ -97,7 +97,7 @@ class TestLocalVectorDBInitialization:
             )
 
             assert db.is_memory_only is True
-            assert db.db_path == ":memory:"
+            assert "?mode=memory&cache=shared" in db.db_path
             assert db.index_path is None
 
     def test_database_not_found_error(self, temp_dir):

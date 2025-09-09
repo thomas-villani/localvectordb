@@ -200,9 +200,9 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_backup_log_parent ON backup_log(parent_backup_id)"
     ]
 
-    BASE_COLUMNS = {
+    BASE_COLUMNS = [
         "id", "content", "content_hash", "created_at", "updated_at"
-    }
+    ]
 
     def __init__(self, db_path: Union[str, Path], read_write_lock: "ReadWriteLock"):
         self.db_path = Path(db_path)
@@ -805,7 +805,7 @@ class DatabaseSchema:
             column_mapping: Dict[str, str],
             current_schema: Dict[str, MetadataField],
             new_schema: Dict[str, MetadataField],
-            reserved_columns: set
+            reserved_columns: list
             ) -> None:
         """Validate the column mapping configuration"""
         for old_col, new_col in column_mapping.items():

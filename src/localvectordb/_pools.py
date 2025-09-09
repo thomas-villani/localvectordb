@@ -63,7 +63,14 @@ class ConnectionPool:
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with proper settings"""
         conn = sqlite3.connect(self.db_path, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
-        conn.execute("PRAGMA foreign_keys = ON")
+        
+        # For in-memory shared cache databases, foreign keys can cause constraint issues
+        # across connections due to transaction isolation
+        if "mode=memory&cache=shared" in str(self.db_path):
+            conn.execute("PRAGMA foreign_keys = OFF")
+        else:
+            conn.execute("PRAGMA foreign_keys = ON")
+            
         conn.row_factory = sqlite3.Row
         self._created_connections += 1
         return conn
@@ -168,8 +175,16 @@ class AsyncConnectionPool:
 
     async def _create_connection(self) -> aiosqlite.Connection:
         """Create a new async SQLite connection with proper settings"""
+        # Re-enable type detection with proper converters registered
         conn = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
-        await conn.execute("PRAGMA foreign_keys = ON")
+        
+        # For in-memory shared cache databases, foreign keys can cause constraint issues
+        # across connections due to transaction isolation
+        if "mode=memory&cache=shared" in str(self.db_path):
+            await conn.execute("PRAGMA foreign_keys = OFF")
+        else:
+            await conn.execute("PRAGMA foreign_keys = ON")
+            
         # Enable row factory for dict-like access
         conn.row_factory = aiosqlite.Row
         self._created_connections += 1

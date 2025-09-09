@@ -30,6 +30,7 @@ import queue
 import sqlite3
 import statistics
 import threading
+import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -142,13 +143,16 @@ class LocalVectorDB(BaseVectorDB):
     ):
         super().__init__()
         self.name = name
-        self.is_memory_only = (name == ":memory:" or base_path == ":memory:")
-
-        if self.is_memory_only:
+        self._original_memory_request = (name == ":memory:" or base_path == ":memory:")
+        
+        if self._original_memory_request:
+            # For in-memory databases, use SQLite shared cache to allow 
+            # multiple connections (sync and async) to access the same database
+            unique_id = str(uuid.uuid4()).replace("-", "")[:8]
+            self.db_path = f"file:memdb_{unique_id}?mode=memory&cache=shared"
             self.base_path = None
-            self.db_path = ":memory:"
             self.index_path = None
-            logger.info("Creating in-memory database")
+            logger.info(f"Creating in-memory database with shared cache: {self.db_path}")
         else:
             self.base_path = Path(base_path)
             self.base_path.mkdir(parents=True, exist_ok=True)
@@ -200,6 +204,7 @@ class LocalVectorDB(BaseVectorDB):
         self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
         self.async_connection_pool: Optional[AsyncConnectionPool] = None
         self.async_max_connections = connection_pool_size or 10
+        self._async_schema_initialized = False  # Track if async schema has been initialized for memory DBs
 
         with self.connection_pool.get_connection() as conn:
             # Initialize schema
@@ -265,6 +270,11 @@ class LocalVectorDB(BaseVectorDB):
     @property
     def closed(self) -> bool:
         return self.connection_pool.closed
+    
+    @property 
+    def is_memory_only(self) -> bool:
+        """Returns True if this database uses in-memory storage (including shared cache)"""
+        return self._original_memory_request
 
     def ping(self) -> bool:
         return not self.closed
@@ -910,7 +920,7 @@ class LocalVectorDB(BaseVectorDB):
             return
 
         # Build dynamic INSERT statement based on metadata schema
-        base_columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+        base_columns = self.schema.BASE_COLUMNS.copy()
         metadata_columns = list(self.metadata_schema.keys())
         all_columns = base_columns + metadata_columns
 
@@ -2344,7 +2354,11 @@ class LocalVectorDB(BaseVectorDB):
         """Perform vector similarity search with enhanced processing"""
 
         # Generate query embedding
-        query_embedding = self.embedding_provider.embed_sync([query])
+        query_embeddings = self.embedding_provider.embed_sync([query])
+        query_embedding = np.array(query_embeddings[0])  # Get single embedding and convert to numpy array
+        
+        # Reshape for FAISS (expects 2D array: n_queries x embedding_dim)
+        query_embedding = query_embedding.reshape(1, -1)
 
         # Search more chunks initially since we might deduplicate and need enough for final k
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
@@ -3335,7 +3349,11 @@ class LocalVectorDB(BaseVectorDB):
             elif method == "frequency_boost":
                 best_score = max(scores)
 
-                quality_weights = [score / best_score for score in scores]
+                # Handle edge case where all scores are 0
+                if best_score == 0:
+                    quality_weights = [1.0 for _ in scores]  # Equal weights if all scores are 0
+                else:
+                    quality_weights = [score / best_score for score in scores]
                 effective_chunk_count = sum(quality_weights)
                 frequency_multiplier = (1.0 + (math.log2(2 + effective_chunk_count) - 1)
                                         * method_options.get("frequency_bias", 0.3))
@@ -4514,6 +4532,31 @@ class LocalVectorDB(BaseVectorDB):
                 max_connections=self.async_max_connections
             )
 
+    async def _ensure_async_schema_initialized(self):
+        """
+        Fallback method to ensure schema is initialized in async connections for in-memory databases.
+        
+        This is a safety measure in case the shared cache approach doesn't work as expected.
+        For regular databases, this is a no-op since schema is already initialized.
+        """
+        if not self.is_memory_only or self._async_schema_initialized:
+            return
+            
+        try:
+            # Check if tables exist by attempting to query a core table
+            async with self.async_connection_pool.get_connection_context() as conn:
+                await conn.execute("SELECT 1 FROM documents LIMIT 1")
+            
+            # If we get here, tables exist - mark as initialized
+            self._async_schema_initialized = True
+            
+        except Exception:
+            # Tables don't exist - initialize schema using async method
+            logger.info("Initializing database schema for async operations in in-memory database")
+            async with self.async_connection_pool.get_connection_context() as conn:
+                await self.schema.initialize_async(self._metadata_schema, db_connection=conn)
+            self._async_schema_initialized = True
+
     async def upsert_async(
             self,
             documents: Union[str, List[str]],
@@ -4552,6 +4595,7 @@ class LocalVectorDB(BaseVectorDB):
             List of document IDs that were upserted
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
 
         # Input normalization (reuse sync logic)
         if isinstance(documents, str):
@@ -5793,9 +5837,9 @@ class LocalVectorDB(BaseVectorDB):
             return
 
         # Build dynamic INSERT statement based on metadata schema
-        base_columns = self.schema.BASE_COLUMNS
+        base_columns = self.schema.BASE_COLUMNS.copy()
         metadata_columns = list(self.metadata_schema.keys())
-        all_columns = list(base_columns) + metadata_columns
+        all_columns = base_columns + metadata_columns
 
         placeholders = ['?'] * len(all_columns)
 
@@ -5936,6 +5980,7 @@ class LocalVectorDB(BaseVectorDB):
             Documents matching the filter criteria
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
 
         # Build the filter query using the existing FilterQueryBuilder
         filter_builder = FilterQueryBuilder(self.metadata_schema)
@@ -5950,7 +5995,7 @@ class LocalVectorDB(BaseVectorDB):
                     raise ValueError("order_by must be a string")
 
                 # Build valid columns set (all document columns)
-                base_columns = self.schema.BASE_COLUMNS
+                base_columns = self.schema.BASE_COLUMNS.copy()
                 metadata_columns = set(self.metadata_schema.keys())
                 valid_columns = set(base_columns).union(metadata_columns)
 
@@ -5969,8 +6014,15 @@ class LocalVectorDB(BaseVectorDB):
 
         # Execute query asynchronously
         async with self.async_connection_pool.get_connection_context() as conn:
-            # Build complete SQL query
-            sql_parts = ["SELECT * FROM documents"]
+            # Build column list - same as sync version for consistency
+            metadata_columns = list(self.metadata_schema.keys())
+            if metadata_columns:
+                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
+            else:
+                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+            
+            # Build complete SQL query with explicit column selection
+            sql_parts = [f"SELECT {', '.join(columns)} FROM documents"]
             if where_clause:
                 sql_parts.append(f"WHERE {where_clause}")
             if order_clause:
@@ -5986,10 +6038,17 @@ class LocalVectorDB(BaseVectorDB):
         documents = []
         for row in rows:
             # Extract metadata (all columns except base columns)
-            base_columns = self.schema.BASE_COLUMNS
+            base_columns = self.schema.BASE_COLUMNS.copy()
             metadata = {}
 
-            for key, value in row.items():
+            # Handle both aiosqlite.Row (which has .items()) and sqlite3.Row (which doesn't)
+            if hasattr(row, 'items'):
+                row_items = row.items()
+            else:
+                # For sqlite3.Row, use keys() and indexing
+                row_items = [(key, row[key]) for key in row.keys()]
+                
+            for key, value in row_items:
                 if key not in base_columns and value is not None:
                     # Parse JSON fields
                     if key in self.metadata_schema:
@@ -6005,7 +6064,10 @@ class LocalVectorDB(BaseVectorDB):
             document = Document(
                 id=row['id'],
                 content=row['content'],
-                metadata=metadata
+                metadata=metadata,
+                created_at=row['created_at'],
+                updated_at=row['updated_at'],
+                content_hash=row['content_hash']
             )
             documents.append(document)
 
@@ -6042,8 +6104,15 @@ class LocalVectorDB(BaseVectorDB):
 
         # Query asynchronously
         async with self.async_connection_pool.get_connection_context() as conn:
+            # Build column list - same as sync version for consistency
+            metadata_columns = list(self.metadata_schema.keys())
+            if metadata_columns:
+                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
+            else:
+                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+                
             placeholders = ','.join(['?' for _ in ids])
-            sql = f"SELECT * FROM documents WHERE id IN ({placeholders})"
+            sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
             cursor = await conn.execute(sql, ids)
             rows = await cursor.fetchall()
 
@@ -6051,10 +6120,17 @@ class LocalVectorDB(BaseVectorDB):
         documents = []
         for row in rows:
             # Extract metadata
-            base_columns = self.schema.BASE_COLUMNS
+            base_columns = self.schema.BASE_COLUMNS.copy()
             metadata = {}
 
-            for key, value in row.items():
+            # Handle both aiosqlite.Row (which has .items()) and sqlite3.Row (which doesn't)
+            if hasattr(row, 'items'):
+                row_items = row.items()
+            else:
+                # For sqlite3.Row, use keys() and indexing
+                row_items = [(key, row[key]) for key in row.keys()]
+                
+            for key, value in row_items:
                 if key not in base_columns and value is not None:
                     # Parse JSON fields
                     if key in self.metadata_schema:
@@ -6069,7 +6145,10 @@ class LocalVectorDB(BaseVectorDB):
             document = Document(
                 id=row['id'],
                 content=row['content'],
-                metadata=metadata
+                metadata=metadata,
+                created_at=row['created_at'],
+                updated_at=row['updated_at'],
+                content_hash=row['content_hash']
             )
             documents.append(document)
 
@@ -6253,6 +6332,7 @@ class LocalVectorDB(BaseVectorDB):
             Search results with normalized scores
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
 
         # For vector and hybrid search, generate embedding asynchronously
         query_embedding = None
@@ -6595,7 +6675,7 @@ class LocalVectorDB(BaseVectorDB):
             return []
 
         # Build SQL to include document metadata columns
-        base_columns = self.schema.BASE_COLUMNS
+        base_columns = self.schema.BASE_COLUMNS.copy()
         metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
 
         # Build SELECT clause with metadata columns prefixed
@@ -6691,7 +6771,7 @@ class LocalVectorDB(BaseVectorDB):
             return {}
 
         # Only select metadata columns (not content)
-        base_columns = self.schema.BASE_COLUMNS
+        base_columns = self.schema.BASE_COLUMNS.copy()
         metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
 
         if not metadata_columns:
