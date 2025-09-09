@@ -28,7 +28,7 @@ from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb._schema import DatabaseSchema
 from localvectordb.utils import get_system_version
-from localvectordb_server._auth import require_api_key, require_read_permission, require_write_permission
+from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._cache import cache
 from localvectordb_server._checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
@@ -45,7 +45,7 @@ from localvectordb_server._logcfg import DatabaseLogger, log_performance, reques
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
 
 # Add this import after the existing imports in routes.py
-from localvectordb_server.extractors import get_extractor_registry, get_supported_formats
+from localvectordb.extractors import get_extractor_registry, get_supported_formats
 
 FILE_EXTRACTION_AVAILABLE = True
 

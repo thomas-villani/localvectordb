@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
-from localvectordb_server.extractors import BaseExtractor, ExtractionResult
+from localvectordb.extractors import BaseExtractor, ExtractionResult
 
 logger = logging.getLogger(__name__)
 
