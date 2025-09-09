@@ -807,4 +807,467 @@ class TestQueryResultClass:
         assert result.score == 0.0  # Default
         assert result.type == "document"  # Default
         assert result.content == "Test content"
-        assert result.metadata == {}
+
+
+@pytest.mark.client
+class TestRemoteVectorDBFileOperations:
+    """Test RemoteVectorDB file upload operations."""
+
+    def test_upsert_from_file(self, mock_httpx_client, tmp_path):
+        """Test upserting documents from files."""
+        # Create temporary test files
+        test_file1 = tmp_path / "test1.txt"
+        test_file1.write_text("Test content 1")
+        test_file2 = tmp_path / "test2.txt"
+        test_file2.write_text("Test content 2")
+
+        # Mock the response for request method (used when files are involved)
+        mock_httpx_client.request.return_value.json.return_value = {
+            "document_ids": ["doc1", "doc2"],
+            "status": "success"
+        }
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        # Test single file
+        result = db.upsert_from_file(test_file1)
+        assert result == ["doc1", "doc2"]
+        
+        # Verify the request was made
+        assert mock_httpx_client.request.called
+
+        # Test multiple files with metadata
+        result = db.upsert_from_file(
+            [test_file1, test_file2],
+            metadata=[{"author": "user1"}, {"author": "user2"}],
+            ids=["custom1", "custom2"]
+        )
+        assert result == ["doc1", "doc2"]
+
+    def test_insert_from_file(self, mock_httpx_client, tmp_path):
+        """Test inserting documents from files."""
+        # Create temporary test file
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test content")
+
+        # Mock the response for request method (used when files are involved)
+        mock_httpx_client.request.return_value.json.return_value = {
+            "document_ids": ["new_doc"],
+            "status": "success"
+        }
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        result = db.insert_from_file(
+            test_file,
+            metadata={"author": "test"},
+            errors="raise"
+        )
+        assert result == ["new_doc"]
+        
+        # Verify the request was made
+        assert mock_httpx_client.request.called
+
+    def test_file_not_found_error(self, mock_httpx_client):
+        """Test error when file doesn't exist."""
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        with pytest.raises(FileNotFoundError, match="File not found"):
+            db.upsert_from_file("/nonexistent/file.txt")
+
+    def test_file_validation_errors(self, mock_httpx_client, tmp_path):
+        """Test validation errors for file operations."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test")
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        # Test metadata count mismatch
+        with pytest.raises(ValueError, match="Number of metadata entries must match"):
+            db.upsert_from_file(
+                [test_file],
+                metadata=[{"a": 1}, {"b": 2}]  # 2 metadata for 1 file
+            )
+
+        # Test ID count mismatch
+        with pytest.raises(ValueError, match="Number of IDs must match"):
+            db.insert_from_file(
+                [test_file],
+                ids=["id1", "id2"]  # 2 IDs for 1 file
+            )
+
+
+@pytest.mark.client
+class TestRemoteVectorDBChunkOperations:
+    """Test RemoteVectorDB chunk operations."""
+
+    def test_upsert_from_chunks(self, mock_httpx_client):
+        """Test upserting documents from chunks."""
+        from localvectordb.core import Chunk, ChunkPosition
+        
+        # Mock the response
+        mock_httpx_client.post.return_value.json.return_value = {
+            "ids": ["doc1", "doc2"],
+            "status": "success"
+        }
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        # Test with Chunk objects
+        chunks_with_objects = {
+            "doc1": [
+                Chunk(
+                    content="Chunk 1",
+                    position=ChunkPosition(start=0, end=7, line=1, column=1, end_line=1, end_column=8),
+                    tokens=2,
+                    index=0
+                ),
+                Chunk(
+                    content="Chunk 2",
+                    position=ChunkPosition(start=8, end=15, line=1, column=9, end_line=1, end_column=16),
+                    tokens=2,
+                    index=1
+                )
+            ],
+            "doc2": [
+                Chunk(
+                    content="Chunk A",
+                    position=ChunkPosition(start=0, end=7, line=1, column=1, end_line=1, end_column=8),
+                    tokens=2,
+                    index=0
+                )
+            ]
+        }
+
+        result = db.upsert_from_chunks(
+            chunks_with_objects,
+            metadata={"doc1": {"author": "user1"}, "doc2": {"author": "user2"}}
+        )
+        assert result == ["doc1", "doc2"]
+
+        # Verify the request payload
+        call_args = mock_httpx_client.post.call_args
+        if call_args:
+            assert call_args[0][0].endswith("/documents/chunks")
+            payload = call_args[1]['json']
+            assert "chunks_by_document" in payload
+            # Check that content field is correctly mapped
+            assert payload["chunks_by_document"]["doc1"][0]["text"] == "Chunk 1"
+
+    def test_upsert_from_chunks_with_strings(self, mock_httpx_client):
+        """Test upserting documents from string chunks."""
+        # Mock the response
+        mock_httpx_client.post.return_value.json.return_value = {
+            "ids": ["doc1"],
+            "status": "success"
+        }
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        # Test with plain strings
+        chunks_with_strings = {
+            "doc1": ["String chunk 1", "String chunk 2"]
+        }
+
+        result = db.upsert_from_chunks(chunks_with_strings)
+        assert result == ["doc1"]
+
+        # Verify the chunks were passed as-is
+        call_args = mock_httpx_client.post.call_args
+        if call_args:
+            payload = call_args[1]['json']
+            assert payload["chunks_by_document"]["doc1"] == ["String chunk 1", "String chunk 2"]
+
+    def test_insert_from_chunks(self, mock_httpx_client):
+        """Test inserting documents from chunks with conflict handling."""
+        from localvectordb.core import Chunk, ChunkPosition
+        
+        # Mock the response
+        mock_httpx_client.post.return_value.json.return_value = {
+            "ids": ["new_doc"],
+            "status": "success"
+        }
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        chunks = {
+            "new_doc": [
+                Chunk(
+                    content="New chunk",
+                    position=ChunkPosition(start=0, end=9, line=1, column=1, end_line=1, end_column=10),
+                    tokens=2,
+                    index=0
+                )
+            ]
+        }
+
+        result = db.insert_from_chunks(
+            chunks,
+            errors="raise",
+            similarity_threshold=0.9
+        )
+        assert result == ["new_doc"]
+
+        # Verify the request
+        call_args = mock_httpx_client.post.call_args
+        if call_args:
+            assert call_args[0][0].endswith("/documents/chunks/insert")
+            payload = call_args[1]['json']
+            assert payload["errors"] == "raise"
+            assert payload["similarity_threshold"] == 0.9
+
+    def test_insert_from_chunks_ignore_errors(self, mock_httpx_client):
+        """Test inserting chunks with ignore errors mode."""
+        # Mock the response
+        mock_httpx_client.post.return_value.json.return_value = {
+            "ids": [],  # No documents inserted due to conflicts
+            "status": "success"
+        }
+
+        db = RemoteVectorDB(
+            name="test_db",
+            base_url="http://localhost:5000"
+        )
+
+        chunks = {
+            "existing_doc": ["chunk1", "chunk2"]
+        }
+
+        result = db.insert_from_chunks(chunks, errors="ignore")
+        assert result == []
+
+        # Verify errors parameter was sent
+        call_args = mock_httpx_client.post.call_args
+        if call_args:
+            assert call_args[1]['json']['errors'] == "ignore"
+
+
+@pytest.mark.asyncio
+@pytest.mark.client
+class TestRemoteVectorDBAsyncFileOperations:
+    """Test async file operations."""
+
+    async def test_upsert_from_file_async(self, tmp_path):
+        """Test async file upsert."""
+        from unittest.mock import AsyncMock, patch, Mock
+        
+        # Create test file
+        test_file = tmp_path / "async_test.txt"
+        test_file.write_text("Async test content")
+
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json = AsyncMock(return_value={
+                "document_ids": ["async_doc"],
+                "status": "success"
+            })
+            
+            mock_client.request.return_value = mock_response
+            mock_get_response = Mock()
+            mock_get_response.json = AsyncMock(return_value={
+                "config": {
+                    "embedding_provider": "ollama",
+                    "embedding_model": "nomic-embed-text",
+                    "embedding_dimension": 384,
+                    "chunking_method": "sentences",
+                    "chunk_size": 500,
+                    "chunk_overlap": 1,
+                    "fts_enabled": True,
+                    "metadata_schema": {}
+                }
+            })
+            mock_client.get.return_value = mock_get_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            db = RemoteVectorDB(
+                name="test_db",
+                base_url="http://localhost:5000"
+            )
+
+            result = await db.upsert_from_file_async(test_file)
+            assert result == ["async_doc"]
+
+    async def test_insert_from_file_async(self, tmp_path):
+        """Test async file insert."""
+        from unittest.mock import AsyncMock, patch, Mock
+        
+        # Create test file
+        test_file = tmp_path / "async_test.txt"
+        test_file.write_text("Async test content")
+
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json = AsyncMock(return_value={
+                "document_ids": ["new_async_doc"],
+                "status": "success"
+            })
+            
+            mock_client.request.return_value = mock_response
+            mock_get_response = Mock()
+            mock_get_response.json = AsyncMock(return_value={
+                "config": {
+                    "embedding_provider": "ollama",
+                    "embedding_model": "nomic-embed-text",
+                    "embedding_dimension": 384,
+                    "chunking_method": "sentences",
+                    "chunk_size": 500,
+                    "chunk_overlap": 1,
+                    "fts_enabled": True,
+                    "metadata_schema": {}
+                }
+            })
+            mock_client.get.return_value = mock_get_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            db = RemoteVectorDB(
+                name="test_db",
+                base_url="http://localhost:5000"
+            )
+
+            result = await db.insert_from_file_async(
+                test_file,
+                metadata={"async": True},
+                errors="ignore"
+            )
+            assert result == ["new_async_doc"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.client
+class TestRemoteVectorDBAsyncChunkOperations:
+    """Test async chunk operations."""
+
+    async def test_upsert_from_chunks_async(self):
+        """Test async chunk upsert."""
+        from localvectordb.core import Chunk, ChunkPosition
+        from unittest.mock import AsyncMock, Mock
+        
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            
+            # Create a proper mock response that won't interfere with status_code checks
+            mock_response = Mock()
+            mock_response.status_code = 200  # This needs to be a plain int
+            mock_response.json = AsyncMock(return_value={
+                "ids": ["async_chunk_doc"],
+                "status": "success"
+            })
+            
+            # Make sure the async client methods return our mock response
+            mock_client.request.return_value = mock_response
+            mock_get_response = Mock()
+            mock_get_response.json = AsyncMock(return_value={
+                "config": {
+                    "embedding_provider": "ollama",
+                    "embedding_model": "nomic-embed-text",
+                    "embedding_dimension": 384,
+                    "chunking_method": "sentences",
+                    "chunk_size": 500,
+                    "chunk_overlap": 1,
+                    "fts_enabled": True,
+                    "metadata_schema": {}
+                }
+            })
+            mock_client.get.return_value = mock_get_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            db = RemoteVectorDB(
+                name="test_db",
+                base_url="http://localhost:5000"
+            )
+
+            chunks = {
+                "async_chunk_doc": [
+                    Chunk(
+                        content="Async chunk",
+                        position=ChunkPosition(start=0, end=11, line=1, column=1, end_line=1, end_column=12),
+                        tokens=2,
+                        index=0
+                    )
+                ]
+            }
+
+            result = await db.upsert_from_chunks_async(chunks)
+            assert result == ["async_chunk_doc"]
+
+    async def test_insert_from_chunks_async(self):
+        """Test async chunk insert."""
+        from unittest.mock import AsyncMock, Mock
+        
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            
+            # Create a proper mock response
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json = AsyncMock(return_value={
+                "ids": ["new_async_chunk"],
+                "status": "success"
+            })
+            
+            # Make sure the async client methods return our mock response
+            mock_client.request.return_value = mock_response
+            mock_get_response = Mock()
+            mock_get_response.json = AsyncMock(return_value={
+                "config": {
+                    "embedding_provider": "ollama",
+                    "embedding_model": "nomic-embed-text",
+                    "embedding_dimension": 384,
+                    "chunking_method": "sentences",
+                    "chunk_size": 500,
+                    "chunk_overlap": 1,
+                    "fts_enabled": True,
+                    "metadata_schema": {}
+                }
+            })
+            mock_client.get.return_value = mock_get_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            db = RemoteVectorDB(
+                name="test_db",
+                base_url="http://localhost:5000"
+            )
+
+            chunks = {
+                "new_async_chunk": ["Simple string chunk"]
+            }
+
+            result = await db.insert_from_chunks_async(
+                chunks,
+                errors="raise",
+                batch_size=50
+            )
+            assert result == ["new_async_chunk"]

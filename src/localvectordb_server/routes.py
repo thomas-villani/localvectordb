@@ -502,6 +502,144 @@ def insert_documents(db_name):
             raise
 
 
+@api.route("/api/v1/<db_name>/documents/chunks", methods=["POST"])
+@require_write_permission
+@handle_errors
+@log_performance("upsert_from_chunks")
+def upsert_from_chunks(db_name):
+    """Upsert documents from pre-chunked data"""
+    
+    with request_context("upsert_from_chunks"):
+        if not request.is_json:
+            raise ValidationError("Request must contain JSON data")
+        
+        data = request.get_json()
+        if not data:
+            raise ValidationError("Request body cannot be empty")
+        
+        # Validate required fields
+        validate_required_fields(data, ['chunks_by_document'])
+        
+        chunks_by_document = data["chunks_by_document"]
+        metadata = data.get("metadata", {})
+        batch_size = data.get("batch_size", 100)
+        similarity_threshold = data.get("similarity_threshold")
+        
+        # Convert chunk dicts back to Chunk objects if needed
+        from localvectordb.chunking import Chunk
+        processed_chunks = {}
+        for doc_id, chunks in chunks_by_document.items():
+            if chunks and isinstance(chunks[0], dict):
+                # Convert dicts to Chunk objects
+                processed_chunks[doc_id] = [
+                    Chunk(
+                        text=chunk['text'],
+                        position=chunk['position'],
+                        total_chunks=chunk['total_chunks'],
+                        metadata=chunk.get('metadata', {})
+                    ) if isinstance(chunk, dict) and 'text' in chunk
+                    else chunk
+                    for chunk in chunks
+                ]
+            else:
+                # Already strings or proper format
+                processed_chunks[doc_id] = chunks
+        
+        try:
+            db = current_app.db_manager.get_db(db_name)
+            
+            db_logger.log_query("upsert_from_chunks", 
+                              database_name=db_name,
+                              document_count=len(chunks_by_document))
+            
+            result_ids = db.upsert_from_chunks(
+                chunks_by_document=processed_chunks,
+                metadata=metadata,
+                batch_size=batch_size,
+                similarity_threshold=similarity_threshold
+            )
+            
+            return jsonify({
+                "message": f"Successfully upserted {len(result_ids)} documents from chunks",
+                "ids": result_ids,
+                "status": "success"
+            })
+            
+        except Exception as e:
+            db_logger.log_error("upsert_from_chunks", e, database_name=db_name)
+            raise
+
+
+@api.route("/api/v1/<db_name>/documents/chunks/insert", methods=["POST"])
+@require_write_permission
+@handle_errors
+@log_performance("insert_from_chunks")
+def insert_from_chunks(db_name):
+    """Insert documents from pre-chunked data with conflict handling"""
+    
+    with request_context("insert_from_chunks"):
+        if not request.is_json:
+            raise ValidationError("Request must contain JSON data")
+        
+        data = request.get_json()
+        if not data:
+            raise ValidationError("Request body cannot be empty")
+        
+        # Validate required fields
+        validate_required_fields(data, ['chunks_by_document'])
+        
+        chunks_by_document = data["chunks_by_document"]
+        metadata = data.get("metadata", {})
+        batch_size = data.get("batch_size", 100)
+        similarity_threshold = data.get("similarity_threshold")
+        errors = data.get("errors", "raise")
+        
+        # Convert chunk dicts back to Chunk objects if needed
+        from localvectordb.chunking import Chunk
+        processed_chunks = {}
+        for doc_id, chunks in chunks_by_document.items():
+            if chunks and isinstance(chunks[0], dict):
+                # Convert dicts to Chunk objects
+                processed_chunks[doc_id] = [
+                    Chunk(
+                        text=chunk['text'],
+                        position=chunk['position'],
+                        total_chunks=chunk['total_chunks'],
+                        metadata=chunk.get('metadata', {})
+                    ) if isinstance(chunk, dict) and 'text' in chunk
+                    else chunk
+                    for chunk in chunks
+                ]
+            else:
+                # Already strings or proper format
+                processed_chunks[doc_id] = chunks
+        
+        try:
+            db = current_app.db_manager.get_db(db_name)
+            
+            db_logger.log_query("insert_from_chunks", 
+                              database_name=db_name,
+                              document_count=len(chunks_by_document))
+            
+            result_ids = db.insert_from_chunks(
+                chunks_by_document=processed_chunks,
+                metadata=metadata,
+                batch_size=batch_size,
+                similarity_threshold=similarity_threshold,
+                errors=errors
+            )
+            
+            return jsonify({
+                "message": f"Successfully inserted {len(result_ids)} documents from chunks",
+                "ids": result_ids,
+                "status": "success"
+            })
+            
+        except Exception as e:
+            db_logger.log_error("insert_from_chunks", e, database_name=db_name)
+            raise
+
+
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["GET"])
 @require_read_permission
 @handle_errors
@@ -1379,6 +1517,9 @@ def upload_files(db_name):
     - batch_size: Batch size for processing (default: 100)
     - ids: JSON string with the list of document ids for files (optional)
     - use_filename_as_id : boolean, ignored if `ids` is provided (optional)
+    - mode: 'upsert' or 'insert' (default: 'upsert')
+    - errors: 'raise' or 'ignore' for insert mode (default: 'raise')
+    - similarity_threshold: Skip chunks too similar to existing (optional)
 
     Returns JSON with uploaded file IDs and extraction details.
     """
@@ -1426,6 +1567,9 @@ def upload_files(db_name):
         extract_text = True # request.form.get('extract_text', 'true').lower() == 'true'
         default_batch_size = current_app.config_obj.embedding.batch_size if hasattr(current_app, 'config_obj') else 100
         batch_size = int(request.form.get('batch_size', default_batch_size))
+        mode = request.form.get('mode', 'upsert')  # Default to upsert for backward compatibility
+        errors = request.form.get('errors', 'raise')  # For insert mode
+        similarity_threshold = request.form.get('similarity_threshold', type=float)
 
         # Parse metadata if provided
         metadata_json = request.form.get('metadata')
@@ -1565,12 +1709,25 @@ def upload_files(db_name):
             if not documents:
                 raise ValidationError("No valid files to process")
 
-            # Upsert documents to database
-            result_ids = db.upsert(
-                documents=documents,
-                metadata=metadata_list,
-                batch_size=batch_size
-            )
+            # Insert or upsert documents to database based on mode
+            if mode == 'insert':
+                result_ids = db.insert(
+                    documents=documents,
+                    metadata=metadata_list,
+                    ids=document_ids if document_ids else None,
+                    batch_size=batch_size,
+                    similarity_threshold=similarity_threshold,
+                    errors=errors
+                )
+            else:
+                # Default to upsert
+                result_ids = db.upsert(
+                    documents=documents,
+                    metadata=metadata_list,
+                    ids=document_ids if document_ids else None,
+                    batch_size=batch_size,
+                    similarity_threshold=similarity_threshold
+                )
 
             db_logger.log_query("upload_files_success",
                                 database_name=db_name,

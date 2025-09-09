@@ -121,9 +121,11 @@ MongoDB-like filtering::
     either local or remote databases with minimal changes.
 """
 import asyncio
+import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import httpx
@@ -723,6 +725,337 @@ class RemoteVectorDB(BaseVectorDB):
             payload["similarity_threshold"] = similarity_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/documents/insert")
+        response = self._make_request_with_retry("POST", url, json=payload)
+        result = self._handle_response(response)
+
+        return result.get("ids", [])
+
+    def upsert_from_file(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            extractor_kwargs: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Insert or update documents from files using file extraction.
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and upsert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file
+        """
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Check files exist
+        for file_path in file_paths:
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Prepare multipart form data
+        url = self._build_url(f"/api/v1/{self.name}/upload")
+        
+        # Build form data
+        form_data = {
+            'batch_size': str(batch_size),
+            'mode': 'upsert'  # Specify upsert mode
+        }
+        
+        if metadata is not None:
+            form_data['metadata'] = json.dumps(metadata)
+        
+        if ids is not None:
+            form_data['ids'] = json.dumps(ids)
+        
+        if similarity_threshold is not None:
+            form_data['similarity_threshold'] = str(similarity_threshold)
+        
+        if extractor_kwargs:
+            form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
+
+        # Prepare files for upload
+        files = []
+        for file_path in file_paths:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                files.append(('files', (file_path.name, file_content)))
+
+        # Make request with files
+        response = self._make_request_with_retry("POST", url, data=form_data, files=files)
+        result = self._handle_response(response)
+
+        return result.get("document_ids", [])
+
+    def insert_from_file(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            extractor_kwargs: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Insert new documents from files using file extraction.
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and insert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts, by default "raise"
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file
+        DuplicateDocumentIDError
+            If errors="raise" and document ID conflicts occur
+        """
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Check files exist
+        for file_path in file_paths:
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Prepare multipart form data
+        url = self._build_url(f"/api/v1/{self.name}/upload")
+        
+        # Build form data
+        form_data = {
+            'batch_size': str(batch_size),
+            'mode': 'insert',  # Specify insert mode
+            'errors': errors
+        }
+        
+        if metadata is not None:
+            form_data['metadata'] = json.dumps(metadata)
+        
+        if ids is not None:
+            form_data['ids'] = json.dumps(ids)
+        
+        if similarity_threshold is not None:
+            form_data['similarity_threshold'] = str(similarity_threshold)
+        
+        if extractor_kwargs:
+            form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
+
+        # Prepare files for upload
+        files = []
+        for file_path in file_paths:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                files.append(('files', (file_path.name, file_content)))
+
+        # Make request with files
+        response = self._make_request_with_retry("POST", url, data=form_data, files=files)
+        result = self._handle_response(response)
+
+        return result.get("document_ids", [])
+
+    def upsert_from_chunks(
+            self,
+            chunks_by_document: Dict[str, Union[List['Chunk'], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None
+    ) -> List[str]:
+        """
+        Upsert documents from pre-chunked data.
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks. Chunks can be either:
+            - List[Chunk]: Full Chunk objects with position information
+            - List[str]: Simple strings that will be converted to Chunk objects
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata
+        batch_size : int, default=100
+            Number of embeddings to generate at once
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+        """
+        # Convert Chunk objects to serializable format
+        serializable_chunks = {}
+        for doc_id, chunks in chunks_by_document.items():
+            if chunks and hasattr(chunks[0], '__dict__'):
+                # Convert Chunk objects to dicts
+                serializable_chunks[doc_id] = [
+                    {
+                        'text': chunk.content,
+                        'position': chunk.position,
+                        'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
+                        'metadata': getattr(chunk, 'metadata', {})
+                    } if hasattr(chunk, 'content') else str(chunk)
+                    for chunk in chunks
+                ]
+            else:
+                # Already strings or serializable
+                serializable_chunks[doc_id] = chunks
+
+        # Prepare request payload
+        payload = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": batch_size
+        }
+
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/chunks")
+        response = self._make_request_with_retry("POST", url, json=payload)
+        result = self._handle_response(response)
+
+        return result.get("ids", [])
+
+    def insert_from_chunks(
+            self,
+            chunks_by_document: Dict[str, Union[List['Chunk'], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise"
+    ) -> List[str]:
+        """
+        Insert documents from pre-chunked data with conflict handling.
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata
+        batch_size : int, default=100
+            Number of embeddings to generate at once
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"], default="raise"
+            How to handle document ID conflicts
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+            
+        Raises
+        ------
+        DuplicateDocumentIDError
+            If a document ID already exists and errors="raise"
+        """
+        # Convert Chunk objects to serializable format
+        serializable_chunks = {}
+        for doc_id, chunks in chunks_by_document.items():
+            if chunks and hasattr(chunks[0], '__dict__'):
+                # Convert Chunk objects to dicts
+                serializable_chunks[doc_id] = [
+                    {
+                        'text': chunk.content,
+                        'position': chunk.position,
+                        'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
+                        'metadata': getattr(chunk, 'metadata', {})
+                    } if hasattr(chunk, 'content') else str(chunk)
+                    for chunk in chunks
+                ]
+            else:
+                # Already strings or serializable
+                serializable_chunks[doc_id] = chunks
+
+        # Prepare request payload
+        payload = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": batch_size,
+            "errors": errors
+        }
+
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/chunks/insert")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1518,10 +1851,10 @@ class RemoteVectorDB(BaseVectorDB):
     async def _handle_response_async(response: httpx.Response) -> dict:
         """Handle API response and raise appropriate exceptions"""
         if response.status_code == 200:
-            return response.json()
+            return await response.json()
 
         try:
-            error_data = response.json()
+            error_data = await response.json()
             error_type = error_data.get("type", "unknown")
             error_msg = error_data.get("error", str(response.status_code))
 
@@ -1677,6 +2010,341 @@ class RemoteVectorDB(BaseVectorDB):
             payload["similarity_threshold"] = similarity_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/documents/insert")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        return result.get("ids", [])
+
+    async def upsert_from_file_async(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
+            **kwargs
+    ) -> List[str]:
+        """
+        Insert or update documents from files using file extraction (async).
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and upsert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file
+        """
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Check files exist
+        for file_path in file_paths:
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Prepare multipart form data
+        url = self._build_url(f"/api/v1/{self.name}/upload")
+        
+        # Build form data
+        form_data = {
+            'batch_size': str(batch_size),
+            'mode': 'upsert'  # Specify upsert mode
+        }
+        
+        if metadata is not None:
+            form_data['metadata'] = json.dumps(metadata)
+        
+        if ids is not None:
+            form_data['ids'] = json.dumps(ids)
+        
+        if similarity_threshold is not None:
+            form_data['similarity_threshold'] = str(similarity_threshold)
+        
+        if extractor_kwargs:
+            form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
+
+        # Prepare files for upload - read files synchronously (file I/O is typically fast)
+        files = []
+        for file_path in file_paths:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                files.append(('files', (file_path.name, file_content)))
+
+        # Make request with files
+        response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
+        result = await self._handle_response_async(response)
+
+        return result.get("document_ids", [])
+
+    async def insert_from_file_async(
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
+            **kwargs
+    ) -> List[str]:
+        """
+        Insert new documents from files using file extraction (async).
+
+        Parameters
+        ----------
+        file_paths : Union[str, Path, List[Union[str, Path]]]
+            Path(s) to files to extract and insert
+        metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+            Metadata for documents. Will be merged with extracted metadata.
+        ids : Optional[Union[str, List[str]]]
+            Document IDs. If not provided, will use filename without extension.
+        batch_size : int
+            Batch size for processing, by default 100
+        similarity_threshold : Optional[float]
+            Skip chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"]
+            How to handle document ID conflicts, by default "raise"
+        extractor_kwargs : Optional[Dict[str, Any]]
+            Additional keyword arguments passed to the extractor
+
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+
+        Raises
+        ------
+        FileNotFoundError
+            If any of the specified files don't exist
+        ValueError
+            If extraction fails for any file
+        DuplicateDocumentIDError
+            If errors="raise" and document ID conflicts occur
+        """
+        # Normalize file paths to list
+        if isinstance(file_paths, (str, Path)):
+            file_paths = [file_paths]
+        file_paths = [Path(p) for p in file_paths]
+
+        # Normalize other inputs
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+        if isinstance(ids, str):
+            ids = [ids]
+
+        # Validate inputs
+        if metadata is not None and len(metadata) != len(file_paths):
+            raise ValueError("Number of metadata entries must match number of files")
+        if ids is not None and len(ids) != len(file_paths):
+            raise ValueError("Number of IDs must match number of files")
+
+        # Check files exist
+        for file_path in file_paths:
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Prepare multipart form data
+        url = self._build_url(f"/api/v1/{self.name}/upload")
+        
+        # Build form data
+        form_data = {
+            'batch_size': str(batch_size),
+            'mode': 'insert',  # Specify insert mode
+            'errors': errors
+        }
+        
+        if metadata is not None:
+            form_data['metadata'] = json.dumps(metadata)
+        
+        if ids is not None:
+            form_data['ids'] = json.dumps(ids)
+        
+        if similarity_threshold is not None:
+            form_data['similarity_threshold'] = str(similarity_threshold)
+        
+        if extractor_kwargs:
+            form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
+
+        # Prepare files for upload - read files synchronously (file I/O is typically fast)
+        files = []
+        for file_path in file_paths:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                files.append(('files', (file_path.name, file_content)))
+
+        # Make request with files
+        response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
+        result = await self._handle_response_async(response)
+
+        return result.get("document_ids", [])
+
+    async def upsert_from_chunks_async(
+            self,
+            chunks_by_document: Dict[str, Union[List['Chunk'], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            **kwargs
+    ) -> List[str]:
+        """
+        Upsert documents from pre-chunked data (async).
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks. Chunks can be either:
+            - List[Chunk]: Full Chunk objects with position information
+            - List[str]: Simple strings that will be converted to Chunk objects
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata
+        batch_size : int, default=100
+            Number of embeddings to generate at once
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were upserted
+        """
+        # Convert Chunk objects to serializable format
+        serializable_chunks = {}
+        for doc_id, chunks in chunks_by_document.items():
+            if chunks and hasattr(chunks[0], '__dict__'):
+                # Convert Chunk objects to dicts
+                serializable_chunks[doc_id] = [
+                    {
+                        'text': chunk.content,
+                        'position': chunk.position,
+                        'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
+                        'metadata': getattr(chunk, 'metadata', {})
+                    } if hasattr(chunk, 'content') else str(chunk)
+                    for chunk in chunks
+                ]
+            else:
+                # Already strings or serializable
+                serializable_chunks[doc_id] = chunks
+
+        # Prepare request payload
+        payload = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": batch_size
+        }
+
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/chunks")
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+
+        return result.get("ids", [])
+
+    async def insert_from_chunks_async(
+            self,
+            chunks_by_document: Dict[str, Union[List['Chunk'], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            **kwargs
+    ) -> List[str]:
+        """
+        Insert documents from pre-chunked data with conflict handling (async).
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata
+        batch_size : int, default=100
+            Number of embeddings to generate at once
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"], default="raise"
+            How to handle document ID conflicts
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+            
+        Raises
+        ------
+        DuplicateDocumentIDError
+            If a document ID already exists and errors="raise"
+        """
+        # Convert Chunk objects to serializable format
+        serializable_chunks = {}
+        for doc_id, chunks in chunks_by_document.items():
+            if chunks and hasattr(chunks[0], '__dict__'):
+                # Convert Chunk objects to dicts
+                serializable_chunks[doc_id] = [
+                    {
+                        'text': chunk.content,
+                        'position': chunk.position,
+                        'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
+                        'metadata': getattr(chunk, 'metadata', {})
+                    } if hasattr(chunk, 'content') else str(chunk)
+                    for chunk in chunks
+                ]
+            else:
+                # Already strings or serializable
+                serializable_chunks[doc_id] = chunks
+
+        # Prepare request payload
+        payload = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": batch_size,
+            "errors": errors
+        }
+
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
+
+        url = self._build_url(f"/api/v1/{self.name}/documents/chunks/insert")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = await self._handle_response_async(response)
 
