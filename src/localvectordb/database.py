@@ -183,10 +183,14 @@ class LocalVectorDB(BaseVectorDB):
             embedding_provider, embedding_model, **embedding_config
         )
 
+        # TODO: store in db config.
+        # TODO: Where is config loaded?
+
         # Validate embedding model
         if not self._embedding_provider.validate_model():
             raise ValueError(f"Embedding model '{embedding_model}' is not available")
 
+        # TODO: allow toggle auto detect vs. manual input
         self._embedding_dimension = self._embedding_provider.get_dimension()
 
         # Threading
@@ -533,6 +537,89 @@ class LocalVectorDB(BaseVectorDB):
 
             return result_ids
 
+    def upsert_from_chunks(
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            queue_size: int = 3
+    ) -> List[str]:
+        """
+        Insert or update documents from pre-chunked data with pipeline processing.
+        
+        This method allows you to directly provide chunks for documents, bypassing the 
+        chunking step and enabling more efficient processing of pre-processed documents.
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks. Chunks can be either:
+            - List[Chunk]: Full Chunk objects with position information
+            - List[str]: Simple strings that will be converted to Chunk objects
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata. If None, empty metadata 
+            is used for all documents.
+        batch_size : int, default=100
+            Number of embeddings to generate at once
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+        queue_size : int, default=3
+            Number of items allowed on the queue for the pipeline (to control memory usage)
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were processed
+            
+        Raises
+        ------
+        ValueError
+            If chunk data is invalid or metadata doesn't match schema
+        """
+        with self._read_write_lock.write_lock():
+            # Validate input
+            if not chunks_by_document:
+                return []
+            
+            # Normalize metadata
+            if metadata is None:
+                metadata = {}
+            
+            # Ensure all documents have metadata (even if empty)
+            metadata_batch = {}
+            for doc_id in chunks_by_document.keys():
+                metadata_batch[doc_id] = metadata.get(doc_id, {})
+            
+            # Validate metadata against schema
+            self._validate_metadata_batch(list(metadata_batch.values()))
+            
+            # Normalize chunks for all documents
+            normalized_chunks_by_document = {}
+            for doc_id, chunks in chunks_by_document.items():
+                normalized_chunks = self._normalize_chunks(chunks, doc_id)
+                if normalized_chunks:  # Only include documents with valid chunks
+                    normalized_chunks_by_document[doc_id] = normalized_chunks
+                
+            if not normalized_chunks_by_document:
+                return []
+            
+            # Process with chunk-based pipeline
+            result_ids = self._process_from_chunks_pipeline(
+                normalized_chunks_by_document, 
+                metadata_batch, 
+                batch_size, 
+                similarity_threshold, 
+                queue_size, 
+                mode="upsert"
+            )
+            
+            # Save state
+            self._save_next_doc_id()
+            self._save_internal()
+            
+            return result_ids
+
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
         """Validate metadata against schema"""
         for metadata in metadata_batch:
@@ -551,6 +638,71 @@ class LocalVectorDB(BaseVectorDB):
                     else:
                         raise ValueError(f"Required metadata field '{field_name}' is missing")
 
+    def _normalize_chunks(self, chunks: Union[List[Chunk], List[str]], doc_id: str) -> List[Chunk]:
+        """
+        Convert mixed chunk input to standardized Chunk objects.
+        
+        Parameters
+        ----------
+        chunks : Union[List[Chunk], List[str]]
+            List of chunks as either Chunk objects or strings
+        doc_id : str
+            Document ID for context in error messages
+            
+        Returns
+        -------
+        List[Chunk]
+            List of normalized Chunk objects with proper content_hash and indexes
+        """
+        if not chunks:
+            return []
+            
+        normalized_chunks = []
+        
+        for i, chunk in enumerate(chunks):
+            if isinstance(chunk, Chunk):
+                # Ensure existing Chunk has content_hash
+                if chunk.content_hash is None:
+                    chunk.content_hash = chunk.calculate_content_hash()
+                    
+                # Ensure chunk index matches position in list
+                if chunk.index != i:
+                    logger.warning(f"Chunk index mismatch in document {doc_id}: "
+                                 f"expected {i}, got {chunk.index}. Correcting index.")
+                    chunk.index = i
+                    
+                normalized_chunks.append(chunk)
+                
+            elif isinstance(chunk, str):
+                # Convert string to Chunk object
+                from localvectordb.core import ChunkPosition
+                
+                # Create minimal position info (since we don't have original document)
+                position = ChunkPosition(
+                    start=0,  # Unknown position in original document
+                    end=len(chunk),
+                    line=1,   # Assume single line for string chunks
+                    column=1,
+                    end_line=1,
+                    end_column=len(chunk) + 1
+                )
+                
+                chunk_obj = Chunk(
+                    content=chunk,
+                    position=position,
+                    tokens=self.chunker.count_tokens(chunk),
+                    index=i,
+                    faiss_id=None,
+                    content_hash=None  # Will be auto-calculated in __post_init__
+                )
+                
+                normalized_chunks.append(chunk_obj)
+                
+            else:
+                raise ValueError(f"Invalid chunk type in document {doc_id} at index {i}: "
+                               f"expected Chunk or str, got {type(chunk)}")
+        
+        return normalized_chunks
 
     def _filter_similar_chunks_vectorized(
             self,
@@ -851,6 +1003,118 @@ class LocalVectorDB(BaseVectorDB):
 
             return result_ids
 
+    def insert_from_chunks(
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            queue_size: int = 3
+    ) -> List[str]:
+        """
+        Insert documents from pre-chunked data with conflict handling.
+        
+        Similar to upsert_from_chunks but fails on duplicate document IDs unless
+        configured to ignore them.
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks. Chunks can be either:
+            - List[Chunk]: Full Chunk objects with position information
+            - List[str]: Simple strings that will be converted to Chunk objects
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata. If None, empty metadata 
+            is used for all documents.
+        batch_size : int, default=100
+            Number of embeddings to generate at once
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"], default="raise"
+            How to handle document ID conflicts:
+            - "raise": Raise DuplicateDocumentIDError
+            - "ignore": Skip existing documents and continue
+        queue_size : int, default=3
+            Number of items allowed on the queue for the pipeline (to control memory usage)
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+            
+        Raises
+        ------
+        DuplicateDocumentIDError
+            If a document ID already exists and errors="raise"
+        ValueError
+            If chunk data is invalid or metadata doesn't match schema
+        """
+        with self._read_write_lock.write_lock():
+            # Validate input
+            if not chunks_by_document:
+                return []
+            
+            # Normalize metadata
+            if metadata is None:
+                metadata = {}
+            
+            # Check for existing document IDs
+            doc_ids = list(chunks_by_document.keys())
+            existing_ids = set()
+            with self.connection_pool.get_connection() as conn:
+                if doc_ids:
+                    placeholders = ','.join(['?'] * len(doc_ids))
+                    cursor = conn.execute(f'SELECT id FROM documents WHERE id IN ({placeholders})', doc_ids)
+                    existing_ids = {row['id'] for row in cursor.fetchall()}
+            
+            # Handle ID conflicts
+            chunks_to_insert = {}
+            metadata_to_insert = {}
+            
+            for doc_id, chunks in chunks_by_document.items():
+                if doc_id in existing_ids:
+                    if errors == "raise":
+                        raise DuplicateDocumentIDError(f"Document with ID '{doc_id}' already exists")
+                    elif errors == "ignore":
+                        logger.info(f"Skipping existing document ID: {doc_id}")
+                        continue
+                
+                chunks_to_insert[doc_id] = chunks
+                metadata_to_insert[doc_id] = metadata.get(doc_id, {})
+            
+            if not chunks_to_insert:
+                return []  # No documents to insert
+            
+            # Validate metadata against schema
+            self._validate_metadata_batch(list(metadata_to_insert.values()))
+            
+            # Normalize chunks for all documents
+            normalized_chunks_by_document = {}
+            for doc_id, chunks in chunks_to_insert.items():
+                normalized_chunks = self._normalize_chunks(chunks, doc_id)
+                if normalized_chunks:  # Only include documents with valid chunks
+                    normalized_chunks_by_document[doc_id] = normalized_chunks
+            
+            if not normalized_chunks_by_document:
+                return []
+            
+            # Process with chunk-based pipeline
+            result_ids = self._process_from_chunks_pipeline(
+                normalized_chunks_by_document,
+                metadata_to_insert,
+                batch_size,
+                similarity_threshold,
+                queue_size,
+                mode="insert"
+            )
+            
+            # Save state
+            self._save_next_doc_id()
+            self._save_internal()
+            
+            return result_ids
+
     def _process_with_pipeline(
             self,
             documents: List[str],
@@ -1106,6 +1370,278 @@ class LocalVectorDB(BaseVectorDB):
                 if worker.is_alive():
                     logger.warning(f"Worker {worker.name} did not complete in time")
 
+        return processed_ids
+
+    def _process_from_chunks_pipeline(
+            self,
+            chunks_by_document: Dict[str, List[Chunk]],
+            metadata_batch: Dict[str, Dict[str, Any]],
+            batch_size: int,
+            similarity_threshold: Optional[float],
+            queue_size: int = 3,
+            mode: Literal["upsert", "insert"] = "upsert"
+    ) -> List[str]:
+        """
+        Enhanced pipeline implementation for pre-chunked documents with chunk hash optimization.
+        
+        Similar to _process_with_pipeline but skips the chunking stage since chunks are provided.
+        
+        2-stage pipeline:
+        1. Embedding thread (only for changed chunks)  
+        2. Database thread
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, List[Chunk]]
+            Pre-chunked documents indexed by document ID
+        metadata_batch : Dict[str, Dict[str, Any]]
+            Metadata indexed by document ID
+        batch_size : int
+            Batch size for embedding generation
+        similarity_threshold : Optional[float]
+            Similarity threshold for filtering duplicate chunks
+        queue_size : int, default=3
+            Queue size for pipeline coordination
+        mode : Literal["upsert", "insert"], default="upsert"
+            Operation mode
+            
+        Returns
+        -------
+        List[str]
+            List of processed document IDs
+        """
+        # PRE-PROCESSING: Fetch existing chunks for all documents
+        doc_ids = list(chunks_by_document.keys())
+        existing_chunks_by_doc = self._fetch_existing_chunks_batch(doc_ids)
+
+        # Queues for pipeline coordination
+        embedding_queue = queue.Queue(maxsize=queue_size)
+        result_queue = queue.Queue()
+
+        # Completion tracking
+        total_docs = len(doc_ids)
+
+        def chunk_comparison_worker():
+            """Stage 1: Compare provided chunks with existing chunks"""
+            try:
+                for doc_id, chunks in chunks_by_document.items():
+                    metadata = metadata_batch.get(doc_id, {})
+                    
+                    # Get existing chunks for this document
+                    existing_chunks = existing_chunks_by_doc.get(doc_id, {})
+                    
+                    # Categorize chunks: unchanged vs needs_embedding
+                    unchanged_chunks = []
+                    chunks_needing_embedding = []
+                    chunk_texts_for_embedding = []
+                    
+                    # Track which existing chunks are being reused
+                    reused_chunk_indices = set()
+                    
+                    for chunk in chunks:
+                        existing_chunk = existing_chunks.get(chunk.index)
+                        
+                        if (existing_chunk and
+                                existing_chunk['content_hash'] == chunk.content_hash and
+                                existing_chunk['faiss_id'] is not None):
+                            
+                            # Chunk unchanged - reuse existing FAISS ID
+                            chunk.faiss_id = existing_chunk['faiss_id']
+                            unchanged_chunks.append(chunk)
+                            reused_chunk_indices.add(chunk.index)
+                            logger.debug(f"Reusing chunk {doc_id}:{chunk.index} (hash: {chunk.content_hash[:8]}...)")
+                            
+                        else:
+                            # Chunk changed/new - needs embedding
+                            chunks_needing_embedding.append(chunk)
+                            chunk_texts_for_embedding.append(chunk.content)
+                            logger.debug(f"Re-embedding chunk {doc_id}:{chunk.index} (hash: {chunk.content_hash[:8]}...)")
+                    
+                    # Calculate what needs to be removed (existing chunks not being reused)
+                    chunk_indices_to_remove = []
+                    faiss_ids_to_remove = []
+                    
+                    for chunk_index, chunk_info in existing_chunks.items():
+                        if chunk_index not in reused_chunk_indices:
+                            chunk_indices_to_remove.append(chunk_index)
+                            if chunk_info['faiss_id'] is not None:
+                                faiss_ids_to_remove.append(chunk_info['faiss_id'])
+                    
+                    # Reconstruct document text from chunks for metadata purposes
+                    doc_text = "\n".join([chunk.content for chunk in chunks])
+                    content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
+                    
+                    chunk_data = {
+                        'doc_id': doc_id,
+                        'doc_text': doc_text,
+                        'content_hash': content_hash,
+                        'metadata': metadata,
+                        'unchanged_chunks': unchanged_chunks,
+                        'chunks_needing_embedding': chunks_needing_embedding,
+                        'chunk_texts_for_embedding': chunk_texts_for_embedding,
+                        'chunk_indices_to_remove': chunk_indices_to_remove,
+                        'faiss_ids_to_remove': faiss_ids_to_remove
+                    }
+                    
+                    embedding_queue.put(chunk_data)
+                
+                # Signal completion
+                embedding_queue.put(None)
+                
+            except Exception as e:
+                logger.error(f"Chunk comparison worker error: {e}")
+                embedding_queue.put(None)
+                raise
+        
+        def embedding_worker():
+            """Stage 2: Embedding generation (only for chunks that need it)"""
+            try:
+                # Get metadata fields that need embeddings once
+                embedding_enabled_fields = self._get_embedding_enabled_fields()
+                
+                while True:
+                    chunk_data = embedding_queue.get()
+                    if chunk_data is None:  # Completion signal
+                        result_queue.put(None)
+                        break
+                    
+                    # Generate embeddings only for chunks that need them
+                    chunk_texts = chunk_data['chunk_texts_for_embedding']
+                    chunks_needing_embedding = chunk_data['chunks_needing_embedding']
+                    
+                    if chunk_texts:
+                        logger.debug(f"Generating embeddings for {len(chunk_texts)} chunks in {chunk_data['doc_id']}")
+                        embeddings = self.embedding_provider.embed_sync(chunk_texts, batch_size)
+                        chunk_data['new_embeddings'] = embeddings
+                        
+                        # Assign FAISS IDs to new chunks (will be updated with actual IDs in database worker)
+                        for chunk in chunks_needing_embedding:
+                            chunk.faiss_id = None  # Will be set when added to FAISS
+                    
+                    else:
+                        chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
+                        logger.debug(f"No new embeddings needed for {chunk_data['doc_id']}")
+                    
+                    # Generate metadata embeddings if needed
+                    if embedding_enabled_fields:
+                        metadata = chunk_data['metadata']
+                        field_embeddings = self._generate_metadata_embeddings(
+                            metadata, embedding_enabled_fields, batch_size
+                        )
+                        chunk_data['field_embeddings'] = field_embeddings
+                    else:
+                        chunk_data['field_embeddings'] = {}
+                    
+                    result_queue.put(chunk_data)
+                    embedding_queue.task_done()
+                    
+            except Exception as e:
+                logger.error(f"Embedding worker error: {e}")
+                result_queue.put(None)
+                raise
+        
+        def database_worker():
+            """Stage 3: Database operations with unchanged + new chunks"""
+            try:
+                processed_ids = []
+                
+                while len(processed_ids) < total_docs:
+                    chunk_data = result_queue.get()
+                    if chunk_data is None:  # Completion signal
+                        break
+                    
+                    # Combine unchanged and new chunks
+                    unchanged_chunks = chunk_data['unchanged_chunks']
+                    chunks_needing_embedding = chunk_data['chunks_needing_embedding']
+                    new_embeddings = chunk_data['new_embeddings']
+                    field_embeddings = chunk_data['field_embeddings']
+                    
+                    # Apply similarity filtering only to new chunks if requested
+                    if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
+                        doc_info = (chunk_data['doc_text'], chunk_data['metadata'],
+                                    chunk_data['doc_id'], chunk_data['content_hash'])
+                        doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
+                        
+                        filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
+                            new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
+                        )
+                        chunks_needing_embedding = filtered_chunks
+                        new_embeddings = filtered_embeddings
+                    
+                    # Combine all chunks for final processing
+                    all_chunks = unchanged_chunks + chunks_needing_embedding
+                    
+                    # Database operations
+                    if len(all_chunks) > 0 or mode == "upsert":  # Always process upserts to update metadata
+                        documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'],
+                                           chunk_data['content_hash'], chunk_data['metadata'])]
+                        chunks_data = [(chunk_data['doc_id'], chunk) for chunk in all_chunks]
+                        
+                        with self.connection_pool.get_connection() as conn:
+                            conn.execute('BEGIN')
+                            try:
+                                if mode == "upsert":
+                                    # Remove old data that's not being reused (including metadata embeddings)
+                                    self._remove_metadata_embeddings(conn, chunk_data['doc_id'])
+                                    self._remove_old_chunks_batch(
+                                        chunk_data['doc_id'],
+                                        chunk_data['chunk_indices_to_remove'],
+                                        chunk_data['faiss_ids_to_remove']
+                                    )
+                                
+                                self._insert_documents_bulk(conn, documents_data, mode=mode)
+                                # Add only new embeddings to FAISS
+                                if new_embeddings.size > 0:
+                                    self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
+                                
+                                self._insert_chunks_bulk(conn, chunks_data)
+                                
+                                # Store metadata field embeddings
+                                if field_embeddings:
+                                    self._store_metadata_embeddings(conn, chunk_data['doc_id'], field_embeddings)
+                                
+                                conn.commit()
+                                
+                                logger.debug(f"Processed {chunk_data['doc_id']}: "
+                                             f"{len(unchanged_chunks)} reused, "
+                                             f"{len(chunks_needing_embedding)} new chunks, "
+                                             f"{len(field_embeddings)} metadata fields embedded")
+                                
+                            except Exception:
+                                conn.rollback()
+                                raise
+                    
+                    processed_ids.append(chunk_data['doc_id'])
+                    result_queue.task_done()
+                
+                return processed_ids
+                
+            except Exception as e:
+                logger.error(f"Database worker error: {e}")
+                raise
+        
+        # Start workers
+        workers = [
+            threading.Thread(target=chunk_comparison_worker, name="ChunkComparisonWorker"),
+            threading.Thread(target=embedding_worker, name="EmbeddingWorker")
+        ]
+        
+        for worker in workers:
+            worker.start()
+        
+        # Run database worker in main thread to get return value
+        try:
+            processed_ids = database_worker()
+        except Exception as e:
+            logger.error(f"Pipeline processing failed: {e}")
+            raise
+        finally:
+            # Ensure all workers complete
+            for worker in workers:
+                worker.join(timeout=30)
+                if worker.is_alive():
+                    logger.warning(f"Worker {worker.name} did not complete in time")
+        
         return processed_ids
 
     def _fetch_existing_chunks_batch(self, doc_ids: List[str]) -> Dict[str, Dict[int, Dict[str, Any]]]:
@@ -1420,20 +1956,47 @@ class LocalVectorDB(BaseVectorDB):
 
                 self._validate_metadata_batch([updated_metadata])
 
+                # Check if any embedding-enabled metadata fields have changed
+                changed_embedding_fields = self._get_changed_embedding_fields(
+                    existing_doc.metadata, updated_metadata
+                )
+
                 with self.connection_pool.get_connection() as conn:
-                    # Build UPDATE statement for metadata
-                    set_clauses = ['updated_at = ?']
-                    values = [datetime.now(UTC)]
+                    conn.execute('BEGIN')
+                    try:
+                        # Remove old metadata embeddings if any fields changed
+                        if changed_embedding_fields:
+                            self._remove_metadata_embeddings(conn, doc_id)
+                            
+                            # Generate new metadata embeddings for changed fields
+                            new_field_embeddings = self._generate_metadata_embeddings(
+                                updated_metadata, changed_embedding_fields, batch_size=100
+                            )
+                            
+                            # Store new metadata embeddings
+                            if new_field_embeddings:
+                                self._store_metadata_embeddings(conn, doc_id, new_field_embeddings)
+                                logger.debug(f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}")
 
-                    for field_name, value in updated_metadata.items():
-                        if field_name in self.metadata_schema:
-                            set_clauses.append(f'{field_name} = ?')
-                            values.append(value)
+                        # Build UPDATE statement for metadata
+                        set_clauses = ['updated_at = ?']
+                        values = [datetime.now(UTC)]
 
-                    values.append(doc_id)
-                    sql = f"UPDATE documents SET {', '.join(set_clauses)} WHERE id = ?"
-                    conn.execute(sql, values)
-                    conn.commit()
+                        for field_name, value in updated_metadata.items():
+                            if field_name in self.metadata_schema:
+                                set_clauses.append(f'{field_name} = ?')
+                                values.append(value)
+
+                        values.append(doc_id)
+                        sql = f"UPDATE documents SET {', '.join(set_clauses)} WHERE id = ?"
+                        conn.execute(sql, values)
+                        conn.commit()
+                        
+                        logger.debug(f"Updated metadata for document {doc_id}")
+                        
+                    except Exception:
+                        conn.rollback()
+                        raise
 
                 return True
 
@@ -3420,6 +3983,44 @@ class LocalVectorDB(BaseVectorDB):
             if field_def.embedding_enabled
         }
 
+    def _get_changed_embedding_fields(
+        self, 
+        old_metadata: Dict[str, Any], 
+        new_metadata: Dict[str, Any]
+    ) -> Dict[str, MetadataField]:
+        """
+        Identify embedding-enabled metadata fields that have changed values.
+        
+        Parameters
+        ----------
+        old_metadata : Dict[str, Any]
+            Original metadata values
+        new_metadata : Dict[str, Any]
+            New metadata values
+            
+        Returns
+        -------
+        Dict[str, MetadataField]
+            Dictionary of changed embedding-enabled fields and their definitions
+        """
+        embedding_enabled_fields = self._get_embedding_enabled_fields()
+        changed_fields = {}
+        
+        for field_name, field_def in embedding_enabled_fields.items():
+            old_value = old_metadata.get(field_name)
+            new_value = new_metadata.get(field_name)
+            
+            # Check if field value actually changed
+            if old_value != new_value:
+                # Only include if new value is not None/empty
+                if new_value is not None and str(new_value).strip():
+                    changed_fields[field_name] = field_def
+                elif old_value is not None and str(old_value).strip():
+                    # Old value existed but new is None/empty - still need to update
+                    changed_fields[field_name] = field_def
+                    
+        return changed_fields
+
     def _track_column_embedding(
         self,
         conn: sqlite3.Connection,
@@ -3472,6 +4073,7 @@ class LocalVectorDB(BaseVectorDB):
             else:
                 text_value = str(field_value)
 
+            # TODO: probably remove the chunking?
             # Chunk the field value if it's long
             field_chunks = self.chunker.chunk(text_value)
 
@@ -3482,6 +4084,129 @@ class LocalVectorDB(BaseVectorDB):
                 field_embeddings[field_name] = embeddings
 
         return field_embeddings
+
+    async def _generate_metadata_embeddings_async(
+        self,
+        metadata: Dict[str, Any],
+        embedding_enabled_fields: Dict[str, MetadataField],
+        batch_size: int = 100
+    ) -> Dict[str, np.ndarray]:
+        """
+        Async version of generating embeddings for metadata fields that have embedding_enabled=True
+        
+        Parameters
+        ----------
+        metadata : Dict[str, Any]
+            Document metadata
+        embedding_enabled_fields : Dict[str, MetadataField]
+            Fields that need embeddings
+        batch_size : int
+            Batch size for embedding generation
+            
+        Returns
+        -------
+        Dict[str, np.ndarray]
+            Field name to embeddings array mapping
+        """
+        field_embeddings = {}
+        
+        for field_name, field_def in embedding_enabled_fields.items():
+            if field_name not in metadata:
+                continue
+                
+            field_value = metadata[field_name]
+            
+            # Handle different field types
+            field_chunks = []
+            if field_def.type == MetadataFieldType.TEXT:
+                if isinstance(field_value, str) and field_value.strip():
+                    # Chunk the text field (simplified chunking for metadata)
+                    text_chunks = self.chunker.chunk(field_value)
+                    field_chunks.extend(text_chunks)
+            elif field_def.type == MetadataFieldType.JSON:
+                if field_value:
+                    # Convert JSON to text and chunk
+                    text_value = str(field_value)
+                    text_chunks = self.chunker.chunk(text_value)
+                    field_chunks.extend(text_chunks)
+            
+            if field_chunks:
+                # Generate embeddings for all chunks asynchronously
+                chunk_texts = [chunk.content for chunk in field_chunks]
+                embeddings = await self.embedding_provider.embed_batch(chunk_texts, batch_size)
+                field_embeddings[field_name] = embeddings
+
+        return field_embeddings
+
+    async def _remove_metadata_embeddings_async(
+        self,
+        conn: aiosqlite.Connection,
+        document_id: str
+    ) -> None:
+        """
+        Async version of removing metadata field embeddings for a document
+        
+        Parameters
+        ----------
+        conn : aiosqlite.Connection
+            Async database connection
+        document_id : str
+            Document ID to remove embeddings for
+        """
+        # Get FAISS IDs for metadata embeddings
+        cursor = await conn.execute("""
+            SELECT faiss_id FROM column_embeddings 
+            WHERE document_id = ?
+        """, (document_id,))
+        
+        rows = await cursor.fetchall()
+        faiss_ids_to_remove = [row['faiss_id'] for row in rows]
+        
+        # Remove FAISS vectors (run in executor since it's sync)
+        if faiss_ids_to_remove:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
+        
+        # Remove database records
+        await conn.execute("""
+            DELETE FROM column_embeddings 
+            WHERE document_id = ?
+        """, (document_id,))
+
+    async def _store_metadata_embeddings_async(
+        self,
+        conn: aiosqlite.Connection,
+        document_id: str,
+        field_embeddings: Dict[str, np.ndarray]
+    ) -> None:
+        """
+        Async version of storing metadata field embeddings in FAISS and track in column_embeddings table
+        
+        Parameters
+        ----------
+        conn : aiosqlite.Connection
+            Async database connection
+        document_id : str
+            Document ID
+        field_embeddings : Dict[str, np.ndarray]
+            Field name to embeddings mapping
+        """
+        for field_name, embeddings in field_embeddings.items():
+            if embeddings.size == 0:
+                continue
+            
+            # Add to FAISS index (run in executor since it's sync)
+            loop = asyncio.get_event_loop()
+            start_id = await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, embeddings, [])
+            
+            # Track in column_embeddings table
+            for chunk_index in range(len(embeddings)):
+                faiss_id = start_id + chunk_index
+                await conn.execute("""
+                    INSERT OR REPLACE INTO column_embeddings 
+                    (document_id, field_name, chunk_index, faiss_id)
+                    VALUES (?, ?, ?, ?)
+                """, (document_id, field_name, chunk_index, faiss_id))
 
     def _store_metadata_embeddings(
         self,
@@ -3638,6 +4363,94 @@ class LocalVectorDB(BaseVectorDB):
 
         return result_ids
 
+    async def upsert_from_chunks_async(
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2
+    ) -> List[str]:
+        """
+        Async version of upsert_from_chunks - Insert or update documents from pre-chunked data.
+        
+        This method allows you to directly provide chunks for documents, bypassing the 
+        chunking step and enabling more efficient processing of pre-processed documents.
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks. Chunks can be either:
+            - List[Chunk]: Full Chunk objects with position information
+            - List[str]: Simple strings that will be converted to Chunk objects
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata. If None, empty metadata 
+            is used for all documents.
+        batch_size : int, default=None
+            Number of embeddings to generate at once. If None, uses default from configuration.
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+        max_concurrent_chunks : int, default=3
+            Maximum number of concurrent chunk processing operations
+        max_concurrent_embeddings : int, default=2
+            Maximum number of concurrent embedding operations
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were processed
+            
+        Raises
+        ------
+        ValueError
+            If chunk data is invalid or metadata doesn't match schema
+        """
+        self._ensure_async_pool()
+        
+        # Validate input
+        if not chunks_by_document:
+            return []
+            
+        # Normalize metadata
+        if metadata is None:
+            metadata = {}
+        
+        # Ensure all documents have metadata (even if empty)
+        metadata_batch = {}
+        for doc_id in chunks_by_document.keys():
+            metadata_batch[doc_id] = metadata.get(doc_id, {})
+        
+        # Validate metadata against schema
+        self._validate_metadata_batch(list(metadata_batch.values()))
+        
+        # Normalize chunks for all documents
+        normalized_chunks_by_document = {}
+        for doc_id, chunks in chunks_by_document.items():
+            normalized_chunks = self._normalize_chunks(chunks, doc_id)
+            if normalized_chunks:  # Only include documents with valid chunks
+                normalized_chunks_by_document[doc_id] = normalized_chunks
+            
+        if not normalized_chunks_by_document:
+            return []
+        
+        # Process with async chunk-based pipeline
+        result_ids = await self._async_process_from_chunks_pipeline(
+            normalized_chunks_by_document,
+            metadata_batch,
+            batch_size,
+            similarity_threshold,
+            max_concurrent_chunks,
+            max_concurrent_embeddings,
+            mode="upsert"
+        )
+        
+        # Save state
+        self._save_next_doc_id()
+        self._save_internal()
+        
+        return result_ids
+
     async def insert_async(
             self,
             documents: Union[str, List[str]],
@@ -3734,6 +4547,118 @@ class LocalVectorDB(BaseVectorDB):
 
         return result_ids
 
+    async def insert_from_chunks_async(
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2
+    ) -> List[str]:
+        """
+        Async version of insert_from_chunks - Insert documents from pre-chunked data with conflict handling.
+        
+        Similar to upsert_from_chunks_async but fails on duplicate document IDs unless
+        configured to ignore them.
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
+            Dictionary mapping document IDs to their chunks. Chunks can be either:
+            - List[Chunk]: Full Chunk objects with position information
+            - List[str]: Simple strings that will be converted to Chunk objects
+        metadata : Optional[Dict[str, Dict[str, Any]]], default=None
+            Dictionary mapping document IDs to their metadata. If None, empty metadata 
+            is used for all documents.
+        batch_size : int, default=None
+            Number of embeddings to generate at once. If None, uses default from configuration.
+        similarity_threshold : Optional[float], default=None
+            If provided, filters out chunks that are too similar to existing chunks
+        errors : Literal["ignore", "raise"], default="raise"
+            How to handle document ID conflicts:
+            - "raise": Raise DuplicateDocumentIDError
+            - "ignore": Skip existing documents and continue
+        max_concurrent_chunks : int, default=3
+            Maximum number of concurrent chunk processing operations
+        max_concurrent_embeddings : int, default=2
+            Maximum number of concurrent embedding operations
+            
+        Returns
+        -------
+        List[str]
+            List of document IDs that were actually inserted
+            
+        Raises
+        ------
+        DuplicateDocumentIDError
+            If a document ID already exists and errors="raise"
+        ValueError
+            If chunk data is invalid or metadata doesn't match schema
+        """
+        self._ensure_async_pool()
+        
+        # Validate input
+        if not chunks_by_document:
+            return []
+
+        # Normalize metadata
+        if metadata is None:
+            metadata = {}
+
+        # Check for existing document IDs
+        doc_ids = list(chunks_by_document.keys())
+        existing_ids = await self._check_existing_ids_async(doc_ids)
+
+        # Handle ID conflicts
+        chunks_to_insert = {}
+        metadata_to_insert = {}
+
+        for doc_id, chunks in chunks_by_document.items():
+            if doc_id in existing_ids:
+                if errors == "raise":
+                    raise DuplicateDocumentIDError(f"Document with ID '{doc_id}' already exists")
+                elif errors == "ignore":
+                    logger.info(f"Skipping existing document ID: {doc_id}")
+                    continue
+
+            chunks_to_insert[doc_id] = chunks
+            metadata_to_insert[doc_id] = metadata.get(doc_id, {})
+
+        if not chunks_to_insert:
+            return []  # No documents to insert
+
+        # Validate metadata against schema
+        self._validate_metadata_batch(list(metadata_to_insert.values()))
+
+        # Normalize chunks for all documents
+        normalized_chunks_by_document = {}
+        for doc_id, chunks in chunks_to_insert.items():
+            normalized_chunks = self._normalize_chunks(chunks, doc_id)
+            if normalized_chunks:  # Only include documents with valid chunks
+                normalized_chunks_by_document[doc_id] = normalized_chunks
+
+        if not normalized_chunks_by_document:
+            return []
+
+        # Process with async chunk-based pipeline
+        result_ids = await self._async_process_from_chunks_pipeline(
+            normalized_chunks_by_document,
+            metadata_to_insert,
+            batch_size,
+            similarity_threshold,
+            max_concurrent_chunks,
+            max_concurrent_embeddings,
+            mode="insert"
+        )
+
+        # Save state
+        self._save_next_doc_id()
+        self._save_internal()
+
+        return result_ids
+
     async def _check_existing_ids_async(self, ids: List[str]) -> set:
         """Async helper method to check for existing document IDs"""
         if not ids:
@@ -3822,6 +4747,17 @@ class LocalVectorDB(BaseVectorDB):
                         else:
                             chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
 
+                        # Generate metadata embeddings if needed
+                        embedding_enabled_fields = self._get_embedding_enabled_fields()
+                        if embedding_enabled_fields:
+                            metadata = chunk_data['metadata']
+                            field_embeddings = await self._generate_metadata_embeddings_async(
+                                metadata, embedding_enabled_fields, batch_size
+                            )
+                            chunk_data['field_embeddings'] = field_embeddings
+                        else:
+                            chunk_data['field_embeddings'] = {}
+
                     await embedding_queue.put(chunk_data)
 
             except Exception as e:
@@ -3859,6 +4795,227 @@ class LocalVectorDB(BaseVectorDB):
         )
 
         return result_ids
+
+    async def _async_process_from_chunks_pipeline(
+            self,
+            chunks_by_document: Dict[str, List[Chunk]],
+            metadata_batch: Dict[str, Dict[str, Any]],
+            batch_size: int,
+            similarity_threshold: Optional[float],
+            max_concurrent_chunks: int,
+            max_concurrent_embeddings: int,
+            mode: Literal["upsert", "insert"] = "upsert"
+    ) -> List[str]:
+        """
+        Async pipeline implementation for pre-chunked documents with chunk hash optimization.
+        
+        Similar to _async_pipeline_process but skips the chunking stage since chunks are provided.
+        
+        2-stage async pipeline with backpressure control:
+        1. Async chunk comparison + embedding generation (only for changed chunks)
+        2. Async database operations
+        
+        Parameters
+        ----------
+        chunks_by_document : Dict[str, List[Chunk]]
+            Pre-chunked documents indexed by document ID
+        metadata_batch : Dict[str, Dict[str, Any]]
+            Metadata indexed by document ID
+        batch_size : int
+            Batch size for embedding generation
+        similarity_threshold : Optional[float]
+            Similarity threshold for filtering duplicate chunks
+        max_concurrent_chunks : int
+            Maximum concurrent chunk comparison operations
+        max_concurrent_embeddings : int
+            Maximum concurrent embedding operations
+        mode : Literal["upsert", "insert"], default="upsert"
+            Operation mode
+            
+        Returns
+        -------
+        List[str]
+            List of processed document IDs
+        """
+        # PRE-PROCESSING: Fetch existing chunks for all documents
+        doc_ids = list(chunks_by_document.keys())
+        existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(doc_ids)
+
+        # Async queues for coordination
+        embedding_queue = asyncio.Queue(maxsize=3)
+
+        # Semaphores for concurrency control
+        embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
+
+        result_ids = []
+
+        async def chunk_comparison_producer():
+            """Stage 1: Async chunk comparison and embedding preparation"""
+            try:
+                comparison_tasks = []
+                for doc_id, chunks in chunks_by_document.items():
+                    metadata = metadata_batch.get(doc_id, {})
+                    task = asyncio.create_task(
+                        self._compare_chunks_and_prepare_async(
+                            doc_id, chunks, metadata, existing_chunks_by_doc.get(doc_id, {}), 
+                            batch_size, embedding_semaphore
+                        )
+                    )
+                    comparison_tasks.append(task)
+
+                # Wait for all chunk comparison/embedding to complete and add to queue
+                for task in asyncio.as_completed(comparison_tasks):
+                    chunk_data = await task
+                    if chunk_data:  # Only add valid results
+                        await embedding_queue.put(chunk_data)
+
+                # Signal completion
+                await embedding_queue.put(None)
+
+            except Exception as e:
+                logger.error(f"Chunk comparison producer error: {e}")
+                await embedding_queue.put(None)
+                raise
+
+        async def database_consumer():
+            """Stage 2: Async database operations"""
+            try:
+                while True:
+                    chunk_data = await embedding_queue.get()
+                    if chunk_data is None:  # Completion signal
+                        break
+
+                    doc_id = await self._process_document_data_async(
+                        chunk_data, similarity_threshold, mode
+                    )
+                    
+                    if doc_id:
+                        result_ids.append(doc_id)
+
+            except Exception as e:
+                logger.error(f"Database consumer error: {e}")
+                raise
+
+        # Run both stages concurrently
+        await asyncio.gather(
+            chunk_comparison_producer(),
+            database_consumer()
+        )
+
+        return result_ids
+
+    async def _compare_chunks_and_prepare_async(
+            self,
+            doc_id: str,
+            chunks: List[Chunk],
+            metadata: Dict[str, Any],
+            existing_chunks: Dict[int, Dict[str, Any]],
+            batch_size: int,
+            embedding_semaphore: asyncio.Semaphore
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Async helper to compare chunks and prepare embedding data.
+        
+        Parameters
+        ----------
+        doc_id : str
+            Document ID
+        chunks : List[Chunk]
+            List of chunks for this document
+        metadata : Dict[str, Any]
+            Document metadata
+        existing_chunks : Dict[int, Dict[str, Any]]
+            Existing chunks for comparison
+        batch_size : int
+            Embedding batch size
+        embedding_semaphore : asyncio.Semaphore
+            Semaphore for embedding concurrency control
+            
+        Returns
+        -------
+        Optional[Dict[str, Any]]
+            Prepared chunk data or None if processing failed
+        """
+        try:
+            # Categorize chunks: unchanged vs needs_embedding
+            unchanged_chunks = []
+            chunks_needing_embedding = []
+            chunk_texts_for_embedding = []
+            
+            # Track which existing chunks are being reused
+            reused_chunk_indices = set()
+            
+            for chunk in chunks:
+                existing_chunk = existing_chunks.get(chunk.index)
+                
+                if (existing_chunk and
+                        existing_chunk['content_hash'] == chunk.content_hash and
+                        existing_chunk['faiss_id'] is not None):
+                    
+                    # Chunk unchanged - reuse existing FAISS ID
+                    chunk.faiss_id = existing_chunk['faiss_id']
+                    unchanged_chunks.append(chunk)
+                    reused_chunk_indices.add(chunk.index)
+                    logger.debug(f"Reusing chunk {doc_id}:{chunk.index} (hash: {chunk.content_hash[:8]}...)")
+                    
+                else:
+                    # Chunk changed/new - needs embedding
+                    chunks_needing_embedding.append(chunk)
+                    chunk_texts_for_embedding.append(chunk.content)
+                    logger.debug(f"Re-embedding chunk {doc_id}:{chunk.index} (hash: {chunk.content_hash[:8]}...)")
+            
+            # Calculate what needs to be removed
+            chunk_indices_to_remove = []
+            faiss_ids_to_remove = []
+            
+            for chunk_index, chunk_info in existing_chunks.items():
+                if chunk_index not in reused_chunk_indices:
+                    chunk_indices_to_remove.append(chunk_index)
+                    if chunk_info['faiss_id'] is not None:
+                        faiss_ids_to_remove.append(chunk_info['faiss_id'])
+            
+            # Generate embeddings for changed chunks
+            new_embeddings = None
+            if chunk_texts_for_embedding:
+                async with embedding_semaphore:
+                    logger.debug(f"Generating embeddings for {len(chunk_texts_for_embedding)} chunks in {doc_id}")
+                    new_embeddings = await self.embedding_provider.embed_batch(chunk_texts_for_embedding, batch_size)
+                    
+                    # Assign FAISS IDs to new chunks (will be updated with actual IDs in database worker)
+                    for chunk in chunks_needing_embedding:
+                        chunk.faiss_id = None  # Will be set when added to FAISS
+            else:
+                new_embeddings = np.array([]).reshape(0, self.embedding_dimension)
+                logger.debug(f"No new embeddings needed for {doc_id}")
+            
+            # Generate metadata embeddings if needed
+            embedding_enabled_fields = self._get_embedding_enabled_fields()
+            field_embeddings = {}
+            if embedding_enabled_fields:
+                field_embeddings = await self._generate_metadata_embeddings_async(
+                    metadata, embedding_enabled_fields, batch_size
+                )
+            
+            # Reconstruct document text from chunks for metadata purposes
+            doc_text = "\n".join([chunk.content for chunk in chunks])
+            content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
+            
+            return {
+                'doc_id': doc_id,
+                'doc_text': doc_text,
+                'content_hash': content_hash,
+                'metadata': metadata,
+                'unchanged_chunks': unchanged_chunks,
+                'chunks_needing_embedding': chunks_needing_embedding,
+                'new_embeddings': new_embeddings,
+                'chunk_indices_to_remove': chunk_indices_to_remove,
+                'faiss_ids_to_remove': faiss_ids_to_remove,
+                'field_embeddings': field_embeddings
+            }
+            
+        except Exception as e:
+            logger.error(f"Error comparing chunks for document {doc_id}: {e}")
+            return None
 
     async def _fetch_existing_chunks_batch_async(self, doc_ids: List[str]) -> Dict[str, Dict[int, Dict[str, Any]]]:
         """
@@ -5522,33 +6679,58 @@ class LocalVectorDB(BaseVectorDB):
             # Validate metadata (reuse sync validation in executor)
             await self._validate_metadata_async(updated_metadata)
 
+            # Check if any embedding-enabled metadata fields have changed
+            changed_embedding_fields = self._get_changed_embedding_fields(
+                existing_doc.metadata, updated_metadata
+            )
+
             async with self.async_connection_pool.get_connection_context() as conn:
-                # Build UPDATE statement for metadata
-                set_clauses = ['updated_at = ?']
-                values = [datetime.now(UTC)]
+                await conn.execute('BEGIN')
+                try:
+                    # Remove old metadata embeddings if any fields changed
+                    if changed_embedding_fields:
+                        await self._remove_metadata_embeddings_async(conn, doc_id)
+                        
+                        # Generate new metadata embeddings for changed fields
+                        new_field_embeddings = await self._generate_metadata_embeddings_async(
+                            updated_metadata, changed_embedding_fields, batch_size=100
+                        )
+                        
+                        # Store new metadata embeddings
+                        if new_field_embeddings:
+                            await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
+                            logger.debug(f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}")
 
-                for field_name, value in updated_metadata.items():
-                    if field_name in self.metadata_schema:
-                        set_clauses.append(f'{field_name} = ?')
-                        values.append(value)
+                    # Build UPDATE statement for metadata
+                    set_clauses = ['updated_at = ?']
+                    values = [datetime.now(UTC)]
 
-                values.append(doc_id)  # For WHERE clause
+                    for field_name, value in updated_metadata.items():
+                        if field_name in self.metadata_schema:
+                            set_clauses.append(f'{field_name} = ?')
+                            values.append(value)
 
-                update_sql = f"""
-                    UPDATE documents 
-                    SET {', '.join(set_clauses)}
-                    WHERE id = ?
-                """
+                    values.append(doc_id)  # For WHERE clause
 
-                cursor = await conn.execute(update_sql, values)
-                affected_rows = cursor.rowcount
-                await conn.commit()
+                    update_sql = f"""
+                        UPDATE documents 
+                        SET {', '.join(set_clauses)}
+                        WHERE id = ?
+                    """
 
-                if affected_rows > 0:
-                    changes_made = True
-                    logger.debug(f"Updated metadata for document {doc_id}")
-                else:
-                    logger.warning(f"No rows affected when updating document {doc_id}")
+                    cursor = await conn.execute(update_sql, values)
+                    affected_rows = cursor.rowcount
+                    await conn.commit()
+
+                    if affected_rows > 0:
+                        changes_made = True
+                        logger.debug(f"Updated metadata for document {doc_id}")
+                    else:
+                        logger.warning(f"No rows affected when updating document {doc_id}")
+                        
+                except Exception:
+                    await conn.rollback()
+                    raise
 
         if not changes_made:
             logger.debug(f"No changes made to document {doc_id}")
