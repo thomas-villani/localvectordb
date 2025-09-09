@@ -2129,6 +2129,13 @@ class LocalVectorDB(BaseVectorDB):
                 deleted_count = cursor.rowcount
                 conn.commit()
 
+            # Check if any documents were actually deleted
+            if deleted_count == 0:
+                if len(ids) == 1:
+                    raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
+                else:
+                    raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
+
             # Remove from FAISS index
             if faiss_ids_to_remove and hasattr(self.index, 'remove_ids'):
                 try:
@@ -6221,6 +6228,13 @@ class LocalVectorDB(BaseVectorDB):
             except Exception:
                 await conn.rollback()
                 raise
+
+        # Check if any documents were actually deleted
+        if deleted_count == 0:
+            if len(ids) == 1:
+                raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
+            else:
+                raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
 
         logger.info(f"Deleted {deleted_count} documents")
         return deleted_count
