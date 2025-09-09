@@ -10,6 +10,8 @@ Overview
 
 - **Ollama**: Local embeddings without API costs
 - **OpenAI**: Cloud-based embeddings with high quality
+- **JinaAI**: Advanced cloud-based embedding models with more control
+- **Google**: Cloud-based Gemini Embedding
 - **Custom Providers**: Plugin system for additional providers
 
 Embedding Providers
@@ -103,6 +105,133 @@ Available Models:
 - ``text-embedding-3-small``: 1536 dimensions, cost-effective
 - ``text-embedding-3-large``: 3072 dimensions, highest quality
 - ``text-embedding-ada-002``: Legacy model, still good quality
+
+JinaAI Provider
+^^^^^^^^^^^^^^^
+
+Advanced cloud-based embedding models with extensive customization options.
+
+Setup:
+
+.. code-block:: bash
+
+   export JINA_API_KEY=your_api_key_here
+   # Get your free API key at: https://jina.ai/?sui=apikey
+
+Configuration:
+
+.. code-block:: python
+
+   # Basic configuration
+   db = VectorDB(
+       "my_db",
+       embedding_provider="jina",
+       embedding_model="jina-embeddings-v4"
+   )
+
+   # Advanced configuration with task-specific optimization
+   db = VectorDB(
+       "my_db",
+       embedding_provider="jina",
+       embedding_model="jina-embeddings-v4",
+       embedding_config={
+           "api_key": "your_api_key_here",
+           "task": "retrieval.passage",  # Optimize for document retrieval
+           "requested_dimensions": 1024,  # Truncate to 1024 dimensions
+           "truncate": True,
+           "late_chunking": True
+       }
+   )
+
+   # Code embeddings
+   db = VectorDB(
+       "my_db",
+       embedding_provider="jina",
+       embedding_model="jina-code-embeddings-1.5b",
+       embedding_config={
+           "task": "code2code.passage"  # Code-to-code similarity
+       }
+   )
+
+Available Models:
+
+- ``jina-embeddings-v4``: 2048 dimensions, multimodal/multilingual
+- ``jina-embeddings-v3``: 1024 dimensions, text-only
+- ``jina-code-embeddings-1.5b``: 1536 dimensions, code-specialized
+- ``jina-code-embeddings-0.5b``: 896 dimensions, code-specialized
+
+Task Types for jina-embeddings-v4:
+
+- ``retrieval.query``: For search queries
+- ``retrieval.passage``: For documents being searched
+- ``text-matching``: For similarity comparisons
+- ``code.query`` / ``code.passage``: For code search
+
+Task Types for code models:
+
+- ``nl2code.query`` / ``nl2code.passage``: Natural language to code
+- ``code2code.query`` / ``code2code.passage``: Code-to-code search
+- ``code2nl.query`` / ``code2nl.passage``: Code to natural language
+- ``code2completion.query`` / ``code2completion.passage``: Code completion
+- ``qa.query`` / ``qa.passage``: Question-answering
+
+Google AI Provider
+^^^^^^^^^^^^^^^^^^
+
+Google's Gemini embedding models with flexible configuration.
+
+Setup:
+
+.. code-block:: bash
+
+   # Set one of these environment variables
+   export GEMINI_API_KEY=your_api_key_here
+   export GOOGLE_API_KEY=your_api_key_here
+
+Configuration:
+
+.. code-block:: python
+
+   # Basic configuration
+   db = VectorDB(
+       "my_db",
+       embedding_provider="google",
+       embedding_model="gemini-embedding-001"
+   )
+
+   # Advanced configuration with task optimization
+   db = VectorDB(
+       "my_db",
+       embedding_provider="google",
+       embedding_model="gemini-embedding-001",
+       embedding_config={
+           "api_key": "your_api_key_here",     # Or better yet, use GEMINI_API_KEY environment variable instead
+           "task_type": "retrieval_document",  # Optimize for document storage
+           "requested_dimensions": 1536,       # Control output size
+           "normalize": True                    # L2-normalize vectors
+       }
+   )
+
+Available Models:
+
+- ``gemini-embedding-001``: 3072 dimensions (default), stable production model
+
+Task Types:
+
+- ``semantic_similarity``: General text similarity (default)
+- ``classification``: Text classification tasks
+- ``clustering``: Document clustering
+- ``retrieval_document``: For documents being indexed
+- ``retrieval_query``: For search queries
+- ``code_retrieval_query``: Code search queries
+- ``question_answering``: Q&A systems
+- ``fact_verification``: Fact-checking tasks
+
+Configuration Options:
+
+- ``requested_dimensions``: Output size (128-3072), defaults to 3072
+- ``normalize``: L2-normalize vectors (recommended for non-3072 outputs)
+- ``task_type``: Task-specific optimization
 
 Custom Provider Example
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -222,23 +351,33 @@ Performance Comparison
    benchmark_provider("ollama", "nomic-embed-text", test_texts)
    benchmark_provider("ollama", "all-minilm", test_texts)
    benchmark_provider("openai", "text-embedding-3-small", test_texts)
+   benchmark_provider("jina", "jina-embeddings-v4", test_texts)
+   benchmark_provider("google", "gemini-embedding-001", test_texts)
 
 Quality Considerations
 ^^^^^^^^^^^^^^^^^^^^^^
 
-+----------------------+------------------------+------------+-----------+-----------------+
-| Provider             | Model                  | Dimensions | Speed     | Cost            |
-+======================+========================+============+===========+=================+
-| Ollama               | nomic-embed-text       | 768        | Medium    | Free            |
-+----------------------+------------------------+------------+-----------+-----------------+
-| Ollama               | mxbai-embed-large      | 1024       | Medium    | Free            |
-+----------------------+------------------------+------------+-----------+-----------------+
-| Ollama               | all-minilm             | 384        | Fast      | Free            |
-+----------------------+------------------------+------------+-----------+-----------------+
-| OpenAI               | text-embedding-3-small | 1536       | Fast      | $0.02/1M tokens |
-+----------------------+------------------------+------------+-----------+-----------------+
-| OpenAI               | text-embedding-3-large | 3072       | Fast      | $0.13/1M tokens |
-+----------------------+------------------------+------------+-----------+-----------------+
++----------------------+----------------------------+------------+-----------+-----------------+
+| Provider             | Model                      | Dimensions | Speed     | Cost            |
++======================+============================+============+===========+=================+
+| Ollama               | nomic-embed-text           | 768        | Medium    | Free            |
++----------------------+----------------------------+------------+-----------+-----------------+
+| Ollama               | mxbai-embed-large          | 1024       | Medium    | Free            |
++----------------------+----------------------------+------------+-----------+-----------------+
+| Ollama               | all-minilm                 | 384        | Fast      | Free            |
++----------------------+----------------------------+------------+-----------+-----------------+
+| OpenAI               | text-embedding-3-small     | 1536       | Fast      | $0.02/1M tokens |
++----------------------+----------------------------+------------+-----------+-----------------+
+| OpenAI               | text-embedding-3-large     | 3072       | Fast      | $0.13/1M tokens |
++----------------------+----------------------------+------------+-----------+-----------------+
+| JinaAI               | jina-embeddings-v4         | 2048       | Fast      | Free tier       |
++----------------------+----------------------------+------------+-----------+-----------------+
+| JinaAI               | jina-embeddings-v3         | 1024       | Fast      | Free tier       |
++----------------------+----------------------------+------------+-----------+-----------------+
+| JinaAI               | jina-code-embeddings-1.5b  | 1536       | Fast      | Free tier       |
++----------------------+----------------------------+------------+-----------+-----------------+
+| Google AI            | gemini-embedding-001       | 3072       | Fast      | Free tier       |
++----------------------+----------------------------+------------+-----------+-----------------+
 
 Advanced Configuration
 ----------------------
@@ -351,7 +490,7 @@ Create a Python package with entry points.
            ],
        },
        install_requires=[
-           "localvectordb>=2.0.0",
+           "localvectordb>=1.0.0",
            "requests",  # Your dependencies
        ]
    )

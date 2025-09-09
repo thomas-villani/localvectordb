@@ -10,7 +10,7 @@ import httpx
 
 from localvectordb.embeddings import (
     EmbeddingProvider, OllamaEmbeddings, OpenAIEmbeddings, MockEmbeddings,
-    EmbeddingRegistry, create_embedding_provider, list_providers,
+    JinaEmbeddings, GoogleEmbeddings, EmbeddingRegistry, create_embedding_provider, list_providers,
     embed_texts, embed_texts_sync
 )
 from localvectordb.exceptions import OllamaNotFoundError, EmbeddingError
@@ -400,6 +400,391 @@ class TestOpenAIEmbeddings:
 
 @pytest.mark.unit
 @pytest.mark.embedding
+@pytest.mark.network
+class TestJinaEmbeddings:
+    """Test JinaEmbeddings provider."""
+
+    def test_create_jina_provider(self):
+        """Test creating JinaAI embedding provider."""
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test-key", task="text-matching")
+        assert provider.model == "jina-embeddings-v4"
+        assert provider.api_key == "test-key"
+        assert provider.provider_name == "jina"
+        assert provider.max_batch_size == 512
+
+    def test_create_without_api_key(self):
+        """Test creating without API key raises error."""
+        with patch.dict('os.environ', {}, clear=True):
+            with pytest.raises(ValueError, match="Jina API key is required"):
+                JinaEmbeddings("jina-embeddings-v4", task="text-matching")
+
+    @patch.dict('os.environ', {'JINA_API_KEY': 'env-key'})
+    def test_api_key_from_environment(self):
+        """Test getting API key from environment."""
+        provider = JinaEmbeddings("jina-embeddings-v4", task="text-matching")
+        assert provider.api_key == "env-key"
+
+    def test_api_key_from_env_var_reference(self):
+        """Test getting API key from custom environment variable."""
+        with patch.dict('os.environ', {'CUSTOM_JINA_KEY': 'custom-key'}):
+            provider = JinaEmbeddings("jina-embeddings-v4", api_key="$CUSTOM_JINA_KEY")
+            assert provider.api_key == "custom-key"
+
+    def test_known_model_dimensions(self):
+        """Test getting dimension for known models."""
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test", task="text-matching")
+        assert provider.get_dimension() == 2048
+
+        provider = JinaEmbeddings("jina-embeddings-v3", api_key="test")
+        assert provider.get_dimension() == 1024
+
+        provider = JinaEmbeddings("jina-code-embeddings-1.5b", api_key="test")
+        assert provider.get_dimension() == 1536
+
+    def test_requested_dimensions_override(self):
+        """Test that requested_dimensions overrides known dimensions."""
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test", requested_dimensions=512)
+        assert provider.get_dimension() == 512
+
+    def test_validate_model_task_validation(self):
+        """Test task validation for different models."""
+        # Valid task for v4
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test", task="retrieval.query")
+        assert provider.task == "retrieval.query"
+
+        # Valid task for code model
+        provider = JinaEmbeddings("jina-code-embeddings-1.5b", api_key="test", task="code2code.query")
+        assert provider.task == "code2code.query"
+
+        # Invalid task should raise error
+        with pytest.raises(ValueError, match="`task` must be one of"):
+            JinaEmbeddings("jina-embeddings-v4", api_key="test", task="invalid_task")
+
+    def test_validate_model_always_returns_true(self):
+        """Test model validation (currently simplified to return True)."""
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test")
+        assert provider.validate_model() is True
+
+    @patch('httpx.Client')
+    def test_get_dimension_api_probe(self, mock_client_class):
+        """Test dimension detection via API probe for unknown models."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "data": [{"embedding": [0.1, 0.2, 0.3, 0.4, 0.5]}]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        # Unknown model should probe API
+        provider = JinaEmbeddings("unknown-model", api_key="test-key")
+        provider._dimension = None  # Force dimension detection
+        dimension = provider._get_model_dimension_api()
+
+        assert dimension == 5
+        mock_client.post.assert_called_once()
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_success(self, mock_client_class):
+        """Test successful embedding generation."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "data": [
+                {"embedding": [0.1, 0.2, 0.3]},
+                {"embedding": [0.4, 0.5, 0.6]}
+            ]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test-key")
+        provider._dimension = 3  # Set dimension to avoid test call
+
+        texts = ["hello", "world"]
+        embeddings = await provider.embed_batch(texts)
+
+        assert embeddings.shape == (2, 3)
+        np.testing.assert_array_equal(embeddings[0], np.asarray([0.1, 0.2, 0.3], dtype=np.float32))
+        np.testing.assert_array_equal(embeddings[1], np.asarray([0.4, 0.5, 0.6], dtype=np.float32))
+
+        # Check API call
+        expected_payload = {
+            "model": "jina-embeddings-v4",
+            "input": texts,
+            "task": "text-matching",
+        }
+        mock_client.post.assert_called_once_with(
+            "https://api.jina.ai/v1/embeddings",
+            headers={
+                "Authorization": "Bearer test-key",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
+            json=expected_payload,
+            timeout=provider.timeout
+        )
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_with_task_and_dimensions(self, mock_client_class):
+        """Test embedding with task and dimensions configuration."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "data": [{"embedding": [0.1, 0.2]}]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = JinaEmbeddings(
+            "jina-embeddings-v4",
+            api_key="test-key",
+            task="retrieval.passage",
+            requested_dimensions=512,
+            truncate=True,
+            late_chunking=True
+        )
+        provider._dimension = 2
+
+        texts = ["test"]
+        await provider.embed_batch(texts)
+
+        # Check that advanced options are included in payload
+        expected_payload = {
+            "model": "jina-embeddings-v4",
+            "input": texts,
+            "task": "retrieval.passage",
+            "dimensions": 512,
+            "truncate": True,
+            "late_chunking": True
+        }
+        mock_client.post.assert_called_once_with(
+            "https://api.jina.ai/v1/embeddings",
+            headers={
+                "Authorization": "Bearer test-key",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
+            json=expected_payload,
+            timeout=provider.timeout
+        )
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_error_response(self, mock_client_class):
+        """Test embedding with error response."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "error": {"message": "Invalid API key"}
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test-key")
+        provider._dimension = 384
+
+        with pytest.raises(RuntimeError, match="Jina API error: Invalid API key"):
+            await provider.embed_batch(["test"])
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_empty_list(self, mock_client_class):
+        """Test embedding empty list returns single empty embedding."""
+        provider = JinaEmbeddings("jina-embeddings-v4", api_key="test-key")
+        provider._dimension = 384
+
+        embeddings = await provider.embed_batch([])
+        assert len(embeddings) == 0
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+@pytest.mark.network
+class TestGoogleEmbeddings:
+    """Test GoogleEmbeddings provider."""
+
+    def test_create_google_provider(self):
+        """Test creating Google AI embedding provider."""
+        provider = GoogleEmbeddings(api_key="test-key")
+        assert provider.model == "gemini-embedding-001"
+        assert provider.api_key == "test-key"
+        assert provider.provider_name == "google"
+        assert provider.max_batch_size == 200
+
+    def test_create_without_api_key(self):
+        """Test creating without API key raises error."""
+        with patch.dict('os.environ', {}, clear=True):
+            with pytest.raises(ValueError, match="Google AI.*API key is required"):
+                GoogleEmbeddings()
+
+    @patch.dict('os.environ', {'GEMINI_API_KEY': 'env-key'})
+    def test_api_key_from_gemini_env(self):
+        """Test getting API key from GEMINI_API_KEY environment."""
+        provider = GoogleEmbeddings()
+        assert provider.api_key == "env-key"
+
+    @patch.dict('os.environ', {'GOOGLE_API_KEY': 'google-key'})
+    def test_api_key_from_google_env(self):
+        """Test getting API key from GOOGLE_API_KEY environment."""
+        provider = GoogleEmbeddings()
+        assert provider.api_key == "google-key"
+
+    def test_custom_configuration(self):
+        """Test custom configuration options."""
+        provider = GoogleEmbeddings(
+            model="gemini-embedding-001",
+            api_key="test-key",
+            task_type="retrieval_document",
+            requested_dimensions=1536,
+            normalize=False,
+            base_url="https://custom.googleapis.com"
+        )
+        assert provider.model == "gemini-embedding-001"
+        assert provider.task_type == "RETRIEVAL_DOCUMENT"
+        assert provider.requested_dimensions == 1536
+        assert provider.normalize is False
+        assert provider.base_url == "https://custom.googleapis.com"
+
+    def test_requested_dimensions_sets_dimension(self):
+        """Test that requested_dimensions immediately sets _dimension."""
+        provider = GoogleEmbeddings(api_key="test", requested_dimensions=1024)
+        assert provider._dimension == 1024
+        assert provider.get_dimension() == 1024
+
+    @patch('httpx.Client')
+    def test_validate_model_success(self, mock_client_class):
+        """Test successful model validation."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_client.get.return_value = mock_response
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        provider = GoogleEmbeddings(api_key="test-key")
+        result = provider.validate_model()
+
+        assert result is True
+        mock_client.get.assert_called_once_with(
+            f"{provider.base_url}/models/{provider.model}",
+            headers={"x-goog-api-key": "test-key"},
+            timeout=provider.timeout
+        )
+
+    @patch('httpx.Client')
+    def test_validate_model_not_found(self, mock_client_class):
+        """Test model validation when model not found."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_client.get.return_value = mock_response
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        provider = GoogleEmbeddings(api_key="test-key")
+        result = provider.validate_model()
+
+        assert result is False
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_success(self, mock_client_class):
+        """Test successful embedding generation."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "embeddings": [
+                {"values": [0.1, 0.2, 0.3]},
+                {"values": [0.4, 0.5, 0.6]}
+            ]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = GoogleEmbeddings(api_key="test-key", requested_dimensions=3, normalize=False)
+
+        texts = ["hello", "world"]
+        embeddings = await provider.embed_batch(texts)
+
+        assert embeddings.shape == (2, 3)
+        np.testing.assert_array_equal(embeddings[0], np.asarray([0.1, 0.2, 0.3], dtype=np.float32))
+        np.testing.assert_array_equal(embeddings[1], np.asarray([0.4, 0.5, 0.6], dtype=np.float32))
+
+        # Check API call structure
+        expected_contents = [{"parts": [{"text": "hello"}]}, {"parts": [{"text": "world"}]}]
+        expected_payload = {
+            "contents": expected_contents,
+            "embedding_config": {
+                "task_type": "SEMANTIC_SIMILARITY",
+                "output_dimensionality": 3
+            }
+        }
+        mock_client.post.assert_called_once_with(
+            f"{provider.base_url}/models/{provider.model}:embedContent",
+            headers={
+                "x-goog-api-key": "test-key",
+                "Content-Type": "application/json"
+            },
+            json=expected_payload,
+            timeout=provider.timeout
+        )
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_with_normalization(self, mock_client_class):
+        """Test embedding with vector normalization."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "embeddings": [
+                {"values": [3.0, 4.0]}  # Magnitude = 5.0
+            ]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = GoogleEmbeddings(api_key="test-key", normalize=True, requested_dimensions=2)
+
+        texts = ["test"]
+        embeddings = await provider.embed_batch(texts)
+
+        # Should be normalized to unit vector
+        expected = np.array([[0.6, 0.8]], dtype=np.float32)  # [3/5, 4/5]
+        np.testing.assert_array_almost_equal(embeddings, expected, decimal=6)
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_error_response(self, mock_client_class):
+        """Test embedding with malformed response."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {"error": "Invalid request"}
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = GoogleEmbeddings(api_key="test-key", requested_dimensions=3)
+
+        with pytest.raises(RuntimeError, match="Unexpected response from Google AI embeddings API"):
+            await provider.embed_batch(["test"])
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
 class TestEmbeddingRegistry:
     """Test EmbeddingRegistry class."""
 
@@ -452,6 +837,8 @@ class TestEmbeddingRegistry:
         assert "mock" in providers
         assert "ollama" in providers
         assert "openai" in providers
+        assert "jina" in providers
+        assert "google" in providers
         assert isinstance(providers, list)
 
     def test_builtin_providers_registered(self):
@@ -459,6 +846,8 @@ class TestEmbeddingRegistry:
         assert "ollama" in EmbeddingRegistry._providers
         assert "openai" in EmbeddingRegistry._providers
         assert "mock" in EmbeddingRegistry._providers
+        assert "jina" in EmbeddingRegistry._providers
+        assert "google" in EmbeddingRegistry._providers
 
     @patch('importlib.metadata.entry_points')
     def test_discover_plugins_importlib_metadata(self, mock_entry_points):
@@ -503,6 +892,8 @@ class TestConvenienceFunctions:
         assert "mock" in providers
         assert "ollama" in providers
         assert "openai" in providers
+        assert "jina" in providers
+        assert "google" in providers
 
     @pytest.mark.asyncio
     async def test_embed_texts_async(self):

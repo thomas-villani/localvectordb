@@ -833,13 +833,13 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         "jina-code-embeddings-1.5b": 1536,
         "jina-code-embeddings-0.5b": 896,
     }
-
     _MODEL_TASKS = {
         "jina-embeddings-v3": ["text-matching", "retrieval.passage", "separation", "text-matching", None],
         "jina-embeddings-v4": ["text-matching", "retrieval.query", "retrieval.passage", "code.query", "code.passage"],
         "jina-code-embeddings-1.5b": [
             "nl2code.query",
             "nl2code.passage",
+            "code2code.query",
             "code2code.passage",
             "code2nl.query",
             "code2nl.passage",
@@ -851,6 +851,7 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         "jina-code-embeddings-0.5b": [
             "nl2code.query",
             "nl2code.passage",
+            "code2code.query",
             "code2code.passage",
             "code2nl.query",
             "code2nl.passage",
@@ -861,11 +862,12 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         ]
     }
 
+
     def __init__(
             self,
             model: str,
             api_key: Optional[str] = None,
-            task: Optional[str] = None,
+            task: Optional[str] = "auto",
             truncate: bool = False,
             late_chunking: bool = False,
             requested_dimensions: Optional[int] = None,
@@ -898,7 +900,13 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         if model not in self._MODEL_TASKS:
             self.task = None
         else:
-            if self.task not in (allowed_tasks := self._MODEL_TASKS.get(model, [])):
+            allowed_tasks = self._MODEL_TASKS.get(model, [])
+            if self.task == "auto":
+                if allowed_tasks:
+                    self.task = allowed_tasks[0]
+                else:
+                    self.task = None
+            elif self.task not in allowed_tasks:
                 raise ValueError(f"`task` must be one of {allowed_tasks} for Jina AI model {model}")
 
         self.late_chunking: bool = late_chunking
