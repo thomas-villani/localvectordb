@@ -83,6 +83,7 @@ import string
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Dict, Generator, List, Optional
@@ -90,6 +91,12 @@ from typing import Any, Dict, Generator, List, Optional
 import bcrypt
 
 logger = logging.getLogger(__name__)
+
+
+class PermissionLevel(Enum):
+    """API key permission levels"""
+    READ_ONLY = "read_only"
+    READ_WRITE = "read_write"
 
 
 @dataclass
@@ -103,6 +110,7 @@ class KeyRecord:
     last_used: Optional[datetime] = None
     active: bool = True
     created_by: Optional[str] = None
+    permission_level: PermissionLevel = PermissionLevel.READ_WRITE
 
     # This field is only populated during key creation
     plain_key: Optional[str] = None
@@ -132,6 +140,7 @@ class KeyRecord:
             'last_used': self.last_used.isoformat() if self.last_used else None,
             'active': self.active,
             'created_by': self.created_by,
+            'permission_level': self.permission_level.value,
             'is_expired': self.is_expired,
             'days_until_expiry': self.days_until_expiry
         }
@@ -139,6 +148,15 @@ class KeyRecord:
     @classmethod
     def from_db_row(cls, row: sqlite3.Row) -> 'KeyRecord':
         """Create KeyRecord from database row"""
+        # Handle permission_level with backward compatibility
+        permission_level = PermissionLevel.READ_WRITE  # Default for backward compatibility
+        if 'permission_level' in row.keys() and row['permission_level']:
+            try:
+                permission_level = PermissionLevel(row['permission_level'])
+            except ValueError:
+                # If invalid permission level in DB, default to read_write
+                permission_level = PermissionLevel.READ_WRITE
+        
         return cls(
             id=row['id'],
             key_hash=row['key_hash'],
@@ -147,7 +165,8 @@ class KeyRecord:
             expires_at=datetime.fromisoformat(row['expires_at']) if row['expires_at'] else None,
             last_used=datetime.fromisoformat(row['last_used']) if row['last_used'] else None,
             active=bool(row['active']),
-            created_by=row['created_by']
+            created_by=row['created_by'],
+            permission_level=permission_level
         )
 
 
@@ -161,7 +180,7 @@ class KeyManager:
     """
 
     # Database schema version for migrations
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     # Key generation settings
     KEY_PREFIX = "lvdb_"
@@ -184,9 +203,9 @@ class KeyManager:
         self._init_database()
 
     def _init_database(self) -> None:
-        """Initialize the SQLite database with required schema"""
+        """Initialize the SQLite database with required schema and handle migrations"""
         with self._get_connection() as conn:
-            # Create keys table
+            # Create keys table with latest schema
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (
                     id TEXT PRIMARY KEY,
@@ -196,7 +215,8 @@ class KeyManager:
                     expires_at TIMESTAMP,
                     last_used TIMESTAMP,
                     active BOOLEAN NOT NULL DEFAULT TRUE,
-                    created_by TEXT
+                    created_by TEXT,
+                    permission_level TEXT NOT NULL DEFAULT 'read_write'
                 )
             """)
 
@@ -211,6 +231,17 @@ class KeyManager:
                 ON api_keys(expires_at)
             """)
 
+            # Only create permission index after ensuring column exists
+            try:
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_api_keys_permission 
+                    ON api_keys(permission_level)
+                """)
+            except Exception as e:
+                # Column might not exist yet if this is a migration
+                logger.debug(f"Could not create permission index: {e}")
+                pass
+
             # Create schema version table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS schema_version (
@@ -218,13 +249,52 @@ class KeyManager:
                 )
             """)
 
-            # Set schema version if not exists
+            # Check current schema version and migrate if needed
             cursor = conn.execute("SELECT version FROM schema_version")
-            if not cursor.fetchone():
+            version_row = cursor.fetchone()
+            
+            if not version_row:
+                # New database - set current version
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)",
                              (self.SCHEMA_VERSION,))
+            else:
+                current_version = version_row['version']
+                if current_version < self.SCHEMA_VERSION:
+                    self._migrate_database(conn, current_version)
+                    # Update schema version
+                    conn.execute("UPDATE schema_version SET version = ?", (self.SCHEMA_VERSION,))
 
             conn.commit()
+
+    def _migrate_database(self, conn: Connection, from_version: int) -> None:
+        """Migrate database schema from one version to another"""
+        logger.info(f"Migrating key database from version {from_version} to {self.SCHEMA_VERSION}")
+        
+        if from_version < 2:
+            # Migration from version 1 to 2: Add permission_level column
+            try:
+                # Check if column already exists (in case of interrupted migration)
+                cursor = conn.execute("PRAGMA table_info(api_keys)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                if 'permission_level' not in columns:
+                    logger.info("Adding permission_level column to api_keys table")
+                    conn.execute("""
+                        ALTER TABLE api_keys 
+                        ADD COLUMN permission_level TEXT NOT NULL DEFAULT 'read_write'
+                    """)
+                    # Create index on the new column
+                    conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_api_keys_permission 
+                        ON api_keys(permission_level)
+                    """)
+                    logger.info("Successfully added permission_level column and index")
+                else:
+                    logger.info("permission_level column already exists")
+                    
+            except Exception as e:
+                logger.error(f"Error during database migration: {e}")
+                raise
 
     @contextmanager
     def _get_connection(self) -> Generator[Connection, Any, None]:
@@ -269,7 +339,8 @@ class KeyManager:
             self,
             description: Optional[str] = None,
             expires_days: Optional[int] = None,
-            created_by: Optional[str] = None
+            created_by: Optional[str] = None,
+            permission_level: PermissionLevel = PermissionLevel.READ_WRITE
     ) -> KeyRecord:
         """
         Create a new API key
@@ -282,6 +353,8 @@ class KeyManager:
             Number of days until key expires (None = never expires)
         created_by : str, optional
             Identifier of who created the key
+        permission_level : PermissionLevel, optional
+            Permission level for the key (defaults to READ_WRITE)
 
         Returns
         -------
@@ -301,16 +374,16 @@ class KeyManager:
         with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO api_keys 
-                (id, key_hash, description, created_at, expires_at, created_by, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, key_hash, description, created_at, expires_at, created_by, active, permission_level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 key_id, key_hash, description, created_at.isoformat(),
                 expires_at.isoformat() if expires_at else None,
-                created_by, True
+                created_by, True, permission_level.value
             ))
             conn.commit()
 
-        logger.info(f"Created API key {key_id} with description: {description}")
+        logger.info(f"Created API key {key_id} with description: {description}, permission: {permission_level.value}")
 
         # Return record with plain key (only time it's available)
         return KeyRecord(
@@ -320,6 +393,7 @@ class KeyManager:
             created_at=created_at,
             expires_at=expires_at,
             created_by=created_by,
+            permission_level=permission_level,
             active=True,
             plain_key=plain_key  # Only included during creation
         )
@@ -375,6 +449,68 @@ class KeyManager:
 
         logger.debug("Key validation failed")
         return False
+
+    def validate_key_with_permissions(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> tuple[bool, Optional[PermissionLevel]]:
+        """
+        Validate an API key and return its permission level
+
+        Parameters
+        ----------
+        key : str
+            The API key to validate
+        update_last_used : bool, default True
+            Whether to update the last_used timestamp
+        prune_expired : bool, default False
+            Whether to automatically prune expired keys
+
+        Returns
+        -------
+        tuple[bool, Optional[PermissionLevel]]
+            (is_valid, permission_level) - permission_level is None if key is invalid
+        """
+        if not key or not key.startswith(self.KEY_PREFIX):
+            return False, None
+            
+        with self._get_connection() as conn:
+            # Get all active keys with permission levels
+            cursor = conn.execute("""
+                SELECT id, key_hash, expires_at, permission_level FROM api_keys 
+                WHERE active = TRUE
+            """)
+
+            for row in cursor:
+                # Check if key matches
+                if self._verify_key(key, row['key_hash']):
+                    # Check expiration
+                    if row['expires_at']:
+                        expires_at = datetime.fromisoformat(row['expires_at'])
+                        if datetime.now(UTC) > expires_at:
+                            logger.info(f"Key {row['id']} is expired")
+                            if prune_expired:
+                                logger.info(f"Pruning expired key: {row['id']}")
+                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'], ))
+                                conn.commit()
+                            return False, None
+
+                    # Update last used timestamp
+                    if update_last_used:
+                        conn.execute("""
+                            UPDATE api_keys SET last_used = ? WHERE id = ?
+                        """, (datetime.now(UTC).isoformat(), row['id']))
+                        conn.commit()
+
+                    # Get permission level
+                    try:
+                        permission_level = PermissionLevel(row['permission_level'])
+                    except (ValueError, KeyError):
+                        # If invalid permission level in DB, default to read_write for safety
+                        permission_level = PermissionLevel.READ_WRITE
+
+                    logger.debug(f"Key {row['id']} validated successfully with permission: {permission_level.value}")
+                    return True, permission_level
+
+        logger.debug("Key validation failed")
+        return False, None
 
     def get_key(self, key_id: str) -> Optional[KeyRecord]:
         """

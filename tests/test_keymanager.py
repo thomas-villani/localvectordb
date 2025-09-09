@@ -146,7 +146,7 @@ class TestKeyRecord:
 
         expected_keys = {
             'id', 'description', 'created_at', 'expires_at',
-            'last_used', 'active', 'created_by', 'is_expired',
+            'last_used', 'active', 'created_by', 'permission_level', 'is_expired',
             'days_until_expiry'
         }
         assert set(result.keys()) == expected_keys

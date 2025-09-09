@@ -351,7 +351,15 @@ Configuration values can be accessed using dot notation:
 Authentication and API Key Management
 -------------------------------------
 
-The LocalVectorDB CLI provides comprehensive API key management for secure server access.
+The LocalVectorDB CLI provides comprehensive API key management with permission-based access control for secure server access.
+
+Permission Levels
+^^^^^^^^^^^^^^^^^
+
+API keys support two permission levels:
+
+- **read_only**: Grants access to query, search, and read operations only. Cannot create, update, or delete any resources.
+- **read_write**: Full access to all operations including database creation, document management, and administrative functions.
 
 API keys are stored in `{root_dir}/api_keys.db` by default. To change the location of this file, set the
 configuration setting ``key_database_path = "path/to/your/api_keys.db"`` in the ``[server.security]`` section.
@@ -389,29 +397,38 @@ Check Authentication Status
 Create API Keys
 ^^^^^^^^^^^^^^^
 
+API keys support permission levels for fine-grained access control:
+
+- **read_only**: Can query and search, but cannot create, update, or delete resources
+- **read_write**: Full access to all operations (default)
+
 .. code-block:: bash
 
-   # Create a basic API key
+   # Create a basic read-write API key (default)
    lvdb auth create-key
 
-   # Create with description
-   lvdb auth create-key --description "Production API Access"
+   # Create a read-only key for monitoring/analytics
+   lvdb auth create-key --description "Monitoring Dashboard" --permission-level read_only
 
-   # Create with expiration
-   lvdb auth create-key --description "Temporary Access" --expires-days 30
+   # Create a read-write key with expiration
+   lvdb auth create-key --description "Admin Access" --permission-level read_write --expires-days 30
 
-   # Create with creator info
-   lvdb auth create-key --description "CI/CD Pipeline" --created-by "admin@company.com"
+   # Create a read-only key for public API
+   lvdb auth create-key --description "Public Search API" \
+                        --permission-level read_only \
+                        --expires-days 365 \
+                        --created-by "api-team"
 
    # JSON output for scripting
-   lvdb auth create-key --description "Script Access" --output json
+   lvdb auth create-key --description "Script Access" --permission-level read_only --output json
 
    # Key-only output for automation
-   lvdb auth create-key --output key-only
+   lvdb auth create-key --permission-level read_write --output key-only
 
 **Options**:
 
 - ``--description, -d``: Human-readable description of the key's purpose
+- ``--permission-level, -p``: Permission level (read_only, read_write) - defaults to read_write
 - ``--expires-days``: Number of days until key expires (omit for no expiration)
 - ``--created-by``: Identifier of who is creating the key
 - ``--output, -o``: Output format (table, json, key-only)
@@ -425,6 +442,7 @@ Create API Keys
    Key Details:
      Key ID: key_20241201_abc123
      Description: Production API Access
+     Permission Level: read_write
      Created: 2024-12-01 10:30:00 UTC
      Expires: Never
 
@@ -466,12 +484,12 @@ List API Keys
 
    API Keys:
 
-   ID                   Description                    Status     Created      Expires      Last Used
-   ------------------------------------------------------------------------------------------------------------------------
-   key_20241201_abc123  Production API Access          ACTIVE     2024-12-01   Never        2024-12-01
-   key_20241125_def456  CI/CD Pipeline                 ACTIVE     2024-11-25   2024-12-25   Never
-   key_20241120_ghi789  Temporary Access               EXPIRED    2024-11-20   2024-11-27   2024-11-26
-   key_20241115_jkl012  Development Access             ACTIVE     2024-11-15   Never        2024-11-30
+   ID                   Description              Permission   Status     Created      Expires      Last Used
+   -----------------------------------------------------------------------------------------------------------------------------------
+   key_20241201_abc123  Production API Access    read_write   ACTIVE     2024-12-01   Never        2024-12-01
+   key_20241125_def456  CI/CD Pipeline          read_write   ACTIVE     2024-11-25   2024-12-25   Never
+   key_20241120_ghi789  Monitoring Dashboard    read_only    ACTIVE     2024-11-20   Never        2024-11-26
+   key_20241115_jkl012  Development Access      read_write   EXPIRED    2024-11-15   2024-11-22   2024-11-21
 
 Get Key Information
 ^^^^^^^^^^^^^^^^^^^
@@ -493,6 +511,7 @@ Get Key Information
    Basic Information:
      ID: key_20241201_abc123
      Description: Production API Access
+     Permission Level: read_write
      Created by: admin@company.com
 
    Status:

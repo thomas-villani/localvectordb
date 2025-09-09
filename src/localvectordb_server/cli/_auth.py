@@ -14,6 +14,7 @@ from datetime import UTC
 import click
 
 from localvectordb_server.cli._utils import EXIT_CODE_ERROR
+from localvectordb_server.keymanager import PermissionLevel
 
 
 @click.group()
@@ -39,20 +40,23 @@ def auth(ctx):
 @click.option('--description', '-d', help='Description of the key purpose')
 @click.option('--expires-days', type=int, help='Number of days until key expires')
 @click.option('--created-by', help='Identifier of who is creating the key')
+@click.option('--permission-level', '-p', type=click.Choice(['read_only', 'read_write']),
+              default='read_write', help='Permission level for the key (default: read_write)')
 @click.option('--output', '-o', type=click.Choice(['table', 'json', 'key-only']),
               default='table', help='Output format')
 @click.pass_context
-def create_api_key(ctx, description, expires_days, created_by, output):
+def create_api_key(ctx, description, expires_days, created_by, permission_level, output):
     """
     Create a new API key.
 
     Generates a new API key for authenticating to the server. You can specify a description,
-    expiration, and creator. Output can be shown as a table, JSON, or key only.
+    expiration, permission level, and creator. Output can be shown as a table, JSON, or key only.
 
     \b
     Examples:
         \b
-        lvdb auth create-key --description "For admin"
+        lvdb auth create-key --description "For admin" --permission-level read_write
+        lvdb auth create-key --description "For monitoring" --permission-level read_only
         lvdb auth create-key --expires-days 30 --output json
     """
     try:
@@ -61,11 +65,15 @@ def create_api_key(ctx, description, expires_days, created_by, output):
         api_key_db_path = ctx.obj.get('api_key_db_path')
         key_manager = get_key_manager(api_key_db_path)
 
+        # Convert string to enum
+        perm_enum = PermissionLevel(permission_level)
+
         # Create the key
         key_record = key_manager.create_key(
             description=description,
             expires_days=expires_days,
-            created_by=created_by
+            created_by=created_by,
+            permission_level=perm_enum
         )
 
         if output == 'key-only':
@@ -84,6 +92,7 @@ def create_api_key(ctx, description, expires_days, created_by, output):
             click.secho("Key Details:", fg="cyan")
             click.echo(f"  Key ID: {key_record.id}")
             click.echo(f"  Description: {key_record.description or 'None'}")
+            click.echo(f"  Permission Level: {key_record.permission_level.value}")
             click.echo(f"  Created: {key_record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
             if key_record.expires_at:
@@ -171,9 +180,9 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
 
             # Table header
             click.secho(
-                f"{'ID':<20} {'Description':<30} {'Status':<10} {'Created':<12} {'Expires':<12} {'Last Used':<12}",
+                f"{'ID':<20} {'Description':<25} {'Permission':<12} {'Status':<10} {'Created':<12} {'Expires':<12} {'Last Used':<12}",
                 fg="cyan")
-            click.secho("-" * 120, fg="cyan")
+            click.secho("-" * 135, fg="cyan")
 
             for key in keys:
                 # Status
@@ -197,11 +206,18 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
                 last_used = key.last_used.strftime('%Y-%m-%d') if key.last_used else "Never"
 
                 # Description truncation
-                desc = (key.description or "")[:28]
-                if len(key.description or "") > 28:
+                desc = (key.description or "")[:23]
+                if len(key.description or "") > 23:
                     desc += ".."
 
-                click.echo(f"{key.id:<20} {desc:<30} {status:<20} {created:<12} {expires:<22} {last_used:<12}")
+                # Permission level with styling
+                perm_display = key.permission_level.value
+                if key.permission_level == PermissionLevel.READ_ONLY:
+                    perm_display = click.style(perm_display, fg="blue")
+                else:
+                    perm_display = click.style(perm_display, fg="green")
+
+                click.echo(f"{key.id:<20} {desc:<25} {perm_display:<22} {status:<20} {created:<12} {expires:<22} {last_used:<12}")
 
     except Exception as e:
         click.secho(f"Error listing API keys: {str(e)}", fg="bright_red")
@@ -327,6 +343,15 @@ def rotate_api_key(ctx, key_id, output):
             click.secho("New Key Details:", fg="cyan")
             click.echo(f"  Key ID: {new_key.id}")
             click.echo(f"  Description: {new_key.description}")
+            
+            # Permission level with styling
+            perm_display = new_key.permission_level.value
+            if new_key.permission_level == PermissionLevel.READ_ONLY:
+                perm_display = click.style(perm_display, fg="blue")
+            else:
+                perm_display = click.style(perm_display, fg="green")
+            click.echo(f"  Permission Level: {perm_display}")
+            
             click.echo(f"  Created: {new_key.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
             if new_key.expires_at:
@@ -457,6 +482,15 @@ def show_key_info(ctx, key_id, output):
             click.secho("Basic Information:", fg="cyan")
             click.echo(f"  ID: {key_record.id}")
             click.echo(f"  Description: {key_record.description or 'None'}")
+            
+            # Permission level with styling
+            perm_display = key_record.permission_level.value
+            if key_record.permission_level == PermissionLevel.READ_ONLY:
+                perm_display = click.style(perm_display, fg="blue")
+            else:
+                perm_display = click.style(perm_display, fg="green")
+            click.echo(f"  Permission Level: {perm_display}")
+            
             click.echo(f"  Created by: {key_record.created_by or 'Unknown'}")
             click.echo()
 

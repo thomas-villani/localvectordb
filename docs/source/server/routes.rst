@@ -6,13 +6,60 @@ The LocalVectorDB HTTP API provides comprehensive endpoints for database and doc
 Authentication
 --------------
 
-Most endpoints require API key authentication when enabled:
+Most endpoints require API key authentication when enabled. API keys have permission levels that control access to different operations.
+
+Permission Levels
+^^^^^^^^^^^^^^^^^
+
+LocalVectorDB supports two API key permission levels:
+
+* **read_only**: Can access all read operations (search, query, list, get)
+* **read_write**: Full access to all operations including create, update, and delete
 
 .. code-block:: bash
 
    # Include API key in Authorization header
    curl -H "Authorization: Bearer your_api_key_here" \
         http://localhost:5000/api/v1/endpoint
+
+Route Permissions
+^^^^^^^^^^^^^^^^^
+
+**Read-Only Routes** (accessible with both read_only and read_write keys):
+
+* ``GET /api/v1/databases`` - List databases
+* ``GET /api/v1/<db_name>/info`` - Get database information
+* ``GET /api/v1/<db_name>/documents/<doc_id>`` - Get document by ID
+* ``GET /api/v1/<db_name>/documents`` - List documents
+* ``POST /api/v1/<db_name>/documents/exists`` - Check document existence
+* ``POST /api/v1/<db_name>/query`` - Query documents
+* ``POST /api/v1/<db_name>/search/*`` - All search endpoints
+* ``POST /api/v1/<db_name>/filter`` - Filter documents
+* ``POST /api/v1/<db_name>/embeddings`` - Get embeddings
+* ``GET /api/v1/<db_name>/schema`` - Get metadata schema
+
+**Write Routes** (require read_write keys):
+
+* ``POST /api/v1/databases`` - Create database
+* ``DELETE /api/v1/<db_name>`` - Delete database
+* ``POST /api/v1/<db_name>/documents`` - Add/update documents
+* ``POST /api/v1/<db_name>/documents/insert`` - Insert documents
+* ``PUT /api/v1/<db_name>/documents/<doc_id>`` - Update document
+* ``DELETE /api/v1/<db_name>/documents/<doc_id>`` - Delete document
+* ``POST /api/v1/<db_name>/upload`` - Upload files
+* ``PUT /api/v1/<db_name>/schema`` - Update metadata schema
+
+Error Responses
+^^^^^^^^^^^^^^^
+
+When a read-only key attempts a write operation:
+
+.. code-block:: json
+
+   {
+     "error": "Insufficient permissions. This endpoint requires read_write access.",
+     "status_code": 401
+   }
 
 
 

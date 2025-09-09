@@ -27,7 +27,7 @@ from werkzeug.utils import secure_filename
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import MetadataField, MetadataFieldType, DatabaseSchema
 from localvectordb.utils import get_system_version
-from localvectordb_server._auth import require_api_key
+from localvectordb_server._auth import require_api_key, require_read_permission, require_write_permission
 from localvectordb_server._cache import cache
 from localvectordb_server._checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
@@ -133,7 +133,7 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
 
 # Database Management Routes
 @api.route("/api/v1/databases", methods=["POST"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("create_database")
 def create_database():
@@ -231,7 +231,7 @@ def create_database():
 
 
 @api.route("/api/v1/databases", methods=["GET"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @cache.cached(timeout=60)  # Cache for 1 minute
 @log_performance("list_databases")
@@ -252,7 +252,7 @@ def list_databases():
 
 
 @api.route("/api/v1/<db_name>/info", methods=["GET"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @cache.cached(timeout=300)  # Cache for 5 minutes
 @log_performance("get_database_info")
@@ -293,7 +293,7 @@ def get_database_info(db_name):
 
 
 @api.route("/api/v1/<db_name>", methods=["DELETE"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("delete_database")
 def delete_database(db_name):
@@ -313,7 +313,7 @@ def delete_database(db_name):
 
 # Document Management Routes
 @api.route("/api/v1/<db_name>/documents", methods=["POST"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("upsert_documents")
 def upsert_documents(db_name):
@@ -426,7 +426,7 @@ def upsert_documents(db_name):
 
 
 @api.route("/api/v1/<db_name>/documents/insert", methods=["POST"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("insert_documents")
 def insert_documents(db_name):
@@ -502,7 +502,7 @@ def insert_documents(db_name):
 
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["GET"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @cache.cached(timeout=300)
 @log_performance("get_document")
@@ -530,7 +530,7 @@ def get_document(db_name, doc_id):
 
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["PUT"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("update_document")
 def update_document(db_name, doc_id):
@@ -587,7 +587,7 @@ def update_document(db_name, doc_id):
 
 
 @api.route("/api/v1/<db_name>/documents/<doc_id>", methods=["DELETE"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("delete_document")
 def delete_document(db_name, doc_id):
@@ -624,7 +624,7 @@ def delete_document(db_name, doc_id):
 
 
 @api.route("/api/v1/<db_name>/documents/exists", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("check_documents_exist")
 def check_documents_exist(db_name):
@@ -661,7 +661,7 @@ def check_documents_exist(db_name):
 
 
 @api.route("/api/v1/<db_name>/documents", methods=["GET"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @cache.cached(timeout=60)
 @log_performance("list_documents")
@@ -804,7 +804,7 @@ def search_handler(db_name, search_params):
 
 # Search Routes
 @api.route("/api/v1/<db_name>/query", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("query_documents")
 def query_documents(db_name):
@@ -822,7 +822,7 @@ def query_documents(db_name):
 
 
 @api.route("/api/v1/<db_name>/search/vector", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("vector_search")
 def vector_search(db_name):
@@ -842,7 +842,7 @@ def vector_search(db_name):
 
 
 @api.route("/api/v1/<db_name>/search/keyword", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("keyword_search")
 def keyword_search(db_name):
@@ -862,7 +862,7 @@ def keyword_search(db_name):
 
 
 @api.route("/api/v1/<db_name>/search/hybrid", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("hybrid_search")
 def hybrid_search(db_name):
@@ -882,7 +882,7 @@ def hybrid_search(db_name):
 
 
 @api.route("/api/v1/<db_name>/query-multi-column", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("query_multi_column")
 def query_multi_column(db_name):
@@ -991,7 +991,7 @@ def query_multi_column(db_name):
 
 
 @api.route("/api/v1/<db_name>/filter", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("filter_documents")
 def filter_documents(db_name):
@@ -1127,7 +1127,7 @@ def filter_documents(db_name):
 
 # Global Search Route
 @api.route("/api/v1/search", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("global_search")
 def global_search():
@@ -1229,7 +1229,7 @@ def health_check():
 
 
 @api.route("/api/v1/<db_name>/embeddings", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("get_embeddings_for_db")
 def get_embeddings_for_db(db_name):
@@ -1297,7 +1297,7 @@ def get_embeddings_for_db(db_name):
 
 
 @api.route("/api/v1/embeddings", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("get_embeddings")
 def get_embeddings():
@@ -1362,7 +1362,7 @@ def get_embeddings():
 
 
 @api.route("/api/v1/<db_name>/upload", methods=["POST"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("upload_files")
 def upload_files(db_name):
@@ -1603,7 +1603,7 @@ def upload_files(db_name):
 
 
 @api.route("/api/v1/upload/supported-formats", methods=["GET"])
-@require_api_key
+@require_read_permission
 @handle_errors
 def get_upload_supported_formats():
     """
@@ -1654,7 +1654,7 @@ def get_upload_supported_formats():
 
 
 @api.route("/api/v1/upload/extract-preview", methods=["POST"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @log_performance("extract_preview")
 def extract_preview():
@@ -1734,7 +1734,7 @@ def extract_preview():
 # Add this route to routes.py after the other database management routes
 
 @api.route("/api/v1/<db_name>/schema", methods=["PUT"])
-@require_api_key
+@require_write_permission
 @handle_errors
 @log_performance("update_metadata_schema")
 def update_metadata_schema(db_name):
@@ -1813,7 +1813,7 @@ def update_metadata_schema(db_name):
 
 
 @api.route("/api/v1/<db_name>/schema", methods=["GET"])
-@require_api_key
+@require_read_permission
 @handle_errors
 @cache.cached(timeout=300)  # Cache for 5 minutes
 @log_performance("get_metadata_schema_info")

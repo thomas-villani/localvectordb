@@ -247,24 +247,35 @@ Security Considerations
 API Key Management
 ^^^^^^^^^^^^^^^^^^
 
-LocalVectorDB Server includes a comprehensive key management system with SQLite-based storage, bcrypt hashing, and full audit trails.
+LocalVectorDB Server includes a comprehensive key management system with SQLite-based storage, bcrypt hashing, full audit trails, and permission-based access control.
+
+Permission Levels
+~~~~~~~~~~~~~~~~~
+
+API keys now support two permission levels:
+
+* **read_only** - Can query databases, search documents, and retrieve data. Cannot create, update, or delete any resources.
+* **read_write** - Full access to all operations including creating databases, adding documents, and deleting resources.
 
 Creating API Keys
 ~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
-   # Create a basic API key
+   # Create a read-write API key (default)
    lvdb auth create-key --description "Production API access"
 
-   # Create a key with expiration
-   lvdb auth create-key --description "Temporary access" --expires-days 30
+   # Create a read-only key for monitoring/analytics
+   lvdb auth create-key --description "Monitoring dashboard" --permission-level read_only
 
-   # Create a key for a specific user/system
-   lvdb auth create-key --description "CI/CD Pipeline" --created-by "admin" --expires-days 90
+   # Create a read-write key with expiration
+   lvdb auth create-key --description "Admin access" --permission-level read_write --expires-days 30
+
+   # Create a read-only key for CI/CD testing
+   lvdb auth create-key --description "CI/CD Pipeline" --permission-level read_only --created-by "admin" --expires-days 90
 
    # Output just the key for scripting
-   lvdb auth create-key --description "Script access" --output key-only
+   lvdb auth create-key --description "Script access" --permission-level read_only --output key-only
 
    # Output as JSON for automation
    lvdb auth create-key --description "API integration" --output json
@@ -354,6 +365,35 @@ API keys must be sent in the Authorization header as Bearer tokens:
 
    headers = {"Authorization": "Bearer lvdb_your_api_key_here"}
    response = requests.get("http://localhost:8080/api/v1/health", headers=headers)
+
+Permission Best Practices
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Follow the principle of least privilege when assigning API key permissions:
+
+* **Use read-only keys** for:
+  
+  - Monitoring and analytics dashboards
+  - Public-facing search interfaces
+  - CI/CD test runners that only validate functionality
+  - Backup verification scripts
+  - Report generation tools
+
+* **Use read-write keys** for:
+  
+  - Administrative interfaces
+  - Data ingestion pipelines
+  - Content management systems
+  - Database maintenance scripts
+  - Development environments (with short expiration)
+
+* **Security recommendations**:
+  
+  - Always set expiration dates for read-write keys
+  - Rotate keys regularly, especially after personnel changes
+  - Use descriptive names to track key usage
+  - Monitor key usage through audit logs
+  - Revoke unused keys promptly
 
 Security Features
 ~~~~~~~~~~~~~~~~~

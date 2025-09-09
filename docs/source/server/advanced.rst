@@ -146,7 +146,7 @@ API Key Authentication
 Database-Managed API Keys
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-LocalVectorDB Server includes a comprehensive API key management system:
+LocalVectorDB Server includes a comprehensive API key management system with permission-based access control:
 
 .. code-block:: toml
 
@@ -158,18 +158,48 @@ LocalVectorDB Server includes a comprehensive API key management system:
    key_audit_logging = true                     # Log key usage
    warn_expiring_days = 7                       # Warning threshold
 
+Permission-Based Access Control
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+API keys support two permission levels for fine-grained access control:
+
+**Read-Only Permission** (``read_only``)
+   - Query and search operations
+   - List databases and documents
+   - Get document content
+   - View metadata schemas
+   - Generate embeddings for queries
+   - Cannot create, update, or delete resources
+
+**Read-Write Permission** (``read_write``)
+   - All read operations
+   - Create and delete databases
+   - Add, update, and delete documents
+   - Modify metadata schemas
+   - Upload files for processing
+   - Full administrative access
+
 Creating and Managing API Keys
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # Create a new API key
-   lvdb auth create-key --description "Production API" --expires-days 90
+   # Create a read-write API key (default)
+   lvdb auth create-key --description "Admin API" --expires-days 90
 
-   # List all keys
+   # Create a read-only key for monitoring
+   lvdb auth create-key --description "Dashboard" --permission-level read_only
+
+   # Create a read-write key with specific expiration
+   lvdb auth create-key --description "Data Pipeline" \
+                       --permission-level read_write \
+                       --expires-days 30 \
+                       --created-by "admin"
+
+   # List all keys with their permissions
    lvdb auth list-keys --active-only
 
-   # Get key information
+   # Get detailed key information including permission level
    lvdb auth key-info key_20241201_abc123
 
    # Rotate a key (creates new, revokes old)
@@ -184,20 +214,48 @@ Creating and Managing API Keys
 Key Management Best Practices
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-1. **Use descriptive names**: Include purpose and owner information
-2. **Set expiration dates**: Regular rotation improves security
-3. **Monitor usage**: Review audit logs for suspicious activity
-4. **Automated rotation**: Script key rotation for production systems
-5. **Least privilege**: Create separate keys for different applications
+1. **Use descriptive names**: Include purpose, permission level, and owner information
+2. **Apply least privilege**: Use read-only keys whenever possible
+3. **Set expiration dates**: Shorter expiration for write keys, longer for read-only
+4. **Monitor usage**: Review audit logs for suspicious activity
+5. **Automated rotation**: Script key rotation for production systems
+6. **Separate keys by environment**: Different keys for dev, staging, and production
+
+Permission-Based Usage Patterns
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Production Deployment Examples**:
 
 .. code-block:: bash
 
-   # Example production key creation
+   # Analytics dashboard (read-only)
    lvdb auth create-key \
-     --description "Production Web App - user:webteam" \
+     --description "Analytics Dashboard - read-only" \
+     --permission-level read_only \
+     --expires-days 365 \
+     --created-by "analytics-team"
+
+   # Data ingestion pipeline (write access)
+   lvdb auth create-key \
+     --description "Daily ETL Pipeline - write" \
+     --permission-level read_write \
      --expires-days 30 \
-     --created-by "deployment-script" \
-     --output key-only > /secure/api-key.txt
+     --created-by "data-team"
+
+   # Public search API (read-only)
+   lvdb auth create-key \
+     --description "Public Search API - read-only" \
+     --permission-level read_only \
+     --expires-days 90 \
+     --created-by "api-team" \
+     --output key-only > /secure/public-api-key.txt
+
+   # Admin interface (full access)
+   lvdb auth create-key \
+     --description "Admin Interface - full-access" \
+     --permission-level read_write \
+     --expires-days 7 \
+     --created-by "admin-user"
 
 Security Configuration
 ----------------------

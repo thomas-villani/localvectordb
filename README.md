@@ -19,7 +19,7 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 
 ### 🌐 **Flexible Deployment**
 - **Local Database**: Direct SQLite + FAISS for maximum performance
-- **HTTP Server**: RESTful API with authentication, rate limiting, CORS
+- **HTTP Server**: RESTful API with permission-based authentication, rate limiting, CORS
 - **Remote Client**: Seamless local/remote switching via factory pattern
 - **Multi-Worker**: Redis-based coordination for distributed deployments
 
@@ -176,10 +176,13 @@ cors_allowed_origins = ["http://localhost:3000"]
 ### API Key Management
 
 ```bash
-# Create API key
-lvdb auth create-key --description "Production API"
+# Create API key with permission level
+lvdb auth create-key --description "Production API" --permission-level read_write
 
-# List keys
+# Create read-only key for analytics
+lvdb auth create-key --description "Analytics Dashboard" --permission-level read_only
+
+# List keys with their permissions
 lvdb auth list-keys --active-only
 
 # Revoke key

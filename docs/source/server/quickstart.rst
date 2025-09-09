@@ -50,6 +50,26 @@ Basic API Usage
        "k": 5
      }'
 
+Production Setup with Authentication
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For production use, enable API key authentication:
+
+.. code-block:: bash
+
+   # Enable authentication in server config
+   lvdb config set server.require_api_key true
+
+   # Create API keys with appropriate permissions
+   # Read-write key for admin operations
+   lvdb auth create-key --description "Admin API" --permission-level read_write --expires-days 30
+
+   # Read-only key for public search
+   lvdb auth create-key --description "Public Search" --permission-level read_only --expires-days 365
+
+   # Use API keys in requests
+   curl -H "Authorization: Bearer your_api_key_here" \
+        http://localhost:5000/api/v1/databases
 
 Learn More
 ^^^^^^^^^^

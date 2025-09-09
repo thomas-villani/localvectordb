@@ -244,8 +244,8 @@ Before using remote databases, start a LocalVectorDB server:
    lvdb config init --enable-auth --enable-cors
    lvdb serve --config ./production-config.toml
 
-   # Create API key for clients
-   lvdb auth create-key --description "My App" --expires-days 90
+   # Create API key for clients (with permission level)
+   lvdb auth create-key --description "My App" --permission-level read_write --expires-days 90
 
 Connecting to Remote Databases
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -595,8 +595,9 @@ Server Management
    lvdb config init --enable-auth --enable-cors
    lvdb serve --config ./config.toml
 
-   # Manage API keys
-   lvdb auth create-key --description "My App" --expires-days 90
+   # Manage API keys with permission levels
+   lvdb auth create-key --description "My App" --permission-level read_write --expires-days 90
+   lvdb auth create-key --description "Analytics" --permission-level read_only --expires-days 365
    lvdb auth list-keys
    lvdb auth revoke-key <key-id>
 
