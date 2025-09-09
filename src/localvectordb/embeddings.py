@@ -19,7 +19,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type, Literal
 
 import httpx
 import numpy as np
@@ -563,6 +563,478 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         return embeddings
 
 
+class GoogleEmbeddings(HTTPEmbeddingProvider):
+    """Google AI (Gemini) embedding provider using the Generative Language API.
+
+    Parameters
+    ----------
+    model : str, default "gemini-embedding-001"
+        The Google AI embedding model, e.g.:
+        - "gemini-embedding-001" (stable)
+        - "gemini-embedding-exp-03-07" (experimental)
+    api_key : str, optional
+        API key string or an env var reference (e.g., "$GEMINI_API_KEY").
+        If not provided, tries env vars (in order): GEMINI_API_KEY, GOOGLE_API_KEY.
+    task_type : Literal, optional
+        One of:
+        {"semantic_similarity", "classification", "clustering", "retrieval_document", "retrieval_query",
+        "code_retrieval_query", "question_answering", "fact_verification"}
+        See: https://ai.google.dev/gemini-api/docs/embeddings#supported-task-types
+    requested_dimensions : int, optional
+        MRL-controlled output size (128–3072). Defaults to 3072 if not set by API.
+        If provided, get_dimension() returns this value without a test call.
+    normalize : bool, default False
+        If True, L2-normalize returned vectors (recommended for non-3072 outputs).
+        For 3072 output, vectors are already normalized by the API.
+    base_url : str, optional
+        Override the base API URL. Defaults to the public Google endpoint.
+    timeout : int, default 90
+        Request timeout in seconds.
+    max_retries : int, default 3
+        Retry attempts on transient errors.
+    retry_delay : float, default 1.0
+        Base delay between retries (exponential backoff).
+    max_concurrent_requests : int, default 5
+        Concurrency for batch processing.
+    """
+
+    def __init__(
+        self,
+        model: str = "gemini-embedding-001",
+        api_key: Optional[str] = None,
+        task_type: Literal["semantic_similarity", "classification", "clustering", "retrieval_document",
+                           "retrieval_query", "code_retrieval_query", "question_answering",
+                           "fact_verification"] = "semantic_similarity",
+        requested_dimensions: Optional[int] = None,
+        normalize: bool = True,
+        base_url: Optional[str] = None,
+        timeout: int = 90,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        max_concurrent_requests: int = 5,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests, **kwargs)
+
+        # Resolve API key (param or env)
+        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
+            api_key = os.getenv(api_key[1:])
+        self.api_key = (
+            api_key
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+        if not self.api_key:
+            raise ValueError("Google AI (Gemini) API key is required. Set api_key or one of: GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY")
+
+        # API base URL (v1beta as in public docs)
+        self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+
+        # Optional config
+        self.task_type = str(task_type).upper()
+        self.requested_dimensions = requested_dimensions
+        self.normalize = normalize
+
+        # If caller fixed the output dimensionality, we can set it immediately.
+        if self.requested_dimensions:
+            self._dimension = int(self.requested_dimensions)
+
+        self._validated = False
+
+        # Conservative default if we must assume without a test call.
+        # The public docs state default is 3072 for gemini-embedding-001.
+        self._default_dimensions_by_model = {
+            "gemini-embedding-001": 3072,
+        }
+
+    @property
+    def provider_name(self) -> str:
+        return "google"
+
+    @property
+    def max_batch_size(self) -> int:
+        # Google API supports multiple Contents in one call; keep a safe batch size.
+        return 200
+
+    def validate_model(self) -> bool:
+        """Validate the model by querying the models endpoint."""
+        if self._validated:
+            return True
+
+        url = f"{self.base_url}/models/{self.model}"
+        headers = {"x-goog-api-key": self.api_key}
+        try:
+            with httpx.Client() as client:
+                r = client.get(url, headers=headers, timeout=self.timeout)
+                if r.status_code == 404:
+                    return False
+                r.raise_for_status()
+                self._validated = True
+                return True
+        except Exception as e:
+            # If validation fails due to networking, treat as not validated but don't crash.
+            logger.warning(f"Could not validate Google AI model '{self.model}': {e}")
+            return False
+
+    def _get_model_dimension_api(self) -> int:
+        """Determine embedding dimension via a small test call."""
+        # If caller provided requested_dimensions, use it.
+        if self.requested_dimensions:
+            return int(self.requested_dimensions)
+
+        # Otherwise attempt a lightweight embed to discover dimension.
+        client = httpx.AsyncClient()
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self._embed_single_batch(["dimension_probe"], client=client))
+                    test_embedding = future.result()
+            else:
+                test_embedding = loop.run_until_complete(self._embed_single_batch(["dimension_probe"], client=client))
+        except RuntimeError:
+            test_embedding = asyncio.run(self._embed_single_batch(["dimension_probe"], client=client))
+
+        if not test_embedding or not test_embedding[0]:
+            # Fallback to known defaults if probe fails to return data.
+            return self._default_dimensions_by_model.get(self.model, 3072)
+        return len(test_embedding[0])
+
+    def get_dimension(self) -> int:
+        """Return embedding dimension, using API probe if needed."""
+        if self._dimension is None:
+            self._dimension = self._get_model_dimension_api()
+        return self._dimension
+
+    async def _embed_single_batch(
+        self,
+        texts: List[str],
+        client: Optional[httpx.AsyncClient] = None,
+        **kwargs: Any
+    ) -> List[List[float]]:
+        if client is None:
+            client = httpx.AsyncClient()
+
+        url = f"{self.base_url}/models/{self.model}:embedContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+
+        # Build 'contents' as a list of Content objects: [{parts: [{text: "..."}]}, ...]
+        contents = [{"parts": [{"text": t}]} for t in texts]
+
+        payload: Dict[str, Any] = {
+            "contents": contents
+        }
+
+        emb_cfg: Dict[str, Any] = {}
+        if self.task_type:
+            emb_cfg["task_type"] = self.task_type
+        if self.requested_dimensions:
+            emb_cfg["output_dimensionality"] = int(self.requested_dimensions)
+        if emb_cfg:
+            payload["embedding_config"] = emb_cfg
+
+        response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        # Possible shapes from API:
+        # - {"embeddings": [ {"values": [...]}, {"values": [...]} ]}
+        # - Rare: Single embedding forms (handle defensively)
+        embeddings_raw = None
+        if "embeddings" in data and isinstance(data["embeddings"], list):
+            embeddings_raw = data["embeddings"]
+        elif "embedding" in data and isinstance(data["embedding"], dict):
+            embeddings_raw = [data["embedding"]]
+        else:
+            raise RuntimeError(f"Unexpected response from Google AI embeddings API: {data}")
+
+        vectors: List[List[float]] = []
+        for e in embeddings_raw:
+            values = e.get("values")
+            if values is None:
+                # Some responses may nest differently; try 'embedding' field if present
+                inner = e.get("embedding")
+                if inner and isinstance(inner, dict):
+                    values = inner.get("values")
+            if values is None:
+                raise RuntimeError("Malformed embedding response: missing 'values'")
+
+            vec = [float(x) for x in values]
+
+            # Optional normalization (recommended for non-3072 outputs)
+            if self.normalize and vec:
+                arr = np.asarray(vec, dtype=np.float32)
+                norm = np.linalg.norm(arr)
+                if norm > 0:
+                    arr = arr / norm
+                vec = arr.tolist()
+
+            vectors.append(vec)
+
+        # If no fixed dimension yet, set it from the first vector length.
+        if self._dimension is None and vectors and len(vectors[0]) > 0:
+            self._dimension = len(vectors[0])
+
+        return vectors
+
+
+class JinaEmbeddings(HTTPEmbeddingProvider):
+    """Jina AI embedding provider.
+
+    Parameters
+    ----------
+    model : str
+        The Jina model to use for embedding. Examples:
+          - "jina-embeddings-v4" (multimodal/multilingual, 2048 dims)
+          - "jina-embeddings-v3" (1024 dims)
+          - "jina-clip-v2" (1024 dims)
+          - "jina-code-embeddings-0.5b"
+          - "jina-code-embeddings-1.5b"
+    api_key : str, optional
+        Optionally provide the API key as a str. If it starts with "$" and the rest is uppercase,
+        the key will be read from that environment variable. Otherwise, defaults to JINA_API_KEY env var.
+        Get your Jina AI API key for free: https://jina.ai/?sui=apikey
+    timeout : int, default = 90
+        HTTP timeout (seconds)
+    max_retries : int, default = 3
+        Automatic retry attempts
+    retry_delay : float, default = 1.0
+        Base delay for exponential backoff
+    max_concurrent_requests : int, default = 5
+        Concurrent requests to Jina API
+
+    Additional keyword arguments are passed through to the Jina Embeddings API request body, for example:
+      - embedding_type: str, default "float" (other options: "base64", "binary", "ubinary")
+      - task: str, e.g., for v4: "retrieval.query" | "retrieval.passage" | "text-matching" | "code.query" | "code.passage"
+              for code models: "nl2code.query" | "nl2code.passage" | "code2code.query" | "code2code.passage" | "code2nl.query" | "code2nl.passage" | "code2completion.query" | "code2completion.passage" | "qa.query" | "qa.passage"
+      - dimensions: int, to truncate output embeddings to this size
+      - truncate: bool
+      - late_chunking: bool (v4)
+      - return_multivector: bool (v4; not supported by this provider, will raise if True)
+      - normalized: bool (v3)
+
+    Behavior
+    --------
+    - By default, embeddings are returned as float vectors.
+    - If you provide `dimensions`, this provider will both:
+        1) tell the API to output that dimension; and
+        2) use that value to pre-allocate output arrays.
+    - If no `dimensions` is provided, well-known models use known sizes (v4=2048, v3=1024, clip-v2=1024).
+      Otherwise, dimension is determined via a one-off probe request.
+    """
+
+    _MODEL_DIMENSIONS = {
+        "jina-embeddings-v4": 2048,
+        "jina-embeddings-v3": 1024,
+        "jina-code-embeddings-1.5b": 1536,
+        "jina-code-embeddings-0.5b": 896,
+    }
+
+    _MODEL_TASKS = {
+        "jina-embeddings-v3": ["text-matching", "retrieval.passage", "separation", "text-matching", None],
+        "jina-embeddings-v4": ["text-matching", "retrieval.query", "retrieval.passage", "code.query", "code.passage"],
+        "jina-code-embeddings-1.5b": [
+            "nl2code.query",
+            "nl2code.passage",
+            "code2code.passage",
+            "code2nl.query",
+            "code2nl.passage",
+            "code2completion.query",
+            "code2completion.passage",
+            "qa.query",
+            "qa.passage",
+        ],
+        "jina-code-embeddings-0.5b": [
+            "nl2code.query",
+            "nl2code.passage",
+            "code2code.passage",
+            "code2nl.query",
+            "code2nl.passage",
+            "code2completion.query",
+            "code2completion.passage",
+            "qa.query",
+            "qa.passage",
+        ]
+    }
+
+    def __init__(
+            self,
+            model: str,
+            api_key: Optional[str] = None,
+            task: Optional[str] = None,
+            truncate: bool = False,
+            late_chunking: bool = False,
+            requested_dimensions: Optional[int] = None,
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5,
+            **kwargs: Any
+    ) -> None:
+        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests,
+                         **kwargs)
+
+        # Resolve API key from env if formatted as "$ENVVAR"
+        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
+            api_key = os.getenv(api_key[1:])
+
+        # Default to JINA_API_KEY env var
+        self.api_key = api_key or os.getenv("JINA_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "Jina API key is required. Please set JINA_API_KEY environment variable. "
+                "Get your Jina AI API key for free: https://jina.ai/?sui=apikey"
+            )
+
+        # Requested truncation dimension (if provided by user)
+        self.requested_dimensions: Optional[int] = requested_dimensions
+        self.truncate: bool = truncate
+        self.task: Optional[str] = task
+
+        if model not in self._MODEL_TASKS:
+            self.task = None
+        else:
+            if self.task not in (allowed_tasks := self._MODEL_TASKS.get(model, [])):
+                raise ValueError(f"`task` must be one of {allowed_tasks} for Jina AI model {model}")
+
+        self.late_chunking: bool = late_chunking
+
+        # If user specified a target dimension, honor it. Else use known mapping if available.
+        if self.requested_dimensions is not None:
+            self._dimension = self.requested_dimensions
+        elif model in self._MODEL_DIMENSIONS:
+            self._dimension = self._MODEL_DIMENSIONS[model]
+        else:
+            self._dimension = None  # will probe
+
+    @property
+    def provider_name(self) -> str:
+        return "jina"
+
+    @property
+    def max_batch_size(self) -> int:
+        # Reasonable default; Jina API supports batching, but no explicit hard limit documented.
+        # Keep moderate to limit payload sizes and latency.
+        return 512
+
+    def validate_model(self) -> bool:
+        """Try a lightweight probe to confirm the model is usable."""
+        return True
+
+    def get_dimension(self) -> int:
+        """Return embedding dimension. Uses known sizes, user-requested dimensions, or probes via API."""
+        if self._dimension is not None:
+            return self._dimension
+
+        # No requested dimension and unknown model: probe the API without truncation to get true size
+        self._dimension = self._get_model_dimension_api()
+        return self._dimension
+
+    def _get_model_dimension_api(self) -> int:
+        """Probe Jina embeddings API to determine embedding size."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",  # required by Jina API
+        }
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": ["dimension probe"],
+        }
+        if self.task:
+            payload["task"] = self.task
+
+        # Do not include "dimensions" on probe, we want the native dimension if unknown
+        with httpx.Client() as client:
+            resp = client.post(
+                "https://api.jina.ai/v1/embeddings",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                msg = data["error"]["message"] if isinstance(data["error"], dict) and "message" in data["error"] else \
+                data["error"]
+                raise RuntimeError(f"Jina API error during dimension probe: {msg}")
+
+            items = data.get("data", [])
+            if not items:
+                raise RuntimeError("No data returned from Jina API during dimension probe")
+            emb = items[0].get("embedding")
+            if not isinstance(emb, list):
+                raise RuntimeError("Unexpected embedding format during dimension probe (expected float list)")
+            return len(emb)
+
+    async def _embed_single_batch(
+            self,
+            texts: List[str],
+            client: Optional[httpx.AsyncClient] = None,
+            **kwargs: Any
+    ) -> List[List[float]]:
+        """Embed a single batch using Jina API."""
+        if client is None:
+            client = httpx.AsyncClient()
+
+        if not texts:
+            return [[]]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",  # required by Jina API
+        }
+
+        # Build payload; only include keys that are set/non-None
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": texts,
+        }
+        if self.task:
+            payload["task"] = self.task
+        if self.truncate:
+            payload["truncate"] = True
+
+        if self.requested_dimensions is not None:
+            payload["dimensions"] = self.requested_dimensions
+
+        if self.late_chunking:
+            payload["late_chunking"] = True
+
+        response = await client.post(
+            "https://api.jina.ai/v1/embeddings",
+            headers=headers,
+            json=payload,
+            timeout=self.timeout
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if "error" in data:
+            # Jina returns {"error": {"message": "..."}}
+            err = data["error"]
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise RuntimeError(f"Jina API error: {msg}")
+
+        items = data.get("data", [])
+        if not items:
+            raise RuntimeError("No embeddings returned from Jina API")
+
+        # Expect float vectors
+        embeddings: List[List[float]] = []
+        for item in items:
+            emb = item.get("embedding")
+            if not isinstance(emb, list):
+                raise RuntimeError("Unexpected embedding format from Jina API (expected float list).")
+            embeddings.append(emb)
+
+        return embeddings
+
 class MockEmbeddings(EmbeddingProvider):
     """Mock embedding provider for testing"""
 
@@ -678,7 +1150,8 @@ class EmbeddingRegistry:
 EmbeddingRegistry.register("ollama", OllamaEmbeddings)
 EmbeddingRegistry.register("openai", OpenAIEmbeddings)
 EmbeddingRegistry.register("mock", MockEmbeddings)
-
+EmbeddingRegistry.register("google", GoogleEmbeddings)
+EmbeddingRegistry.register("jina", JinaEmbeddings)
 
 # Convenience functions
 def create_embedding_provider(
