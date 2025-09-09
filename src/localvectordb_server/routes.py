@@ -25,7 +25,8 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb.core import MetadataField, MetadataFieldType, DatabaseSchema
+from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb._schema import DatabaseSchema
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_api_key, require_read_permission, require_write_permission
 from localvectordb_server._cache import cache

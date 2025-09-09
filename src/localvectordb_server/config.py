@@ -48,7 +48,8 @@ from typing import Any, Dict, List, Literal, Optional, Union, get_type_hints
 
 import click
 
-from localvectordb.core import MetadataField, get_common_metadata_schemas
+from localvectordb.core import MetadataField
+from localvectordb._schema import get_common_metadata_schemas
 from localvectordb.exceptions import ConfigurationError
 
 

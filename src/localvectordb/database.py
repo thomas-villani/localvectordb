@@ -42,20 +42,17 @@ import numpy as np
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
 from localvectordb.chunking import ChunkerFactory, PositionTrackingChunker
 from localvectordb.core import (
-    AsyncConnectionPool,
     BaseVectorDB,
     Chunk,
     ChunkPosition,
-    ConnectionPool,
-    DatabaseSchema,
     Document,
     DocumentScoringMethod,
     MetadataField,
     MetadataFieldType,
     QueryResult,
-    ReadWriteLock,
-    get_common_metadata_schemas,
 )
+from localvectordb._pools import ConnectionPool, AsyncConnectionPool, ReadWriteLock
+from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.exceptions import (
     DatabaseError,

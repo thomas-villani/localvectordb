@@ -20,7 +20,9 @@ from typing import Any, Dict
 
 import pytest
 
-from localvectordb.core import DatabaseSchema, MetadataField, MetadataFieldType, ReadWriteLock
+from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb._pools import ReadWriteLock
+from localvectordb._schema import DatabaseSchema
 from localvectordb.migration import Migration, MigrationEngine, MigrationScript
 from localvectordb.versioning import DatabaseVersion, VersionManager
 

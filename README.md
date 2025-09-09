@@ -458,7 +458,7 @@ export OPENAI_API_KEY="your-openai-key"  # if using OpenAI
 
 ```python
 from localvectordb import VectorDB
-from localvectordb.core import get_common_metadata_schemas
+from localvectordb._schema import get_common_metadata_schemas
 
 # Use predefined research paper schema
 schema = get_common_metadata_schemas("research_papers")

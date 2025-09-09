@@ -39,7 +39,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Union
 
 from localvectordb.backup import BackupManager, BackupType
-from localvectordb.core import DatabaseSchema, MetadataField, MetadataFieldType, ReadWriteLock
+from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb._pools import ReadWriteLock
+from localvectordb._schema import DatabaseSchema
 from localvectordb.versioning import DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)

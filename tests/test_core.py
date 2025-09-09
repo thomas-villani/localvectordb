@@ -10,8 +10,10 @@ import pytest
 
 from localvectordb.core import (
     MetadataField, MetadataFieldType, ChunkPosition, Chunk, Document,
-    QueryResult, DatabaseSchema, ConnectionPool, ReadWriteLock
+    QueryResult
 )
+from localvectordb._pools import ConnectionPool, ReadWriteLock
+from localvectordb._schema import DatabaseSchema
 
 
 @pytest.mark.unit
