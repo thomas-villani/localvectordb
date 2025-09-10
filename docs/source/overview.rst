@@ -356,9 +356,9 @@ Using Multi-Column Search
 
 Advanced Search Examples
 ^^^^^^^^^^^^^^^^^^^^^^^^
-There are many options to give fine-tuned control over search results. In particular, there are a number of options
-for the ``document_scoring_method`` that can be employed to control how the overall score of a document is calculated
-from the scores of the chunks. :doc:`Learn more about document_scoring_method options<document-scoring>`.
+There are many options to give fine-tuned control over search results. LocalVectorDB supports four return types 
+for different use cases, and various document scoring methods to control how chunk scores are aggregated. 
+:doc:`Learn more about query types and options<query>` and :doc:`document scoring methods<document-scoring>`.
 
 .. code-block:: python
 
@@ -366,6 +366,7 @@ from the scores of the chunks. :doc:`Learn more about document_scoring_method op
    paper_results = await db.query_async(
        "deep learning transformers",
        search_type="hybrid",           # Combine vector and keyword search
+       return_type="documents",        # Return full documents (default)
        k=20,
        filters={                       # Filter by metadata
            "year": {"$gte": 2020},
@@ -374,14 +375,41 @@ from the scores of the chunks. :doc:`Learn more about document_scoring_method op
        document_scoring_method="frequency_boost"  # Boost documents with multiple matches
    )
 
-   # Customer support search across tickets and knowledge base
+   # Get semantically enriched excerpts for RAG applications
+   rag_context = await db.query_async(
+       "neural network architectures",
+       search_type="hybrid",
+       return_type="enriched",         # NEW: Semantically enriched chunks
+       context_window=4,               # Include up to 4 similar chunks per document
+       k=3,                           # Get comprehensive excerpts from top 3 documents
+       score_threshold=0.6
+   )
+   
+   for result in rag_context:
+       print(f"Document: {result.document_id}")
+       print(f"Matched chunks: {result.metadata['_matched_chunk_indices']}")
+       print(f"Total enriched chunks: {result.metadata['_enriched_chunk_count']}")
+       print(f"Content: {result.content}")
+
+   # Customer support search with context window
    support_results = await db.query_multi_column_async(
        "password reset issue",
        columns=["content", "title", "tags", "solution"],
        search_type="hybrid",
+       return_type="context",          # Include surrounding chunks for readability
+       context_window=2,               # 2 chunks before and after each match
        k=10,
        filters={"status": "resolved"},
        score_threshold=0.7
+   )
+
+   # Precise chunk-level search for exact matches
+   precise_chunks = await db.query_async(
+       "API authentication error",
+       search_type="keyword",          # Exact keyword matching
+       return_type="chunks",           # Individual matching chunks only
+       k=5,
+       score_threshold=0.8
    )
 
 Document Operations

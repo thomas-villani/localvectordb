@@ -29,6 +29,7 @@ scale to distributed deployments without changing your code.
    quickstart
    installation
    overview
+   query
    embeddings
    chunking
    metadata.filtering

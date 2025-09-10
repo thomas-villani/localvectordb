@@ -2253,7 +2253,7 @@ class LocalVectorDB(BaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks', 'context'] = 'documents',  # Add 'context'
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
@@ -2273,8 +2273,8 @@ class LocalVectorDB(BaseVectorDB):
             Query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
-        return_type : Literal['documents', 'chunks', 'context']
-            Whether to return full documents, individual chunks, or chunks with context
+        return_type : Literal['documents', 'chunks', 'context', 'enriched']
+            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context
         k : int
             Maximum number of results to return
         score_threshold : float
@@ -2285,10 +2285,13 @@ class LocalVectorDB(BaseVectorDB):
             Weight for vector search in hybrid mode (0-1)
         context_window : int
             Number of chunks before and after to include when return_type='context'
+            Number of similar chunks to enrich when return_type='enriched'
         semantic_dedup_threshold : Optional[float]
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
         document_scoring_method : DocumentScoringMethod
             Method for aggregating chunk scores into document scores
+            One of: {"best", "average", "worst", "weighted_average", "frequency_boost", "harmonic_mean",
+            "diminishing_returns", "statistical", "robust_mean", "percentile", "geometric_mean"}
         document_scoring_options : dict, optional
             Parameters to pass to the scoring method function.
             - frequency_boost
@@ -2349,7 +2352,7 @@ class LocalVectorDB(BaseVectorDB):
     def _vector_search(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -2382,7 +2385,9 @@ class LocalVectorDB(BaseVectorDB):
                 continue
 
             # Convert distance to normalized score (0-1, higher=better)
-            score = (max(0.0, 1.0 / (1.0 + float(dist))) - 0.5 / 0.5)
+            # First get base similarity (0.5-1.0), then normalize to (0.0-1.0)
+            base_similarity = 1.0 / (1.0 + float(dist))
+            score = max(0.0, (base_similarity - 0.5) / 0.5)
 
             if score < score_threshold:
                 continue
@@ -2463,6 +2468,12 @@ class LocalVectorDB(BaseVectorDB):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
 
+        elif return_type == 'enriched':
+            # Add intra-document context enrichment and return
+            final_results = self._enrich_with_intra_doc_context(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+
         elif return_type == 'documents':
             # Aggregate to document level
             document_results = self._aggregate_document_scores_with_method(
@@ -2503,7 +2514,7 @@ class LocalVectorDB(BaseVectorDB):
     def _keyword_search(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -2617,6 +2628,10 @@ class LocalVectorDB(BaseVectorDB):
             final_results = self._add_context_window(chunk_results, context_window)
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
+        elif return_type == 'enriched':
+            final_results = self._enrich_with_intra_doc_context(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
         elif return_type == 'documents':
             document_results = self._aggregate_document_scores_with_method(
                 chunk_results, document_scoring_method, document_scoring_options
@@ -2629,7 +2644,7 @@ class LocalVectorDB(BaseVectorDB):
     def _hybrid_search(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -2673,6 +2688,10 @@ class LocalVectorDB(BaseVectorDB):
 
         if return_type == 'context':
             final_results = self._add_context_window(combined_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'enriched':
+            final_results = self._enrich_with_intra_doc_context(combined_results, context_window)
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
@@ -3033,13 +3052,225 @@ class LocalVectorDB(BaseVectorDB):
 
         return merged
 
+    def _enrich_with_intra_doc_context(
+            self,
+            results: List[QueryResult],
+            context_window: int
+    ) -> List[QueryResult]:
+        """
+        Enrich matched chunks by finding semantically similar chunks within the same document.
+        
+        For each matched chunk, performs vector similarity search within the document to find
+        the most relevant chunks, then combines them into an enriched result.
+        
+        Parameters
+        ----------
+        results : List[QueryResult]
+            Initial search results to enrich
+        context_window : int
+            Number of similar chunks to include in enriched results
+            
+        Returns
+        -------
+        List[QueryResult]
+            Enriched results with intra-document context
+        """
+        if context_window <= 0 or not results:
+            return results
+
+        enriched_results = []
+
+        # Group results by document and collect chunk data
+        doc_chunks_to_enrich = defaultdict(list)
+        
+        for result in results:
+            if result.type != 'chunk':
+                # For document results, just pass through
+                enriched_results.append(result)
+                continue
+            
+            doc_id = result.document_id
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunks_to_enrich[doc_id].append((chunk_index, result))
+
+        # Process each document
+        with self.connection_pool.get_connection() as conn:
+            for doc_id, chunk_requests in doc_chunks_to_enrich.items():
+                # Get all chunks for this document
+                cursor = conn.execute('''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, 
+                           end_line, end_col, faiss_id
+                    FROM chunks 
+                    WHERE document_id = ? AND faiss_id IS NOT NULL
+                    ORDER BY chunk_index
+                ''', [doc_id])
+                
+                doc_chunks = {row['chunk_index']: row for row in cursor.fetchall()}
+                doc_faiss_ids = [row['faiss_id'] for row in doc_chunks.values()]
+                
+                if len(doc_chunks) <= 1:
+                    # Single chunk - create enriched result with just the original chunk
+                    for chunk_index, result in chunk_requests:
+                        if chunk_index not in doc_chunks:
+                            enriched_results.append(result)
+                            continue
+                        
+                        target_chunk = doc_chunks[chunk_index]
+                        
+                        # Create enriched result with just the original chunk
+                        enriched_result = QueryResult(
+                            id=f"{doc_id}:enriched:{chunk_index}",
+                            score=result.score,  # Keep original relevance score
+                            type="enriched",
+                            content=target_chunk['content'],
+                            metadata=result.metadata.copy(),
+                            document_id=doc_id,
+                            position=ChunkPosition(
+                                start=int(target_chunk['start_pos']),
+                                end=int(target_chunk['end_pos']),
+                                line=int(target_chunk['start_line']),
+                                column=int(target_chunk['start_col']),
+                                end_line=int(target_chunk['end_line']),
+                                end_column=int(target_chunk['end_col'])
+                            )
+                        )
+                        
+                        # Add metadata about enrichment
+                        enriched_result.metadata['_enriched_chunk_count'] = 1
+                        enriched_result.metadata['_original_chunk_index'] = chunk_index
+                        enriched_result.metadata['_similarity_scores'] = [1.0]  # Only self
+                        enriched_result.metadata['_enrichment_method'] = 'single_chunk'
+                        
+                        enriched_results.append(enriched_result)
+                    continue
+                
+                # Get embeddings for all chunks in document
+                doc_embeddings = self._reconstruct_embeddings_batch(doc_faiss_ids)
+                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings)}
+                
+                # Combine all matched chunks from this document into one enriched result
+                all_matched_indices = [chunk_index for chunk_index, result in chunk_requests]
+                all_matched_results = [result for chunk_index, result in chunk_requests]
+                
+                # Find all chunks that are similar to ANY of the matched chunks
+                relevant_chunks = set()
+                similarity_scores = {}
+                
+                for chunk_index in all_matched_indices:
+                    if chunk_index not in doc_chunks:
+                        continue
+                        
+                    target_chunk = doc_chunks[chunk_index]
+                    target_faiss_id = target_chunk['faiss_id']
+                    target_embedding = faiss_id_to_embedding[target_faiss_id]
+                    
+                    # Always include the matched chunk itself
+                    relevant_chunks.add(chunk_index)
+                    similarity_scores[chunk_index] = max(similarity_scores.get(chunk_index, 0), 1.0)
+                    
+                    # Calculate similarities to all other chunks in document
+                    similarities = []
+                    for other_chunk_idx, other_chunk in doc_chunks.items():
+                        if other_chunk_idx == chunk_index:
+                            continue  # Skip self
+                        
+                        other_faiss_id = other_chunk['faiss_id']
+                        other_embedding = faiss_id_to_embedding[other_faiss_id]
+                        
+                        # Cosine similarity
+                        similarity = np.dot(target_embedding, other_embedding) / (
+                            np.linalg.norm(target_embedding) * np.linalg.norm(other_embedding)
+                        )
+                        similarities.append((similarity, other_chunk_idx))
+                    
+                    # Add top similar chunks
+                    similarities.sort(reverse=True, key=lambda x: x[0])
+                    for similarity, other_chunk_idx in similarities[:context_window-1]:
+                        relevant_chunks.add(other_chunk_idx)
+                        # Keep the highest similarity score if chunk is similar to multiple matched chunks
+                        similarity_scores[other_chunk_idx] = max(similarity_scores.get(other_chunk_idx, 0), similarity)
+                
+                # Create one enriched result for the entire document
+                if relevant_chunks:
+                    # Sort chunks by index for natural reading order
+                    sorted_chunk_indices = sorted(relevant_chunks)
+                    
+                    # Combine content and calculate position boundaries
+                    combined_content = []
+                    chunk_similarities = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
+                    
+                    for chunk_idx in sorted_chunk_indices:
+                        chunk_data = doc_chunks[chunk_idx]
+                        combined_content.append(chunk_data['content'])
+                        chunk_similarities.append(similarity_scores[chunk_idx])
+                        
+                        # Update position boundaries
+                        min_start_pos = min(min_start_pos, chunk_data['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_data['end_pos'])
+                        min_start_line = min(min_start_line, chunk_data['start_line'])
+                        max_end_line = max(max_end_line, chunk_data['end_line'])
+                        
+                        if chunk_data['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_data['start_col'])
+                        if chunk_data['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_data['end_col'])
+                    
+                    # Create new position spanning the entire enriched context
+                    enriched_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col)
+                    )
+                    
+                    # Use the highest score among all matched chunks
+                    best_score = max(result.score for result in all_matched_results)
+                    
+                    # Merge metadata from all matched results
+                    combined_metadata = {}
+                    for result in all_matched_results:
+                        combined_metadata.update(result.metadata)
+                    
+                    # Create enriched result
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
+                    
+                    enriched_result = QueryResult(
+                        id=f"{doc_id}:enriched",
+                        score=best_score,
+                        type="enriched",
+                        content=combined_text,
+                        metadata=combined_metadata,
+                        document_id=doc_id,
+                        position=enriched_position
+                    )
+                    
+                    # Add metadata about enrichment
+                    enriched_result.metadata['_enriched_chunk_count'] = len(relevant_chunks)
+                    enriched_result.metadata['_matched_chunk_indices'] = all_matched_indices
+                    enriched_result.metadata['_all_chunk_indices'] = sorted_chunk_indices
+                    enriched_result.metadata['_similarity_scores'] = chunk_similarities
+                    enriched_result.metadata['_enrichment_method'] = 'intra_document_similarity'
+                    
+                    enriched_results.append(enriched_result)
+        
+        return enriched_results
+
     def query_multi_column(
             self,
             query: str,
             *,
             columns: Optional[List[str]] = None,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
@@ -6302,7 +6533,7 @@ class LocalVectorDB(BaseVectorDB):
             self,
             query: str,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
-            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
@@ -6321,8 +6552,8 @@ class LocalVectorDB(BaseVectorDB):
             Search query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform, by default 'hybrid'
-        return_type : Literal['documents', 'chunks', 'context']
-            Whether to return full documents, individual chunks, or chunks with context, by default 'documents'
+        return_type : Literal['documents', 'chunks', 'context', 'enriched']
+            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context, by default 'documents'
         k : int
             Maximum number of results to return, by default 10
         score_threshold : float
@@ -6366,7 +6597,7 @@ class LocalVectorDB(BaseVectorDB):
             query: str,
             query_embedding: Optional[np.ndarray],
             search_type: Literal['vector', 'keyword', 'hybrid'],
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -6387,8 +6618,8 @@ class LocalVectorDB(BaseVectorDB):
             Precomputed embedding for the query (None for keyword-only search)
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
-        return_type : Literal['documents', 'chunks', 'context']
-            Whether to return full documents, individual chunks, or chunks with context
+        return_type : Literal['documents', 'chunks', 'context', 'enriched']
+            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context
         k : int
             Maximum number of results to return
         score_threshold : float
@@ -6434,7 +6665,7 @@ class LocalVectorDB(BaseVectorDB):
     async def _vector_search_with_embedding_async(
             self,
             query_embedding: np.ndarray,
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -6512,7 +6743,7 @@ class LocalVectorDB(BaseVectorDB):
     async def _keyword_search_async(
             self,
             query: str,
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -6620,7 +6851,7 @@ class LocalVectorDB(BaseVectorDB):
             self,
             query: str,
             query_embedding: np.ndarray,
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             k: int,
             score_threshold: float,
             filters: Optional[Dict[str, Any]],
@@ -6846,7 +7077,7 @@ class LocalVectorDB(BaseVectorDB):
     async def _process_search_results_async(
             self,
             results: List[QueryResult],
-            return_type: Literal['documents', 'chunks', 'context'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
             document_scoring_method: DocumentScoringMethod,
             document_scoring_options: Optional[dict],
             context_window: int
@@ -6857,6 +7088,8 @@ class LocalVectorDB(BaseVectorDB):
 
         if return_type == 'documents':
             return await self._aggregate_document_scores_with_method_async(results, document_scoring_method, document_scoring_options)
+        elif return_type == 'enriched':
+            return await self._enrich_with_intra_doc_context_async(results, context_window)
         else:  # context
             return await self._add_context_window_async(results, context_window)
 
@@ -7178,6 +7411,245 @@ class LocalVectorDB(BaseVectorDB):
 
         return context_results
 
+    async def _enrich_with_intra_doc_context_async(
+            self,
+            results: List[QueryResult],
+            context_window: int
+    ) -> List[QueryResult]:
+        """
+        Enrich matched chunks by finding semantically similar chunks within the same document asynchronously.
+        
+        For each matched chunk, performs vector similarity search within the document to find
+        the most relevant chunks, then combines them into an enriched result.
+        
+        Parameters
+        ----------
+        results : List[QueryResult]
+            Initial search results to enrich
+        context_window : int
+            Number of similar chunks to include in enriched results
+            
+        Returns
+        -------
+        List[QueryResult]
+            Enriched results with intra-document context
+        """
+        if context_window <= 0 or not results:
+            return results
+
+        enriched_results = []
+
+        # Group results by document and collect chunk data
+        doc_chunks_to_enrich = defaultdict(list)
+        
+        for result in results:
+            if result.type != 'chunk':
+                # For document results, just pass through
+                enriched_results.append(result)
+                continue
+            
+            doc_id = result.document_id
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunks_to_enrich[doc_id].append((chunk_index, result))
+
+        # Process each document
+        async with self.async_connection_pool.get_connection_context() as conn:
+            for doc_id, chunk_requests in doc_chunks_to_enrich.items():
+                # Get all chunks for this document
+                cursor = await conn.execute('''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, 
+                           end_line, end_col, faiss_id
+                    FROM chunks 
+                    WHERE document_id = ? AND faiss_id IS NOT NULL
+                    ORDER BY chunk_index
+                ''', [doc_id])
+                
+                rows = await cursor.fetchall()
+                doc_chunks = {row['chunk_index']: row for row in rows}
+                doc_faiss_ids = [row['faiss_id'] for row in doc_chunks.values()]
+                
+                if len(doc_chunks) <= 1:
+                    # Single chunk - create enriched result with just the original chunk
+                    for chunk_index, result in chunk_requests:
+                        if chunk_index not in doc_chunks:
+                            enriched_results.append(result)
+                            continue
+                        
+                        target_chunk = doc_chunks[chunk_index]
+                        
+                        # Create enriched result with just the original chunk
+                        enriched_result = QueryResult(
+                            id=f"{doc_id}:enriched:{chunk_index}",
+                            score=result.score,  # Keep original relevance score
+                            type="enriched",
+                            content=target_chunk['content'],
+                            metadata=result.metadata.copy(),
+                            document_id=doc_id,
+                            position=ChunkPosition(
+                                start=int(target_chunk['start_pos']),
+                                end=int(target_chunk['end_pos']),
+                                line=int(target_chunk['start_line']),
+                                column=int(target_chunk['start_col']),
+                                end_line=int(target_chunk['end_line']),
+                                end_column=int(target_chunk['end_col'])
+                            )
+                        )
+                        
+                        # Add metadata about enrichment
+                        enriched_result.metadata['_enriched_chunk_count'] = 1
+                        enriched_result.metadata['_original_chunk_index'] = chunk_index
+                        enriched_result.metadata['_similarity_scores'] = [1.0]  # Only self
+                        enriched_result.metadata['_enrichment_method'] = 'single_chunk'
+                        
+                        enriched_results.append(enriched_result)
+                    continue
+                
+                # Get embeddings for all chunks in document (run in executor since it's CPU/GPU bound)
+                loop = asyncio.get_event_loop()
+                doc_embeddings = await loop.run_in_executor(
+                    None, self._reconstruct_embeddings_batch, doc_faiss_ids
+                )
+                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings)}
+                
+                # Combine all matched chunks from this document into one enriched result
+                all_matched_indices = [chunk_index for chunk_index, result in chunk_requests]
+                all_matched_results = [result for chunk_index, result in chunk_requests]
+                
+                # Find all chunks that are similar to ANY of the matched chunks
+                relevant_chunks = set()
+                similarity_scores = {}
+                
+                for chunk_index in all_matched_indices:
+                    if chunk_index not in doc_chunks:
+                        continue
+                        
+                    target_chunk = doc_chunks[chunk_index]
+                    target_faiss_id = target_chunk['faiss_id']
+                    target_embedding = faiss_id_to_embedding[target_faiss_id]
+                    
+                    # Always include the matched chunk itself
+                    relevant_chunks.add(chunk_index)
+                    similarity_scores[chunk_index] = max(similarity_scores.get(chunk_index, 0), 1.0)
+                    
+                    # Calculate similarities to all other chunks in document (CPU-bound, use executor)
+                    similarities_data = await loop.run_in_executor(
+                        None,
+                        self._calculate_chunk_similarities,
+                        target_embedding,
+                        chunk_index,
+                        doc_chunks,
+                        faiss_id_to_embedding
+                    )
+                    
+                    # Add top similar chunks
+                    similarities_data.sort(reverse=True, key=lambda x: x[0])
+                    for similarity, other_chunk_idx, _ in similarities_data[:context_window-1]:
+                        relevant_chunks.add(other_chunk_idx)
+                        # Keep the highest similarity score if chunk is similar to multiple matched chunks
+                        similarity_scores[other_chunk_idx] = max(similarity_scores.get(other_chunk_idx, 0), similarity)
+                
+                # Create one enriched result for the entire document
+                if relevant_chunks:
+                    # Sort chunks by index for natural reading order
+                    sorted_chunk_indices = sorted(relevant_chunks)
+                    
+                    # Combine content and calculate position boundaries
+                    combined_content = []
+                    chunk_similarities = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
+                    
+                    for chunk_idx in sorted_chunk_indices:
+                        chunk_data = doc_chunks[chunk_idx]
+                        combined_content.append(chunk_data['content'])
+                        chunk_similarities.append(similarity_scores[chunk_idx])
+                        
+                        # Update position boundaries
+                        min_start_pos = min(min_start_pos, chunk_data['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_data['end_pos'])
+                        min_start_line = min(min_start_line, chunk_data['start_line'])
+                        max_end_line = max(max_end_line, chunk_data['end_line'])
+                        
+                        if chunk_data['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_data['start_col'])
+                        if chunk_data['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_data['end_col'])
+                    
+                    # Create new position spanning the entire enriched context
+                    enriched_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col)
+                    )
+                    
+                    # Use the highest score among all matched chunks
+                    best_score = max(result.score for result in all_matched_results)
+                    
+                    # Merge metadata from all matched results
+                    combined_metadata = {}
+                    for result in all_matched_results:
+                        combined_metadata.update(result.metadata)
+                    
+                    # Create enriched result
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
+                    
+                    enriched_result = QueryResult(
+                        id=f"{doc_id}:enriched",
+                        score=best_score,
+                        type="enriched",
+                        content=combined_text,
+                        metadata=combined_metadata,
+                        document_id=doc_id,
+                        position=enriched_position
+                    )
+                    
+                    # Add metadata about enrichment
+                    enriched_result.metadata['_enriched_chunk_count'] = len(relevant_chunks)
+                    enriched_result.metadata['_matched_chunk_indices'] = all_matched_indices
+                    enriched_result.metadata['_all_chunk_indices'] = sorted_chunk_indices
+                    enriched_result.metadata['_similarity_scores'] = chunk_similarities
+                    enriched_result.metadata['_enrichment_method'] = 'intra_document_similarity'
+                    
+                    enriched_results.append(enriched_result)
+        
+        return enriched_results
+
+    def _calculate_chunk_similarities(
+            self, 
+            target_embedding: np.ndarray,
+            target_chunk_index: int,
+            doc_chunks: Dict[int, Any],
+            faiss_id_to_embedding: Dict[int, np.ndarray]
+    ) -> List[Tuple[float, int, Any]]:
+        """
+        Calculate similarities between target chunk and all other chunks in document.
+        
+        This is extracted as a separate method to run in executor for async operation.
+        """
+        similarities = []
+        for other_chunk_idx, other_chunk in doc_chunks.items():
+            if other_chunk_idx == target_chunk_index:
+                continue  # Skip self
+            
+            other_faiss_id = other_chunk['faiss_id']
+            other_embedding = faiss_id_to_embedding[other_faiss_id]
+            
+            # Cosine similarity
+            similarity = np.dot(target_embedding, other_embedding) / (
+                np.linalg.norm(target_embedding) * np.linalg.norm(other_embedding)
+            )
+            similarities.append((similarity, other_chunk_idx, other_chunk))
+        
+        return similarities
+
     async def update_async(
             self,
             doc_id: str,
@@ -7370,7 +7842,7 @@ class LocalVectorDB(BaseVectorDB):
             *,
             columns: Optional[List[str]] = None,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,

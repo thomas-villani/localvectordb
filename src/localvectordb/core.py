@@ -358,7 +358,7 @@ class QueryResult:
     """Result from a search query"""
     id: str
     score: float  # Normalized 0-1, higher=better
-    type: Literal['document', 'chunk', 'context']
+    type: Literal['document', 'chunk', 'context', 'enriched']
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -390,8 +390,8 @@ class QueryResult:
             position = ChunkPosition.from_dict(data["position"])
 
         q_type = data.get("type", "document")
-        if q_type not in ("document", "chunk"):
-            raise ValueError("`type` must be 'document' or 'chunk'")
+        if q_type not in ("document", "chunk", "context", "enriched"):
+            raise ValueError("`type` must be 'document', 'chunk', 'context', or 'enriched'")
 
         return cls(
             id=data["id"],
