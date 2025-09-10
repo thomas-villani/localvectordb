@@ -56,7 +56,6 @@ server = [
 ]
 
 mcp = [
-    "aiosqlite>=0.21.0",
     "fastmcp>=2.12.2",
 ]
 
@@ -88,6 +87,11 @@ file-extraction-rtf-epub = [
     "ebooklib>=0.19",
     "striprtf>=0.0.29",
 ]
+all = [
+    "localvectordb[server]",
+    "localvectordb[file-extraction]",
+    "localvectordb[mcp]"
+]
 dev = [
     "freezegun>=1.5.2",
     "pytest>=8.4.0",
@@ -99,6 +103,7 @@ dev = [
     "sphinx-rtd-theme>=3.0.2",
     "localvectordb[file-extraction]",
     "localvectordb[server]",
+    "localvectordb[mcp]",
     "ruff>=0.12.12",
     "mypy>=1.17.1",
 ]

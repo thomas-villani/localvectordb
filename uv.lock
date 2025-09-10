@@ -726,11 +726,31 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "bcrypt" },
+    { name = "beautifulsoup4" },
+    { name = "cachelib" },
+    { name = "ebooklib" },
+    { name = "fastmcp" },
+    { name = "flask" },
+    { name = "flask-caching" },
+    { name = "flask-cors" },
+    { name = "flask-limiter" },
+    { name = "flask-talisman" },
+    { name = "lxml" },
+    { name = "openpyxl" },
+    { name = "pdfplumber" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "striprtf" },
+]
 dev = [
     { name = "bcrypt" },
     { name = "beautifulsoup4" },
     { name = "cachelib" },
     { name = "ebooklib" },
+    { name = "fastmcp" },
     { name = "flask" },
     { name = "flask-caching" },
     { name = "flask-cors" },
@@ -783,7 +803,6 @@ file-extraction-web = [
     { name = "lxml" },
 ]
 mcp = [
-    { name = "aiosqlite" },
     { name = "fastmcp" },
 ]
 server = [
@@ -799,7 +818,6 @@ server = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.21.0" },
-    { name = "aiosqlite", marker = "extra == 'mcp'", specifier = ">=0.21.0" },
     { name = "bcrypt", marker = "extra == 'server'", specifier = ">=4.3.0" },
     { name = "beautifulsoup4", marker = "extra == 'file-extraction'", specifier = ">=4.13.4" },
     { name = "beautifulsoup4", marker = "extra == 'file-extraction-web'", specifier = ">=4.13.4" },
@@ -815,7 +833,11 @@ requires-dist = [
     { name = "flask-talisman", marker = "extra == 'server'", specifier = ">=1.1.0" },
     { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.5.2" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "localvectordb", extras = ["file-extraction"], marker = "extra == 'all'" },
     { name = "localvectordb", extras = ["file-extraction"], marker = "extra == 'dev'" },
+    { name = "localvectordb", extras = ["mcp"], marker = "extra == 'all'" },
+    { name = "localvectordb", extras = ["mcp"], marker = "extra == 'dev'" },
+    { name = "localvectordb", extras = ["server"], marker = "extra == 'all'" },
     { name = "localvectordb", extras = ["server"], marker = "extra == 'dev'" },
     { name = "lxml", marker = "extra == 'file-extraction'", specifier = ">=5.4.0" },
     { name = "lxml", marker = "extra == 'file-extraction-web'", specifier = ">=5.4.0" },
