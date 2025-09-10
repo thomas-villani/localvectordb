@@ -244,7 +244,7 @@ class ServerSettings(BaseSettings):
 
     # Turn on to accept various file formats with upload route
     file_upload_enabled: bool = False
-    max_request_size: int = 100 * 1024 * 1024  # 100MB default
+    max_request_size: int = 10 * 1024 * 1024  # 10MB default
 
     # Feature flags
     # enable_async_processing: bool = True   - not yet implemented
@@ -305,6 +305,23 @@ class ServerSettings(BaseSettings):
     cors_allowed_headers: List[str] = field(default_factory=lambda: ["Content-Type", "Authorization"])
     cors_max_age: int = 86400  # 24 hours
 
+    # CSP/HTTP header settings (Talisman)
+    security_headers_enabled: bool = True
+    force_https: bool = False
+    strict_transport_security: bool = True
+    strict_transport_security_max_age: int = 31536000
+    content_security_policy: dict = field(default_factory=lambda: {
+        'default-src': "'self'",
+        'script-src': "'self' 'unsafe-inline'",
+        'style-src': "'self' 'unsafe-inline'",
+        'connect-src': "'self'",
+        'img-src': "'self' data:",
+        'frame-ancestors': 'none',
+    })
+    content_type_nosniff: bool = True
+    x_frame_options: str = 'DENY'
+    x_xss_protection: bool = True
+    referrer_policy: str = 'strict-origin-when-cross-origin'
 
     def validate(self):
         # Validate host
@@ -794,7 +811,15 @@ class Config:
             'cors_enabled', 'cors_allowed_origins', 'cors_allowed_methods',
             'cors_allowed_headers', 'cors_max_age', 'key_database_path',
             'default_key_expiry_days', 'auto_prune_expired_keys',
-            'key_audit_logging', 'auth_log_level', 'warn_expiring_days', 'trusted_hosts'
+            'key_audit_logging', 'auth_log_level', 'warn_expiring_days', 'trusted_hosts',
+            'force_https',
+            'strict_transport_security',
+            'strict_transport_security_max_age',
+            'content_security_policy',
+            'content_type_nosniff',
+            'x_frame_options',
+            'x_xss_protection',
+            'referrer_policy',
         }
 
         security_config = {}

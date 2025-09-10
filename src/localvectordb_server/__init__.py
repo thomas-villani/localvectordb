@@ -20,6 +20,13 @@ from flask import Flask
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
+    from flask_talisman import Talisman
+    _FLASK_TALISMAN_AVAILABLE = True
+except ImportError:
+    Talisman = None
+    _FLASK_TALISMAN_AVAILABLE = False
+
+try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
 
@@ -161,6 +168,20 @@ def create_app(
                 app.wsgi_app,
                 x_for=1,  # Number of proxies setting X-Forwarded-For, one for single proxy
             )
+
+    if _config.server.security_headers_enabled:
+        security_config = {
+            'force_https': _config.server.force_https,
+            'strict_transport_security': _config.server.strict_transport_security,
+            'strict_transport_security_max_age': _config.server.strict_transport_security_max_age,
+            'content_security_policy': _config.server.content_security_policy,
+            'content_type_nosniff': _config.server.content_type_nosniff,
+            'x_frame_options': _config.server.x_frame_options,
+            'x_xss_protection': _config.server.x_xss_protection,
+            'referrer_policy': _config.server.referrer_policy
+        }
+        Talisman(app, **security_config)
+
 
     if _config.server.enable_rate_limiting:
         if not _FLASK_LIMITER_AVAILABLE:
