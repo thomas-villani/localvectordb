@@ -245,7 +245,7 @@ class TestHelperFunctions:
 class TestDatabaseManagementRoutes:
     """Test database management routes."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_create_database_success(self, client, app):
         """Test successful database creation."""
         # Mock the database manager's create_db method
@@ -302,7 +302,7 @@ class TestDatabaseManagementRoutes:
             embedding_config = call_args[0][3]
             assert embedding_config.model == "nomic-embed-text"
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_create_database_with_metadata_schema(self, client, app):
         """Test database creation with custom metadata schema."""
         with patch.object(app.db_manager, 'create_db') as mock_create_db:
@@ -349,7 +349,7 @@ class TestDatabaseManagementRoutes:
             assert metadata_schema is not None
             assert len(metadata_schema) == 2  # title and author fields
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_create_database_already_exists(self, client, app):
         """Test database creation when database already exists."""
         with patch.object(app.db_manager, 'create_db') as mock_create_db:
@@ -370,7 +370,7 @@ class TestDatabaseManagementRoutes:
             result = json.loads(response.data)
             assert "already exists" in result["error"]["message"]
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_create_database_no_name(self, client):
         """Test database creation without name."""
         data = {"embedding_model": "test-model"}
@@ -381,13 +381,13 @@ class TestDatabaseManagementRoutes:
 
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_create_database_no_data(self, client):
         """Test database creation without data."""
         response = client.post('/api/v1/databases')
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_list_databases(self, client, app):
         """Test listing databases."""
         response = client.get('/api/v1/databases')
@@ -397,7 +397,7 @@ class TestDatabaseManagementRoutes:
         assert "databases" in result
         assert result["count"] == 2
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_get_database_info(self, client, app, mock_db):
         """Test getting database info."""
         app.db_manager.get_db.return_value = mock_db
@@ -410,7 +410,7 @@ class TestDatabaseManagementRoutes:
         assert "stats" in result
         assert "config" in result
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_delete_database(self, client, app, temp_dir):
         """Test database deletion."""
         # Create mock database files
@@ -438,7 +438,7 @@ class TestDatabaseManagementRoutes:
 class TestDocumentManagementRoutes:
     """Test document management routes."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_upsert_documents_single(self, client, app, mock_db):
         """Test upserting single document."""
         app.db_manager.get_db.return_value = mock_db
@@ -460,7 +460,7 @@ class TestDocumentManagementRoutes:
 
         mock_db.upsert.assert_called_once()
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_upsert_documents_multiple(self, client, app, mock_db):
         """Test upserting multiple documents."""
         app.db_manager.get_db.return_value = mock_db
@@ -480,7 +480,7 @@ class TestDocumentManagementRoutes:
         result = json.loads(response.data)
         assert len(result["ids"]) == 2
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_insert_documents(self, client, app, mock_db):
         """Test inserting documents."""
         app.db_manager.get_db.return_value = mock_db
@@ -499,7 +499,7 @@ class TestDocumentManagementRoutes:
         assert response.status_code == 200
         mock_db.insert.assert_called_once()
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_get_document_success(self, client, app, mock_db, sample_document):
         """Test getting document successfully."""
         app.db_manager.get_db.return_value = mock_db
@@ -512,7 +512,7 @@ class TestDocumentManagementRoutes:
         assert result["id"] == "doc_1"
         assert result["content"] == "This is a test document."
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_get_document_not_found(self, client, app, mock_db):
         """Test getting non-existent document."""
         app.db_manager.get_db.return_value = mock_db
@@ -522,7 +522,7 @@ class TestDocumentManagementRoutes:
 
         assert response.status_code == 404
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_update_document_success(self, client, app, mock_db):
         """Test updating document successfully."""
         app.db_manager.get_db.return_value = mock_db
@@ -542,7 +542,7 @@ class TestDocumentManagementRoutes:
         assert result["status"] == "success"
         assert result["updated"] is True
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_update_document_not_found(self, client, app, mock_db):
         """Test updating non-existent document."""
         app.db_manager.get_db.return_value = mock_db
@@ -556,7 +556,7 @@ class TestDocumentManagementRoutes:
 
         assert response.status_code == 404
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_delete_document_success(self, client, app, mock_db):
         """Test deleting document successfully."""
         app.db_manager.get_db.return_value = mock_db
@@ -570,7 +570,7 @@ class TestDocumentManagementRoutes:
         assert result["status"] == "success"
         assert result["deleted_count"] == 1
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_delete_document_not_found(self, client, app, mock_db):
         """Test deleting non-existent document."""
         app.db_manager.get_db.return_value = mock_db
@@ -580,7 +580,7 @@ class TestDocumentManagementRoutes:
 
         assert response.status_code == 404
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_check_documents_exist(self, client, app, mock_db):
         """Test checking document existence."""
         app.db_manager.get_db.return_value = mock_db
@@ -596,7 +596,7 @@ class TestDocumentManagementRoutes:
         result = json.loads(response.data)
         assert result["exists"] == [True, False]
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_list_documents(self, client, app, mock_db, sample_document):
         """Test listing documents with pagination."""
         app.db_manager.get_db.return_value = mock_db
@@ -618,7 +618,7 @@ class TestDocumentManagementRoutes:
 class TestSearchRoutes:
     """Test search routes."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_query_documents_vector(self, client, app, mock_db, sample_query_result):
         """Test vector query."""
         app.db_manager.get_db.return_value = mock_db
@@ -641,7 +641,7 @@ class TestSearchRoutes:
 
         mock_db.query.assert_called_once()
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_query_documents_hybrid(self, client, app, mock_db):
         """Test hybrid query."""
         app.db_manager.get_db.return_value = mock_db
@@ -662,7 +662,7 @@ class TestSearchRoutes:
         result = json.loads(response.data)
         assert result["search_type"] == "hybrid"
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_vector_search_convenience(self, client, app, mock_db):
         """Test vector search convenience endpoint."""
         app.db_manager.get_db.return_value = mock_db
@@ -675,7 +675,7 @@ class TestSearchRoutes:
                                content_type='application/json')
         assert response.status_code == 200
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_keyword_search_convenience(self, client, app, mock_db):
         """Test keyword search convenience endpoint."""
         app.db_manager.get_db.return_value = mock_db
@@ -689,7 +689,7 @@ class TestSearchRoutes:
 
         assert response.status_code == 200
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_hybrid_search_convenience(self, client, app, mock_db):
         """Test hybrid search convenience endpoint."""
         app.db_manager.get_db.return_value = mock_db
@@ -710,7 +710,7 @@ class TestSearchRoutes:
 class TestFilterRoutes:
     """Test filter routes."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_filter_documents_where(self, client, app, mock_db, sample_document):
         """Test filtering documents with where clause."""
         app.db_manager.get_db.return_value = mock_db
@@ -730,7 +730,7 @@ class TestFilterRoutes:
         result = json.loads(response.data)
         assert len(result["documents"]) == 1
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_filter_documents_sql(self, client, app, mock_db):
         """Test filtering documents with SQL clause."""
         app.db_manager.get_db.return_value = mock_db
@@ -748,7 +748,7 @@ class TestFilterRoutes:
 
         assert response.status_code == 200
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_filter_documents_no_criteria(self, client, app, mock_db):
         """Test filtering without criteria."""
         data = {}
@@ -766,7 +766,7 @@ class TestFilterRoutes:
 class TestGlobalSearchRoutes:
     """Test global search routes."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_global_search_all_dbs(self, client, app, sample_query_result):
         """Test global search across all databases."""
         # Setup mock databases
@@ -797,7 +797,7 @@ class TestGlobalSearchRoutes:
         assert "db1" in result["results"]
         assert "db2" in result["results"]
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_global_search_specific_dbs(self, client, app, sample_query_result):
         """Test global search on specific databases."""
         mock_db = Mock()
@@ -844,7 +844,7 @@ class TestHealthRoutes:
 class TestEmbeddingRoutes:
     """Test embedding routes."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_get_embeddings_for_db(self, client, app, mock_db):
         """Test getting embeddings using database provider."""
         app.db_manager.get_db.return_value = mock_db
@@ -860,7 +860,7 @@ class TestEmbeddingRoutes:
         result = json.loads(response.data)
         assert "embeddings" in result
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_get_embeddings_generic(self, client):
         """Test getting embeddings from specific provider."""
         with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_create:
@@ -888,7 +888,7 @@ class TestEmbeddingRoutes:
 class TestErrorHandling:
     """Test error handling."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_database_not_found_error(self, client, app):
         """Test DatabaseNotFoundError handling."""
         app.db_manager.get_db.side_effect = DatabaseNotFoundError("Database not found")
@@ -899,7 +899,7 @@ class TestErrorHandling:
         result = json.loads(response.data)
         assert result["error"]["code"] == "DATABASE_NOT_FOUND"
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_duplicate_document_id_error(self, client, app, mock_db):
         """Test DuplicateDocumentIDError handling."""
         app.db_manager.get_db.return_value = mock_db
@@ -915,7 +915,7 @@ class TestErrorHandling:
         result = json.loads(response.data)
         assert result["error"]["code"] == "DUPLICATE_DOCUMENT_ID"
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_embedding_error(self, client, app, mock_db):
         """Test EmbeddingError handling."""
         app.db_manager.get_db.return_value = mock_db
@@ -945,7 +945,7 @@ class TestErrorHandling:
 class TestRequestValidation:
     """Test request validation."""
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_query_no_data(self, client):
         """Test query endpoint without data."""
         response = client.post('/api/v1/test_db/query', data=json.dumps({}))
@@ -954,7 +954,7 @@ class TestRequestValidation:
         response = client.post('/api/v1/test_db/query', data=json.dumps({}), content_type='application/json')
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_query_no_query_text(self, client):
         """Test query endpoint without query text."""
         data = {"search_type": "vector"}
@@ -965,13 +965,13 @@ class TestRequestValidation:
 
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_update_document_no_data(self, client):
         """Test update endpoint without data."""
         response = client.put('/api/v1/test_db/documents/doc_1', content_type='application/json')
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_write_permission', lambda f: f)
     def test_update_document_empty_data(self, client):
         """Test update endpoint with empty data."""
         data = {}
@@ -982,7 +982,7 @@ class TestRequestValidation:
 
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_embeddings_no_texts(self, client):
         """Test embeddings endpoint without texts."""
         data = {"provider": "mock", "model": "test"}
@@ -993,7 +993,7 @@ class TestRequestValidation:
 
         assert response.status_code == 400
 
-    @patch('localvectordb_server.routes.require_api_key', lambda f: f)
+    @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_embeddings_no_provider(self, client):
         """Test embeddings endpoint without provider."""
         data = {"texts": ["test"], "model": "test"}

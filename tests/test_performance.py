@@ -78,7 +78,7 @@ class TestDatabasePerformance:
             mock_conn = create_mock_connection()
             mock_pooled_conn = create_mock_pooled_connection(mock_conn)
 
-            with patch('localvectordb.core.ConnectionPool.get_connection') as mock_get_conn:
+            with patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
                 mock_get_conn.return_value = mock_pooled_conn
 
                 db = LocalVectorDB(
@@ -523,7 +523,7 @@ class TestScalabilityBenchmarks:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
              patch('faiss.IndexFlatL2') as mock_faiss, \
              patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-             patch('localvectordb.core.ConnectionPool.get_connection') as mock_get_conn:
+             patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
 
             mock_provider = MockEmbeddings("test-model", dimension=128)
             mock_embedding.return_value = mock_provider
@@ -591,7 +591,7 @@ class TestScalabilityBenchmarks:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
              patch('faiss.IndexFlatL2') as mock_faiss, \
              patch('faiss.IndexIDMap') as mock_faiss_idmap, \
-             patch('localvectordb.core.ConnectionPool.get_connection') as mock_get_conn:
+             patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
 
             mock_provider = MockEmbeddings("test-model", dimension=128)
             mock_embedding.return_value = mock_provider

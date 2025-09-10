@@ -619,9 +619,8 @@ class TestLocalVectorDBDeletion:
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
         with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
-            result = mock_db.delete("nonexistent")
-
-        assert result == 0
+            with pytest.raises(DocumentNotFoundError):
+                result = mock_db.delete("nonexistent")
 
 
 class TestLocalVectorDBUpdate:

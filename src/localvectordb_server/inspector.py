@@ -19,8 +19,10 @@ from datetime import datetime
 
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
+from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import handle_errors
 from localvectordb_server._logcfg import log_performance
+from localvectordb_server.keymanager import PermissionLevel
 
 logger = logging.getLogger(__name__)
 
@@ -43,40 +45,63 @@ def inspector_enabled():
     return True
 
 
-def require_inspector_auth(f):
-    """Decorator to require authentication for inspector routes"""
-    def decorated_function(*args, **kwargs):
-        if not inspector_enabled():
-            return render_template('inspector_disabled.html'), 503
+def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
+    """Decorator to require authentication for inspector routes with permission checking
+    
+    Parameters
+    ----------
+    required_permission : PermissionLevel
+        The minimum permission level required (READ_ONLY or READ_WRITE)
+    """
+    def decorator(f):
+        def decorated_function(*args, **kwargs):
+            if not inspector_enabled():
+                return render_template('inspector_disabled.html'), 503
 
-        # Check if API key authentication is required
-        config = getattr(current_app, 'config_obj', None)
-        if config and config.server.require_api_key:
-            # For web interface, check session or require API key parameter
-            api_key = session.get('inspector_api_key') or request.args.get('api_key')
-            if not api_key:
-                return redirect(url_for('inspector.login'))
-
-            # Validate API key
-            try:
-                key_manager = getattr(current_app, 'key_manager', None)
-                if key_manager and not key_manager.validate_key(api_key):
-                    flash('Invalid API key', 'error')
+            # Check if API key authentication is required
+            config = getattr(current_app, 'config_obj', None)
+            if config and config.server.require_api_key:
+                # For web interface, check session or require API key parameter
+                api_key = session.get('inspector_api_key') or request.args.get('api_key')
+                if not api_key:
                     return redirect(url_for('inspector.login'))
-                # Store valid API key in session
-                session['inspector_api_key'] = api_key
-            except Exception as e:
-                logger.error(f"API key validation error: {e}")
-                flash('Authentication error', 'error')
-                return redirect(url_for('inspector.login'))
 
-        return f(*args, **kwargs)
-    decorated_function.__name__ = f.__name__
-    return decorated_function
+                # Validate API key and check permissions
+                try:
+                    key_manager = getattr(current_app, 'key_manager', None)
+                    if key_manager:
+                        is_valid, permission_level = key_manager.validate_key_with_permissions(api_key)
+                        if not is_valid:
+                            flash('Invalid API key', 'error')
+                            return redirect(url_for('inspector.login'))
+                        
+                        # Check if user has required permission
+                        if required_permission == PermissionLevel.READ_WRITE and permission_level == PermissionLevel.READ_ONLY:
+                            flash('Insufficient permissions. This action requires write access.', 'error')
+                            return redirect(url_for('inspector.dashboard'))
+                        
+                        # Store valid API key in session
+                        session['inspector_api_key'] = api_key
+                        session['inspector_permission_level'] = permission_level.value
+                    else:
+                        # Fall back to simple validation if new method not available
+                        if not key_manager.validate_key(api_key):
+                            flash('Invalid API key', 'error')
+                            return redirect(url_for('inspector.login'))
+                        session['inspector_api_key'] = api_key
+                except Exception as e:
+                    logger.error(f"API key validation error: {e}")
+                    flash('Authentication error', 'error')
+                    return redirect(url_for('inspector.login'))
+
+            return f(*args, **kwargs)
+        decorated_function.__name__ = f.__name__
+        return decorated_function
+    return decorator
 
 
 @inspector_bp.route('/')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @log_performance("inspector_dashboard")
 def dashboard():
     """Main dashboard showing system overview"""
@@ -133,14 +158,19 @@ def login():
             flash('API key is required', 'error')
             return render_template('login.html')
 
-        # Validate API key
+        # Validate API key and get permissions
         try:
             key_manager = getattr(current_app, 'key_manager', None)
-            if key_manager and key_manager.validate_key(api_key):
-                session['inspector_api_key'] = api_key
-                return redirect(url_for('inspector.dashboard'))
+            if key_manager:
+                is_valid, permission_level = key_manager.validate_key_with_permissions(api_key)
+                if is_valid:
+                    session['inspector_api_key'] = api_key
+                    session['inspector_permission_level'] = permission_level.value if permission_level else 'read_write'
+                    return redirect(url_for('inspector.dashboard'))
+                else:
+                    flash('Invalid API key', 'error')
             else:
-                flash('Invalid API key', 'error')
+                flash('Key manager not available', 'error')
         except Exception as e:
             logger.error(f"Login error: {e}")
             flash('Authentication error', 'error')
@@ -152,12 +182,13 @@ def login():
 def logout():
     """Logout and clear session"""
     session.pop('inspector_api_key', None)
+    session.pop('inspector_permission_level', None)
     flash('Logged out successfully', 'success')
     return redirect(url_for('inspector.login'))
 
 
 @inspector_bp.route('/database/<db_name>')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @log_performance("inspector_database")
 def database_detail(db_name):
     """Database detail view with document browser"""
@@ -199,7 +230,7 @@ def database_detail(db_name):
 
 
 @inspector_bp.route('/query')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @log_performance("inspector_query")
 def query_interface():
     """Interactive query testing interface"""
@@ -221,7 +252,7 @@ def query_interface():
 
 
 @inspector_bp.route('/embeddings')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @log_performance("inspector_embeddings")
 def embeddings_view():
     """Embedding visualization interface"""
@@ -243,7 +274,7 @@ def embeddings_view():
 
 
 @inspector_bp.route('/admin')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @log_performance("inspector_admin")
 def admin_interface():
     """System administration interface"""
@@ -278,7 +309,7 @@ def admin_interface():
 
 
 @inspector_bp.route('/api/databases')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @handle_errors
 def api_databases():
     """API endpoint to get database list with stats"""
@@ -313,7 +344,7 @@ def api_databases():
 
 
 @inspector_bp.route('/api/system/stats')
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_ONLY)
 @handle_errors
 def api_system_stats():
     """API endpoint to get system statistics"""
@@ -331,7 +362,7 @@ def api_system_stats():
 
 
 @inspector_bp.route('/api/database/<db_name>/upload', methods=['POST'])
-@require_inspector_auth
+@require_inspector_auth(PermissionLevel.READ_WRITE)
 @handle_errors
 def api_upload_document(db_name):
     """API endpoint to upload a document file to a database"""
@@ -430,5 +461,6 @@ def inject_inspector_context():
         'inspector_enabled': inspector_enabled(),
         'require_api_key': config.server.require_api_key if config else False,
         'logged_in': 'inspector_api_key' in session,
-        'current_user': session.get('inspector_api_key', '')[:8] + '...' if 'inspector_api_key' in session else None
+        'current_user': session.get('inspector_api_key', '')[:8] + '...' if 'inspector_api_key' in session else None,
+        'permission_level': session.get('inspector_permission_level', 'unknown')
     }

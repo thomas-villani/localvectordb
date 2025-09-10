@@ -70,6 +70,7 @@ class TestLocalVectorDBIntegration:
             mock_schema_instance = Mock()
             mock_schema_instance.initialize = Mock()
             mock_schema_instance.metadata_fields = metadata_schema
+            mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
             mock_schema.return_value = mock_schema_instance
 
             # Mock FAISS index
@@ -324,6 +325,7 @@ class TestLocalVectorDBIntegration:
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
+                mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
 
                 mock_index = Mock()
@@ -446,6 +448,7 @@ class TestLocalVectorDBIntegration:
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
+                mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
 
                 mock_index = Mock()
@@ -555,6 +558,7 @@ class TestLocalVectorDBIntegration:
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
+                mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
 
                 mock_index = Mock()
@@ -646,6 +650,7 @@ class TestLocalVectorDBIntegration:
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
+                mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
                 
                 mock_index = Mock()
@@ -748,6 +753,7 @@ class TestLocalVectorDBIntegration:
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
+                mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
                 
                 mock_index = Mock()
@@ -892,6 +898,7 @@ class TestLocalVectorDBIntegration:
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
+                mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
                 
                 mock_index = Mock()

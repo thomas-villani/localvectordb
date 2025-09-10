@@ -178,7 +178,7 @@ class BackupConfig:
         max_backup_size_gb: float = 0.0,
         include_faiss_index: bool = True
     ):
-        self.backup_location = Path(backup_location)
+        self.backup_location: Path = Path(backup_location)
         self.compression_algorithm = compression_algorithm
         self.verify_integrity = verify_integrity
         self.retention_days = retention_days

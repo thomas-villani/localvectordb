@@ -212,122 +212,122 @@ def validate_api_key_with_permissions(token: str) -> tuple[bool, PermissionLevel
     logger.debug("Token validation failed for all sources")
     return False, PermissionLevel.READ_WRITE
 
-
-def require_api_key(f):
-    """
-    Enhanced decorator to require Bearer token authentication for routes.
-
-    Features:
-    - Comprehensive security logging
-    - Rate limiting integration
-    - Enhanced error messages
-    - Security metrics collection
-    - Request context tracking
-
-    Parameters
-    ----------
-    f : callable
-        The route function to protect
-
-    Returns
-    -------
-    callable
-        Wrapped function that checks for Bearer token before executing
-
-    Raises
-    ------
-    Unauthorized
-        If authentication token is required but missing or invalid
-
-    Examples
-    --------
-
-    Protecting a route::
-
-        @app.route('/api/v1/protected')
-        @require_api_key
-        def protected_endpoint():
-            return {"message": "Access granted"}
-
-    Using with Bearer token::
-
-        curl -H "Authorization: Bearer lvdb_abc123..." http://localhost:5000/api/v1/protected
-    """
-
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        # Check if authentication is required
-        auth_required = current_app.config.get("REQUIRE_API_KEY", False)
-        if not auth_required:
-            return f(*args, **kwargs)
-
-        auth_header_key = getattr(current_app.config_obj.server, 'api_key_header', 'Authorization') if hasattr(
-            current_app, 'config_obj') else 'Authorization'
-
-        # Extract Authorization header
-        auth_header = request.headers.get(auth_header_key)
-        if not auth_header:
-            security_logger.log_auth_attempt(
-                success=False,
-                reason="Missing Authorization header",
-                endpoint=request.endpoint
-            )
-            raise Unauthorized("Authorization header required")
-
-        # Parse Bearer token
-        try:
-            auth_type, token = auth_header.split(None, 1)
-        except ValueError:
-            security_logger.log_auth_attempt(
-                success=False,
-                reason="Invalid Authorization header format",
-                endpoint=request.endpoint,
-                auth_header_preview=auth_header[:20] + "..." if len(auth_header) > 20 else auth_header
-            )
-            raise Unauthorized("Invalid Authorization header format. Expected: Bearer <token>")
-
-        if auth_type.lower() != "bearer":
-            security_logger.log_auth_attempt(
-                success=False,
-                reason=f"Invalid auth type: {auth_type}",
-                endpoint=request.endpoint,
-                auth_type=auth_type
-            )
-            raise Unauthorized("Bearer token required")
-
-        # Validate the token
-        start_time = time.time()
-        is_valid = validate_api_key(token)
-        validation_time = time.time() - start_time
-
-        if not is_valid:
-            security_logger.log_auth_attempt(
-                success=False,
-                reason="Invalid Bearer token",
-                endpoint=request.endpoint,
-                token_prefix=_mask_token(token),
-                validation_time_ms=validation_time * 1000
-            )
-            raise Unauthorized("Invalid Bearer token")
-
-        # Success logging
-        security_logger.log_auth_attempt(
-            success=True,
-            reason="Authentication successful",
-            endpoint=request.endpoint,
-            token_prefix=_mask_token(token),
-            validation_time_ms=validation_time * 1000
-        )
-
-        logger.debug("API key authentication successful")
-
-        # Store token hash for request tracking
-        g.api_key_hash = hash(token)
-        g.authenticated = True
-
-        return f(*args, **kwargs)
-
-    return decorated
+# Removed in favor of
+# def require_api_key(f):
+#     """
+#     Enhanced decorator to require Bearer token authentication for routes.
+#
+#     Features:
+#     - Comprehensive security logging
+#     - Rate limiting integration
+#     - Enhanced error messages
+#     - Security metrics collection
+#     - Request context tracking
+#
+#     Parameters
+#     ----------
+#     f : callable
+#         The route function to protect
+#
+#     Returns
+#     -------
+#     callable
+#         Wrapped function that checks for Bearer token before executing
+#
+#     Raises
+#     ------
+#     Unauthorized
+#         If authentication token is required but missing or invalid
+#
+#     Examples
+#     --------
+#
+#     Protecting a route::
+#
+#         @app.route('/api/v1/protected')
+#         @require_api_key
+#         def protected_endpoint():
+#             return {"message": "Access granted"}
+#
+#     Using with Bearer token::
+#
+#         curl -H "Authorization: Bearer lvdb_abc123..." http://localhost:5000/api/v1/protected
+#     """
+#
+#     @wraps(f)
+#     def decorated(*args, **kwargs):
+#         # Check if authentication is required
+#         auth_required = current_app.config.get("REQUIRE_API_KEY", False)
+#         if not auth_required:
+#             return f(*args, **kwargs)
+#
+#         auth_header_key = getattr(current_app.config_obj.server, 'api_key_header', 'Authorization') if hasattr(
+#             current_app, 'config_obj') else 'Authorization'
+#
+#         # Extract Authorization header
+#         auth_header = request.headers.get(auth_header_key)
+#         if not auth_header:
+#             security_logger.log_auth_attempt(
+#                 success=False,
+#                 reason="Missing Authorization header",
+#                 endpoint=request.endpoint
+#             )
+#             raise Unauthorized("Authorization header required")
+#
+#         # Parse Bearer token
+#         try:
+#             auth_type, token = auth_header.split(None, 1)
+#         except ValueError:
+#             security_logger.log_auth_attempt(
+#                 success=False,
+#                 reason="Invalid Authorization header format",
+#                 endpoint=request.endpoint,
+#                 auth_header_preview=auth_header[:20] + "..." if len(auth_header) > 20 else auth_header
+#             )
+#             raise Unauthorized("Invalid Authorization header format. Expected: Bearer <token>")
+#
+#         if auth_type.lower() != "bearer":
+#             security_logger.log_auth_attempt(
+#                 success=False,
+#                 reason=f"Invalid auth type: {auth_type}",
+#                 endpoint=request.endpoint,
+#                 auth_type=auth_type
+#             )
+#             raise Unauthorized("Bearer token required")
+#
+#         # Validate the token
+#         start_time = time.time()
+#         is_valid = validate_api_key(token)
+#         validation_time = time.time() - start_time
+#
+#         if not is_valid:
+#             security_logger.log_auth_attempt(
+#                 success=False,
+#                 reason="Invalid Bearer token",
+#                 endpoint=request.endpoint,
+#                 token_prefix=_mask_token(token),
+#                 validation_time_ms=validation_time * 1000
+#             )
+#             raise Unauthorized("Invalid Bearer token")
+#
+#         # Success logging
+#         security_logger.log_auth_attempt(
+#             success=True,
+#             reason="Authentication successful",
+#             endpoint=request.endpoint,
+#             token_prefix=_mask_token(token),
+#             validation_time_ms=validation_time * 1000
+#         )
+#
+#         logger.debug("API key authentication successful")
+#
+#         # Store token hash for request tracking
+#         g.api_key_hash = hash(token)
+#         g.authenticated = True
+#
+#         return f(*args, **kwargs)
+#
+#     return decorated
 
 
 def _require_permission(required_permission: PermissionLevel):
