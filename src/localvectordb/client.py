@@ -132,13 +132,13 @@ import httpx
 import numpy as np
 
 from localvectordb.core import (
-    BaseVectorDB,
     Document,
     DocumentScoringMethod,
     MetadataField,
     MetadataFieldType,
     QueryResult,
 )
+from localvectordb.database import BaseVectorDB
 from localvectordb.embeddings import EmbeddingProvider, HTTPEmbeddingProvider
 from localvectordb.exceptions import (
     BaseLocalVectorDBException,
@@ -730,6 +730,10 @@ class RemoteVectorDB(BaseVectorDB):
 
         return result.get("ids", [])
 
+    # TODO: Must implement route!
+    def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        pass
+
     def upsert_from_file(
             self,
             file_paths: Union[str, Path, List[Union[str, Path]]],
@@ -737,7 +741,8 @@ class RemoteVectorDB(BaseVectorDB):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            extractor_kwargs: Optional[Dict[str, Any]] = None
+            queue_size: int = 3,
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Insert or update documents from files using file extraction.
@@ -2438,6 +2443,13 @@ class RemoteVectorDB(BaseVectorDB):
                 logger.warning(f"Failed to delete document: {result}")
 
         return deleted_count
+
+    # TODO: must implement route!
+    async def count_async(
+            self,
+            filters: Optional[Dict[str, Any]] = None
+    ) -> int:
+        pass
 
     async def update_async(
             self,

@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
-from localvectordb import MetadataField
+from localvectordb.core import MetadataField
 
 logger = logging.getLogger(__name__)
 

@@ -19,7 +19,6 @@ from typing import Union
 from urllib.parse import parse_qs, urlparse
 
 from localvectordb.client import RemoteVectorDB
-from localvectordb.core import AnyVectorDB
 from localvectordb.database import LocalVectorDB
 
 
@@ -27,7 +26,7 @@ def VectorDB(
         name: str,
         base_path: Union[str, Path],
         **kwargs
-) -> AnyVectorDB:
+) -> Union[LocalVectorDB, RemoteVectorDB]:
     """
     Enhanced factory function that returns the appropriate VectorDB instance
     based on whether base_path looks like a URL or a local path, with optional async support.
@@ -168,8 +167,9 @@ def _fix_types(item):
     return item
 
 
-def from_uri(db_uri: str) -> AnyVectorDB:
+def from_uri(db_uri: str) -> Union[LocalVectorDB, RemoteVectorDB]:
     parsed = urlparse(db_uri)
+    # TODO: if http/https, use remote.
     if parsed.scheme != "lvdb":
         raise ValueError(f"Invalid database URI: scheme must be 'lvdb', found: '{parsed.scheme}'")
 

@@ -205,6 +205,7 @@ from localvectordb.backup import BackupManager, IncrementalBackupManager, PointI
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.extractors import get_extractor_registry, ExtractorRegistry
 
+
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",
            "BackupManager", "IncrementalBackupManager", "PointInTimeRecoveryManager",

@@ -12,14 +12,15 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Union, Dict, Optional, Any, List
-
+import logging
 import aiosqlite
 
-from localvectordb import MetadataField
-from localvectordb.core import MetadataFieldType, logger
+from localvectordb.core import MetadataFieldType, MetadataField
 from localvectordb._pools import ReadWriteLock
 from localvectordb.versioning import VersionManager, DatabaseVersion
 
+
+logger = logging.getLogger(__name__)
 
 class DatabaseSchema:
     """

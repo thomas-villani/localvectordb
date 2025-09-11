@@ -78,7 +78,8 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Union
 import numpy as np
 
 from localvectordb._filters import FILTER_OPERATORS
-from localvectordb.core import AnyVectorDB, Document, DocumentScoringMethod, QueryResult
+from localvectordb.database.base import BaseVectorDB
+from localvectordb.core import Document, DocumentScoringMethod, QueryResult
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class SemanticFilter:
     metric: SimilarityMetric = SimilarityMetric.COSINE
     embedding_model: Optional[str] = None
 
-    async def apply_async(self, documents: List[Document], db: AnyVectorDB) -> List[Document]:
+    async def apply_async(self, documents: List[Document], db: "BaseVectorDB") -> List[Document]:
         """Apply semantic filtering with async embedding generation."""
         if not documents:
             return documents
@@ -154,7 +155,7 @@ class SemanticFilter:
 
         return filtered_docs
 
-    def apply(self, documents: List[Document], db: AnyVectorDB) -> List[Document]:
+    def apply(self, documents: List[Document], db: BaseVectorDB) -> List[Document]:
         """Apply semantic filtering synchronously."""
         if not documents:
             return documents
@@ -254,7 +255,7 @@ class QueryBuilder:
     and filter operations against vector databases.
     """
 
-    def __init__(self, db: AnyVectorDB):
+    def __init__(self, db: BaseVectorDB):
         self._db = db
         self._search_clauses: List[SearchClause] = []
         self._exact_filters: List[Dict[str, Any]] = []

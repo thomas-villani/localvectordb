@@ -1,0 +1,1740 @@
+# Copyright (c) 2023-2025 Tom Villani, Ph.D.
+#
+# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
+# You may not use this file for commercial purposes without explicit permission.
+#
+# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
+#
+# Contact: thomas.villani@gmail.com
+#
+# src/localvectordb/database/search.py
+"""
+Query/search (sync + async), deduplication, context windows, and scoring.
+
+This module keeps the original logic with minimal changes, grouped by purpose.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import math
+from abc import ABC
+from collections import defaultdict
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
+import numpy as np
+
+from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
+from localvectordb.core import ChunkPosition, DocumentScoringMethod, QueryResult
+from localvectordb.database.base import LocalVectorDBBase
+
+logger = logging.getLogger(__name__)
+
+
+class SearchMixin(LocalVectorDBBase, ABC):
+    # -----------------
+    # Public search API
+    # -----------------
+    def query(self, query: str, *,
+              search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+              return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+              k: int = 10, score_threshold: float = 0.0,
+              filters: Optional[Dict[str, Any]] = None,
+              vector_weight: float = 0.7,
+              context_window: int = 2,
+              semantic_dedup_threshold: Optional[float] = None,
+              document_scoring_method: DocumentScoringMethod = "frequency_boost",
+              document_scoring_options: Optional[dict] = None
+              ) -> List[QueryResult]:
+        """
+        Unified query interface for all search types
+
+        Parameters
+        ----------
+        query : str
+            Query text
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks', 'context', 'enriched']
+            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        context_window : int
+            Number of chunks before and after to include when return_type='context'
+            Number of similar chunks to enrich when return_type='enriched'
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+            One of: {"best", "average", "worst", "weighted_average", "frequency_boost", "harmonic_mean",
+            "diminishing_returns", "statistical", "robust_mean", "percentile", "geometric_mean"}
+        document_scoring_options : dict, optional
+            Parameters to pass to the scoring method function.
+            - frequency_boost
+                frequency_bias : 0.0 - 1.0, default = 0.3
+                    The ratio of the frequency multiplier to apply. Higher favors documents with more matching chunks
+            - harmonic_mean
+                max_chunks : int, default = 5
+                    The number of top-scoring chunks to include to calculate the score
+                coverage_threshold : 0.0 - 1.0, default = 0.7
+                    The score threshold, above which chunks are considered "high-quality" and give an
+                    additional bonus to the score.
+            - diminishing_returns
+                decay_factor : float, default = 0.8
+                    The decay of the cumulative score of multiple chunks from the same document
+            - statistical
+                best_weight : float, default = 0.6
+                    The weight of the best scoring chunk in the total score
+                mean_weight : float, default = 0.2
+                    The weight of the mean chunk score in the total score
+                consistency_weight : float, default = 0.1
+                    The weight applied based on how low the variance in the chunk scores is
+                coverage_weight : float, default = 0.1
+                    The weight applied for how many chunks are retrieved
+            - robust_mean
+                outlier_threshold : float, default = 2.0
+                    The z-score threshold to identifier outliers
+                position_decay : float, default = 0.9
+                    The penalization for the rank of the chunk on its score
+            - percentile
+                primary_percentile : float, default = 0.9
+                    The first percentile of chunks to sample for the overall document score
+                secondary_percentile : float, default = 0.7
+                    The lower percentile of chunks to sample for the overall document score
+                primary_weight : float, default = 0.7
+                    The weight to apply to the primary percentile result
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with normalized scores
+        """
+        with self._read_write_lock.read_lock():
+            if search_type == 'vector':
+                return self._vector_search(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            elif search_type == 'keyword':
+                return self._keyword_search(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            elif search_type == 'hybrid':
+                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            else:
+                raise ValueError(f"Unknown search type: {search_type}")
+
+    # ---------------
+    # Vector (sync)
+    # ---------------
+    def _vector_search(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+        query_embeddings = self.embedding_provider.embed_sync([query])
+        query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
+        initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
+        distances, indices = self.index.search(query_embedding, initial_k)
+        valid_results, valid_faiss_ids = [], []
+        for dist, idx in zip(distances[0], indices[0], strict=False):
+            if idx == -1:
+                continue
+            base_similarity = 1.0 / (1.0 + float(dist))
+            score = max(0.0, (base_similarity - 0.5) / 0.5)
+            if score < score_threshold:
+                continue
+            valid_results.append((int(idx), score))
+            valid_faiss_ids.append(int(idx))
+        if not valid_faiss_ids:
+            return []
+        chunk_results = []
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ','.join(['?'] * len(valid_faiss_ids))
+            cursor = conn.execute(f'''
+                SELECT c.*, d.id as doc_id, d.content as doc_content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id  
+                WHERE c.faiss_id IN ({placeholders})
+            ''', valid_faiss_ids)
+            faiss_id_to_row, doc_ids_to_fetch = {}, set()
+            for row in cursor.fetchall():
+                faiss_id_to_row[row['faiss_id']] = row
+                doc_ids_to_fetch.add(row['doc_id'])
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+            for faiss_id, score in valid_results:
+                row = faiss_id_to_row.get(faiss_id)
+                if not row:
+                    continue
+                doc_metadata = doc_metadata_batch.get(row['doc_id'], {})
+                if filters and not matches_metadata_filter(doc_metadata, filters):
+                    continue
+                position = ChunkPosition(
+                    start=row['start_pos'],
+                    end=row['end_pos'],
+                    line=row['start_line'],
+                    column=row['start_col'],
+                    end_line=row['end_line'],
+                    end_column=row['end_col'],
+                )
+                result = QueryResult(
+                    id=f"{row['document_id']}:{row['chunk_index']}",
+                    score=score,
+                    type='chunk',
+                    content=row['content'],
+                    metadata=doc_metadata,
+                    document_id=row['doc_id'],
+                    position=position,
+                )
+                chunk_results.append(result)
+        if semantic_dedup_threshold is not None:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
+        if return_type == 'context':
+            final_results = self._add_context_window(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'enriched':
+            final_results = self._enrich_with_intra_doc_context(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            document_results = self._aggregate_document_scores_with_method(chunk_results, document_scoring_method, document_scoring_options)
+            return document_results[:k]
+        else:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            return chunk_results[:k]
+
+    def _get_documents_metadata_batch(self, conn, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not doc_ids or not self.metadata_schema:
+            return {doc_id: {} for doc_id in doc_ids}
+        metadata_columns = list(self.metadata_schema.keys())
+        placeholders = ','.join(['?'] * len(doc_ids))
+        cursor = conn.execute(
+            f"SELECT id, {', '.join(metadata_columns)} FROM documents WHERE id IN ({placeholders})",
+            doc_ids,
+        )
+        result = {}
+        for row in cursor.fetchall():
+            doc_id = row['id']
+            result[doc_id] = {col_name: row[col_name] for col_name in metadata_columns}
+        for doc_id in doc_ids:
+            if doc_id not in result:
+                result[doc_id] = {}
+        return result
+
+    # ----------------
+    # Keyword (sync)
+    # ----------------
+    def _keyword_search(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+        if not self.fts_enabled:
+            logger.warning("FTS not available, returning empty results")
+            return []
+        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized_query:
+            return []
+        initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
+        chunk_results: List[QueryResult] = []
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute('''
+                SELECT rowid, rank
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            ''', (sanitized_query, initial_k))
+            valid_chunk_data, valid_chunk_ids = [], []
+            for row in cursor.fetchall():
+                score = 1.0 - min(1.0, math.exp(float(row['rank'])))
+                if score < score_threshold:
+                    continue
+                chunk_id = row['rowid']
+                valid_chunk_data.append((chunk_id, score))
+                valid_chunk_ids.append(chunk_id)
+            if not valid_chunk_ids:
+                return []
+            placeholders = ','.join(['?'] * len(valid_chunk_ids))
+            cursor = conn.execute(f'''
+                SELECT c.*, d.id as doc_id, d.content as doc_content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE c.id IN ({placeholders})
+            ''', valid_chunk_ids)
+            chunk_id_to_row, doc_ids_to_fetch = {}, set()
+            for row in cursor.fetchall():
+                chunk_id_to_row[row['id']] = row
+                doc_ids_to_fetch.add(row['doc_id'])
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+            for chunk_id, score in valid_chunk_data:
+                row = chunk_id_to_row.get(chunk_id)
+                if not row:
+                    continue
+                doc_metadata = doc_metadata_batch.get(row['doc_id'], {})
+                if filters and not matches_metadata_filter(doc_metadata, filters):
+                    continue
+                position = ChunkPosition(
+                    start=row['start_pos'],
+                    end=row['end_pos'],
+                    line=row['start_line'],
+                    column=row['start_col'],
+                    end_line=row['end_line'],
+                    end_column=row['end_col'],
+                )
+                result = QueryResult(
+                    id=f"{row['document_id']}:{row['chunk_index']}",
+                    score=score,
+                    type='chunk',
+                    content=row['content'],
+                    metadata=doc_metadata,
+                    document_id=row['doc_id'],
+                    position=position,
+                )
+                chunk_results.append(result)
+        if semantic_dedup_threshold is not None:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
+        if return_type == 'context':
+            final_results = self._add_context_window(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'enriched':
+            final_results = self._enrich_with_intra_doc_context(chunk_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            document_results = self._aggregate_document_scores_with_method(chunk_results, document_scoring_method, document_scoring_options)
+            return document_results[:k]
+        else:
+            chunk_results.sort(key=lambda x: x.score, reverse=True)
+            return chunk_results[:k]
+
+    # ----------------
+    # Hybrid (sync)
+    # ----------------
+    def _hybrid_search(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+        if not self.fts_enabled:
+            logger.info("FTS not available, falling back to vector search")
+            return self._vector_search(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+        search_k = min(k * 4, 100)
+        vector_results = self._vector_search(query, 'chunks', search_k, 0.0, filters, 0, None)
+        keyword_results = self._keyword_search(query, 'chunks', search_k, 0.0, filters, 0, None)
+        combined_results = self._combine_search_results(vector_results=vector_results, keyword_results=keyword_results, vector_weight=vector_weight, k=search_k, score_threshold=0.0)
+        if semantic_dedup_threshold is not None:
+            combined_results = self._apply_semantic_deduplication(combined_results, semantic_dedup_threshold)
+        combined_results = [r for r in combined_results if r.score >= score_threshold]
+        if return_type == 'context':
+            final_results = self._add_context_window(combined_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'enriched':
+            final_results = self._enrich_with_intra_doc_context(combined_results, context_window)
+            final_results.sort(key=lambda x: x.score, reverse=True)
+            return final_results[:k]
+        elif return_type == 'documents':
+            document_results = self._aggregate_document_scores_with_method(combined_results, document_scoring_method, document_scoring_options)
+            return document_results[:k]
+        else:
+            combined_results.sort(key=lambda x: x.score, reverse=True)
+            return combined_results[:k]
+
+    # ----------------------------
+    # Embeddings access + dedup
+    # ----------------------------
+    def get_chunk_embeddings(self, chunk_ids: str | List[str]) -> np.ndarray:
+        """Returns embeddings for chunks given by `chunk_ids`"
+
+        Parameters
+        ----------
+        chunk_ids : str | List[str]
+            The chunk_ids for which to return embeddings
+
+        Returns
+        -------
+        np.ndarray
+
+        """
+        single_id = isinstance(chunk_ids, str)
+        if single_id:
+            chunk_ids = [chunk_ids]
+        chunk_list = []
+        for cid in chunk_ids:
+            doc_id, chunk_idx = self._split_chunk_id(cid)
+            if chunk_idx == -1:
+                raise ValueError(f"Expected chunk ids (e.g. doc_1:1), found: {cid}")
+            chunk_list.append((doc_id, chunk_idx))
+        placeholders = ",".join(["(?,?)"] * len(chunk_list))
+        query_str = f"""SELECT faiss_id, document_id, chunk_index FROM chunks WHERE (document_id, chunk_index) IN ({placeholders})"""
+        params = [item for pair in chunk_list for item in pair]
+        with self._read_write_lock.read_lock():
+            with self.connection_pool.get_connection() as conn:
+                cursor = conn.execute(query_str, params)
+                rows = cursor.fetchall()
+                faiss_ids = [row["faiss_id"] for row in rows]
+            return self._reconstruct_embeddings_batch(faiss_ids)
+
+    def _apply_semantic_deduplication(self, results: List[QueryResult], threshold: float) -> List[QueryResult]:
+        """
+        Apply semantic deduplication to search results using FAISS index embeddings.
+
+        Optimized version that minimizes database calls and uses batch FAISS operations.
+
+        Parameters
+        ----------
+        results : List[QueryResult]
+            Initial search results to deduplicate - MUST BE SORTED with highest score first
+        threshold : float
+            Similarity threshold (0-1, higher=more similar). Chunks above this threshold are considered duplicates.
+
+        Returns
+        -------
+        List[QueryResult]
+            Deduplicated results with highest-scored chunk from each similar group
+        """
+        if not results or threshold is None or threshold <= 0:
+            return results
+        chunk_results = [r for r in results if r.type == 'chunk']
+        if len(chunk_results) <= 1:
+            return results
+        chunk_identifiers = [(r.document_id, self._extract_chunk_index_from_id(r.id)) for r in chunk_results]
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
+            query = f'''
+                SELECT document_id, chunk_index, faiss_id 
+                FROM chunks 
+                WHERE (document_id, chunk_index) IN ({placeholders})
+            '''
+            params = [item for pair in chunk_identifiers for item in pair]
+            cursor = conn.execute(query, params)
+            faiss_id_mapping = { (row['document_id'], row['chunk_index']): row['faiss_id'] for row in cursor.fetchall() }
+        faiss_ids = []
+        result_mapping = {}
+        for result in chunk_results:
+            doc_id, chunk_idx = self._split_chunk_id(result.id)
+            faiss_id = faiss_id_mapping.get((doc_id, chunk_idx))
+            if faiss_id is not None:
+                faiss_ids.append(faiss_id)
+                result_mapping[faiss_id] = result
+        embeddings_matrix = self._reconstruct_embeddings_batch(faiss_ids)
+        norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
+        normalized_embeddings = embeddings_matrix / np.maximum(norms, 1e-8)
+        similarity_matrix = np.dot(normalized_embeddings, normalized_embeddings.T)
+        similar_pairs = similarity_matrix >= threshold
+        np.fill_diagonal(similar_pairs, False)
+        upper_tri = np.triu(similar_pairs, k=1)
+        should_remove = np.any(upper_tri, axis=0)
+        keep_mask = ~should_remove
+        final_chunk_results = [result_mapping[faiss_ids[i]] for i in range(len(faiss_ids)) if keep_mask[i]]
+        return final_chunk_results
+
+    @staticmethod
+    def _split_chunk_id(chunk_id: str) -> tuple[str, int]:
+        try:
+            parts = chunk_id.rsplit(':', maxsplit=1)
+            chunk_idx = int(parts[-1])
+            doc_id = parts[0]
+            return doc_id, chunk_idx
+        except (ValueError, IndexError, TypeError):
+            return chunk_id, -1
+
+    @staticmethod
+    def _extract_chunk_index_from_id(chunk_id: str) -> int:
+        _, chunk_idx = SearchMixin._split_chunk_id(chunk_id)
+        return chunk_idx
+
+    # ---------------------
+    # Context and enrichment
+    # ---------------------
+    def _add_context_window(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+        if context_window <= 0 or not results:
+            return results
+        context_results: List[QueryResult] = []
+        doc_chunk_requests = defaultdict(list)
+        for result in results:
+            if result.type != 'chunk':
+                context_results.append(result)
+                continue
+            doc_id = result.document_id
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunk_requests[doc_id].append((chunk_index, result))
+        with self.connection_pool.get_connection() as conn:
+            for doc_id, chunk_requests in doc_chunk_requests.items():
+                ranges_needed = []
+                for chunk_index, result in chunk_requests:
+                    start_index = max(0, chunk_index - context_window)
+                    end_index = chunk_index + context_window
+                    ranges_needed.append((start_index, end_index, chunk_index, result))
+                merged_ranges = self._merge_overlapping_ranges(ranges_needed)
+                all_chunk_indices = set()
+                for start, end, _, _ in merged_ranges:
+                    all_chunk_indices.update(range(start, end + 1))
+                if not all_chunk_indices:
+                    continue
+                placeholders = ','.join(['?'] * len(all_chunk_indices))
+                cursor = conn.execute(f'''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col
+                    FROM chunks 
+                    WHERE document_id = ? AND chunk_index IN ({placeholders})
+                    ORDER BY chunk_index
+                ''', [doc_id] + list(all_chunk_indices))
+                chunks_by_index = {row['chunk_index']: row for row in cursor.fetchall()}
+                for chunk_index, result in chunk_requests:
+                    context_chunks = []
+                    start_context = max(0, chunk_index - context_window)
+                    end_context = chunk_index + context_window
+                    for i in range(start_context, end_context + 1):
+                        if i in chunks_by_index:
+                            context_chunks.append(chunks_by_index[i])
+                    if not context_chunks:
+                        context_results.append(result)
+                        continue
+                    combined_content = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
+                    for chunk_row in context_chunks:
+                        combined_content.append(chunk_row['content'])
+                        min_start_pos = min(min_start_pos, chunk_row['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_row['end_pos'])
+                        min_start_line = min(min_start_line, chunk_row['start_line'])
+                        max_end_line = max(max_end_line, chunk_row['end_line'])
+                        if chunk_row['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_row['start_col'])
+                        if chunk_row['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_row['end_col'])
+                    context_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col),
+                    )
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
+                    context_result = QueryResult(
+                        id=f"{doc_id}:context:{chunk_index}",
+                        score=result.score,
+                        type="context",
+                        content=combined_text,
+                        metadata=result.metadata.copy(),
+                        document_id=doc_id,
+                        position=context_position,
+                    )
+                    context_result.metadata['_context_window'] = context_window
+                    context_result.metadata['_original_chunk_index'] = chunk_index
+                    context_result.metadata['_context_chunk_count'] = len(context_chunks)
+                    context_result.metadata['_context_start_index'] = start_context
+                    context_result.metadata['_context_end_index'] = end_context
+                    context_results.append(context_result)
+        return context_results
+
+    @staticmethod
+    def _merge_overlapping_ranges(ranges_needed: List[Tuple[int, int, int, Any]]) -> List[Tuple[int, int, int, Any]]:
+        if not ranges_needed:
+            return []
+        sorted_ranges = sorted(ranges_needed, key=lambda x: x[0])
+        merged = []
+        current_start, current_end, first_chunk, first_result = sorted_ranges[0]
+        for start, end, chunk_idx, result in sorted_ranges[1:]:
+            if start <= current_end + 1:
+                current_end = max(current_end, end)
+            else:
+                merged.append((current_start, current_end, first_chunk, first_result))
+                current_start, current_end, first_chunk, first_result = start, end, chunk_idx, result
+        merged.append((current_start, current_end, first_chunk, first_result))
+        return merged
+
+    def _enrich_with_intra_doc_context(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+        if context_window <= 0 or not results:
+            return results
+        enriched_results: List[QueryResult] = []
+        doc_chunks_to_enrich = defaultdict(list)
+        with self.connection_pool.get_connection() as conn:
+            for result in results:
+                if result.type != 'chunk':
+                    enriched_results.append(result)
+                    continue
+                doc_id = result.document_id
+                chunk_index = self._extract_chunk_index_from_id(result.id)
+                doc_chunks_to_enrich[doc_id].append((chunk_index, result))
+            for doc_id, chunk_requests in doc_chunks_to_enrich.items():
+                cursor = conn.execute('''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, 
+                           end_line, end_col, faiss_id
+                    FROM chunks 
+                    WHERE document_id = ? AND faiss_id IS NOT NULL
+                    ORDER BY chunk_index
+                ''', [doc_id])
+                doc_chunks = {row['chunk_index']: row for row in cursor.fetchall()}
+                doc_faiss_ids = [row['faiss_id'] for row in doc_chunks.values()]
+                if len(doc_chunks) <= 1:
+                    for chunk_index, result in chunk_requests:
+                        if chunk_index not in doc_chunks:
+                            enriched_results.append(result)
+                            continue
+                        target_chunk = doc_chunks[chunk_index]
+                        enriched_result = QueryResult(
+                            id=f"{doc_id}:enriched:{chunk_index}",
+                            score=result.score,
+                            type="enriched",
+                            content=target_chunk['content'],
+                            metadata=result.metadata.copy(),
+                            document_id=doc_id,
+                            position=ChunkPosition(
+                                start=int(target_chunk['start_pos']),
+                                end=int(target_chunk['end_pos']),
+                                line=int(target_chunk['start_line']),
+                                column=int(target_chunk['start_col']),
+                                end_line=int(target_chunk['end_line']),
+                                end_column=int(target_chunk['end_col']),
+                            ),
+                        )
+                        enriched_result.metadata['_enriched_chunk_count'] = 1
+                        enriched_result.metadata['_original_chunk_index'] = chunk_index
+                        enriched_result.metadata['_similarity_scores'] = [1.0]
+                        enriched_result.metadata['_enrichment_method'] = 'single_chunk'
+                        enriched_results.append(enriched_result)
+                    continue
+                doc_embeddings = self._reconstruct_embeddings_batch(doc_faiss_ids)
+                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings)}
+                all_matched_indices = [chunk_index for chunk_index, _ in chunk_requests]
+                all_matched_results = [result for _, result in chunk_requests]
+                relevant_chunks = set()
+                similarity_scores = {}
+                for chunk_index in all_matched_indices:
+                    if chunk_index not in doc_chunks:
+                        continue
+                    target_chunk = doc_chunks[chunk_index]
+                    target_faiss_id = target_chunk['faiss_id']
+                    target_embedding = faiss_id_to_embedding[target_faiss_id]
+                    relevant_chunks.add(chunk_index)
+                    similarity_scores[chunk_index] = max(similarity_scores.get(chunk_index, 0), 1.0)
+                    similarities = []
+                    for other_chunk_idx, other_chunk in doc_chunks.items():
+                        if other_chunk_idx == chunk_index:
+                            continue
+                        other_embedding = faiss_id_to_embedding[other_chunk['faiss_id']]
+                        similarity = float(np.dot(target_embedding, other_embedding) / (np.linalg.norm(target_embedding) * np.linalg.norm(other_embedding)))
+                        similarities.append((similarity, other_chunk_idx))
+                    similarities.sort(reverse=True, key=lambda x: x[0])
+                    for similarity, other_chunk_idx in similarities[: context_window - 1]:
+                        relevant_chunks.add(other_chunk_idx)
+                        similarity_scores[other_chunk_idx] = max(similarity_scores.get(other_chunk_idx, 0), similarity)
+                if relevant_chunks:
+                    sorted_chunk_indices = sorted(relevant_chunks)
+                    combined_content = []
+                    chunk_similarities = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
+                    for chunk_idx in sorted_chunk_indices:
+                        chunk_data = doc_chunks[chunk_idx]
+                        combined_content.append(chunk_data['content'])
+                        chunk_similarities.append(similarity_scores[chunk_idx])
+                        min_start_pos = min(min_start_pos, chunk_data['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_data['end_pos'])
+                        min_start_line = min(min_start_line, chunk_data['start_line'])
+                        max_end_line = max(max_end_line, chunk_data['end_line'])
+                        if chunk_data['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_data['start_col'])
+                        if chunk_data['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_data['end_col'])
+                    enriched_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col),
+                    )
+                    best_score = max(result.score for result in all_matched_results)
+                    combined_metadata: Dict[str, Any] = {}
+                    for result in all_matched_results:
+                        combined_metadata.update(result.metadata)
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
+                    enriched_result = QueryResult(
+                        id=f"{doc_id}:enriched",
+                        score=best_score,
+                        type="enriched",
+                        content=combined_text,
+                        metadata=combined_metadata,
+                        document_id=doc_id,
+                        position=enriched_position,
+                    )
+                    enriched_result.metadata['_enriched_chunk_count'] = len(relevant_chunks)
+                    enriched_result.metadata['_matched_chunk_indices'] = all_matched_indices
+                    enriched_result.metadata['_all_chunk_indices'] = sorted_chunk_indices
+                    enriched_result.metadata['_similarity_scores'] = chunk_similarities
+                    enriched_result.metadata['_enrichment_method'] = 'intra_document_similarity'
+                    enriched_results.append(enriched_result)
+        return enriched_results
+
+    # -------------------------------
+    # Aggregation/scoring (sync/async)
+    # -------------------------------
+    def _aggregate_document_scores_with_method(self, chunk_results: List[QueryResult], method: DocumentScoringMethod = "frequency_boost", method_options: dict = None) -> List[QueryResult]:
+        if not chunk_results:
+            return []
+        method_options = method_options or {}
+        doc_groups = defaultdict(list)
+        for result in chunk_results:
+            doc_id = result.document_id if result.type == 'chunk' else result.id
+            doc_groups[doc_id].append(result)
+        all_doc_ids = list(doc_groups.keys())
+        if not all_doc_ids:
+            return []
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ','.join(['?'] * len(all_doc_ids))
+            cursor = conn.execute(
+                f'''
+                SELECT id, content 
+                FROM documents 
+                WHERE id IN ({placeholders})
+                ''',
+                all_doc_ids,
+            )
+            doc_content_map = {row['id']: row['content'] for row in cursor.fetchall()}
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, all_doc_ids)
+        return self._compute_document_scores(method, method_options, doc_groups, doc_content_map, doc_metadata_batch)
+
+    @staticmethod
+    def _compute_document_scores(method, method_options, doc_groups, doc_content_map, doc_metadata_batch):
+        import numpy as np
+        import math
+        import statistics
+        document_results: List[QueryResult] = []
+        for doc_id, chunks in doc_groups.items():
+            doc_content = doc_content_map.get(doc_id)
+            if not doc_content:
+                continue
+            scores = [chunk.score for chunk in chunks]
+            method_metadata = {}
+            if method == "best":
+                final_score = max(scores)
+            elif method == "worst":
+                final_score = min(scores)
+            elif method == "average":
+                final_score = sum(scores) / len(scores)
+            elif method == "weighted_average":
+                weights = np.array(scores)
+                weights = weights / weights.sum() if weights.sum() > 0 else weights
+                method_metadata["weights"] = weights.tolist()
+                final_score = np.average(scores, weights=weights)
+            elif method == "frequency_boost":
+                best_score = max(scores)
+                if best_score == 0:
+                    quality_weights = [1.0 for _ in scores]
+                else:
+                    quality_weights = [score / best_score for score in scores]
+                effective_chunk_count = sum(quality_weights)
+                frequency_multiplier = (1.0 + (math.log2(2 + effective_chunk_count) - 1) * method_options.get("frequency_bias", 0.3))
+                method_metadata["effective_chunk_count"] = effective_chunk_count
+                method_metadata["frequency_multiplier"] = frequency_multiplier
+                final_score = min(1.0, best_score * frequency_multiplier)
+            elif method == "harmonic_mean":
+                max_chunks_for_harmonic = method_options.get("max_chunks", 5)
+                coverage_threshold = method_options.get("coverage_threshold", 0.7)
+                sorted_scores = sorted(scores, reverse=True)
+                top_scores = sorted_scores[:max_chunks_for_harmonic]
+                harmonic_mean = len(top_scores) / sum(1 / max(score, 0.001) for score in top_scores)
+                high_quality_chunks = sum(1 for score in scores if score >= coverage_threshold)
+                coverage_ratio = high_quality_chunks / len(scores)
+                coverage_bonus = 1.0 + (coverage_ratio * 0.2)
+                method_metadata["harmonic_mean"] = harmonic_mean
+                method_metadata["coverage_ratio"] = coverage_ratio
+                final_score = min(1.0, harmonic_mean * coverage_bonus)
+            elif method == "diminishing_returns":
+                sorted_scores = sorted(scores, reverse=True)
+                decay_factor = method_options.get("decay_factor", 0.8)
+                total_score = 0.0
+                weight = 1.0
+                for score in sorted_scores:
+                    total_score += score * weight
+                    weight *= decay_factor
+                max_possible = sum(decay_factor ** i for i in range(len(scores)))
+                method_metadata["max_possible"] = max_possible
+                final_score = min(1.0, total_score / max_possible)
+            elif method == "statistical":
+                if len(scores) == 1:
+                    final_score = scores[0]
+                else:
+                    best_weight = method_options.get("best_weight", 0.6)
+                    mean_weight = method_options.get("mean_weight", 0.2)
+                    consistency_weight = method_options.get("consistency_weight", 0.1)
+                    coverage_weight = method_options.get("coverage_weight", 0.1)
+                    best_score = max(scores)
+                    mean_score = statistics.mean(scores)
+                    std_dev = statistics.stdev(scores)
+                    consistency = 1.0 - min(1.0, std_dev / mean_score) if mean_score > 0 else 0.0
+                    median_score = statistics.median(scores)
+                    above_median_ratio = sum(1 for score in scores if score >= median_score) / len(scores)
+                    method_metadata["standard_deviation"] = std_dev
+                    method_metadata["median"] = median_score
+                    method_metadata["above_median_ratio"] = above_median_ratio
+                    final_score = best_score * best_weight + mean_score * mean_weight + consistency * consistency_weight + above_median_ratio * coverage_weight
+                    final_score = min(1.0, final_score)
+            elif method == "robust_mean":
+                if len(scores) == 1:
+                    final_score = scores[0]
+                else:
+                    outlier_threshold = method_options.get("outlier_threshold", 2.0)
+                    position_decay = method_options.get("position_decay", 0.9)
+                    mean_score = statistics.mean(scores)
+                    std_score = statistics.stdev(scores) if len(scores) > 1 else 0
+                    if std_score > 0:
+                        filtered_scores = [score for score in scores if abs(score - mean_score) <= outlier_threshold * std_score]
+                    else:
+                        filtered_scores = scores
+                    if not filtered_scores:
+                        filtered_scores = scores
+                    sorted_scores = sorted(filtered_scores, reverse=True)
+                    weights = [position_decay ** i for i in range(len(sorted_scores))]
+                    weighted_sum = sum(score * weight for score, weight in zip(sorted_scores, weights, strict=False))
+                    weight_sum = sum(weights)
+                    method_metadata["standard_deviation"] = std_score
+                    method_metadata["weighted_sum"] = weighted_sum
+                    method_metadata["weights"] = weights
+                    final_score = weighted_sum / weight_sum if weight_sum > 0 else 0.0
+            elif method == "percentile":
+                if len(scores) == 1:
+                    final_score = scores[0]
+                else:
+                    primary_percentile = method_options.get("primary_percentile", 0.9)
+                    secondary_percentile = method_options.get("secondary_percentile", 0.7)
+                    primary_weight = method_options.get("primary_weight", 0.7)
+                    primary_score = np.percentile(scores, primary_percentile * 100)
+                    secondary_score = np.percentile(scores, secondary_percentile * 100)
+                    method_metadata["primary_score"] = primary_score
+                    method_metadata["secondary_score"] = secondary_score
+                    method_metadata["primary_percentile"] = primary_percentile
+                    method_metadata["secondary_percentile"] = secondary_percentile
+                    method_metadata["primary_wieght"] = primary_weight
+                    final_score = primary_score * primary_weight + secondary_score * (1 - primary_weight)
+            elif method == "geometric_mean":
+                stabilization_factor = 0.1
+                stabilized_scores = [score + stabilization_factor for score in scores]
+                product = 1.0
+                for score in stabilized_scores:
+                    product *= score
+                geometric_mean = product ** (1.0 / len(stabilized_scores))
+                final_score = max(0.0, geometric_mean - stabilization_factor)
+            else:
+                final_score = max(scores)
+            doc_metadata = doc_metadata_batch.get(doc_id, {})
+            method_metadata['_aggregation_method'] = method
+            method_metadata['_chunk_count'] = len(chunks)
+            method_metadata['_best_chunk_score'] = max(scores)
+            method_metadata['_average_chunk_score'] = sum(scores) / len(scores)
+            doc_metadata["_scoring"] = method_metadata
+            doc_result = QueryResult(
+                id=doc_id,
+                score=final_score,
+                type='document',
+                content=doc_content_map.get(doc_id, ""),
+                metadata=doc_metadata,
+            )
+            document_results.append(doc_result)
+        document_results.sort(key=lambda x: x.score, reverse=True)
+        return document_results
+
+    # ----------------------
+    # Multi-column search
+    # ----------------------
+    def query_multi_column(self, query: str, *, columns: Optional[List[str]] = None, search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector', return_type: Literal['documents', 'chunks', 'enriched'] = 'documents', k: int = 10, score_threshold: float = 0.0, filters: Optional[Dict[str, Any]] = None, vector_weight: float = 0.7, document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+        """
+        Query across multiple columns (main content + embedding-enabled metadata fields)
+
+        Parameters
+        ----------
+        query : str
+            Query text
+        columns : Optional[List[str]]
+            Specific columns to search. If None, searches all embedding-enabled fields
+            plus main content. Use 'content' for main document content.
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters for the scoring method
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with column attribution
+        """
+
+        with self._read_write_lock.read_lock():
+            embedding_enabled_fields = self._get_embedding_enabled_fields()
+            if columns is None:
+                search_columns = ['content'] + list(embedding_enabled_fields.keys())
+            else:
+                search_columns = []
+                for col in columns:
+                    if col == 'content' or col in embedding_enabled_fields:
+                        search_columns.append(col)
+                    else:
+                        logger.warning(f"Column '{col}' is not embedding-enabled, skipping")
+                if not search_columns:
+                    logger.warning("No valid columns specified for search")
+                    return []
+            all_results: List[QueryResult] = []
+            if 'content' in search_columns:
+                content_results = self.query(
+                    query=query,
+                    search_type=search_type,
+                    return_type='chunks',
+                    k=k * 2,
+                    score_threshold=score_threshold,
+                    filters=filters,
+                    vector_weight=vector_weight,
+                    document_scoring_method=document_scoring_method,
+                    document_scoring_options=document_scoring_options,
+                )
+                for result in content_results:
+                    result.metadata = result.metadata or {}
+                    result.metadata['_search_column'] = 'content'
+                    all_results.append(result)
+            metadata_columns = [col for col in search_columns if col != 'content']
+            if metadata_columns and search_type in ['vector', 'hybrid']:
+                for field_name in metadata_columns:
+                    field_results = self._search_metadata_field(query=query, field_name=field_name, k=k * 2, score_threshold=score_threshold, filters=filters)
+                    for result in field_results:
+                        result.metadata = result.metadata or {}
+                        result.metadata['_search_column'] = field_name
+                        all_results.append(result)
+            all_results.sort(key=lambda x: x.score, reverse=True)
+            limited_results = all_results[:k]
+            if return_type == 'documents':
+                return self._aggregate_document_scores_with_method(limited_results, document_scoring_method, document_scoring_options)
+            else:
+                return limited_results
+
+    def _search_metadata_field(self, query: str, field_name: str, k: int, score_threshold: float, filters: Optional[Dict[str, Any]]) -> List[QueryResult]:
+        if hasattr(self.embedding_provider, 'embed_query'):
+            query_embedding = self.embedding_provider.embed_query(query)
+        else:
+            query_embedding = self.embedding_provider.embed_sync([query])[0]
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
+                FROM column_embeddings ce
+                JOIN documents d ON ce.document_id = d.id
+                WHERE ce.field_name = ?
+            """, (field_name,))
+            field_embedding_data = cursor.fetchall()
+            if not field_embedding_data:
+                return []
+            faiss_ids = [row['faiss_id'] for row in field_embedding_data]
+            if not faiss_ids:
+                return []
+            field_embeddings = self._reconstruct_embeddings_batch(faiss_ids)
+            if field_embeddings.size == 0:
+                return []
+            query_embedding_2d = query_embedding.reshape(1, -1)
+            similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
+            scores = (similarities + 1) / 2
+            valid_indices = np.where(scores >= score_threshold)[0]
+            if len(valid_indices) == 0:
+                return []
+            sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
+            results: List[QueryResult] = []
+            for idx in sorted_indices:
+                row_data = field_embedding_data[idx]
+                doc_metadata = self._get_document_metadata(conn, row_data['document_id'])
+                result = QueryResult(
+                    id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
+                    content=str(doc_metadata.get(field_name, "")),
+                    score=float(scores[idx]),
+                    document_id=row_data['document_id'],
+                    metadata=doc_metadata,
+                    type='chunk',
+                )
+                results.append(result)
+            if filters:
+                results = [r for r in results if matches_metadata_filter(r.metadata, filters)]
+            return results
+
+    def _get_document_metadata(self, conn, document_id: str) -> Dict[str, Any]:
+        if not self.metadata_schema:
+            return {}
+        columns = ['id'] + list(self.metadata_schema.keys())
+        cursor = conn.execute(f"SELECT {', '.join(columns)} FROM documents WHERE id = ?", (document_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {}
+        return {col: row[col] for col in columns[1:]}
+
+    @staticmethod
+    def _combine_search_results(vector_results: List[QueryResult], keyword_results: List[QueryResult], vector_weight: float, k: int, score_threshold: float) -> List[QueryResult]:
+        combined_results: Dict[str, Dict[str, Any]] = {}
+        for result in vector_results:
+            combined_results[result.id] = {"result": result, "vector_score": result.score, "keyword_score": 0.0}
+        for result in keyword_results:
+            if result.id in combined_results:
+                combined_results[result.id]["keyword_score"] = result.score
+            else:
+                combined_results[result.id] = {"result": result, "vector_score": 0.0, "keyword_score": result.score}
+        final_results: List[QueryResult] = []
+        for result_data in combined_results.values():
+            final_score = vector_weight * result_data["vector_score"] + (1.0 - vector_weight) * result_data["keyword_score"]
+            if final_score >= score_threshold:
+                result = result_data["result"]
+                result.score = final_score
+                final_results.append(result)
+        final_results.sort(key=lambda x: x.score, reverse=True)
+        return final_results[:k]
+
+    # ----------------
+    # Async Search API
+    # ----------------
+    async def query_async(self,
+                          query: str,
+                          search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
+                          return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+                          k: int = 10, score_threshold: float = 0.0,
+                          filters: Optional[Dict[str, Any]] = None,
+                          vector_weight: float = 0.7,
+                          context_window: int = 2,
+                          semantic_dedup_threshold: Optional[float] = None,
+                          document_scoring_method: DocumentScoringMethod = "frequency_boost",
+                          document_scoring_options: Optional[dict] = None
+                          ) -> List[QueryResult]:
+        """
+        Async query the database using vector, keyword, or hybrid search
+
+        Parameters
+        ----------
+        query : str
+            Search query text
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform, by default 'hybrid'
+        return_type : Literal['documents', 'chunks', 'context', 'enriched']
+            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context, by default 'documents'
+        k : int
+            Maximum number of results to return, by default 10
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better), by default 0.0
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply, by default None
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1), by default 0.7
+        context_window : int
+            Number of chunks before and after to include when return_type='context', by default 2
+        semantic_dedup_threshold : Optional[float]
+            Similarity threshold for semantic deduplication (0-1, higher=more similar), by default None
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores, by default "frequency_boost"
+        document_scoring_options : dict, optional
+            Parameters for the document_scoring_method (to choose overall scores for documents from chunk results)
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with normalized scores
+        """
+        self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
+        query_embedding = None
+        if search_type in ['vector', 'hybrid']:
+            query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
+        return await self._search_with_embedding_async(query, query_embedding, search_type, return_type, k, score_threshold, filters, vector_weight, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+
+    async def _search_with_embedding_async(self, query: str, query_embedding: Optional[np.ndarray], search_type: Literal['vector', 'keyword', 'hybrid'], return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+        if search_type == 'vector':
+            results = await self._vector_search_with_embedding_async(query_embedding, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+        elif search_type == 'keyword':
+            results = await self._keyword_search_async(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+        elif search_type == 'hybrid':
+            results = await self._hybrid_search_with_embedding_async(query, query_embedding, return_type, k, score_threshold, filters, vector_weight, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+        else:
+            raise ValueError(f"Unknown search type: {search_type}")
+        return results
+
+    async def _vector_search_with_embedding_async(self,
+                                                  query_embedding: np.ndarray,
+                                                  return_type: Literal['documents', 'chunks', 'context', 'enriched'],
+                                                  k: int, score_threshold: float,
+                                                  filters: Optional[Dict[str, Any]],
+                                                  context_window: int,
+                                                  semantic_dedup_threshold: Optional[float],
+                                                  document_scoring_method: DocumentScoringMethod = "frequency_boost",
+                                                  document_scoring_options: Optional[dict] = None
+                                                  ) -> List[QueryResult]:
+
+        loop = asyncio.get_event_loop()
+        search_k = min(k * 2, 100)
+        distances, indices = await loop.run_in_executor(None, lambda: self.index.search(query_embedding.reshape(1, -1), search_k))
+        distances = distances[0].tolist()
+        indices = indices[0].tolist()
+        valid_results = [(dist, idx) for dist, idx in zip(distances, indices, strict=False) if idx != -1]
+        if not valid_results:
+            return []
+        chunk_faiss_ids = [idx for _, idx in valid_results]
+        chunks_data = await self._get_chunks_by_faiss_ids_async(chunk_faiss_ids)
+        if filters:
+            chunks_data = await self._apply_metadata_filters_async(chunks_data, filters)
+        query_results: List[QueryResult] = []
+        faiss_id_to_distance = {idx: dist for dist, idx in valid_results}
+        for chunk_data in chunks_data:
+            faiss_id = chunk_data['faiss_id']
+            if faiss_id in faiss_id_to_distance:
+                distance = faiss_id_to_distance[faiss_id]
+                similarity = 1.0 / (1.0 + distance)
+                if similarity >= score_threshold:
+                    query_results.append(QueryResult(
+                        id=chunk_data['chunk_id'],
+                        score=similarity,
+                        type='chunk',
+                        content=chunk_data['content'],
+                        metadata=chunk_data.get('metadata', {}),
+                        document_id=chunk_data['document_id'],
+                        position=chunk_data.get('position'),
+                    ))
+        query_results.sort(key=lambda x: x.score, reverse=True)
+        if semantic_dedup_threshold is not None:
+            query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
+        final_results = await self._process_search_results_async(query_results, return_type, document_scoring_method, document_scoring_options, context_window)
+        return final_results[:k]
+
+    async def _keyword_search_async(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: Optional[dict] = None) -> List[QueryResult]:
+        if not self.fts_enabled:
+            logger.warning("FTS not enabled, returning empty results")
+            return []
+        fts_query = query.replace("'", "''").replace('"', '""')
+        filter_clause = ""
+        filter_params: List[Any] = []
+        if filters:
+            filter_builder = FilterQueryBuilder(self.metadata_schema)
+            where_clause, params = filter_builder.build_where_clause(filters)
+            filter_clause = f" AND d.rowid IN (SELECT rowid FROM documents WHERE {where_clause})"
+            filter_params = params
+        metadata_columns = list(self.metadata_schema.keys())
+        metadata_select = ', '.join([f'd.{col}' for col in metadata_columns]) if metadata_columns else ''
+        metadata_select_clause = f', {metadata_select}' if metadata_select else ''
+        async with self.async_connection_pool.get_connection_context() as conn:
+            sql = f"""
+                SELECT c.document_id, c.chunk_index, c.content, c.faiss_id,
+                       c.start_pos, c.end_pos, c.start_line, c.start_col, c.end_line, c.end_col,
+                       fts.rank, d.content as doc_content{metadata_select_clause}
+                FROM chunks_fts fts
+                JOIN chunks c ON c.rowid = fts.rowid
+                JOIN documents d ON d.id = c.document_id
+                WHERE chunks_fts MATCH ? {filter_clause}
+                ORDER BY fts.rank
+                LIMIT ?
+            """
+            params = [fts_query] + filter_params + [k * 2]
+            cursor = await conn.execute(sql, params)
+            rows = await cursor.fetchall()
+        query_results: List[QueryResult] = []
+        for row in rows:
+            fts_rank = row['rank']
+            similarity = 1.0 / (1.0 + abs(fts_rank))
+            if similarity >= score_threshold:
+                position = ChunkPosition(
+                    start=row['start_pos'],
+                    end=row['end_pos'],
+                    line=row['start_line'],
+                    column=row['start_col'],
+                    end_line=row['end_line'],
+                    end_column=row['end_col'],
+                )
+                metadata: Dict[str, Any] = {}
+                for field_name in metadata_columns:
+                    value = row[field_name]
+                    if value is not None:
+                        if field_name in self.metadata_schema:
+                            field_def = self.metadata_schema[field_name]
+                            if field_def.type.name == 'JSON' and isinstance(value, str):
+                                try:
+                                    import json
+                                    value = json.loads(value)
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+                        metadata[field_name] = value
+                query_results.append(QueryResult(
+                    id=f"{row['document_id']}:{row['chunk_index']}",
+                    score=similarity,
+                    type='chunk',
+                    content=row['content'],
+                    metadata=metadata,
+                    document_id=row['document_id'],
+                    position=position,
+                ))
+        if semantic_dedup_threshold is not None:
+            query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
+        final_results = await self._process_search_results_async(query_results, return_type, document_scoring_method, document_scoring_options, context_window)
+        return final_results[:k]
+
+    async def _hybrid_search_with_embedding_async(self, query: str, query_embedding: np.ndarray, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: Optional[dict] = None) -> List[QueryResult]:
+        if not self.fts_enabled:
+            return await self._vector_search_with_embedding_async(query_embedding, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method)
+        search_k = min(k * 4, 100)
+        vector_task = asyncio.create_task(self._vector_search_with_embedding_async(query_embedding, 'chunks', search_k, 0.0, filters, 0, None, "best"))
+        keyword_task = asyncio.create_task(self._keyword_search_async(query, 'chunks', search_k, 0.0, filters, 0, None, "best"))
+        vector_results, keyword_results = await asyncio.gather(vector_task, keyword_task)
+        combined_results = await self._combine_search_results_async(vector_results=vector_results, keyword_results=keyword_results, vector_weight=vector_weight, k=search_k, score_threshold=0.0)
+        if semantic_dedup_threshold is not None:
+            combined_results = await self._apply_semantic_deduplication_async(combined_results, semantic_dedup_threshold)
+        if score_threshold > 0.0:
+            combined_results = [r for r in combined_results if r.score >= score_threshold]
+        final_results = await self._process_search_results_async(combined_results, return_type, document_scoring_method, document_scoring_options, context_window)
+        return final_results[:k]
+
+    async def _get_chunks_by_faiss_ids_async(self, faiss_ids: List[int]) -> List[Dict[str, Any]]:
+        if not faiss_ids:
+            return []
+        base_columns = self.schema.BASE_COLUMNS.copy()
+        metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
+        chunk_columns = [
+            'c.document_id', 'c.chunk_index', 'c.content', 'c.faiss_id',
+            'c.start_pos', 'c.end_pos', 'c.start_line', 'c.start_col', 'c.end_line', 'c.end_col',
+            'd.content as doc_content'
+        ]
+        for col in metadata_columns:
+            chunk_columns.append(f'd.{col}')
+        placeholders = ','.join(['?' for _ in faiss_ids])
+        sql = f"""
+            SELECT {', '.join(chunk_columns)}
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id  
+            WHERE c.faiss_id IN ({placeholders})
+        """
+        async with self.async_connection_pool.get_connection_context() as conn:
+            cursor = await conn.execute(sql, faiss_ids)
+            rows = await cursor.fetchall()
+        chunks_data: List[Dict[str, Any]] = []
+        for row in rows:
+            position = ChunkPosition(
+                start=row['start_pos'],
+                end=row['end_pos'],
+                line=row['start_line'],
+                column=row['start_col'],
+                end_line=row['end_line'],
+                end_column=row['end_col'],
+            )
+            metadata: Dict[str, Any] = {}
+            for field_name in metadata_columns:
+                value = row[field_name]
+                if value is not None:
+                    if field_name in self.metadata_schema:
+                        field_def = self.metadata_schema[field_name]
+                        if field_def.type.name == 'JSON' and isinstance(value, str):
+                            try:
+                                import json
+                                value = json.loads(value)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                    metadata[field_name] = value
+            chunks_data.append({
+                'chunk_id': f"{row['document_id']}:{row['chunk_index']}",
+                'document_id': row['document_id'],
+                'content': row['content'],
+                'faiss_id': row['faiss_id'],
+                'position': position,
+                'metadata': metadata,
+            })
+        return chunks_data
+
+    async def _apply_metadata_filters_async(self, chunks_data: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not filters or not chunks_data:
+            return chunks_data
+        doc_ids = list(set(chunk['document_id'] for chunk in chunks_data))
+        if not doc_ids:
+            return chunks_data
+        doc_metadata = await self._get_document_metadata_async(doc_ids)
+        filtered_doc_ids = set()
+        for doc_id, metadata in doc_metadata.items():
+            if matches_metadata_filter(metadata, filters):
+                filtered_doc_ids.add(doc_id)
+        return [chunk for chunk in chunks_data if chunk['document_id'] in filtered_doc_ids]
+
+    async def _get_document_metadata_async(self, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not doc_ids:
+            return {}
+        base_columns = self.schema.BASE_COLUMNS.copy()
+        metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
+        if not metadata_columns:
+            return {doc_id: {} for doc_id in doc_ids}
+        sql = f"SELECT {', '.join(metadata_columns)} FROM documents WHERE id IN ({','.join(['?' for _ in doc_ids])})"
+        async with self.async_connection_pool.get_connection_context() as conn:
+            cursor = await conn.execute(sql, doc_ids)
+            rows = await cursor.fetchall()
+        doc_metadata: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            doc_id = row['id']
+            metadata: Dict[str, Any] = {}
+            for field_name in metadata_columns:
+                value = row[field_name]
+                if value is not None and field_name in self.metadata_schema:
+                    field_def = self.metadata_schema[field_name]
+                    if field_def.type.name == 'JSON' and isinstance(value, str):
+                        try:
+                            value = json.loads(value)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                metadata[field_name] = value
+            doc_metadata[doc_id] = metadata
+        return doc_metadata
+
+    async def _combine_search_results_async(self, vector_results: List[QueryResult], keyword_results: List[QueryResult], vector_weight: float, k: int, score_threshold: float) -> List[QueryResult]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._combine_search_results, vector_results, keyword_results, vector_weight, k, score_threshold)
+
+    async def _process_search_results_async(self, results: List[QueryResult], return_type: Literal['documents', 'chunks', 'context', 'enriched'], document_scoring_method: DocumentScoringMethod, document_scoring_options: Optional[dict], context_window: int) -> List[QueryResult]:
+        if return_type == 'chunks':
+            return results
+        if return_type == 'documents':
+            return await self._aggregate_document_scores_with_method_async(results, document_scoring_method, document_scoring_options)
+        elif return_type == 'enriched':
+            return await self._enrich_with_intra_doc_context_async(results, context_window)
+        else:
+            return await self._add_context_window_async(results, context_window)
+
+    async def _apply_semantic_deduplication_async(self, results: List[QueryResult], threshold: float) -> List[QueryResult]:
+        if not results or threshold is None or threshold <= 0:
+            return results
+        chunk_results = [r for r in results if r.type == 'chunk']
+        if len(chunk_results) <= 1:
+            return results
+        chunk_identifiers = [(r.document_id, self._extract_chunk_index_from_id(r.id)) for r in chunk_results]
+        async with self.async_connection_pool.get_connection_context() as conn:
+            placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
+            query = f'''
+                SELECT document_id, chunk_index, faiss_id 
+                FROM chunks 
+                WHERE (document_id, chunk_index) IN ({placeholders})
+            '''
+            params = [item for pair in chunk_identifiers for item in pair]
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+            faiss_id_mapping = { (row['document_id'], row['chunk_index']): row['faiss_id'] for row in rows }
+        faiss_ids, result_mapping = [], {}
+        for result in chunk_results:
+            doc_id, chunk_idx = self._split_chunk_id(result.id)
+            faiss_id = faiss_id_mapping.get((doc_id, chunk_idx))
+            if faiss_id is not None:
+                faiss_ids.append(faiss_id)
+                result_mapping[faiss_id] = result
+        if not faiss_ids:
+            return results
+        loop = asyncio.get_event_loop()
+        embeddings_matrix = await loop.run_in_executor(None, self._reconstruct_embeddings_batch, faiss_ids)
+        def compute_keep_mask():
+            norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
+            normalized_embeddings = embeddings_matrix / np.maximum(norms, 1e-8)
+            similarity_matrix = np.dot(normalized_embeddings, normalized_embeddings.T)
+            similar_pairs = similarity_matrix >= threshold
+            import numpy as _np
+            _np.fill_diagonal(similar_pairs, False)
+            upper_tri = _np.triu(similar_pairs, k=1)
+            should_remove = _np.any(upper_tri, axis=0)
+            keep_mask = ~should_remove
+            return keep_mask
+        keep_mask = await loop.run_in_executor(None, compute_keep_mask)
+        final_chunk_results = [result_mapping[faiss_ids[i]] for i in range(len(faiss_ids)) if keep_mask[i]]
+        return final_chunk_results
+
+    async def _aggregate_document_scores_with_method_async(self, chunk_results: List[QueryResult], method: DocumentScoringMethod = "frequency_boost", method_options: dict = None) -> List[QueryResult]:
+        if not chunk_results:
+            return []
+        method_options = method_options or {}
+        doc_groups = defaultdict(list)
+        for result in chunk_results:
+            doc_id = result.document_id if result.type == 'chunk' else result.id
+            doc_groups[doc_id].append(result)
+        all_doc_ids = list(doc_groups.keys())
+        if not all_doc_ids:
+            return []
+        async with self.async_connection_pool.get_connection_context() as conn:
+            placeholders = ','.join(['?'] * len(all_doc_ids))
+            cursor = await conn.execute(
+                f'''
+                SELECT id, content 
+                FROM documents 
+                WHERE id IN ({placeholders})
+                ''',
+                all_doc_ids,
+            )
+            doc_content_map: Dict[str, str] = {}
+            async for row in cursor:
+                doc_content_map[row['id']] = row['content']
+            doc_metadata_batch = await self._get_document_metadata_async(all_doc_ids)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._compute_document_scores, method, method_options, doc_groups, doc_content_map, doc_metadata_batch)
+
+    async def _add_context_window_async(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+        if context_window <= 0 or not results:
+            return results
+        context_results: List[QueryResult] = []
+        doc_chunk_requests = defaultdict(list)
+        for result in results:
+            if result.type != 'chunk':
+                context_results.append(result)
+                continue
+            doc_id = result.document_id
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunk_requests[doc_id].append((chunk_index, result))
+        async with self.async_connection_pool.get_connection_context() as conn:
+            for doc_id, chunk_requests in doc_chunk_requests.items():
+                ranges_needed = []
+                for chunk_index, result in chunk_requests:
+                    start_index = max(0, chunk_index - context_window)
+                    end_index = chunk_index + context_window
+                    ranges_needed.append((start_index, end_index, chunk_index, result))
+                merged_ranges = self._merge_overlapping_ranges(ranges_needed)
+                all_chunk_indices = set()
+                for start, end, _, _ in merged_ranges:
+                    all_chunk_indices.update(range(start, end + 1))
+                if not all_chunk_indices:
+                    continue
+                placeholders = ','.join(['?'] * len(all_chunk_indices))
+                cursor = await conn.execute(f'''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col
+                    FROM chunks 
+                    WHERE document_id = ? AND chunk_index IN ({placeholders})
+                    ORDER BY chunk_index
+                ''', [doc_id] + list(all_chunk_indices))
+                chunks_by_index: Dict[int, Any] = {}
+                async for row in cursor:
+                    chunks_by_index[row['chunk_index']] = row
+                for chunk_index, result in chunk_requests:
+                    context_chunks = []
+                    start_context = max(0, chunk_index - context_window)
+                    end_context = chunk_index + context_window
+                    for i in range(start_context, end_context + 1):
+                        if i in chunks_by_index:
+                            context_chunks.append(chunks_by_index[i])
+                    if not context_chunks:
+                        context_results.append(result)
+                        continue
+                    combined_content = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
+                    for chunk_row in context_chunks:
+                        combined_content.append(chunk_row['content'])
+                        min_start_pos = min(min_start_pos, chunk_row['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_row['end_pos'])
+                        min_start_line = min(min_start_line, chunk_row['start_line'])
+                        max_end_line = max(max_end_line, chunk_row['end_line'])
+                        if chunk_row['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_row['start_col'])
+                        if chunk_row['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_row['end_col'])
+                    context_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col),
+                    )
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
+                    context_result = QueryResult(
+                        id=f"{doc_id}:context:{chunk_index}",
+                        score=result.score,
+                        type="context",
+                        content=combined_text,
+                        metadata=result.metadata.copy(),
+                        document_id=doc_id,
+                        position=context_position,
+                    )
+                    context_result.metadata.update({
+                        '_context_window': context_window,
+                        '_original_chunk_index': chunk_index,
+                        '_context_chunk_count': len(context_chunks),
+                        '_context_start_index': start_context,
+                        '_context_end_index': end_context,
+                    })
+                    context_results.append(context_result)
+        return context_results
+
+    async def _enrich_with_intra_doc_context_async(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+        if context_window <= 0 or not results:
+            return results
+        enriched_results: List[QueryResult] = []
+        doc_chunks_to_enrich = defaultdict(list)
+        async with self.async_connection_pool.get_connection_context() as conn:
+            for result in results:
+                if result.type != 'chunk':
+                    enriched_results.append(result)
+                    continue
+                doc_id = result.document_id
+                chunk_index = self._extract_chunk_index_from_id(result.id)
+                doc_chunks_to_enrich[doc_id].append((chunk_index, result))
+            for doc_id, chunk_requests in doc_chunks_to_enrich.items():
+                cursor = await conn.execute('''
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, 
+                           end_line, end_col, faiss_id
+                    FROM chunks 
+                    WHERE document_id = ? AND faiss_id IS NOT NULL
+                    ORDER BY chunk_index
+                ''', [doc_id])
+                rows = await cursor.fetchall()
+                doc_chunks = {row['chunk_index']: row for row in rows}
+                doc_faiss_ids = [row['faiss_id'] for row in doc_chunks.values()]
+                if len(doc_chunks) <= 1:
+                    for chunk_index, result in chunk_requests:
+                        if chunk_index not in doc_chunks:
+                            enriched_results.append(result)
+                            continue
+                        target_chunk = doc_chunks[chunk_index]
+                        enriched_result = QueryResult(
+                            id=f"{doc_id}:enriched:{chunk_index}",
+                            score=result.score,
+                            type="enriched",
+                            content=target_chunk['content'],
+                            metadata=result.metadata.copy(),
+                            document_id=doc_id,
+                            position=ChunkPosition(
+                                start=int(target_chunk['start_pos']),
+                                end=int(target_chunk['end_pos']),
+                                line=int(target_chunk['start_line']),
+                                column=int(target_chunk['start_col']),
+                                end_line=int(target_chunk['end_line']),
+                                end_column=int(target_chunk['end_col']),
+                            ),
+                        )
+                        enriched_result.metadata['_enriched_chunk_count'] = 1
+                        enriched_result.metadata['_original_chunk_index'] = chunk_index
+                        enriched_result.metadata['_similarity_scores'] = [1.0]
+                        enriched_result.metadata['_enrichment_method'] = 'single_chunk'
+                        enriched_results.append(enriched_result)
+                    continue
+                loop = asyncio.get_event_loop()
+                doc_embeddings = await loop.run_in_executor(None, self._reconstruct_embeddings_batch, doc_faiss_ids)
+                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings)}
+                all_matched_indices = [chunk_index for chunk_index, _ in chunk_requests]
+                all_matched_results = [result for _, result in chunk_requests]
+                relevant_chunks = set()
+                similarity_scores: Dict[int, float] = {}
+                for chunk_index in all_matched_indices:
+                    if chunk_index not in doc_chunks:
+                        continue
+                    target_chunk = doc_chunks[chunk_index]
+                    target_faiss_id = target_chunk['faiss_id']
+                    target_embedding = faiss_id_to_embedding[target_faiss_id]
+                    relevant_chunks.add(chunk_index)
+                    similarity_scores[chunk_index] = max(similarity_scores.get(chunk_index, 0), 1.0)
+                    def calc_sims():
+                        sims = []
+                        import numpy as _np
+                        for other_chunk_idx, other_chunk in doc_chunks.items():
+                            if other_chunk_idx == chunk_index:
+                                continue
+                            other_embedding = faiss_id_to_embedding[other_chunk['faiss_id']]
+                            similarity = float(_np.dot(target_embedding, other_embedding) / (_np.linalg.norm(target_embedding) * _np.linalg.norm(other_embedding)))
+                            sims.append((similarity, other_chunk_idx, other_chunk))
+                        return sims
+                    similarities_data = await loop.run_in_executor(None, calc_sims)
+                    similarities_data.sort(reverse=True, key=lambda x: x[0])
+                    for similarity, other_chunk_idx, _ in similarities_data[: context_window - 1]:
+                        relevant_chunks.add(other_chunk_idx)
+                        similarity_scores[other_chunk_idx] = max(similarity_scores.get(other_chunk_idx, 0), similarity)
+                if relevant_chunks:
+                    sorted_chunk_indices = sorted(relevant_chunks)
+                    combined_content = []
+                    chunk_similarities: List[float] = []
+                    min_start_pos = float('inf')
+                    max_end_pos = 0
+                    min_start_line = float('inf')
+                    min_start_col = float('inf')
+                    max_end_line = 0
+                    max_end_col = 0
+                    for chunk_idx in sorted_chunk_indices:
+                        chunk_data = doc_chunks[chunk_idx]
+                        combined_content.append(chunk_data['content'])
+                        chunk_similarities.append(similarity_scores[chunk_idx])
+                        min_start_pos = min(min_start_pos, chunk_data['start_pos'])
+                        max_end_pos = max(max_end_pos, chunk_data['end_pos'])
+                        min_start_line = min(min_start_line, chunk_data['start_line'])
+                        max_end_line = max(max_end_line, chunk_data['end_line'])
+                        if chunk_data['start_line'] == min_start_line:
+                            min_start_col = min(min_start_col, chunk_data['start_col'])
+                        if chunk_data['end_line'] == max_end_line:
+                            max_end_col = max(max_end_col, chunk_data['end_col'])
+                    enriched_position = ChunkPosition(
+                        start=int(min_start_pos),
+                        end=int(max_end_pos),
+                        line=int(min_start_line),
+                        column=int(min_start_col),
+                        end_line=int(max_end_line),
+                        end_column=int(max_end_col),
+                    )
+                    best_score = max(result.score for result in all_matched_results)
+                    combined_metadata: Dict[str, Any] = {}
+                    for result in all_matched_results:
+                        combined_metadata.update(result.metadata)
+                    separator = "\n\n---\n\n"
+                    combined_text = separator.join(combined_content)
+                    enriched_result = QueryResult(
+                        id=f"{doc_id}:enriched",
+                        score=best_score,
+                        type="enriched",
+                        content=combined_text,
+                        metadata=combined_metadata,
+                        document_id=doc_id,
+                        position=enriched_position,
+                    )
+                    enriched_result.metadata['_enriched_chunk_count'] = len(relevant_chunks)
+                    enriched_result.metadata['_matched_chunk_indices'] = all_matched_indices
+                    enriched_result.metadata['_all_chunk_indices'] = sorted_chunk_indices
+                    enriched_result.metadata['_similarity_scores'] = chunk_similarities
+                    enriched_result.metadata['_enrichment_method'] = 'intra_document_similarity'
+                    enriched_results.append(enriched_result)
+        return enriched_results
+
+    async def query_multi_column_async(
+            self,
+            query: str,
+            *,
+            columns: Optional[List[str]] = None,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+            k: int = 10,
+            score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: dict = None
+    ) -> List[QueryResult]:
+        """
+        Async query across multiple columns (main content + embedding-enabled metadata fields)
+
+        Parameters
+        ----------
+        query : str
+            Query text
+        columns : Optional[List[str]]
+            Specific columns to search. If None, searches all embedding-enabled fields
+            plus main content. Use 'content' for main document content.
+        search_type : Literal['vector', 'keyword', 'hybrid']
+            Type of search to perform
+        return_type : Literal['documents', 'chunks']
+            Whether to return full documents or individual chunks
+        k : int
+            Maximum number of results to return
+        score_threshold : float
+            Minimum score threshold (0-1, higher=better)
+        filters : Optional[Dict[str, Any]]
+            Metadata filters to apply
+        vector_weight : float
+            Weight for vector search in hybrid mode (0-1)
+        document_scoring_method : DocumentScoringMethod
+            Method for aggregating chunk scores into document scores
+        document_scoring_options : dict, optional
+            Parameters for the scoring method
+
+        Returns
+        -------
+        List[QueryResult]
+            Search results with column attribution
+        """
+        self._ensure_async_pool()
+
+        # Determine which columns to search
+        embedding_enabled_fields = self._get_embedding_enabled_fields()
+
+        if columns is None:
+            # Search all embedding-enabled fields plus main content
+            search_columns = ['content'] + list(embedding_enabled_fields.keys())
+        else:
+            # Validate requested columns
+            search_columns = []
+            for col in columns:
+                if col == 'content':
+                    search_columns.append(col)
+                elif col in embedding_enabled_fields:
+                    search_columns.append(col)
+                else:
+                    logger.warning(f"Column '{col}' is not embedding-enabled, skipping")
+
+            if not search_columns:
+                logger.warning("No valid columns specified for search")
+                return []
+
+        all_results = []
+
+        # Search main content if requested
+        if 'content' in search_columns:
+            content_results = await self.query_async(
+                query=query,
+                search_type=search_type,
+                return_type='chunks',  # Always get chunks for multi-column
+                k=k * 2,  # Get more results to allow for proper ranking
+                score_threshold=score_threshold,
+                filters=filters,
+                vector_weight=vector_weight,
+                document_scoring_method=document_scoring_method,
+                document_scoring_options=document_scoring_options
+            )
+
+            # Add column attribution
+            for result in content_results:
+                result.metadata = result.metadata or {}
+                result.metadata['_search_column'] = 'content'
+                all_results.append(result)
+
+        # Search metadata fields
+        metadata_columns = [col for col in search_columns if col != 'content']
+        if metadata_columns and search_type in ['vector', 'hybrid']:
+            # Create tasks for concurrent metadata field searches
+            metadata_search_tasks = []
+            for field_name in metadata_columns:
+                task = asyncio.create_task(
+                    self._search_metadata_field_async(
+                        query=query,
+                        field_name=field_name,
+                        k=k * 2,
+                        score_threshold=score_threshold,
+                        filters=filters
+                    )
+                )
+                metadata_search_tasks.append((field_name, task))
+
+            # Wait for all metadata searches to complete
+            for field_name, task in metadata_search_tasks:
+                field_results = await task
+
+                # Add column attribution
+                for result in field_results:
+                    result.metadata = result.metadata or {}
+                    result.metadata['_search_column'] = field_name
+                    all_results.append(result)
+
+        # Sort all results by score and limit
+        all_results.sort(key=lambda x: x.score, reverse=True)
+        limited_results = all_results[:k]
+
+        # TODO: other aggregations aren't being done here?
+
+        if return_type == 'documents':
+            # Aggregate chunks into documents
+            return await self._aggregate_document_scores_with_method_async(
+                limited_results,
+                document_scoring_method,
+                document_scoring_options
+            )
+        else:
+            return limited_results

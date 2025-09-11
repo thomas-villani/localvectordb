@@ -44,7 +44,6 @@ from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, mat
 from localvectordb.chunking import ChunkerFactory, PositionTrackingChunker
 from localvectordb.extractors import ExtractorRegistry
 from localvectordb.core import (
-    BaseVectorDB,
     Chunk,
     ChunkPosition,
     Document,
@@ -53,6 +52,7 @@ from localvectordb.core import (
     MetadataFieldType,
     QueryResult,
 )
+from localvectordb.database import BaseVectorDB
 from localvectordb._pools import ConnectionPool, AsyncConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
@@ -4426,7 +4426,7 @@ class LocalVectorDB(BaseVectorDB):
             filters: Optional[Dict[str, Any]] = None
     ) -> int:
         """
-        Async count documents matching filter criteria
+        Count documents matching filter criteria
 
         Parameters
         ----------
@@ -6505,14 +6505,14 @@ class LocalVectorDB(BaseVectorDB):
 
     async def exists_async(
             self,
-            id: str
+            ids: str
     ) -> bool:
         """
         Async check if a document exists
 
         Parameters
         ----------
-        id : str
+        ids : str
             Document ID to check
 
         Returns

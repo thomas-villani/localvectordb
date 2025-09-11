@@ -1,0 +1,537 @@
+# Copyright (c) 2023-2025 Tom Villani, Ph.D.
+#
+# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
+# You may not use this file for commercial purposes without explicit permission.
+#
+# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
+#
+# Contact: thomas.villani@gmail.com
+#
+# src/localvectordb/database/base.py
+"""
+Core initialization and infrastructure for LocalVectorDB.
+
+This module contains the base LocalVectorDB class which is responsible for:
+- Filesystem paths, connection pools and schema initialization
+- Chunker and embedding provider setup
+- FTS (SQLite FTS5) initialization
+- FAISS index creation/loading, GPU transfer and persistence
+- Shared properties and lifecycle management (save/close)
+
+All domain-specific behavior (ingestion pipelines, search, metadata handling,
+CRUD) is mixed in via other modules to compose the final LocalVectorDB class.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import sqlite3
+import uuid
+from abc import ABC
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Union
+
+import faiss
+import numpy as np
+
+from localvectordb._filters import FilterQueryBuilder
+from localvectordb._pools import ConnectionPool, AsyncConnectionPool, ReadWriteLock
+from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
+from localvectordb.core import Chunk
+from localvectordb.database.base import LocalVectorDBBase
+from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
+from localvectordb.utils import get_system_version
+from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
+
+logger = logging.getLogger(__name__)
+
+
+class LocalVectorDBCore(LocalVectorDBBase, ABC):
+    """
+    Base class providing initialization, configuration, FAISS/FTS setup, and lifecycle.
+
+    This class intentionally mirrors the original LocalVectorDB.__init__ and related
+    helpers as closely as possible to preserve behavior.
+    """
+
+    def __init__(
+            self, name: str, base_path: Union[str, Path] = ".lvdb", *, metadata_schema: Optional[Dict[str, Any]] = None,
+            doc_id_pattern: str = "doc_{idx}", embedding_provider: str = "ollama",
+            embedding_model: str = "nomic-embed-text", embedding_config: Optional[Dict[str, Any]] = None,
+            chunking_method: Union[str, Any] = "sentences", chunk_size: int = 500, chunk_overlap: int = 1,
+            faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
+            faiss_index_hnsw_flat_neighbors: Optional[int] = None, faiss_index_lsh_bits: Optional[int] = None,
+            enable_gpu: bool = False, enable_fts: bool = True, connection_pool_size: int = 10,
+            create_if_not_exists: bool = True
+            ):
+
+        super().__init__(name, base_path, metadata_schema=metadata_schema, doc_id_pattern=doc_id_pattern,
+                         embedding_provider=embedding_provider, embedding_model=embedding_model,
+                         embedding_config=embedding_config, chunking_method=chunking_method, chunk_size=chunk_size,
+                         chunk_overlap=chunk_overlap, faiss_index_type=faiss_index_type,
+                         faiss_index_hnsw_flat_neighbors=faiss_index_hnsw_flat_neighbors,
+                         faiss_index_lsh_bits=faiss_index_lsh_bits, enable_gpu=enable_gpu, enable_fts=enable_fts,
+                         connection_pool_size=connection_pool_size, create_if_not_exists=create_if_not_exists)
+        self.name = name
+        self._original_memory_request = (name == ":memory:" or base_path == ":memory:")
+
+        if self._original_memory_request:
+            unique_id = str(uuid.uuid4()).replace("-", "")[:8]
+            self.db_path = f"file:memdb_{unique_id}?mode=memory&cache=shared"
+            self.base_path = None
+            self.index_path = None
+            logger.info(f"Creating in-memory database with shared cache: {self.db_path}")
+        else:
+            self.base_path = Path(base_path)
+            self.base_path.mkdir(parents=True, exist_ok=True)
+            self.db_path = str(self.base_path / f"{name}.sqlite")
+            self.index_path = self.base_path / f"{name}.faiss"
+            if not create_if_not_exists and not Path(self.db_path).exists():
+                raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
+
+        # Metadata schema
+        if isinstance(metadata_schema, str):
+            self._metadata_schema = get_common_metadata_schemas(metadata_schema)
+        else:
+            self._metadata_schema = metadata_schema or {}
+        self.doc_id_pattern = doc_id_pattern
+
+        # Chunker
+        from localvectordb.chunking import ChunkerFactory
+        self._chunking_method = chunking_method
+        self._chunk_size = chunk_size
+        self._chunk_overlap = chunk_overlap
+        self.chunker = ChunkerFactory.create_chunker(chunking_method, chunk_size, chunk_overlap)
+
+        # Embedding provider
+        embedding_config = embedding_config or {}
+        self._embedding_provider = EmbeddingRegistry.create_provider(
+            embedding_provider, embedding_model, **embedding_config
+        )
+        if not self._embedding_provider.validate_model():
+            raise ValueError(f"Embedding model '{embedding_model}' is not available")
+        self._embedding_dimension = self._embedding_provider.get_dimension()
+
+        # Threading
+        self._read_write_lock = ReadWriteLock()
+
+        # Database schema + pools
+        self.schema = DatabaseSchema(self.db_path, self._read_write_lock)
+        self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
+        self.async_connection_pool: Optional[AsyncConnectionPool] = None
+        self.async_max_connections = connection_pool_size or 10
+        self._async_schema_initialized = False
+
+        with self.connection_pool.get_connection() as conn:
+            self.schema.initialize(self._metadata_schema, db_connection=conn)
+            if not self.is_memory_only and Path(self.db_path).exists():
+                existing_schema = self.schema.load_metadata_schema(db_connection=conn)
+                self._metadata_schema.update(existing_schema)
+
+        # FTS
+        self._fts_enabled = False
+        if enable_fts:
+            self._init_fts()
+
+        # FAISS
+        self._init_faiss_index(enable_gpu, faiss_index_type, faiss_index_hnsw_flat_neighbors, faiss_index_lsh_bits)
+
+        # State
+        self._next_doc_id = self._load_next_doc_id()
+
+        # Save config
+        self._save_config()
+
+    # Context managers
+    def __enter__(self) -> "LocalVectorDBCore":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    # Properties
+    @property
+    def embedding_provider(self) -> EmbeddingProvider:
+        return self._embedding_provider
+
+    @property
+    def embedding_dimension(self) -> int:
+        return self._embedding_dimension
+
+    @property
+    def chunk_size(self) -> int:
+        return self._chunk_size
+
+    @property
+    def chunk_overlap(self) -> int:
+        return self._chunk_overlap
+
+    @property
+    def chunking_method(self) -> str:
+        return self._chunking_method
+
+    @property
+    def fts_enabled(self) -> bool:
+        return self._fts_enabled
+
+    @property
+    def embedding_model(self) -> str:
+        return self.embedding_provider.model
+
+    @property
+    def metadata_schema(self) -> dict[str, Any]:
+        return self._metadata_schema.copy()
+
+    @property
+    def closed(self) -> bool:
+        return self.connection_pool.closed
+
+    @property
+    def is_memory_only(self) -> bool:
+        return self._original_memory_request
+
+    def ping(self) -> bool:
+        return not self.closed
+
+    # FTS helpers
+    def _check_fts5_availability(self) -> bool:
+        try:
+            with self.connection_pool.get_connection() as conn:
+                conn.execute("CREATE VIRTUAL TABLE temp.fts5_test USING fts5(content)")
+                conn.execute("DROP TABLE temp.fts5_test")
+                return True
+        except sqlite3.OperationalError:
+            logger.warning("SQLite FTS5 extension not available. Keyword search will be disabled.")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking FTS5 availability: {e}")
+            return False
+
+    def _init_fts(self) -> None:
+        if not self._check_fts5_availability():
+            self._fts_enabled = False
+            return
+        try:
+            with self.connection_pool.get_connection() as conn:
+                conn.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                        id,
+                        content,
+                        content='documents',
+                        content_rowid='rowid'
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                        document_id,
+                        content,
+                        content='chunks',
+                        content_rowid='id'
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+                        INSERT INTO documents_fts(rowid, id, content)
+                        VALUES (new.rowid, new.id, new.content);
+                    END
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+                        DELETE FROM documents_fts WHERE rowid = old.rowid;
+                    END
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
+                        DELETE FROM documents_fts WHERE rowid = old.rowid;
+                        INSERT INTO documents_fts(rowid, id, content)
+                        VALUES (new.rowid, new.id, new.content);
+                    END
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+                        INSERT INTO chunks_fts(rowid, document_id, content)
+                        VALUES (new.id, new.document_id, new.content);
+                    END
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+                        DELETE FROM chunks_fts WHERE rowid = old.id;
+                    END
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+                        DELETE FROM chunks_fts WHERE rowid = old.id;
+                        INSERT INTO chunks_fts(rowid, document_id, content)
+                        VALUES (new.id, new.document_id, new.content);
+                    END
+                    """
+                )
+                conn.commit()
+                self._fts_enabled = True
+                logger.info("FTS5 initialized successfully")
+        except Exception as e:
+            logger.error(f"Error setting up FTS5: {e}")
+            self._fts_enabled = False
+
+    # FAISS helpers
+    def _init_faiss_index(
+        self,
+        enable_gpu: bool,
+        faiss_index_type,
+        faiss_index_hnsw_flat_neighbors: Optional[int],
+        faiss_index_lsh_bits: Optional[int],
+    ):
+        if self.index_path and self.index_path.exists():
+            try:
+                loaded_index = faiss.read_index(str(self.index_path))
+            except RuntimeError as e:
+                raise DatabaseError(f"Error loading faiss index: {str(e)}")
+            if hasattr(loaded_index, 'id_map'):
+                self.index = loaded_index
+                logger.info(f"Loaded existing FAISS IndexIDMap with {self.index.ntotal} vectors")
+            else:
+                raise DatabaseError("Expected FAISS index to have `id_map` attribute. Invalid faiss index!")
+        else:
+            if faiss_index_type == "IndexFlatL2":
+                base_index = faiss.IndexFlatL2(self.embedding_dimension)
+            elif faiss_index_type == "IndexFlatIP":
+                base_index = faiss.IndexFlatIP(self.embedding_dimension)
+            elif faiss_index_type == "IndexHNSWFlat":
+                base_index = faiss.IndexHNSWFlat(self.embedding_dimension, faiss_index_hnsw_flat_neighbors or 16)
+            elif faiss_index_type == "IndexLSH":
+                base_index = faiss.IndexLSH(self.embedding_dimension, faiss_index_lsh_bits or self.embedding_dimension * 2)
+            else:
+                raise ValueError("Invalid faiss index for LocalVectorDB. Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
+            self.index = faiss.IndexIDMap(base_index)
+            logger.info(f"Created new FAISS IndexIDMap with dimension {self.embedding_dimension}")
+        if enable_gpu and faiss.get_num_gpus() > 0:
+            try:
+                self.index = faiss.index_cpu_to_all_gpus(self.index)
+                logger.info("Moved FAISS index to GPU")
+            except Exception as e:
+                logger.warning(f"Could not move IndexIDMap to GPU: {e}")
+        elif enable_gpu:
+            logger.warning("GPU requested but no GPUs available")
+
+    def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+        if len(embeddings) == 0:
+            return
+        start_faiss_id = self.index.ntotal
+        new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
+        self.index.add_with_ids(embeddings, new_faiss_ids)
+        for i, chunk in enumerate(chunks):
+            chunk.faiss_id = int(new_faiss_ids[i])
+
+    def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
+        if not faiss_ids or not hasattr(self.index, 'remove_ids'):
+            return
+        try:
+            ids_array = np.array(faiss_ids, dtype=np.int64)
+            self.index.remove_ids(ids_array)
+            logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
+        except Exception as e:
+            logger.warning(f"Failed to remove vectors from FAISS: {e}")
+
+    def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
+        if not faiss_ids:
+            return np.array([]).reshape(0, self.embedding_dimension)
+        faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
+        internal_indices = []
+        for fid in faiss_ids_array:
+            internal_idx = -1
+            for i in range(self.index.ntotal):
+                if self.index.id_map.at(i) == fid:
+                    internal_idx = i
+                    break
+            if internal_idx != -1:
+                internal_indices.append(internal_idx)
+        if not internal_indices:
+            return np.array([]).reshape(0, self.embedding_dimension)
+        internal_indices_array = np.array(internal_indices, dtype=np.int64)
+        embeddings = self.index.index.reconstruct_batch(internal_indices_array)
+        return embeddings
+
+    # Config/state helpers
+    def _load_next_doc_id(self) -> int:
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute('SELECT value FROM config WHERE key = ?', ('next_doc_id',))
+            row = cursor.fetchone()
+            return int(row['value']) if row else 1
+
+    def _save_next_doc_id(self) -> None:
+        with self.connection_pool.get_connection() as conn:
+            conn.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ('next_doc_id', str(self._next_doc_id)))
+            conn.commit()
+
+    def _save_config(self):
+        config = {
+            'embedding_provider': self.embedding_provider.provider_name,
+            'embedding_model': self.embedding_provider.model,
+            'embedding_dimension': self.embedding_dimension,
+            'chunking_method': self.chunking_method,
+            'chunk_size': self.chunk_size,
+            'chunk_overlap': self.chunk_overlap,
+            'doc_id_pattern': self.doc_id_pattern,
+            'fts_enabled': str(self.fts_enabled),
+            'version': get_system_version(),
+        }
+        with self.connection_pool.get_connection() as conn:
+            for key, value in config.items():
+                conn.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', (key, str(value)))
+            conn.commit()
+
+    def _generate_doc_id(self) -> str:
+        doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)
+        self._next_doc_id += 1
+        return doc_id
+
+    # Persistence
+    def _save_internal(self):
+        if not self.is_memory_only and hasattr(self.index, 'ntotal') and self.index.ntotal > 0:
+            if hasattr(self.index, 'index') and hasattr(self.index.index, 'device'):
+                cpu_index = faiss.index_gpu_to_cpu(self.index)
+                faiss.write_index(cpu_index, str(self.index_path))
+            else:
+                faiss.write_index(self.index, str(self.index_path))
+
+    def save(self):
+        with self._read_write_lock.write_lock():
+            self._save_internal()
+
+    def close(self):
+        """Close the database"""
+        self.save()
+        self.connection_pool.close_all()
+        if hasattr(self, 'async_connection_pool') and self.async_connection_pool is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    asyncio.create_task(self.close_async())
+                else:
+                    asyncio.run(self.close_async())
+            except RuntimeError:
+                asyncio.run(self.close_async())
+            except Exception as e:
+                logger.warning(f"Error closing async resources: {e}")
+
+    # Stats
+    def get_stats(self) -> Dict[str, Any]:
+        """Get database statistics
+
+        Returns
+        -------
+        dict[str, int|str|bool]
+            A dict with the following keys:
+            - documents
+            - chunks
+            - index_vectors
+            - embedding_dimension
+            - embedding_provider
+            - embedding_model
+            - chunking_method
+            - chunk_size
+            - chunk_overlap
+            - fts_enabled
+        """
+        with self.connection_pool.get_connection() as conn:
+            doc_count = conn.execute('SELECT COUNT(*) FROM documents').fetchone()[0]
+            chunk_count = conn.execute('SELECT COUNT(*) FROM chunks').fetchone()[0]
+            index_size = self.index.ntotal if hasattr(self.index, 'ntotal') else 0
+            return {
+                'documents': doc_count,
+                'chunks': chunk_count,
+                'index_vectors': index_size,
+                'embedding_dimension': self.embedding_dimension,
+                'embedding_provider': self.embedding_provider.provider_name,
+                'embedding_model': self.embedding_provider.model,
+                'chunking_method': self.chunking_method,
+                'chunk_size': self.chunk_size,
+                'chunk_overlap': self.chunk_overlap,
+                'fts_enabled': self.fts_enabled,
+            }
+
+    def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Count documents matching filter criteria
+
+        Parameters
+        ----------
+        filters : Optional[Dict[str, Any]]
+            Filter criteria using MongoDB-style syntax, by default None
+
+        Returns
+        -------
+        int
+            Number of documents matching the criteria
+        """
+        if filters:
+            filter_builder = FilterQueryBuilder(self.metadata_schema)
+            where_clause, params = filter_builder.build_where_clause(filters)
+            sql = f"SELECT COUNT(*) as count FROM documents WHERE {where_clause}"
+        else:
+            sql = "SELECT COUNT(*) as count FROM documents"
+            params = []
+        with self.connection_pool.get_connection_context() as conn:
+            cursor = conn.execute(sql, params)
+            row = cursor.fetchone()
+            return row['count'] if row else 0
+
+    # Async helpers
+    def _ensure_async_pool(self) -> None:
+        if self.async_connection_pool is None:
+            self.async_connection_pool = AsyncConnectionPool(self.db_path, max_connections=self.async_max_connections)
+
+    async def _ensure_async_schema_initialized(self) -> None:
+        if not self.is_memory_only or self._async_schema_initialized:
+            return
+        try:
+            async with self.async_connection_pool.get_connection_context() as conn:
+                await conn.execute("SELECT 1 FROM documents LIMIT 1")
+            self._async_schema_initialized = True
+        except Exception:
+            logger.info("Initializing database schema for async operations in in-memory database")
+            async with self.async_connection_pool.get_connection_context() as conn:
+                await self.schema.initialize_async(self._metadata_schema, db_connection=conn)
+            self._async_schema_initialized = True
+
+    async def close_async(self):
+        """Close async resources"""
+        if self.async_connection_pool:
+            await self.async_connection_pool.close_all()
+            self.async_connection_pool = None
+
+    async def save_async(self):
+        """Saves the database asynchronously"""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.save)
+
+    async def get_async_stats(self) -> Dict[str, Any]:
+        """Get async-specific statistics"""
+        stats = {}
+        if self.async_connection_pool:
+            stats['async_pool'] = self.async_connection_pool.stats
+        else:
+            stats['async_pool'] = {'status': 'not_initialized'}
+        return stats
+
+    async def __aenter__(self):
+        self._ensure_async_pool()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close_async()
