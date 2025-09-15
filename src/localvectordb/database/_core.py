@@ -7,7 +7,8 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb/database/base.py
+# src/localvectordb/database/_core.py
+
 """
 Core initialization and infrastructure for LocalVectorDB.
 
@@ -37,11 +38,12 @@ import numpy as np
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._pools import ConnectionPool, AsyncConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
-from localvectordb.core import Chunk
+from localvectordb.core import Chunk, MetadataField
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.utils import get_system_version
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
+from localvectordb.chunking import ChunkerFactory
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +79,14 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         if self._original_memory_request:
             unique_id = str(uuid.uuid4()).replace("-", "")[:8]
-            self.db_path = f"file:memdb_{unique_id}?mode=memory&cache=shared"
+            self.db_path: Union[str, Path] = f"file:memdb_{unique_id}?mode=memory&cache=shared"
             self.base_path = None
             self.index_path = None
             logger.info(f"Creating in-memory database with shared cache: {self.db_path}")
         else:
             self.base_path = Path(base_path)
             self.base_path.mkdir(parents=True, exist_ok=True)
-            self.db_path = str(self.base_path / f"{name}.sqlite")
+            self.db_path: Union[str, Path] = self.base_path / f"{name}.sqlite"
             self.index_path = self.base_path / f"{name}.faiss"
             if not create_if_not_exists and not Path(self.db_path).exists():
                 raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
@@ -97,7 +99,6 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self.doc_id_pattern = doc_id_pattern
 
         # Chunker
-        from localvectordb.chunking import ChunkerFactory
         self._chunking_method = chunking_method
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
@@ -135,6 +136,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # FAISS
         self._init_faiss_index(enable_gpu, faiss_index_type, faiss_index_hnsw_flat_neighbors, faiss_index_lsh_bits)
+
+        # How many items allowed on the processing queues.
+        self.pipeline_queue_size: int = 3
 
         # State
         self._next_doc_id = self._load_next_doc_id()
@@ -179,7 +183,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         return self.embedding_provider.model
 
     @property
-    def metadata_schema(self) -> dict[str, Any]:
+    def metadata_schema(self) ->  Dict[str, MetadataField]:
         return self._metadata_schema.copy()
 
     @property
@@ -394,6 +398,88 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             for key, value in config.items():
                 conn.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', (key, str(value)))
             conn.commit()
+
+    def _get_faiss_metric_type(self) -> str:
+        """Detect the metric type of the FAISS index.
+        
+        Returns:
+            'L2' for L2 distance metrics
+            'IP' for inner product metrics
+        """
+        if not hasattr(self, 'index') or self.index is None:
+            return 'L2'  # Default
+        
+        # Check if it's an IndexIDMap wrapper
+        if hasattr(self.index, 'index'):
+            base_index = self.index.index
+        else:
+            base_index = self.index
+        
+        # Check the index type name
+        index_type = str(type(base_index).__name__)
+        if 'IP' in index_type or 'InnerProduct' in index_type:
+            return 'IP'
+        elif 'L2' in index_type:
+            return 'L2'
+        elif 'HNSW' in index_type:
+            # HNSW can use different metrics, check if it's HNSW with IP
+            if hasattr(base_index, 'metric_type'):
+                if base_index.metric_type == faiss.METRIC_INNER_PRODUCT:
+                    return 'IP'
+            return 'L2'  # Default for HNSW
+        else:
+            # LSH and others default to L2-like behavior
+            return 'L2'
+    
+    def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float:
+        """Convert FAISS distance to similarity score based on metric type.
+
+        Parameters
+        ----------
+        distance : float
+            The distance value from FAISS
+        metric_type : str
+            'L2' or 'IP', if None will auto-detect
+
+        Returns
+        -------
+        float
+            Similarity measure
+        """
+        if metric_type is None:
+            metric_type = self._get_faiss_metric_type()
+        
+        if metric_type == 'IP':
+            # For inner product, the distance IS the similarity (if normalized)
+            # Assuming normalized embeddings, IP ranges from -1 to 1
+            # Convert to 0-1 range
+            return max(0.0, min(1.0, (distance + 1.0) / 2.0))
+        else:
+            # L2 distance: convert using 1/(1+distance)
+            return 1.0 / (1.0 + distance)
+    
+    def _similarity_to_distance(self, similarity: float, metric_type: str = None) -> float:
+        """Convert similarity threshold to FAISS distance threshold.
+        
+        Args:
+            similarity: Similarity threshold in [0, 1] range
+            metric_type: 'L2' or 'IP', if None will auto-detect
+        
+        Returns:
+            Distance threshold for FAISS
+        """
+        if metric_type is None:
+            metric_type = self._get_faiss_metric_type()
+        
+        similarity = max(0.001, min(1.0, similarity))  # Clamp to valid range
+        
+        if metric_type == 'IP':
+            # Convert from 0-1 to -1 to 1 range
+            # Higher similarity means higher inner product
+            return similarity * 2.0 - 1.0
+        else:
+            # L2 distance: invert the formula
+            return (1.0 / similarity) - 1.0
 
     def _generate_doc_id(self) -> str:
         doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)

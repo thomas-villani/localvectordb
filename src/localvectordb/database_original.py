@@ -477,7 +477,7 @@ class LocalVectorDB(BaseVectorDB):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            queue_size: int = 3
+            # queue_size: int = 3
     ) -> List[str]:
         """
         Insert or update documents in the database with pipeline processing
@@ -552,7 +552,6 @@ class LocalVectorDB(BaseVectorDB):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            queue_size: int = 3,
             extractor_kwargs: Optional[Dict[str, Any]] = None
     ) -> List[str]:
         """
@@ -573,8 +572,6 @@ class LocalVectorDB(BaseVectorDB):
             Batch size for processing, by default 100
         similarity_threshold : Optional[float]
             Skip adding chunks that are more similar than this value
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline
         extractor_kwargs : Optional[Dict[str, Any]]
             Additional keyword arguments passed to the extractor
 
@@ -653,7 +650,6 @@ class LocalVectorDB(BaseVectorDB):
             ids=final_ids,
             batch_size=batch_size,
             similarity_threshold=similarity_threshold,
-            queue_size=queue_size
         )
 
     def upsert_from_chunks(
@@ -1030,8 +1026,7 @@ class LocalVectorDB(BaseVectorDB):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise",
-            queue_size: int = 3
+            errors: Literal["ignore", "raise"] = "raise"
     ) -> List[str]:
         """
         Insert new documents into the database with pipeline processing
@@ -1050,8 +1045,6 @@ class LocalVectorDB(BaseVectorDB):
             Skip chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"]
             How to handle document ID conflicts, by default "raise"
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline (to control memory usage)
 
         Returns
         -------
@@ -2262,7 +2255,7 @@ class LocalVectorDB(BaseVectorDB):
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
             document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: dict = None
+            document_scoring_options: Optional[dict] = None
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types

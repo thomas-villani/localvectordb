@@ -7,7 +7,8 @@
 #
 # Contact: thomas.villani@gmail.com
 # 
-# localvectordb/database/_base.py
+# localvectordb/database/base.py
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -61,7 +62,7 @@ class BaseVectorDB(ABC):
         pass
 
     @abstractmethod
-    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+    def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """Retrieve documents by ID."""
         pass
 
@@ -97,15 +98,15 @@ class BaseVectorDB(ABC):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
             vector_weight: float = 0.7,
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: Literal[
-                "best", "average", "worst", "weighted_average", "frequency_boost"] = "frequency_boost"
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None
     ) -> List[QueryResult]:
         """Unified query interface for all search types."""
         pass
@@ -215,6 +216,7 @@ class BaseVectorDB(ABC):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
+    @abstractmethod
     def query_builder(self) -> "QueryBuilder":
         """
         Create a new QueryBuilder for this database.
@@ -248,8 +250,7 @@ class BaseVectorDB(ABC):
                 .semantic_filter("category", "research")
                 .execute_async())
         """
-        from localvectordb.query_builder import QueryBuilder
-        return QueryBuilder(self)
+        raise NotImplementedError()
 
     def ping(self) -> bool:
         """Check if the database is accessible. Override in subclasses."""
@@ -261,8 +262,7 @@ class BaseVectorDB(ABC):
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
             metadata: Optional[Dict[str, Dict[str, Any]]] = None,
             batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            queue_size: int = 3
+            similarity_threshold: Optional[float] = None
     ) -> List[str]:
         pass
 
@@ -274,7 +274,6 @@ class BaseVectorDB(ABC):
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
-            queue_size: int = 3,
     ) -> List[str]:
         pass
 
@@ -286,7 +285,6 @@ class BaseVectorDB(ABC):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            queue_size: int = 3,
             extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         pass
@@ -388,7 +386,7 @@ class BaseVectorDB(ABC):
         pass
 
     @abstractmethod
-    async def get_async(self, ids: Union[str, List[str]]) -> Union["Document", List["Document"], None]:
+    async def get_async(self, ids: Union[str, List[str]]) -> Union["Document", List["Document"]]:
         """Retrieve documents by ID asynchronously."""
         pass
 
@@ -424,8 +422,8 @@ class BaseVectorDB(ABC):
             self,
             query: str,
             *,
-            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks', 'context'] = 'documents',
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
@@ -524,6 +522,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self.index: IndexIDMap = None
         self.db_path: Path = None
         self.async_max_connections: int = None
+        self.pipeline_queue_size: int = 3
 
     @abstractmethod
     def _generate_doc_id(self) -> str:

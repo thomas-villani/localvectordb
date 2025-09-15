@@ -619,7 +619,7 @@ class RemoteVectorDB(BaseVectorDB):
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
-            similarity_threshold: Optional[float] = None
+            similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
         Insert or update documents in the database
@@ -674,8 +674,8 @@ class RemoteVectorDB(BaseVectorDB):
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
-            similarity_threshold: Optional[float] = None
     ) -> List[str]:
         """
         Insert new documents into the database
@@ -741,7 +741,6 @@ class RemoteVectorDB(BaseVectorDB):
             ids: Optional[Union[str, List[str]]] = None,
             batch_size: int = 100,
             similarity_threshold: Optional[float] = None,
-            queue_size: int = 3,
             extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """

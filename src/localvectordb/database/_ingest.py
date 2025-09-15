@@ -37,7 +37,7 @@ from localvectordb.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
-
+DEFAULT_QUEUE_SIZE = 3
 
 class PipelineMixin(LocalVectorDBBase, ABC):
 
@@ -51,7 +51,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         ids: Optional[Union[str, List[str]]] = None,
         batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
-        queue_size: int = 3,
     ) -> List[str]:
         """
         Insert or update documents in the database with pipeline processing
@@ -71,8 +70,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Batch size for processing, by default 100
         similarity_threshold : Optional[float]
             Skip adding chunks that are more similar than this value
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline (to control memory usage)
 
         Returns
         -------
@@ -97,7 +94,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ids = [(self._generate_doc_id() if i is None else i) for i in ids]
             self._validate_metadata_batch(metadata)
             result_ids = self._process_with_pipeline(
-                documents, metadata, ids, batch_size, similarity_threshold, queue_size, mode="upsert"
+                documents, metadata, ids, batch_size, similarity_threshold, mode="upsert"
             )
             self._save_next_doc_id()
             self._save_internal()
@@ -110,7 +107,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         ids: Optional[Union[str, List[str]]] = None,
         batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
-        queue_size: int = 3,
         extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
@@ -131,8 +127,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Batch size for processing, by default 100
         similarity_threshold : Optional[float]
             Skip adding chunks that are more similar than this value
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline
         extractor_kwargs : Optional[Dict[str, Any]]
             Additional keyword arguments passed to the extractor
 
@@ -187,7 +181,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ids=final_ids,
             batch_size=batch_size,
             similarity_threshold=similarity_threshold,
-            queue_size=queue_size,
         )
 
     def upsert_from_chunks(
@@ -196,7 +189,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
         batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
-        queue_size: int = 3,
     ) -> List[str]:
         """
         Insert or update documents from pre-chunked data with pipeline processing.
@@ -217,8 +209,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Number of embeddings to generate at once
         similarity_threshold : Optional[float], default=None
             If provided, filters out chunks that are too similar to existing chunks
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline (to control memory usage)
 
         Returns
         -------
@@ -249,7 +239,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 metadata_batch,
                 batch_size,
                 similarity_threshold,
-                queue_size,
                 mode="upsert",
             )
             self._save_next_doc_id()
@@ -264,7 +253,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
-        queue_size: int = 3,
     ) -> List[str]:
         """
         Insert new documents into the database with pipeline processing
@@ -283,8 +271,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Skip chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"]
             How to handle document ID conflicts, by default "raise"
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline (to control memory usage)
 
         Returns
         -------
@@ -328,7 +314,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             meta_to_process = [d[1] for d in docs_to_insert]
             ids_to_process = [d[2] for d in docs_to_insert]
             result_ids = self._process_with_pipeline(
-                docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, queue_size, mode="insert"
+                docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, mode="insert"
             )
             self._save_next_doc_id()
             self._save_internal()
@@ -342,7 +328,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
-        queue_size: int = 3,
         extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
@@ -365,8 +350,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Skip chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"]
             How to handle document ID conflicts, by default "raise"
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline
         extractor_kwargs : Optional[Dict[str, Any]]
             Additional keyword arguments passed to the extractor
 
@@ -422,7 +405,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             batch_size=batch_size,
             similarity_threshold=similarity_threshold,
             errors=errors,
-            queue_size=queue_size,
         )
 
     def insert_from_chunks(
@@ -432,7 +414,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
-        queue_size: int = 3,
     ) -> List[str]:
         """
         Insert documents from pre-chunked data with conflict handling.
@@ -457,8 +438,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             How to handle document ID conflicts:
             - "raise": Raise DuplicateDocumentIDError
             - "ignore": Skip existing documents and continue
-        queue_size : int, default=3
-            Number of items allowed on the queue for the pipeline (to control memory usage)
 
         Returns
         -------
@@ -510,7 +489,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 metadata_to_insert,
                 batch_size,
                 similarity_threshold,
-                queue_size,
                 mode="insert",
             )
             self._save_next_doc_id()
@@ -577,10 +555,23 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         filtered_mappings = [doc_chunk_mapping[i] for i in range(len(doc_chunk_mapping)) if hash_mask[i]]
         if self.index.ntotal == 0 or similarity_threshold is None or similarity_threshold <= 0:
             return filtered_chunks, filtered_embeddings, filtered_mappings
-        distance_threshold = (1.0 / max(similarity_threshold, 0.001)) - 1.0
-        distances, indices = self.index.search(filtered_embeddings, k=1)
-        valid_matches = (indices[:, 0] != -1)
-        too_similar = (distances[:, 0] < distance_threshold) & valid_matches
+        
+        # Get the metric type and convert similarity to distance threshold
+        metric_type = self._get_faiss_metric_type()
+        if metric_type == 'IP':
+            # For inner product, higher values mean more similar
+            # We want to filter out chunks that are TOO similar (above threshold)
+            distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
+            distances, indices = self.index.search(filtered_embeddings, k=1)
+            valid_matches = (indices[:, 0] != -1)
+            too_similar = (distances[:, 0] > distance_threshold) & valid_matches
+        else:
+            # For L2, lower distances mean more similar
+            # We want to filter out chunks that are TOO similar (below threshold)
+            distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
+            distances, indices = self.index.search(filtered_embeddings, k=1)
+            valid_matches = (indices[:, 0] != -1)
+            too_similar = (distances[:, 0] < distance_threshold) & valid_matches
         keep_mask = ~too_similar
         final_chunks = [filtered_chunks[i] for i in range(len(filtered_chunks)) if keep_mask[i]]
         final_embeddings = filtered_embeddings[keep_mask]
@@ -647,7 +638,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # -----------------
     # Pipelines (sync)
     # -----------------
-    def _process_with_pipeline(self, documents: List[str], metadata_batch: List[Dict[str, Any]], ids: List[str], batch_size: int, similarity_threshold: Optional[float], queue_size: int = 3, mode: Literal["upsert", "insert"] = "upsert") -> List[str]:
+    def _process_with_pipeline(self,
+                               documents: List[str],
+                               metadata_batch: List[Dict[str, Any]],
+                               ids: List[str], batch_size: int,
+                               similarity_threshold: Optional[float],
+                               # queue_size: int = 3,
+                               mode: Literal["upsert", "insert"] = "upsert"
+                               ) -> List[str]:
+        queue_size = self.pipeline_queue_size or DEFAULT_QUEUE_SIZE
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(ids)
         chunk_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -791,7 +790,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     logger.warning(f"Worker {w.name} did not complete in time")
         return processed_ids
 
-    def _process_from_chunks_pipeline(self, chunks_by_document: Dict[str, List[Chunk]], metadata_batch: Dict[str, Dict[str, Any]], batch_size: int, similarity_threshold: Optional[float], queue_size: int = 3, mode: Literal["upsert", "insert"] = "upsert") -> List[str]:
+    def _process_from_chunks_pipeline(self,
+                                      chunks_by_document: Dict[str, List[Chunk]],
+                                      metadata_batch: Dict[str, Dict[str, Any]],
+                                      batch_size: int,
+                                      similarity_threshold: Optional[float],
+                                      mode: Literal["upsert", "insert"] = "upsert"
+                                      ) -> List[str]:
+
+        queue_size = self.pipeline_queue_size or DEFAULT_QUEUE_SIZE
         doc_ids = list(chunks_by_document.keys())
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(doc_ids)
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -1170,6 +1177,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             If chunk data is invalid or metadata doesn't match schema
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
         if not chunks_by_document:
             return []
         if metadata is None:
@@ -1192,8 +1200,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             max_concurrent_embeddings,
             mode="upsert",
         )
-        self._save_next_doc_id()
-        self._save_internal()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._save_next_doc_id)
+        await self.save_async()
         return result_ids
 
     async def insert_async(
@@ -1426,6 +1435,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             If chunk data is invalid or metadata doesn't match schema
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
         if not chunks_by_document:
             return []
         if metadata is None:
@@ -1461,8 +1471,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             max_concurrent_embeddings,
             mode="insert",
         )
-        self._save_next_doc_id()
-        self._save_internal()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._save_next_doc_id)
+        await self.save_async()
         return result_ids
 
     async def _check_existing_ids_async(self, ids: List[str]) -> set:
@@ -1706,6 +1717,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             unchanged_chunks = chunk_data['unchanged_chunks']
             chunks_needing_embedding = chunk_data['chunks_needing_embedding']
             new_embeddings = chunk_data.get('new_embeddings', np.array([]).reshape(0, self.embedding_dimension))
+            field_embeddings = chunk_data.get('field_embeddings', {})
+            
             if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
                 loop = asyncio.get_event_loop()
                 doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'], chunk_data['content_hash'])
@@ -1724,11 +1737,21 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 async with self.async_connection_pool.get_connection_context() as conn:
                     try:
                         await conn.execute('BEGIN')
+                        
+                        # Remove old metadata embeddings on upsert
+                        if mode == "upsert" and field_embeddings:
+                            await self._remove_metadata_embeddings_async(conn, doc_id)
+                        
                         await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
                         if new_embeddings.size > 0:
                             loop = asyncio.get_event_loop()
                             await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding)
                         await self._insert_chunks_bulk_async(conn, chunks_data)
+                        
+                        # Store metadata embeddings if present
+                        if field_embeddings:
+                            await self._store_metadata_embeddings_async(conn, doc_id, field_embeddings)
+                        
                         await conn.commit()
                     except Exception:
                         await conn.rollback()

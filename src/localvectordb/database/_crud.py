@@ -23,6 +23,8 @@ from abc import ABC
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
+
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Document
 from localvectordb.database.base import LocalVectorDBBase
@@ -84,7 +86,16 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     metadata = {}
                     for col_name in metadata_columns:
                         if col_name in row.keys():
-                            metadata[col_name] = row[col_name]
+                            value = row[col_name]
+                            # Parse JSON fields if needed
+                            if value is not None and col_name in self.metadata_schema:
+                                field_def = self.metadata_schema[col_name]
+                                if field_def.type.name == 'JSON' and isinstance(value, str):
+                                    try:
+                                        value = json.loads(value)
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
+                            metadata[col_name] = value
                     doc = Document(
                         id=row['id'],
                         content=row['content'],
@@ -162,8 +173,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
             if faiss_ids_to_remove and hasattr(self.index, 'remove_ids'):
                 try:
-                    import numpy as _np
-                    ids_array = _np.array(faiss_ids_to_remove, dtype=_np.int64)
+                    ids_array = np.array(faiss_ids_to_remove, dtype=np.int64)
                     self.index.remove_ids(ids_array)
                     logger.info(f"Removed {len(faiss_ids_to_remove)} vectors from FAISS index")
                 except Exception as e:
@@ -381,7 +391,18 @@ class CrudMixin(LocalVectorDBBase, ABC):
             rows = cursor.fetchall()
             documents: List[Document] = []
             for row in rows:
-                metadata = {col_name: row[col_name] for col_name in metadata_columns}
+                metadata = {}
+                for col_name in metadata_columns:
+                    value = row[col_name]
+                    # Parse JSON fields if needed
+                    if value is not None and col_name in self.metadata_schema:
+                        field_def = self.metadata_schema[col_name]
+                        if field_def.type.name == 'JSON' and isinstance(value, str):
+                            try:
+                                value = json.loads(value)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                    metadata[col_name] = value
                 doc = Document(
                     id=row['id'],
                     content=row['content'],
@@ -396,7 +417,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
     # -------------
     # Async CRUD
     # -------------
-    async def get_async(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+    async def get_async(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """
         Async retrieve documents by ID
 
@@ -409,15 +430,21 @@ class CrudMixin(LocalVectorDBBase, ABC):
         -------
         Union[Document, List[Document], None]
             Document(s) if found, None if single ID not found, empty list if no IDs found
+
+        Raises
+        ------
+        DocumentNotFoundError
+            If any requested documents are not found
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
         if isinstance(ids, str):
             single_id = True
             ids = [ids]
         else:
             single_id = False
         if not ids:
-            return [] if not single_id else None
+            raise ValueError("`ids` must be provided.")
         async with self.async_connection_pool.get_connection_context() as conn:
             metadata_columns = list(self.metadata_schema.keys())
             if metadata_columns:
@@ -428,6 +455,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
             sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
             cursor = await conn.execute(sql, ids)
             rows = await cursor.fetchall()
+
+        found_ids = {row['id'] for row in rows}
+        missing_ids = [doc_id for doc_id in ids if doc_id not in found_ids]
+        if missing_ids:
+            if single_id:
+                raise DocumentNotFoundError(f"Document not found: {missing_ids[0]}", missing_ids[0])
+            else:
+                raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
         documents: List[Document] = []
         for row in rows:
             base_columns = self.schema.BASE_COLUMNS.copy()
@@ -456,7 +491,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             )
             documents.append(document)
         if single_id:
-            return documents[0] if documents else None
+            return documents[0]
         else:
             return documents
 
@@ -475,6 +510,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Number of documents deleted
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
         if isinstance(ids, str):
             ids = [ids]
         if not ids:
@@ -487,6 +523,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 ids,
             )
             faiss_ids = [row['faiss_id'] for row in await cursor.fetchall()]
+            
+            # Also collect metadata embedding FAISS IDs
+            cursor = await conn.execute(
+                f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
+                ids,
+            )
+            faiss_ids.extend([row['faiss_id'] for row in await cursor.fetchall()])
+            
             if faiss_ids:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
@@ -522,6 +566,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Number of documents matching the criteria
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
         if filters:
             filter_builder = FilterQueryBuilder(self.metadata_schema)
             where_clause, params = filter_builder.build_where_clause(filters)
@@ -534,7 +579,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             row = await cursor.fetchone()
             return row['count'] if row else 0
 
-    async def exists_async(self, ids: str) -> bool:
+    async def exists_async(self, ids: Union[str, list[str]]) -> Union[bool, list[bool]]:
         """
         Async check if a document exists
 
@@ -545,10 +590,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
         Returns
         -------
-        bool
+        bool or list[bool]
             True if document exists, False otherwise
         """
         self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
         single = isinstance(ids, str)
         ids_list = [ids] if single else list(ids)
         if not ids_list:

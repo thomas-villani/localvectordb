@@ -138,8 +138,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         for dist, idx in zip(distances[0], indices[0], strict=False):
             if idx == -1:
                 continue
-            base_similarity = 1.0 / (1.0 + float(dist))
-            score = max(0.0, (base_similarity - 0.5) / 0.5)
+            base_similarity = self._distance_to_similarity(float(dist))
+            # Normalize to 0-1 range with better spread
+            score = base_similarity
             if score < score_threshold:
                 continue
             valid_results.append((int(idx), score))
@@ -215,7 +216,20 @@ class SearchMixin(LocalVectorDBBase, ABC):
         result = {}
         for row in cursor.fetchall():
             doc_id = row['id']
-            result[doc_id] = {col_name: row[col_name] for col_name in metadata_columns}
+            metadata = {}
+            for col_name in metadata_columns:
+                value = row[col_name]
+                # Parse JSON fields if needed
+                if value is not None and col_name in self.metadata_schema:
+                    field_def = self.metadata_schema[col_name]
+                    if field_def.type.name == 'JSON' and isinstance(value, str):
+                        try:
+                            import json
+                            value = json.loads(value)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                metadata[col_name] = value
+            result[doc_id] = metadata
         for doc_id in doc_ids:
             if doc_id not in result:
                 result[doc_id] = {}
@@ -1095,7 +1109,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             faiss_id = chunk_data['faiss_id']
             if faiss_id in faiss_id_to_distance:
                 distance = faiss_id_to_distance[faiss_id]
-                similarity = 1.0 / (1.0 + distance)
+                similarity = self._distance_to_similarity(distance)
                 if similarity >= score_threshold:
                     query_results.append(QueryResult(
                         id=chunk_data['chunk_id'],
@@ -1145,6 +1159,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_results: List[QueryResult] = []
         for row in rows:
             fts_rank = row['rank']
+            # FTS rank is not a distance, so we use a different formula
+            # Lower rank (negative) is better, convert to similarity
             similarity = 1.0 / (1.0 + abs(fts_rank))
             if similarity >= score_threshold:
                 position = ChunkPosition(
@@ -1201,13 +1217,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not faiss_ids:
             return []
         base_columns = self.schema.BASE_COLUMNS.copy()
-        metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
+        metadata_columns = list(self.metadata_schema.keys())
+        all_columns = base_columns + metadata_columns
         chunk_columns = [
             'c.document_id', 'c.chunk_index', 'c.content', 'c.faiss_id',
             'c.start_pos', 'c.end_pos', 'c.start_line', 'c.start_col', 'c.end_line', 'c.end_col',
             'd.content as doc_content'
         ]
-        for col in metadata_columns:
+        for col in all_columns:
             chunk_columns.append(f'd.{col}')
         placeholders = ','.join(['?' for _ in faiss_ids])
         sql = f"""
@@ -1230,17 +1247,16 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 end_column=row['end_col'],
             )
             metadata: Dict[str, Any] = {}
+            # Only include actual metadata fields, not base columns
             for field_name in metadata_columns:
                 value = row[field_name]
                 if value is not None:
-                    if field_name in self.metadata_schema:
-                        field_def = self.metadata_schema[field_name]
-                        if field_def.type.name == 'JSON' and isinstance(value, str):
-                            try:
-                                import json
-                                value = json.loads(value)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
+                    field_def = self.metadata_schema[field_name]
+                    if field_def.type.name == 'JSON' and isinstance(value, str):
+                        try:
+                            value = json.loads(value)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
                     metadata[field_name] = value
             chunks_data.append({
                 'chunk_id': f"{row['document_id']}:{row['chunk_index']}",
@@ -1268,11 +1284,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
     async def _get_document_metadata_async(self, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if not doc_ids:
             return {}
-        base_columns = self.schema.BASE_COLUMNS.copy()
-        metadata_columns = list(base_columns) + list(self.metadata_schema.keys())
-        if not metadata_columns:
+        # Get all columns but only put metadata fields in the metadata dict
+        base_columns = ['id']
+        metadata_columns = list(self.metadata_schema.keys())
+        all_columns = base_columns + metadata_columns
+        if not all_columns:
             return {doc_id: {} for doc_id in doc_ids}
-        sql = f"SELECT {', '.join(metadata_columns)} FROM documents WHERE id IN ({','.join(['?' for _ in doc_ids])})"
+        sql = f"SELECT {', '.join(all_columns)} FROM documents WHERE id IN ({','.join(['?' for _ in doc_ids])})"
         async with self.async_connection_pool.get_connection_context() as conn:
             cursor = await conn.execute(sql, doc_ids)
             rows = await cursor.fetchall()
@@ -1280,9 +1298,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         for row in rows:
             doc_id = row['id']
             metadata: Dict[str, Any] = {}
+            # Only include actual metadata fields, not base columns
             for field_name in metadata_columns:
                 value = row[field_name]
-                if value is not None and field_name in self.metadata_schema:
+                if value is not None:
                     field_def = self.metadata_schema[field_name]
                     if field_def.type.name == 'JSON' and isinstance(value, str):
                         try:
@@ -1605,6 +1624,119 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     enriched_results.append(enriched_result)
         return enriched_results
 
+    async def _search_metadata_field_async(
+            self,
+            query: str,
+            field_name: str,
+            k: int,
+            score_threshold: float,
+            filters: Optional[Dict[str, Any]]
+    ) -> List[QueryResult]:
+        """
+        Async search a specific metadata field's embeddings
+        
+        Parameters
+        ----------
+        query : str
+            Query text
+        field_name : str
+            Name of metadata field to search
+        k : int
+            Maximum results to return
+        score_threshold : float
+            Minimum score threshold
+        filters : Optional[Dict[str, Any]]
+            Metadata filters
+            
+        Returns
+        -------
+        List[QueryResult]
+            Search results for this field
+        """
+        # Generate query embedding asynchronously
+        embeddings = await self.embedding_provider.embed_batch([query])
+        query_embedding = embeddings[0]
+
+        async with self.async_connection_pool.get_connection_context() as conn:
+            # Get all metadata field embeddings
+            cursor = await conn.execute("""
+                SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
+                FROM column_embeddings ce
+                JOIN documents d ON ce.document_id = d.id
+                WHERE ce.field_name = ?
+            """, (field_name,))
+
+            field_embedding_data = await cursor.fetchall()
+
+            if not field_embedding_data:
+                return []
+
+            # Extract FAISS IDs for this field
+            faiss_ids = [row['faiss_id'] for row in field_embedding_data]
+
+            if not faiss_ids:
+                return []
+
+            # Get embeddings for these FAISS IDs (run in executor as FAISS is not async)
+            loop = asyncio.get_event_loop()
+            field_embeddings = await loop.run_in_executor(
+                None, self._reconstruct_embeddings_batch, faiss_ids
+            )
+
+            if field_embeddings.size == 0:
+                return []
+
+            # Compute similarities (run in executor for numpy operations)
+            def compute_similarities():
+                query_embedding_2d = query_embedding.reshape(1, -1)
+                similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
+                # Convert to scores (higher is better)
+                scores = (similarities + 1) / 2  # Normalize to 0-1
+                return scores
+
+            scores = await loop.run_in_executor(None, compute_similarities)
+
+            # Filter by score threshold
+            valid_indices = np.where(scores >= score_threshold)[0]
+
+            if len(valid_indices) == 0:
+                return []
+
+            # Sort by score and limit
+            sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
+
+            results = []
+
+            # Get document metadata for all results in batch
+            doc_ids = [field_embedding_data[idx]['document_id'] for idx in sorted_indices]
+            doc_metadata_batch = await self._get_document_metadata_async(doc_ids)
+
+            for idx in sorted_indices:
+                row_data = field_embedding_data[idx]
+                doc_metadata = doc_metadata_batch.get(row_data['document_id'], {})
+
+                # Create result
+                result = QueryResult(
+                    id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
+                    content=str(doc_metadata.get(field_name, "")),
+                    score=float(scores[idx]),
+                    document_id=row_data['document_id'],
+                    metadata=doc_metadata,
+                    type='chunk'
+                )
+                results.append(result)
+
+            # Apply metadata filters if provided
+            if filters:
+                loop = asyncio.get_event_loop()
+                # Use the existing sync filter function in executor
+                def apply_filters():
+                    return [r for r in results if matches_metadata_filter(r.metadata, filters)]
+
+                results = await loop.run_in_executor(None, apply_filters)
+
+            return results
+
     async def query_multi_column_async(
             self,
             query: str,
@@ -1726,8 +1858,6 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # Sort all results by score and limit
         all_results.sort(key=lambda x: x.score, reverse=True)
         limited_results = all_results[:k]
-
-        # TODO: other aggregations aren't being done here?
 
         if return_type == 'documents':
             # Aggregate chunks into documents
