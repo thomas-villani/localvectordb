@@ -51,6 +51,46 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Similarity score between 0.0 and 1.0 (higher is better)
         """
         return 1.0 - min(1.0, math.exp(float(rank)))
+    
+    # Pure business logic helpers for DRY elimination
+    def _build_metadata_field_search_sql(self, field_name: str) -> tuple[str, tuple[str]]:
+        """Build SQL for searching metadata field embeddings (pure business logic)"""
+        sql = """
+            SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
+            FROM column_embeddings ce
+            JOIN documents d ON ce.document_id = d.id
+            WHERE ce.field_name = ?
+        """
+        return sql, (field_name,)
+    
+    def _calculate_embedding_similarities(self, query_embedding: np.ndarray, 
+                                        field_embeddings: np.ndarray) -> np.ndarray:
+        """Calculate similarities between query and field embeddings (pure business logic)"""
+        query_embedding_2d = query_embedding.reshape(1, -1)
+        similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
+        scores = (similarities + 1) / 2  # Normalize to [0, 1]
+        return scores
+    
+    def _filter_and_sort_by_scores(self, scores: np.ndarray, score_threshold: float, k: int) -> np.ndarray:
+        """Filter scores by threshold and return sorted indices (pure business logic)"""
+        valid_indices = np.where(scores >= score_threshold)[0]
+        if len(valid_indices) == 0:
+            return np.array([], dtype=int)
+        # Sort by score descending and limit
+        sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
+        return sorted_indices
+    
+    def _create_metadata_search_result(self, row_data: Dict, field_name: str, score: float, 
+                                     doc_metadata: Dict[str, Any]) -> QueryResult:
+        """Create QueryResult for metadata field search (pure business logic)"""
+        return QueryResult(
+            id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
+            content=str(doc_metadata.get(field_name, "")),
+            score=float(score),
+            document_id=row_data['document_id'],
+            metadata=doc_metadata,
+            type='chunk'
+        )
 
     # -----------------
     # Public search API
@@ -1004,48 +1044,51 @@ class SearchMixin(LocalVectorDBBase, ABC):
     def _search_metadata_field(
             self, query: str, field_name: str, k: int, score_threshold: float, filters: Optional[Dict[str, Any]]
             ) -> List[QueryResult]:
+        # Generate query embedding
         if hasattr(self.embedding_provider, 'embed_query'):
             query_embedding = self.embedding_provider.embed_query(query)
         else:
             query_embedding = self.embedding_provider.embed_sync([query])[0]
+        
+        # Use shared business logic for SQL construction
+        sql, params = self._build_metadata_field_search_sql(field_name)
+        
         with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute("""
-                SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
-                FROM column_embeddings ce
-                JOIN documents d ON ce.document_id = d.id
-                WHERE ce.field_name = ?
-            """, (field_name,))
+            cursor = conn.execute(sql, params)
             field_embedding_data = cursor.fetchall()
+            
             if not field_embedding_data:
                 return []
+            
+            # Extract FAISS IDs and get embeddings
             faiss_ids = [row['faiss_id'] for row in field_embedding_data]
             if not faiss_ids:
                 return []
+                
             field_embeddings = self._reconstruct_embeddings_batch(faiss_ids)
             if field_embeddings.size == 0:
                 return []
-            query_embedding_2d = query_embedding.reshape(1, -1)
-            similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
-            scores = (similarities + 1) / 2
-            valid_indices = np.where(scores >= score_threshold)[0]
-            if len(valid_indices) == 0:
+            
+            # Use shared business logic for similarity calculation
+            scores = self._calculate_embedding_similarities(query_embedding, field_embeddings)
+            
+            # Use shared business logic for filtering and sorting
+            sorted_indices = self._filter_and_sort_by_scores(scores, score_threshold, k)
+            if len(sorted_indices) == 0:
                 return []
-            sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
+            
+            # Build results using shared business logic
             results: List[QueryResult] = []
             for idx in sorted_indices:
                 row_data = field_embedding_data[idx]
                 doc_metadata = self._get_document_metadata(conn, row_data['document_id'])
-                result = QueryResult(
-                    id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
-                    content=str(doc_metadata.get(field_name, "")),
-                    score=float(scores[idx]),
-                    document_id=row_data['document_id'],
-                    metadata=doc_metadata,
-                    type='chunk',
-                )
+                result = self._create_metadata_search_result(row_data, field_name, scores[idx], doc_metadata)
                 results.append(result)
+            
+            # Apply filters if provided
             if filters:
                 results = [r for r in results if matches_metadata_filter(r.metadata, filters)]
+            
             return results
 
     def _get_document_metadata(self, conn, document_id: str) -> Dict[str, Any]:
@@ -1787,15 +1830,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         embeddings = await self.embedding_provider.embed_batch([query])
         query_embedding = embeddings[0]
 
+        # Use shared business logic for SQL construction
+        sql, params = self._build_metadata_field_search_sql(field_name)
+
         async with self.async_connection_pool.get_connection_context() as conn:
             # Get all metadata field embeddings
-            cursor = await conn.execute("""
-                SELECT ce.faiss_id, ce.document_id, ce.chunk_index, d.content, d.created_at, d.updated_at
-                FROM column_embeddings ce
-                JOIN documents d ON ce.document_id = d.id
-                WHERE ce.field_name = ?
-            """, (field_name,))
-
+            cursor = await conn.execute(sql, params)
             field_embedding_data = await cursor.fetchall()
 
             if not field_embedding_data:
@@ -1816,24 +1856,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
             if field_embeddings.size == 0:
                 return []
 
-            # Compute similarities (run in executor for numpy operations)
-            def compute_similarities():
-                query_embedding_2d = query_embedding.reshape(1, -1)
-                similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
-                # Convert to scores (higher is better)
-                scores = (similarities + 1) / 2  # Normalize to 0-1
-                return scores
+            # Use shared business logic for similarity calculation (run in executor)
+            scores = await loop.run_in_executor(
+                None, self._calculate_embedding_similarities, query_embedding, field_embeddings
+            )
 
-            scores = await loop.run_in_executor(None, compute_similarities)
+            # Use shared business logic for filtering and sorting (run in executor)
+            sorted_indices = await loop.run_in_executor(
+                None, self._filter_and_sort_by_scores, scores, score_threshold, k
+            )
 
-            # Filter by score threshold
-            valid_indices = np.where(scores >= score_threshold)[0]
-
-            if len(valid_indices) == 0:
+            if len(sorted_indices) == 0:
                 return []
-
-            # Sort by score and limit
-            sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
 
             results = []
 
@@ -1841,25 +1875,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
             doc_ids = [field_embedding_data[idx]['document_id'] for idx in sorted_indices]
             doc_metadata_batch = await self._get_document_metadata_async(doc_ids)
 
+            # Build results using shared business logic
             for idx in sorted_indices:
                 row_data = field_embedding_data[idx]
                 doc_metadata = doc_metadata_batch.get(row_data['document_id'], {})
-
-                # Create result
-                result = QueryResult(
-                    id=f"{row_data['document_id']}:meta:{field_name}:{row_data['chunk_index']}",
-                    content=str(doc_metadata.get(field_name, "")),
-                    score=float(scores[idx]),
-                    document_id=row_data['document_id'],
-                    metadata=doc_metadata,
-                    type='chunk'
-                )
+                result = self._create_metadata_search_result(row_data, field_name, scores[idx], doc_metadata)
                 results.append(result)
 
             # Apply metadata filters if provided
             if filters:
-                loop = asyncio.get_event_loop()
-
                 # Use the existing sync filter function in executor
                 def apply_filters():
                     return [r for r in results if matches_metadata_filter(r.metadata, filters)]

@@ -38,6 +38,52 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     #############################
     # Metadata Validation/Info  #
     #############################
+    
+    # Pure business logic helpers for DRY elimination
+    def _build_metadata_schema_info(self) -> Dict[str, Any]:
+        """Build metadata schema information dictionary (pure business logic)"""
+        info = {
+            'fields': {},
+            'field_count': len(self.metadata_schema),
+            'indexed_fields': [],
+            'required_fields': [],
+            'field_types': {}
+        }
+        for field_name, field_def in self.metadata_schema.items():
+            info['fields'][field_name] = {
+                'type': field_def.type.value,
+                'indexed': field_def.indexed,
+                'required': field_def.required,
+                'default_value': field_def.default_value
+            }
+            if field_def.indexed:
+                info['indexed_fields'].append(field_name)
+            if field_def.required:
+                info['required_fields'].append(field_name)
+            field_type = field_def.type.value
+            info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
+        return info
+    
+    def _calculate_faiss_ids_for_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
+        """Calculate FAISS IDs for embeddings using index state (pure business logic)"""
+        start_id = self.index.ntotal
+        if hasattr(self.index, 'add_with_ids'):
+            return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
+        else:
+            # For basic add, we'll need to calculate after adding
+            return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
+    
+    def _add_embeddings_to_faiss(self, embeddings: np.ndarray) -> np.ndarray:
+        """Add embeddings to FAISS index and return actual IDs (pure business logic for FAISS operations)"""
+        start_id = self.index.ntotal
+        if hasattr(self.index, 'add_with_ids'):
+            ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
+            self.index.add_with_ids(embeddings, ids)
+            return ids  # Return actual IDs used
+        else:
+            self.index.add(embeddings)
+            return np.arange(start_id, self.index.ntotal, dtype=np.int64)  # Fall back to range
+    
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
         for metadata in metadata_batch:
             for field_name, value in metadata.items():
@@ -68,27 +114,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             - required_fields: List of required field names
             - field_types: Summary of field types used
         """
-        info = {
-            'fields': {},
-            'field_count': len(self.metadata_schema),
-            'indexed_fields': [],
-            'required_fields': [],
-            'field_types': {}
-        }
-        for field_name, field_def in self.metadata_schema.items():
-            info['fields'][field_name] = {
-                'type': field_def.type.value,
-                'indexed': field_def.indexed,
-                'required': field_def.required,
-                'default_value': field_def.default_value
-            }
-            if field_def.indexed:
-                info['indexed_fields'].append(field_name)
-            if field_def.required:
-                info['required_fields'].append(field_name)
-            field_type = field_def.type.value
-            info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
-        return info
+        return self._build_metadata_schema_info()
 
     async def get_metadata_schema_info_async(self) -> Dict[str, Any]:
         """
@@ -104,28 +130,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             - required_fields: List of required field names
             - field_types: Summary of field types used
         """
-
-        info = {
-            'fields': {},
-            'field_count': len(self.metadata_schema),
-            'indexed_fields': [],
-            'required_fields': [],
-            'field_types': {}
-        }
-        for field_name, field_def in self.metadata_schema.items():
-            info['fields'][field_name] = {
-                'type': field_def.type.value,
-                'indexed': field_def.indexed,
-                'required': field_def.required,
-                'default_value': field_def.default_value
-            }
-            if field_def.indexed:
-                info['indexed_fields'].append(field_name)
-            if field_def.required:
-                info['required_fields'].append(field_name)
-            field_type = field_def.type.value
-            info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
-        return info
+        return self._build_metadata_schema_info()
 
     #############################
     # Schema Updates (sync/async)
@@ -440,16 +445,8 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         for field_name, embeddings in field_embeddings.items():
             if embeddings.size == 0:
                 continue
-            start_id = self.index.ntotal
-            if hasattr(self.index, 'add_with_ids'):
-                ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
-                self.index.add_with_ids(embeddings, ids)
-                # Use the exact IDs we passed to add_with_ids
-                actual_ids = ids
-            else:
-                self.index.add(embeddings)
-                # Fall back to range calculation for basic add
-                actual_ids = np.arange(start_id, self.index.ntotal, dtype=np.int64)
+            # Use shared business logic for FAISS operations
+            actual_ids = self._add_embeddings_to_faiss(embeddings)
             # Track using actual IDs
             for chunk_index, faiss_id in enumerate(actual_ids):
                 self._track_column_embedding(conn, document_id, field_name, chunk_index, int(faiss_id))
@@ -463,20 +460,10 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         for field_name, embeddings in field_embeddings.items():
             if embeddings.size == 0:
                 continue
-            # Add to FAISS (run sync in executor)
+            # Use shared business logic for FAISS operations (run in executor)
             loop = asyncio.get_event_loop()
-
-            def _add():
-                start_id = self.index.ntotal
-                if hasattr(self.index, 'add_with_ids'):
-                    ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
-                    self.index.add_with_ids(embeddings, ids)
-                    return ids  # Return actual IDs used
-                else:
-                    self.index.add(embeddings)
-                    return np.arange(start_id, self.index.ntotal, dtype=np.int64)  # Fall back to range
-
-            actual_ids = await loop.run_in_executor(None, _add)
+            actual_ids = await loop.run_in_executor(None, self._add_embeddings_to_faiss, embeddings)
+            
             for chunk_index, faiss_id in enumerate(actual_ids):
                 await conn.execute(
                     """

@@ -41,7 +41,7 @@ def app():
     app.db_manager = Mock()
     app.db_manager.databases = {}
     app.db_manager.list_databases.return_value = ['test_db1', 'test_db2']
-    app.db_manager.delete_db.return_value = (True, None)
+    app.db_manager.delete_database.return_value = (True, None)
 
     # Register blueprint
     app.register_blueprint(api)

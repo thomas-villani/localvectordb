@@ -27,6 +27,7 @@ import numpy as np
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Document
 from localvectordb.database.base import LocalVectorDBBase
+from localvectordb.database._utils import SyncDatabaseExecutor, AsyncDatabaseExecutor
 from localvectordb.exceptions import DocumentNotFoundError, MetadataFilterError
 from localvectordb.query_builder import QueryBuilder
 
@@ -34,12 +35,161 @@ logger = logging.getLogger(__name__)
 
 
 class CrudMixin(LocalVectorDBBase, ABC):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._sync_executor = SyncDatabaseExecutor()
+        self._async_executor = AsyncDatabaseExecutor()
+    
     # -------------
     # Query builder
     # -------------
     def query_builder(self) -> QueryBuilder:
         """Returns a QueryBuilder for the database."""
         return QueryBuilder(self)
+    
+    # Pure business logic helpers
+    def _build_document_columns_list(self) -> List[str]:
+        """Build list of columns for document retrieval (pure business logic)"""
+        metadata_columns = list(self.metadata_schema.keys())
+        if metadata_columns:
+            return ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
+        else:
+            return ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+    
+    def _build_get_documents_sql(self, requested_ids: List[str]) -> tuple[str, List[str]]:
+        """Build SQL for retrieving documents by ID (pure business logic)"""
+        columns = self._build_document_columns_list()
+        placeholders = ','.join(['?'] * len(requested_ids))
+        sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
+        return sql, requested_ids
+    
+    def _validate_missing_documents(self, requested_ids: List[str], found_ids: set) -> None:
+        """Validate that all requested documents were found (pure business logic)"""
+        missing_ids = [doc_id for doc_id in requested_ids if doc_id not in found_ids]
+        if missing_ids:
+            if len(requested_ids) == 1:
+                raise DocumentNotFoundError(f"Document not found: {missing_ids[0]}", missing_ids[0])
+            else:
+                raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
+    
+    def _construct_document_from_row(self, row) -> Document:
+        """Construct Document object from database row (pure business logic)"""
+        # Extract metadata (columns that are not base columns)
+        metadata = {}
+        base_columns = {'id', 'content', 'content_hash', 'created_at', 'updated_at'}
+        
+        if hasattr(row, 'items'):
+            row_items = row.items()
+        else:
+            row_items = [(key, row[key]) for key in row.keys()]
+        
+        for key, value in row_items:
+            if key not in base_columns:
+                metadata[key] = value
+        
+        return Document(
+            id=row['id'],
+            content=row['content'],
+            metadata=metadata,
+            created_at=row['created_at'],
+            updated_at=row['updated_at'],
+            content_hash=row['content_hash'],
+        )
+    
+    def _build_exists_sql(self, ids_list: List[str]) -> tuple[str, List[str]]:
+        """Build SQL for checking document existence (pure business logic)"""
+        placeholders = ','.join(['?'] * len(ids_list))
+        sql = f'SELECT id FROM documents WHERE id IN ({placeholders})'
+        return sql, ids_list
+    
+    def _process_exists_results(self, rows, ids_list: List[str]) -> List[bool]:
+        """Process exists query results into boolean list (pure business logic)"""
+        existing_ids = {row['id'] for row in rows}
+        return [doc_id in existing_ids for doc_id in ids_list]
+    
+    def _build_filter_sql(self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, 
+                          limit: Optional[int] = None, offset: int = 0) -> tuple[str, List[Any]]:
+        """Build SQL for filtering documents (pure business logic)"""
+        columns = self._build_document_columns_list()
+        query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
+        params: List[Any] = []
+        
+        filter_builder = None
+        if where:
+            try:
+                filter_builder = FilterQueryBuilder(self.metadata_schema)
+                where_clause, filter_params = filter_builder.build_where_clause(where)
+                if where_clause:
+                    query_parts.append(f"WHERE {where_clause}")
+                    params.extend(filter_params)
+            except Exception as e:
+                raise MetadataFilterError(f"Error building filter query: {str(e)}")
+        
+        if order_by:
+            try:
+                if filter_builder is None:
+                    filter_builder = FilterQueryBuilder(self.metadata_schema)
+                valid_columns = set(columns)
+                order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
+                query_parts.append(order_by_clause)
+            except Exception as e:
+                raise MetadataFilterError(f"Error building ORDER BY clause: {str(e)}")
+        
+        if limit:
+            if not isinstance(limit, int) or limit <= 0:
+                raise MetadataFilterError("Limit must be a positive integer")
+            query_parts.append(f"LIMIT {limit}")
+        
+        if offset:
+            if not isinstance(offset, int) or offset < 0:
+                raise MetadataFilterError("Offset must be a non-negative integer")
+            query_parts.append(f"OFFSET {offset}")
+        
+        return ' '.join(query_parts), params
+    
+    def _construct_documents_from_rows(self, rows) -> List[Document]:
+        """Construct Document objects from database rows (pure business logic)"""
+        documents: List[Document] = []
+        for row in rows:
+            doc = self._construct_document_from_row(row)
+            documents.append(doc)
+        return documents
+
+    def _core_get_sync(self, conn, requested_ids: List[str]) -> List[Document]:
+        """Core logic for retrieving documents by ID (sync version)"""
+        # Use shared business logic helpers
+        sql, params = self._build_get_documents_sql(requested_ids)
+        cursor = self._sync_executor.execute(conn, sql, params)
+        rows = self._sync_executor.fetchall(cursor)
+        
+        # Validate all documents were found using shared logic
+        found_ids = {row['id'] for row in rows}
+        self._validate_missing_documents(requested_ids, found_ids)
+        
+        # Construct documents using shared logic
+        documents = []
+        for row in rows:
+            doc = self._construct_document_from_row(row)
+            documents.append(doc)
+        return documents
+
+    async def _core_get_async(self, conn, requested_ids: List[str]) -> List[Document]:
+        """Core logic for retrieving documents by ID (async version)"""
+        # Use shared business logic helpers
+        sql, params = self._build_get_documents_sql(requested_ids)
+        cursor = await self._async_executor.execute(conn, sql, params)
+        rows = await self._async_executor.fetchall(cursor)
+
+        # Validate all documents were found using shared logic
+        found_ids = {row['id'] for row in rows}
+        self._validate_missing_documents(requested_ids, found_ids)
+        
+        # Construct documents using shared logic
+        documents = []
+        for row in rows:
+            document = self._construct_document_from_row(row)
+            documents.append(document)
+        return documents
 
     def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """
@@ -64,37 +214,24 @@ class CrudMixin(LocalVectorDBBase, ABC):
         requested_ids = [ids] if single_id else ids
         with self._read_write_lock.read_lock():
             with self.connection_pool.get_connection() as conn:
-                metadata_columns = list(self.metadata_schema.keys())
-                if metadata_columns:
-                    columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
-                else:
-                    columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
-                placeholders = ','.join(['?'] * len(requested_ids))
-                sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
-                cursor = conn.execute(sql, requested_ids)
-                rows = cursor.fetchall()
-                found_ids = {row['id'] for row in rows}
-                missing_ids = [doc_id for doc_id in requested_ids if doc_id not in found_ids]
-                if missing_ids:
-                    if single_id:
-                        raise DocumentNotFoundError(f"Document not found: {missing_ids[0]}", missing_ids[0])
-                    else:
-                        raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
-                documents = []
-                for row in rows:
-                    metadata = {col_name: row[col_name] for col_name in metadata_columns if col_name in row.keys()}
-                    doc = Document(
-                        id=row['id'],
-                        content=row['content'],
-                        metadata=metadata,
-                        created_at=row['created_at'],
-                        updated_at=row['updated_at'],
-                        content_hash=row['content_hash'],
-                    )
-                    documents.append(doc)
-            id_to_doc = {doc.id: doc for doc in documents}
-            ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
-            return ordered_documents[0] if single_id else ordered_documents
+                documents = self._core_get_sync(conn, requested_ids)
+        id_to_doc = {doc.id: doc for doc in documents}
+        ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
+        return ordered_documents[0] if single_id else ordered_documents
+
+    def _core_exists_sync(self, conn, ids_list: List[str]) -> List[bool]:
+        """Core logic for checking if documents exist (sync version)"""
+        sql, params = self._build_exists_sql(ids_list)
+        cursor = self._sync_executor.execute(conn, sql, params)
+        rows = self._sync_executor.fetchall(cursor)
+        return self._process_exists_results(rows, ids_list)
+
+    async def _core_exists_async(self, conn, ids_list: List[str]) -> List[bool]:
+        """Core logic for checking if documents exist (async version)"""
+        sql, params = self._build_exists_sql(ids_list)
+        cursor = await self._async_executor.execute(conn, sql, params)
+        rows = await self._async_executor.fetchall(cursor)
+        return self._process_exists_results(rows, ids_list)
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """
@@ -111,13 +248,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Existence status for each ID
         """
         single_id = isinstance(ids, str)
-        if single_id:
-            ids = [ids]
+        ids_list = [ids] if single_id else ids
         with self.connection_pool.get_connection() as conn:
-            placeholders = ','.join(['?'] * len(ids))
-            cursor = conn.execute(f'SELECT id FROM documents WHERE id IN ({placeholders})', ids)
-            existing_ids = {row['id'] for row in cursor.fetchall()}
-        results = [doc_id in existing_ids for doc_id in ids]
+            results = self._core_exists_sync(conn, ids_list)
         return results[0] if single_id else results
 
     def delete(self, ids: Union[str, List[str]]) -> int:
@@ -353,56 +486,13 @@ class CrudMixin(LocalVectorDBBase, ABC):
         - Field names are validated against the metadata schema
         - JSON fields support special operations like $contains
         """
-        metadata_columns = list(self.metadata_schema.keys())
-        if metadata_columns:
-            columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
-        else:
-            columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
-        query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
-        params: List[Any] = []
-        filter_builder = None
-        if where:
-            try:
-                filter_builder = FilterQueryBuilder(self.metadata_schema)
-                where_clause, filter_params = filter_builder.build_where_clause(where)
-                if where_clause:
-                    query_parts.append(f"WHERE {where_clause}")
-                    params.extend(filter_params)
-            except Exception as e:
-                raise MetadataFilterError(f"Error building filter query: {str(e)}")
-        if order_by:
-            try:
-                if filter_builder is None:
-                    filter_builder = FilterQueryBuilder(self.metadata_schema)
-                valid_columns = set(columns)
-                order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
-                query_parts.append(order_by_clause)
-            except Exception as e:
-                raise MetadataFilterError(f"Error building ORDER BY clause: {str(e)}")
-        if limit:
-            if not isinstance(limit, int) or limit <= 0:
-                raise MetadataFilterError("Limit must be a positive integer")
-            query_parts.append(f"LIMIT {limit}")
-        if offset:
-            if not isinstance(offset, int) or offset < 0:
-                raise MetadataFilterError("Offset must be a non-negative integer")
-            query_parts.append(f"OFFSET {offset}")
+        # Use shared business logic for SQL construction
+        sql, params = self._build_filter_sql(where, order_by, limit, offset)
+        
         with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute(' '.join(query_parts), params)
+            cursor = conn.execute(sql, params)
             rows = cursor.fetchall()
-            documents: List[Document] = []
-            for row in rows:
-                metadata = {col_name: row[col_name] for col_name in metadata_columns if col_name in row.keys()}
-                doc = Document(
-                    id=row['id'],
-                    content=row['content'],
-                    metadata=metadata,
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at'],
-                    content_hash=row['content_hash'],
-                )
-                documents.append(doc)
-        return documents
+            return self._construct_documents_from_rows(rows)
 
     # -------------
     # Async CRUD
@@ -428,55 +518,15 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
-        if isinstance(ids, str):
-            single_id = True
-            ids = [ids]
-        else:
-            single_id = False
-        if not ids:
+        single_id = isinstance(ids, str)
+        requested_ids = [ids] if single_id else ids
+        if not requested_ids:
             raise ValueError("`ids` must be provided.")
         async with self.async_connection_pool.get_connection_context() as conn:
-            metadata_columns = list(self.metadata_schema.keys())
-            if metadata_columns:
-                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
-            else:
-                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
-            placeholders = ','.join(['?' for _ in ids])
-            sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
-            cursor = await conn.execute(sql, ids)
-            rows = await cursor.fetchall()
-
-        found_ids = {row['id'] for row in rows}
-        missing_ids = [doc_id for doc_id in ids if doc_id not in found_ids]
-        if missing_ids:
-            if single_id:
-                raise DocumentNotFoundError(f"Document not found: {missing_ids[0]}", missing_ids[0])
-            else:
-                raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
-        documents: List[Document] = []
-        for row in rows:
-            base_columns = self.schema.BASE_COLUMNS.copy()
-            metadata = {}
-            if hasattr(row, 'items'):
-                row_items = row.items()
-            else:
-                row_items = [(key, row[key]) for key in row.keys()]
-            for key, value in row_items:
-                if key not in base_columns:
-                    metadata[key] = value
-            document = Document(
-                id=row['id'],
-                content=row['content'],
-                metadata=metadata,
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                content_hash=row['content_hash'],
-            )
-            documents.append(document)
-        if single_id:
-            return documents[0]
-        else:
-            return documents
+            documents = await self._core_get_async(conn, requested_ids)
+        id_to_doc = {doc.id: doc for doc in documents}
+        ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
+        return ordered_documents[0] if single_id else ordered_documents
 
     async def delete_async(self, ids: Union[str, List[str]]) -> int:
         """
@@ -585,14 +635,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
         if not ids_list:
             return False if single else []
 
-        placeholders = ','.join(['?'] * len(ids_list))
         async with self.async_connection_pool.get_connection_context() as conn:
-            cursor = await conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", ids_list)
-            rows = await cursor.fetchall()
-            existing = {row['id'] for row in rows}
-
-        result = [doc_id in existing for doc_id in ids_list]
-        return result[0] if single else result
+            results = await self._core_exists_async(conn, ids_list)
+        return results[0] if single else results
 
     async def filter_async(
             self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
@@ -619,62 +664,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
-        filter_builder = FilterQueryBuilder(self.metadata_schema)
-        where_clause, params = filter_builder.build_where_clause(where)
-        order_clause = ""
-        if order_by:
-            try:
-                if not isinstance(order_by, str):
-                    raise ValueError("order_by must be a string")
-                base_columns = self.schema.BASE_COLUMNS.copy()
-                metadata_columns = set(self.metadata_schema.keys())
-                valid_columns = set(base_columns).union(metadata_columns)
-                order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
-                order_clause = f" {order_by_clause}"
-            except Exception as e:
-                raise ValueError(f"Error building ORDER BY clause: {str(e)}")
-        limit_clause = ""
-        if limit is not None:
-            limit_clause = f" LIMIT {limit}"
-            if offset > 0:
-                limit_clause += f" OFFSET {offset}"
+        
+        # Use shared business logic for SQL construction
+        sql, params = self._build_filter_sql(where, order_by, limit, offset)
+        
         async with self.async_connection_pool.get_connection_context() as conn:
-            metadata_columns = list(self.metadata_schema.keys())
-            if metadata_columns:
-                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
-            else:
-                columns = ['id', 'content', 'content_hash', 'created_at', 'updated_at']
-            sql_parts = [f"SELECT {', '.join(columns)} FROM documents"]
-            if where_clause:
-                sql_parts.append(f"WHERE {where_clause}")
-            if order_clause:
-                sql_parts.append(order_clause.strip())
-            if limit_clause:
-                sql_parts.append(limit_clause.strip())
-            sql = " ".join(sql_parts)
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
-        documents: List[Document] = []
-        for row in rows:
-            base_columns = self.schema.BASE_COLUMNS.copy()
-            metadata = {}
-            if hasattr(row, 'items'):
-                row_items = row.items()
-            else:
-                row_items = [(key, row[key]) for key in row.keys()]
-            for key, value in row_items:
-                if key not in base_columns:
-                    metadata[key] = value
-            document = Document(
-                id=row['id'],
-                content=row['content'],
-                metadata=metadata,
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                content_hash=row['content_hash'],
-            )
-            documents.append(document)
-        return documents
+            return self._construct_documents_from_rows(rows)
 
     async def update_async(
             self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None

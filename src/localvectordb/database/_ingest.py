@@ -40,6 +40,36 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineMixin(LocalVectorDBBase, ABC):
+    
+    # Pure business logic helpers for DRY elimination
+    def _build_documents_bulk_insert_sql(self, mode: Literal["insert", "replace"] = "replace") -> tuple[str, List[str]]:
+        """Build SQL for bulk document insertion (pure business logic)"""
+        base_columns = self.schema.BASE_COLUMNS.copy()
+        metadata_columns = list(self.metadata_schema.keys())
+        all_columns = base_columns + metadata_columns
+        placeholders = ['?'] * len(all_columns)
+        sql_verb = "INSERT OR REPLACE" if mode == "replace" else "INSERT"
+        sql = f"{sql_verb} INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
+        return sql, all_columns
+    
+    def _prepare_documents_bulk_data(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]]) -> List[tuple]:
+        """Prepare document data for bulk insertion (pure business logic)"""
+        if not documents_data:
+            return []
+        
+        _, all_columns = self._build_documents_bulk_insert_sql()
+        metadata_columns = list(self.metadata_schema.keys())
+        bulk_data = []
+        current_time = datetime.now(UTC)
+        
+        for doc_id, content, content_hash, metadata in documents_data:
+            row_data = [doc_id, content, content_hash, current_time, current_time]
+            for field_name in metadata_columns:
+                value = metadata.get(field_name)
+                row_data.append(value)
+            bulk_data.append(tuple(row_data))
+        
+        return bulk_data
 
     # -----------------
     # Public APIs (sync)
@@ -611,20 +641,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ) -> None:
         if not documents_data:
             return
-        base_columns = self.schema.BASE_COLUMNS.copy()
-        metadata_columns = list(self.metadata_schema.keys())
-        all_columns = base_columns + metadata_columns
-        placeholders = ['?'] * len(all_columns)
-        sql_verb = "INSERT OR REPLACE" if mode == "replace" else "INSERT"
-        sql = f"{sql_verb} INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
-        bulk_data = []
-        current_time = datetime.now(UTC)
-        for doc_id, content, content_hash, metadata in documents_data:
-            row_data = [doc_id, content, content_hash, current_time, current_time]
-            for field_name in metadata_columns:
-                value = metadata.get(field_name)
-                row_data.append(value)
-            bulk_data.append(tuple(row_data))
+        
+        # Use shared business logic for SQL and data preparation
+        sql, _ = self._build_documents_bulk_insert_sql(mode)
+        bulk_data = self._prepare_documents_bulk_data(documents_data)
         conn.executemany(sql, bulk_data)
 
     @staticmethod
@@ -1875,20 +1895,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ) -> None:
         if not documents_data:
             return
-        base_columns = self.schema.BASE_COLUMNS.copy()
-        metadata_columns = list(self.metadata_schema.keys())
-        all_columns = base_columns + metadata_columns
-        placeholders = ['?'] * len(all_columns)
-        sql_verb = "INSERT OR REPLACE" if mode == "replace" else "INSERT"
-        sql = f"{sql_verb} INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
-        bulk_data = []
-        current_time = datetime.now(UTC)
-        for doc_id, content, content_hash, metadata in documents_data:
-            row_data = [doc_id, content, content_hash, current_time, current_time]
-            for field_name in metadata_columns:
-                value = metadata.get(field_name)
-                row_data.append(value)
-            bulk_data.append(tuple(row_data))
+        
+        # Use shared business logic for SQL and data preparation
+        sql, _ = self._build_documents_bulk_insert_sql(mode)
+        bulk_data = self._prepare_documents_bulk_data(documents_data)
         await conn.executemany(sql, bulk_data)
 
     @staticmethod

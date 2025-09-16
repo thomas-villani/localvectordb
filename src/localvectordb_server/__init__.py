@@ -181,6 +181,9 @@ def create_app(
             'x_xss_protection': _config.server.x_xss_protection,
             'referrer_policy': _config.server.referrer_policy
         }
+        if not _FLASK_TALISMAN_AVAILABLE:
+            raise RuntimeError("server.securty_headers_enabled = true, but `flask-talisman` not installed. "
+                               "Install using `pip install flask-talisman>=1.1.0`")
         Talisman(app, **security_config)
 
 

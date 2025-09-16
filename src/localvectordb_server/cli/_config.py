@@ -593,7 +593,7 @@ def _configure_redis_registry(config, redis_url):
         if parsed.scheme != 'redis':
             raise ValueError("Redis URL must start with 'redis://'")
 
-        config.server.db_registry_type = "redis"
+        config.server.db_registry_type = "RedisCache"
         config.server.db_registry_settings = _parse_redis_url(redis_url)
         click.secho(f"Configured Redis registry: {redis_url}", fg="green")
 
@@ -604,7 +604,7 @@ def _configure_redis_registry(config, redis_url):
 
 def _configure_file_registry(config):
     """Configure file-based database registry"""
-    config.server.db_registry_type = "file"
+    config.server.db_registry_type = "FileSystemCache"
     config.server.db_registry_settings = {
         "cache_dir": "./.lvdb/registry_cache"
     }

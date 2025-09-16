@@ -87,6 +87,10 @@ class BackupMetadata:
         ID of parent backup (for incremental backups)
     metadata : Dict[str, Any], optional
         Additional metadata
+    archive_checksum : str, optional
+        SHA-256 checksum of the entire archive file for integrity verification
+    manifest_checksum : str, optional
+        SHA-256 checksum of the manifest.json for tampering detection
     """
 
     def __init__(
@@ -101,7 +105,9 @@ class BackupMetadata:
             compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
             size_bytes: int = 0,
             parent_backup_id: Optional[str] = None,
-            metadata: Optional[Dict[str, Any]] = None
+            metadata: Optional[Dict[str, Any]] = None,
+            archive_checksum: Optional[str] = None,
+            manifest_checksum: Optional[str] = None
     ):
         self.backup_id = backup_id
         self.backup_type = backup_type
@@ -114,6 +120,8 @@ class BackupMetadata:
         self.size_bytes = size_bytes
         self.parent_backup_id = parent_backup_id
         self.metadata = metadata or {}
+        self.archive_checksum = archive_checksum
+        self.manifest_checksum = manifest_checksum
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert metadata to dictionary for JSON serialization."""
@@ -128,7 +136,9 @@ class BackupMetadata:
             'compression_algorithm': self.compression_algorithm.value,
             'size_bytes': self.size_bytes,
             'parent_backup_id': self.parent_backup_id,
-            'metadata': self.metadata
+            'metadata': self.metadata,
+            'archive_checksum': self.archive_checksum,
+            'manifest_checksum': self.manifest_checksum
         }
 
     @classmethod
@@ -145,7 +155,9 @@ class BackupMetadata:
             compression_algorithm=CompressionAlgorithm(data['compression_algorithm']),
             size_bytes=data['size_bytes'],
             parent_backup_id=data.get('parent_backup_id'),
-            metadata=data.get('metadata', {})
+            metadata=data.get('metadata', {}),
+            archive_checksum=data.get('archive_checksum'),  # Backward compatibility
+            manifest_checksum=data.get('manifest_checksum')  # Backward compatibility
         )
 
 
@@ -306,7 +318,19 @@ class BackupManager:
         backup_filename = f"{self.database_name}_backup_{timestamp}_{metadata.backup_id[:8]}.lvdb-backup"
         backup_path = self.config.backup_location / backup_filename
 
-        # Write manifest to temp directory
+        # Calculate manifest checksum (without the checksum fields themselves)
+        temp_manifest_data = metadata.to_dict()
+        temp_manifest_data['archive_checksum'] = None  # Will be calculated after archive creation
+        temp_manifest_data['manifest_checksum'] = None  # Will be calculated now
+        
+        # Calculate manifest checksum from the normalized JSON
+        manifest_json = json.dumps(temp_manifest_data, sort_keys=True, separators=(',', ':'))
+        manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
+        
+        # Update metadata with manifest checksum
+        metadata.manifest_checksum = manifest_checksum
+
+        # Write final manifest to temp directory
         manifest_path = temp_dir / "manifest.json"
         with open(manifest_path, 'w') as f:
             json.dump(metadata.to_dict(), f, indent=2)
@@ -330,7 +354,12 @@ class BackupManager:
                     if file_path.is_file():
                         tar.add(file_path, arcname=file_path.name)
 
+        # Calculate archive checksum for integrity verification
+        archive_checksum = self._calculate_file_checksum(backup_path)
+        metadata.archive_checksum = archive_checksum
+        
         logger.info(f"Created backup archive: {backup_path}")
+        logger.debug(f"Archive checksum: {archive_checksum}")
         return backup_path
 
     def create_backup(
@@ -507,6 +536,7 @@ class BackupManager:
         logger.debug(f"Verifying backup integrity: {backup_path}")
 
         try:
+            # 1. Verify archive checksum first (if available)
             with tarfile.open(backup_path, "r:*") as tar:
                 # Check that manifest exists
                 manifest_info = tar.getmember("manifest.json")
@@ -516,6 +546,34 @@ class BackupManager:
                 manifest_data = json.load(manifest_file)
 
                 metadata = BackupMetadata.from_dict(manifest_data)
+                
+                # 2. Verify archive-level checksum (if available)
+                if metadata.archive_checksum:
+                    actual_archive_checksum = self._calculate_file_checksum(backup_path)
+                    if actual_archive_checksum != metadata.archive_checksum:
+                        raise ValueError(
+                            f"Archive checksum mismatch: expected {metadata.archive_checksum}, "
+                            f"got {actual_archive_checksum}"
+                        )
+                    logger.debug("Archive checksum verification passed")
+                
+                # 3. Verify manifest integrity (if available)
+                if metadata.manifest_checksum:
+                    # Reconstruct manifest data without checksum fields for verification
+                    manifest_for_verification = manifest_data.copy()
+                    manifest_for_verification['archive_checksum'] = None
+                    manifest_for_verification['manifest_checksum'] = None
+                    
+                    # Calculate checksum of normalized manifest
+                    manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(',', ':'))
+                    actual_manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
+                    
+                    if actual_manifest_checksum != metadata.manifest_checksum:
+                        raise ValueError(
+                            f"Manifest integrity check failed: expected {metadata.manifest_checksum}, "
+                            f"got {actual_manifest_checksum}"
+                        )
+                    logger.debug("Manifest integrity verification passed")
 
                 # Verify all expected files are present
                 tar_members = {member.name for member in tar.getmembers() if member.isfile()}
@@ -957,6 +1015,93 @@ class BackupManager:
 
         logger.info(f"Cleaned up {deleted_count} old backups")
         return deleted_count
+
+    def verify_backup_streaming(self, backup_id: str, verify_archive_members: bool = True) -> bool:
+        """
+        Verify backup integrity using streaming without full extraction.
+        
+        Parameters
+        ----------
+        backup_id : str
+            ID of backup to verify
+        verify_archive_members : bool, default True
+            Whether to verify individual archive member checksums.
+            If False, only verifies archive and manifest checksums.
+            
+        Returns
+        -------
+        bool
+            True if backup is valid
+            
+        Notes
+        -----
+        This method provides efficient verification by streaming archive contents
+        rather than extracting to disk. Useful for large backups or when disk
+        space is limited.
+        """
+        logger.info(f"Streaming verification of backup: {backup_id}")
+        
+        backup_file = self._find_backup_file(backup_id)
+        if not backup_file:
+            logger.error(f"Backup file not found: {backup_id}")
+            return False
+
+        try:
+            with tarfile.open(backup_file, "r:*") as tar:
+                # Extract and parse manifest
+                manifest_info = tar.getmember("manifest.json")
+                manifest_file = tar.extractfile(manifest_info)
+                if manifest_file is None:
+                    raise ValueError("Could not extract manifest file from backup")
+                manifest_data = json.load(manifest_file)
+                metadata = BackupMetadata.from_dict(manifest_data)
+                
+                # Verify archive checksum (if available)
+                if metadata.archive_checksum:
+                    actual_archive_checksum = self._calculate_file_checksum(backup_file)
+                    if actual_archive_checksum != metadata.archive_checksum:
+                        raise ValueError(
+                            f"Archive checksum mismatch: expected {metadata.archive_checksum}, "
+                            f"got {actual_archive_checksum}"
+                        )
+                    logger.debug("Archive checksum verification passed")
+                
+                # Verify manifest integrity (if available)
+                if metadata.manifest_checksum:
+                    manifest_for_verification = manifest_data.copy()
+                    manifest_for_verification['archive_checksum'] = None
+                    manifest_for_verification['manifest_checksum'] = None
+                    
+                    manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(',', ':'))
+                    actual_manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
+                    
+                    if actual_manifest_checksum != metadata.manifest_checksum:
+                        raise ValueError(
+                            f"Manifest integrity check failed: expected {metadata.manifest_checksum}, "
+                            f"got {actual_manifest_checksum}"
+                        )
+                    logger.debug("Manifest integrity verification passed")
+                
+                # Verify file structure
+                tar_members = {member.name for member in tar.getmembers() if member.isfile()}
+                expected_files = set(metadata.file_paths.keys()) | {"manifest.json"}
+                
+                if tar_members != expected_files:
+                    missing = expected_files - tar_members
+                    extra = tar_members - expected_files
+                    raise ValueError(f"Backup structure check failed. Missing: {missing}, Extra: {extra}")
+                
+                # Optionally verify individual archive member checksums via streaming
+                if verify_archive_members:
+                    self._verify_archive_checksums(tar, metadata)
+                    logger.debug("Archive member checksum verification passed")
+            
+            logger.info(f"Streaming backup verification passed: {backup_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Streaming backup verification failed: {e}")
+            return False
 
     def verify_backup(self, backup_id: str) -> bool:
         """

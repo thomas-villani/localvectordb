@@ -25,7 +25,7 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb._schema import DatabaseSchema
+from localvectordb._schema import DatabaseSchema, validate_sql_identifier
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DocumentNotFoundError
 
@@ -102,6 +102,15 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
         if not isinstance(field_name, str) or not field_name.strip():
             raise ValidationError(
                 "Metadata field names must be non-empty strings",
+                field=f"metadata_schema.{field_name}"
+            )
+        
+        # Validate SQL identifier safety
+        try:
+            validate_sql_identifier(field_name)
+        except ValueError as e:
+            raise ValidationError(
+                f"Invalid metadata field name '{field_name}': {str(e)}",
                 field=f"metadata_schema.{field_name}"
             )
 
@@ -303,7 +312,7 @@ def delete_database(db_name):
 
     with request_context("delete_database"):
 
-        success, errors = current_app.db_manager.delete_db(db_name)
+        success, errors = current_app.db_manager.delete_database(db_name)
         if not success:
             raise APIError(errors, "DATABASE_DELETE_ERROR", 500, {"db_name": db_name}, True)
 

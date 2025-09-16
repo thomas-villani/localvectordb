@@ -164,7 +164,7 @@ class DatabaseManagerMock:
 
         return all_results
 
-    def delete_db(self, name, *args, **kwargs):
+    def delete_database(self, name, *args, **kwargs):
         if name in self._created_dbs:
             self._created_dbs.remove(name)
         db_file = self.base_path / f"{name}.sqlite"

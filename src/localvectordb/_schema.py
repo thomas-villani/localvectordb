@@ -10,6 +10,7 @@
 # ${DIR_PATH}/${FILE_NAME}
 import json
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -18,9 +19,72 @@ import aiosqlite
 
 from localvectordb._pools import ReadWriteLock
 from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.database._utils import SyncDatabaseExecutor, AsyncDatabaseExecutor
 from localvectordb.versioning import DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
+
+
+def validate_sql_identifier(identifier: str) -> None:
+    """
+    Validate that a string is a safe SQL identifier for use in DDL operations.
+    
+    Parameters
+    ----------
+    identifier : str
+        The identifier to validate
+        
+    Raises
+    ------
+    ValueError
+        If the identifier is not safe for SQL DDL operations
+        
+    Notes
+    -----
+    Safe SQL identifiers must:
+    - Start with a letter (A-Z, a-z) or underscore (_)
+    - Contain only letters, digits (0-9), and underscores
+    - Not be empty or whitespace-only
+    - Not exceed 64 characters (reasonable limit for portability)
+    """
+    if not identifier or not isinstance(identifier, str):
+        raise ValueError("SQL identifier must be a non-empty string")
+    
+    identifier = identifier.strip()
+    if not identifier:
+        raise ValueError("SQL identifier cannot be whitespace-only")
+    
+    if len(identifier) > 64:
+        raise ValueError(f"SQL identifier too long (max 64 chars): '{identifier}'")
+    
+    # Check for valid SQL identifier pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', identifier):
+        raise ValueError(
+            f"Invalid SQL identifier '{identifier}'. Must start with letter or underscore, "
+            f"and contain only letters, digits, and underscores."
+        )
+    
+    # Check against SQLite reserved words (common subset)
+    reserved_words = {
+        'abort', 'action', 'add', 'after', 'all', 'alter', 'analyze', 'and', 'as', 'asc',
+        'attach', 'autoincrement', 'before', 'begin', 'between', 'by', 'cascade', 'case',
+        'cast', 'check', 'collate', 'column', 'commit', 'conflict', 'constraint', 'create',
+        'cross', 'current_date', 'current_time', 'current_timestamp', 'database', 'default',
+        'deferrable', 'deferred', 'delete', 'desc', 'detach', 'distinct', 'drop', 'each',
+        'else', 'end', 'escape', 'except', 'exclusive', 'exists', 'explain', 'fail', 'for',
+        'foreign', 'from', 'full', 'glob', 'group', 'having', 'if', 'ignore', 'immediate',
+        'in', 'index', 'indexed', 'initially', 'inner', 'insert', 'instead', 'intersect',
+        'into', 'is', 'isnull', 'join', 'key', 'left', 'like', 'limit', 'match', 'natural',
+        'no', 'not', 'notnull', 'null', 'of', 'offset', 'on', 'or', 'order', 'outer',
+        'plan', 'pragma', 'primary', 'query', 'raise', 'recursive', 'references', 'regexp',
+        'reindex', 'release', 'rename', 'replace', 'restrict', 'right', 'rollback', 'row',
+        'savepoint', 'select', 'set', 'table', 'temp', 'temporary', 'then', 'to',
+        'transaction', 'trigger', 'union', 'unique', 'update', 'using', 'vacuum', 'values',
+        'view', 'virtual', 'when', 'where', 'with', 'without'
+    }
+    
+    if identifier.lower() in reserved_words:
+        raise ValueError(f"SQL identifier '{identifier}' is a reserved word")
 
 
 class DatabaseSchema:
@@ -210,6 +274,8 @@ class DatabaseSchema:
         self.db_path = Path(db_path)
         self.metadata_fields: Dict[str, MetadataField] = {}
         self._read_write_lock: ReadWriteLock = read_write_lock
+        self._sync_executor = SyncDatabaseExecutor()
+        self._async_executor = AsyncDatabaseExecutor()
 
     def _check_trigram_tokenizer_availability(self, conn: sqlite3.Connection) -> bool:
         """
@@ -492,35 +558,126 @@ class DatabaseSchema:
             if db_connection is None:
                 db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
             with db_connection as conn:
-                # Enable foreign keys
-                conn.execute("PRAGMA foreign_keys = ON")
-
-                # Create base tables
-                for _, ddl in self.BASE_SCHEMA.items():
-                    conn.execute(ddl)
-
-                # Create base indexes
-                for index_ddl in self.BASE_INDEXES:
-                    conn.execute(index_ddl)
-
-                # Set up metadata schema if provided
-                if metadata_schema:
-                    self._setup_metadata_schema(conn, metadata_schema)
-
-                # Initialize version tracking for new databases
-                self._initialize_version_tracking(conn)
-
+                self._core_initialize_sync(metadata_schema, conn)
                 conn.commit()
 
     def _setup_metadata_schema(self, conn: sqlite3.Connection, schema: Dict[str, MetadataField]):
         """Set up metadata schema and add columns to documents table"""
+        return self._core_setup_metadata_schema_sync(conn, schema)
 
+    def _validate_metadata_field_name(self, field_name: str):
+        """Validate metadata field name (pure business logic)"""
+        try:
+            validate_sql_identifier(field_name)
+        except ValueError as e:
+            raise ValueError(f"Cannot add unsafe field name '{field_name}': {str(e)}")
+
+    def _get_sqlite_type_mapping(self, field_def: MetadataField) -> str:
+        """Get SQLite type for metadata field (pure business logic)"""
+        sqlite_type_map = {
+            MetadataFieldType.TEXT: "TEXT",
+            MetadataFieldType.INTEGER: "INTEGER",
+            MetadataFieldType.REAL: "REAL",
+            MetadataFieldType.BOOLEAN: "BOOLEAN",
+            MetadataFieldType.DATE: "TEXT",  # Store as ISO string
+            MetadataFieldType.JSON: "TEXT"  # Store as JSON string
+        }
+        return sqlite_type_map[field_def.type]
+
+    def _build_default_clause(self, field_def: MetadataField) -> str:
+        """Build DEFAULT clause for column (pure business logic)"""
+        if field_def.default_value is None:
+            return ""
+        
+        if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
+            return f" DEFAULT '{field_def.default_value}'"
+        elif field_def.type == MetadataFieldType.JSON:
+            return f" DEFAULT '{json.dumps(field_def.default_value)}'"
+        else:
+            return f" DEFAULT {field_def.default_value}"
+
+    def _build_fts_triggers(self, field_name: str, fts_table_name: str) -> List[str]:
+        """Build FTS trigger SQL statements (pure business logic)"""
+        return [
+            f'''
+            CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert
+            AFTER INSERT ON documents
+            WHEN NEW.{field_name} IS NOT NULL
+            BEGIN
+                INSERT INTO {fts_table_name}(document_id, content)
+                VALUES (NEW.id, NEW.{field_name});
+            END
+            ''',
+            f'''
+            CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update
+            AFTER UPDATE OF {field_name} ON documents
+            WHEN NEW.{field_name} IS NOT NULL
+            BEGIN
+                DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
+                INSERT INTO {fts_table_name}(document_id, content)
+                VALUES (NEW.id, NEW.{field_name});
+            END
+            ''',
+            f'''
+            CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete
+            AFTER DELETE ON documents
+            BEGIN
+                DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
+            END
+            '''
+        ]
+
+    def _core_initialize_sync(self, metadata_schema: Optional[Dict[str, MetadataField]], conn: sqlite3.Connection):
+        """Core logic for initializing database schema (sync version)"""
+        # Enable foreign keys
+        self._sync_executor.execute(conn, "PRAGMA foreign_keys = ON")
+
+        # Create base tables
+        for _, ddl in self.BASE_SCHEMA.items():
+            self._sync_executor.execute(conn, ddl)
+
+        # Create base indexes
+        for index_ddl in self.BASE_INDEXES:
+            self._sync_executor.execute(conn, index_ddl)
+
+        # Set up metadata schema if provided
+        if metadata_schema:
+            self._setup_metadata_schema(conn, metadata_schema)
+
+        # Initialize version tracking for new databases
+        self._initialize_version_tracking(conn)
+
+    async def _core_initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]], conn):
+        """Core logic for initializing database schema (async version)"""
+        # Enable foreign keys
+        await self._async_executor.execute(conn, "PRAGMA foreign_keys = ON")
+
+        # Create base tables
+        for _, ddl in self.BASE_SCHEMA.items():
+            await self._async_executor.execute(conn, ddl)
+
+        # Create base indexes
+        for index_ddl in self.BASE_INDEXES:
+            await self._async_executor.execute(conn, index_ddl)
+
+        # Set up metadata schema if provided
+        if metadata_schema:
+            await self._setup_metadata_schema_async(conn, metadata_schema)
+
+    def _core_setup_metadata_schema_sync(self, conn: sqlite3.Connection, schema: Dict[str, MetadataField]):
+        """Core logic for setting up metadata schema and adding columns to documents table (sync version)"""
         # Validate that no metadata field names conflict with reserved columns
         for field_name in schema.keys():
+            # Validate SQL identifier safety
+            try:
+                validate_sql_identifier(field_name)
+            except ValueError as e:
+                raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
+            
             if field_name.lower() in self.BASE_COLUMNS:
                 raise ValueError(
                     f"Metadata field name '{field_name}' conflicts with reserved column name. "
-                    f"Reserved columns are: {", ".join(sorted(self.BASE_COLUMNS))}"
+                    f"Reserved columns are: {', '.join(sorted(self.BASE_COLUMNS))}"
                 )
 
         for field_name, field_def in schema.items():
@@ -544,7 +701,7 @@ class DatabaseSchema:
                                           required=required, default_value=default_value)
 
             # Store schema definition
-            conn.execute("""INSERT OR REPLACE INTO metadata_schema
+            self._sync_executor.execute(conn, """INSERT OR REPLACE INTO metadata_schema
                 (field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -562,39 +719,152 @@ class DatabaseSchema:
 
         self.metadata_fields = schema
 
+    async def _core_setup_metadata_schema_async(self, conn, schema: Dict[str, MetadataField]):
+        """Core logic for setting up metadata schema and adding columns to documents table (async version)"""
+        # Validate that no metadata field names conflict with reserved columns
+        for field_name in schema.keys():
+            # Validate SQL identifier safety
+            try:
+                validate_sql_identifier(field_name)
+            except ValueError as e:
+                raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
+            
+            if field_name.lower() in self.BASE_COLUMNS:
+                raise ValueError(
+                    f"Metadata field name '{field_name}' conflicts with reserved column name. "
+                    f"Reserved columns are: {', '.join(sorted(self.BASE_COLUMNS))}"
+                )
+
+        for field_name, field_def in schema.items():
+            if isinstance(field_def, str):
+                field_def = MetadataField(MetadataFieldType(field_def), False, required=False)
+            elif isinstance(field_def, tuple):
+                if len(field_def) == 2:
+                    field_type, should_index = field_def
+                    required = False
+                    default_value = None
+                elif len(field_def) == 3:
+                    field_type, should_index, required = field_def
+                    default_value = None
+                elif len(field_def) == 4:
+                    field_type, should_index, required, default_value = field_def
+                else:
+                    raise ValueError(
+                        f"Schema definition tuple must be 2-4 items: "
+                        f"(field_type, should_index[, required, default_value]). Found: {len(field_def)}")
+                field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index,
+                                          required=required, default_value=default_value)
+
+            # Store schema definition (fixed to include embedding_enabled and fts_enabled)
+            await self._async_executor.execute(conn, """INSERT OR REPLACE INTO metadata_schema
+                (field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                field_name,
+                field_def.type.value,
+                field_def.indexed,
+                field_def.required,
+                json.dumps(field_def.default_value) if field_def.default_value is not None else None,
+                field_def.embedding_enabled,
+                field_def.fts_enabled
+            ))
+
+            # Add column to documents table
+            await self._add_metadata_column_async(conn, field_name, field_def)
+
+        self.metadata_fields = schema
+
+    def _core_load_metadata_schema_sync(self, conn: sqlite3.Connection) -> Dict[str, MetadataField]:
+        """Core logic for loading metadata schema from database (sync version)"""
+        cursor = self._sync_executor.execute(conn, "SELECT * FROM metadata_schema")
+        schema = {}
+
+        for row in self._sync_executor.fetchall(cursor):
+            # Handle both old schema (5 columns) and new schema (7 columns)
+            if len(row) == 5:
+                # Old schema - no embedding_enabled or fts_enabled
+                field_name, field_type, indexed, required, default_value = row
+                embedding_enabled = False
+                fts_enabled = False
+            else:
+                # New schema with embedding_enabled and fts_enabled
+                field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled = row
+
+            # Parse default value
+            parsed_default = None
+            if default_value is not None:
+                try:
+                    parsed_default = json.loads(default_value)
+                except json.JSONDecodeError:
+                    parsed_default = default_value
+
+            schema[field_name] = MetadataField(
+                type=MetadataFieldType(field_type),
+                indexed=bool(indexed),
+                required=bool(required),
+                default_value=parsed_default,
+                embedding_enabled=bool(embedding_enabled),
+                fts_enabled=bool(fts_enabled)
+            )
+
+        self.metadata_fields = schema
+        return schema
+
+    async def _core_load_metadata_schema_async(self, conn) -> Dict[str, MetadataField]:
+        """Core logic for loading metadata schema from database (async version)"""
+        cursor = await self._async_executor.execute(conn, "SELECT * FROM metadata_schema")
+        schema = {}
+
+        rows = await self._async_executor.fetchall(cursor)
+        for row in rows:
+            # Handle both old schema (5 columns) and new schema (7 columns) - fixed bug
+            if len(row) == 5:
+                # Old schema - no embedding_enabled or fts_enabled
+                field_name, field_type, indexed, required, default_value = row
+                embedding_enabled = False
+                fts_enabled = False
+            else:
+                # New schema with embedding_enabled and fts_enabled
+                field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled = row
+
+            # Parse default value
+            parsed_default = None
+            if default_value is not None:
+                try:
+                    parsed_default = json.loads(default_value)
+                except json.JSONDecodeError:
+                    parsed_default = default_value
+
+            schema[field_name] = MetadataField(
+                type=MetadataFieldType(field_type),
+                indexed=bool(indexed),
+                required=bool(required),
+                default_value=parsed_default,
+                embedding_enabled=bool(embedding_enabled),
+                fts_enabled=bool(fts_enabled)
+            )
+
+        self.metadata_fields = schema
+        return schema
+
     def _add_metadata_column(self, conn: sqlite3.Connection, field_name: str, field_def: MetadataField):
         """Add a metadata column to the documents table"""
-        # Map field types to SQLite types
-        sqlite_type_map = {
-            MetadataFieldType.TEXT: "TEXT",
-            MetadataFieldType.INTEGER: "INTEGER",
-            MetadataFieldType.REAL: "REAL",
-            MetadataFieldType.BOOLEAN: "BOOLEAN",
-            MetadataFieldType.DATE: "TEXT",  # Store as ISO string
-            MetadataFieldType.JSON: "TEXT"  # Store as JSON string
-        }
-
-        sqlite_type = sqlite_type_map[field_def.type]
-
+        # Business logic validation
+        self._validate_metadata_field_name(field_name)
+        sqlite_type = self._get_sqlite_type_mapping(field_def)
+        
         # Check if column already exists
         cursor = conn.execute("PRAGMA table_info(documents)")
         existing_columns = {row[1] for row in cursor.fetchall()}
 
         if field_name not in existing_columns:
-            # Add the column
-            default_clause = ""
-            if field_def.default_value is not None:
-                if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
-                    default_clause = f" DEFAULT '{field_def.default_value}'"
-                elif field_def.type == MetadataFieldType.JSON:
-                    default_clause = f" DEFAULT '{json.dumps(field_def.default_value)}'"
-                else:
-                    default_clause = f" DEFAULT {field_def.default_value}"
-
+            # Build and execute column addition
+            default_clause = self._build_default_clause(field_def)
             ddl = f'ALTER TABLE documents ADD COLUMN {field_name} {sqlite_type}{default_clause}'
             conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
+            
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
@@ -603,49 +873,26 @@ class DatabaseSchema:
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
                 fts_table_name = f'fts_{field_name}'
-                # Check if trigram tokenizer is available, fall back to default if not
+                
+                # Check tokenizer availability and build FTS SQL
                 if self._check_trigram_tokenizer_availability(conn):
                     tokenizer_clause = "tokenize='trigram'"
                     logger.debug(f"Using trigram tokenizer for FTS table: {fts_table_name}")
                 else:
-                    tokenizer_clause = ""  # Use default tokenizer
+                    tokenizer_clause = ""
                     logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
 
-                conn.execute(f'''
+                create_fts_sql = f'''
                     CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                     USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
-                ''')
+                '''
+                conn.execute(create_fts_sql)
                 logger.info(f"Created FTS table: {fts_table_name}")
 
-                # Create triggers to keep FTS in sync
-                conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert
-                    AFTER INSERT ON documents
-                    WHEN NEW.{field_name} IS NOT NULL
-                    BEGIN
-                        INSERT INTO {fts_table_name}(document_id, content)
-                        VALUES (NEW.id, NEW.{field_name});
-                    END
-                ''')
-
-                conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update
-                    AFTER UPDATE OF {field_name} ON documents
-                    WHEN NEW.{field_name} IS NOT NULL
-                    BEGIN
-                        DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
-                        INSERT INTO {fts_table_name}(document_id, content)
-                        VALUES (NEW.id, NEW.{field_name});
-                    END
-                ''')
-
-                conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete
-                    AFTER DELETE ON documents
-                    BEGIN
-                        DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
-                    END
-                ''')
+                # Create triggers using shared business logic
+                triggers = self._build_fts_triggers(field_name, fts_table_name)
+                for trigger_sql in triggers:
+                    conn.execute(trigger_sql)
 
     def _ensure_enhanced_metadata_schema(self, db_connection):
         """
@@ -732,39 +979,7 @@ class DatabaseSchema:
         self._ensure_enhanced_metadata_schema(db_connection)
 
         with db_connection as conn:
-            cursor = conn.execute("SELECT * FROM metadata_schema")
-            schema = {}
-
-            for row in cursor.fetchall():
-                # Handle both old schema (5 columns) and new schema (7 columns)
-                if len(row) == 5:
-                    # Old schema - no embedding_enabled or fts_enabled
-                    field_name, field_type, indexed, required, default_value = row
-                    embedding_enabled = False
-                    fts_enabled = False
-                else:
-                    # New schema with embedding_enabled and fts_enabled
-                    field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled = row
-
-                # Parse default value
-                parsed_default = None
-                if default_value is not None:
-                    try:
-                        parsed_default = json.loads(default_value)
-                    except json.JSONDecodeError:
-                        parsed_default = default_value
-
-                schema[field_name] = MetadataField(
-                    type=MetadataFieldType(field_type),
-                    indexed=bool(indexed),
-                    required=bool(required),
-                    default_value=parsed_default,
-                    embedding_enabled=bool(embedding_enabled),
-                    fts_enabled=bool(fts_enabled)
-                )
-
-            self.metadata_fields = schema
-            return schema
+            return self._core_load_metadata_schema_sync(conn)
 
     def update_metadata_schema(
             self,
@@ -1308,21 +1523,7 @@ class DatabaseSchema:
             db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
         try:
-            # Enable foreign keys
-            await db_connection.execute("PRAGMA foreign_keys = ON")
-
-            # Create base tables
-            for _, ddl in self.BASE_SCHEMA.items():
-                await db_connection.execute(ddl)
-
-            # Create base indexes
-            for index_ddl in self.BASE_INDEXES:
-                await db_connection.execute(index_ddl)
-
-            # Set up metadata schema if provided
-            if metadata_schema:
-                await self._setup_metadata_schema_async(db_connection, metadata_schema)
-
+            await self._core_initialize_async(metadata_schema, db_connection)
             await db_connection.commit()
         finally:
             if owns_connection and db_connection:
@@ -1330,85 +1531,26 @@ class DatabaseSchema:
 
     async def _setup_metadata_schema_async(self, conn, schema: Dict[str, MetadataField]) -> None:
         """Set up metadata schema and add columns to documents table asynchronously"""
-
-        # Validate that no metadata field names conflict with reserved columns
-        for field_name in schema.keys():
-            if field_name.lower() in self.BASE_COLUMNS:
-                raise ValueError(
-                    f"Metadata field name '{field_name}' conflicts with reserved column name. "
-                    f"Reserved columns are: {', '.join(sorted(self.BASE_COLUMNS))}"
-                )
-
-        for field_name, field_def in schema.items():
-            if isinstance(field_def, str):
-                field_def = MetadataField(MetadataFieldType(field_def), False, required=False)
-            elif isinstance(field_def, tuple):
-                if len(field_def) == 2:
-                    field_type, should_index = field_def
-                    required = False
-                    default_value = None
-                elif len(field_def) == 3:
-                    field_type, should_index, required = field_def
-                    default_value = None
-                elif len(field_def) == 4:
-                    field_type, should_index, required, default_value = field_def
-                else:
-                    raise ValueError(
-                        f"Schema definition tuple must be 2-4 items: "
-                        f"(field_type, should_index[, required, default_value]). Found: {len(field_def)}")
-                field_def = MetadataField(MetadataFieldType(field_type), indexed=should_index,
-                                          required=required, default_value=default_value)
-
-            # Store schema definition
-            await conn.execute("""INSERT OR REPLACE INTO metadata_schema
-                (field_name, field_type, indexed, required, default_value)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                field_name,
-                field_def.type.value,
-                field_def.indexed,
-                field_def.required,
-                json.dumps(field_def.default_value) if field_def.default_value is not None else None
-            ))
-
-            # Add column to documents table
-            await self._add_metadata_column_async(conn, field_name, field_def)
-
-        self.metadata_fields = schema
+        return await self._core_setup_metadata_schema_async(conn, schema)
 
     async def _add_metadata_column_async(self, conn, field_name: str, field_def: MetadataField) -> None:
         """Add a metadata column to the documents table asynchronously"""
-        # Map field types to SQLite types
-        sqlite_type_map = {
-            MetadataFieldType.TEXT: "TEXT",
-            MetadataFieldType.INTEGER: "INTEGER",
-            MetadataFieldType.REAL: "REAL",
-            MetadataFieldType.BOOLEAN: "BOOLEAN",
-            MetadataFieldType.DATE: "TEXT",  # Store as ISO string
-            MetadataFieldType.JSON: "TEXT"  # Store as JSON string
-        }
-
-        sqlite_type = sqlite_type_map[field_def.type]
-
+        # Business logic validation using shared helpers
+        self._validate_metadata_field_name(field_name)
+        sqlite_type = self._get_sqlite_type_mapping(field_def)
+        
         # Check if column already exists
         cursor = await conn.execute("PRAGMA table_info(documents)")
         existing_columns = {row[1] for row in await cursor.fetchall()}
 
         if field_name not in existing_columns:
-            # Add the column
-            default_clause = ""
-            if field_def.default_value is not None:
-                if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
-                    default_clause = f" DEFAULT '{field_def.default_value}'"
-                elif field_def.type == MetadataFieldType.JSON:
-                    default_clause = f" DEFAULT '{json.dumps(field_def.default_value)}'"
-                else:
-                    default_clause = f" DEFAULT {field_def.default_value}"
-
+            # Build and execute column addition using shared business logic
+            default_clause = self._build_default_clause(field_def)
             ddl = f'ALTER TABLE documents ADD COLUMN {field_name} {sqlite_type}{default_clause}'
             await conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
+            
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
@@ -1417,49 +1559,26 @@ class DatabaseSchema:
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
                 fts_table_name = f'fts_{field_name}'
-                # Check if trigram tokenizer is available, fall back to default if not
+                
+                # Check tokenizer availability and build FTS SQL
                 if await self._check_trigram_tokenizer_availability_async(conn):
                     tokenizer_clause = "tokenize='trigram'"
                     logger.debug(f"Using trigram tokenizer for FTS table: {fts_table_name}")
                 else:
-                    tokenizer_clause = ""  # Use default tokenizer
+                    tokenizer_clause = ""
                     logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
 
-                await conn.execute(f'''
+                create_fts_sql = f'''
                     CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                     USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
-                ''')
+                '''
+                await conn.execute(create_fts_sql)
                 logger.info(f"Created FTS table: {fts_table_name}")
 
-                # Create triggers to keep FTS in sync
-                await conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert
-                    AFTER INSERT ON documents
-                    WHEN NEW.{field_name} IS NOT NULL
-                    BEGIN
-                        INSERT INTO {fts_table_name}(document_id, content)
-                        VALUES (NEW.id, NEW.{field_name});
-                    END
-                ''')
-
-                await conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update
-                    AFTER UPDATE OF {field_name} ON documents
-                    WHEN NEW.{field_name} IS NOT NULL
-                    BEGIN
-                        DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
-                        INSERT INTO {fts_table_name}(document_id, content)
-                        VALUES (NEW.id, NEW.{field_name});
-                    END
-                ''')
-
-                await conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete
-                    AFTER DELETE ON documents
-                    BEGIN
-                        DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
-                    END
-                ''')
+                # Create triggers using shared business logic
+                triggers = self._build_fts_triggers(field_name, fts_table_name)
+                for trigger_sql in triggers:
+                    await conn.execute(trigger_sql)
 
     async def load_metadata_schema_async(self, db_connection: Optional[aiosqlite.Connection] = None) -> Dict[
         str, MetadataField]:
@@ -1473,30 +1592,7 @@ class DatabaseSchema:
 
         conn = db_connection
         try:
-            cursor = await conn.execute("SELECT * FROM metadata_schema")
-            schema = {}
-
-            rows = await cursor.fetchall()
-            for row in rows:
-                field_name, field_type, indexed, required, default_value = row
-
-                # Parse default value
-                parsed_default = None
-                if default_value is not None:
-                    try:
-                        parsed_default = json.loads(default_value)
-                    except json.JSONDecodeError:
-                        parsed_default = default_value
-
-                schema[field_name] = MetadataField(
-                    type=MetadataFieldType(field_type),
-                    indexed=bool(indexed),
-                    required=bool(required),
-                    default_value=parsed_default
-                )
-
-            self.metadata_fields = schema
-            return schema
+            return await self._core_load_metadata_schema_async(conn)
         finally:
             if owns_connection and db_connection:
                 await db_connection.close()

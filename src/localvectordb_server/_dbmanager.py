@@ -463,6 +463,8 @@ class DatabaseManager:
 
         # Get registry configuration from server settings
         registry_type = self.app.config_obj.server.db_registry_type
+
+
         registry_settings = self.app.config_obj.server.db_registry_settings
 
         if registry_type == self.app.config_obj.server.cache_type and not registry_settings:
