@@ -229,7 +229,7 @@ operation_timeout = 300
 # Optional: Customize which tools are available (defaults shown)
 # read_only_tools = [
 #     "list_databases",
-#     "get_database_info", 
+#     "get_database_info",
 #     "query_database",
 #     "filter_documents",
 #     "get_document",
@@ -241,7 +241,7 @@ operation_timeout = 300
 # write_tools = [
 #     "create_database",
 #     "delete_database",
-#     "upsert_documents", 
+#     "upsert_documents",
 #     "update_document",
 #     "delete_document",
 #     "update_metadata_schema"

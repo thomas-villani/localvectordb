@@ -275,12 +275,14 @@ class FilterQueryBuilder:
             json_value = json.dumps(value)
             param_placeholder = self._add_param(json_value)
             # Use JSON_EXTRACT or fallback to string search
-            return f"(json_extract({field}, '$') LIKE '%' || {param_placeholder} || '%' OR {field} LIKE '%' || {param_placeholder} || '%')"
+            return (f"(json_extract({field}, '$') LIKE '%' || {param_placeholder} "
+                    f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')")
         elif json_op == '$not_contains':
             # Check if JSON array does not contain value
             json_value = json.dumps(value)
             param_placeholder = self._add_param(json_value)
-            return f"NOT (json_extract({field}, '$') LIKE '%' || {param_placeholder} || '%' OR {field} LIKE '%' || {param_placeholder} || '%')"
+            return (f"NOT (json_extract({field}, '$') LIKE '%' || {param_placeholder} "
+                    f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')")
         else:
             raise DatabaseError(f"Unsupported JSON operation: {json_op}")
 
@@ -438,19 +440,19 @@ class FilterQueryBuilder:
 
     def build_order_by_clause(self, order_by: str, valid_columns: Optional[set] = None) -> str:
         """Build secure ORDER BY clause with proper identifier quoting.
-        
+
         Parameters
         ----------
         order_by : str
             ORDER BY specification (e.g., "field_name DESC", "created_at")
         valid_columns : Optional[set]
             Set of valid column names. If None, uses schema + reserved columns.
-            
+
         Returns
         -------
         str
             Safe SQL ORDER BY clause
-            
+
         Raises
         ------
         DatabaseError

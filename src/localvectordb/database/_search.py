@@ -39,12 +39,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
     def _fts_rank_to_similarity(self, rank: float) -> float:
         """
         Convert FTS5 rank to similarity score with consistent formula.
-        
+
         Parameters
         ----------
         rank : float
             The FTS5 rank value (lower/more negative values are better matches)
-            
+
         Returns
         -------
         float
@@ -55,17 +55,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # -----------------
     # Public search API
     # -----------------
-    def query(self, query: str, *,
-              search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-              return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
-              k: int = 10, score_threshold: float = 0.0,
-              filters: Optional[Dict[str, Any]] = None,
-              vector_weight: float = 0.7,
-              context_window: int = 2,
-              semantic_dedup_threshold: Optional[float] = None,
-              document_scoring_method: DocumentScoringMethod = "frequency_boost",
-              document_scoring_options: Optional[dict] = None
-              ) -> List[QueryResult]:
+    def query(
+            self, query: str, *,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+            k: int = 10, score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None
+            ) -> List[QueryResult]:
         """
         Unified query interface for all search types
 
@@ -137,18 +138,27 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         with self._read_write_lock.read_lock():
             if search_type == 'vector':
-                return self._vector_search(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+                return self._vector_search(query, return_type, k, score_threshold, filters, context_window,
+                                           semantic_dedup_threshold, document_scoring_method, document_scoring_options)
             elif search_type == 'keyword':
-                return self._keyword_search(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+                return self._keyword_search(query, return_type, k, score_threshold, filters, context_window,
+                                            semantic_dedup_threshold, document_scoring_method, document_scoring_options)
             elif search_type == 'hybrid':
-                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight,
+                                           context_window, semantic_dedup_threshold, document_scoring_method,
+                                           document_scoring_options)
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
 
     # ---------------
     # Vector (sync)
     # ---------------
-    def _vector_search(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+    def _vector_search(
+            self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int,
+            score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None
+            ) -> List[QueryResult]:
         query_embeddings = self.embedding_provider.embed_sync([query])
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
@@ -172,7 +182,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             cursor = conn.execute(f'''
                 SELECT c.*, d.id as doc_id, d.content as doc_content
                 FROM chunks c
-                JOIN documents d ON c.document_id = d.id  
+                JOIN documents d ON c.document_id = d.id
                 WHERE c.faiss_id IN ({placeholders})
             ''', valid_faiss_ids)
             faiss_id_to_row, doc_ids_to_fetch = {}, set()
@@ -217,7 +227,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
-            document_results = self._aggregate_document_scores_with_method(chunk_results, document_scoring_method, document_scoring_options)
+            document_results = self._aggregate_document_scores_with_method(chunk_results, document_scoring_method,
+                                                                           document_scoring_options)
             return document_results[:k]
         else:
             chunk_results.sort(key=lambda x: x.score, reverse=True)
@@ -257,7 +268,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ----------------
     # Keyword (sync)
     # ----------------
-    def _keyword_search(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+    def _keyword_search(
+            self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int,
+            score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None
+            ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.warning("FTS not available, returning empty results")
             return []
@@ -333,7 +349,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
-            document_results = self._aggregate_document_scores_with_method(chunk_results, document_scoring_method, document_scoring_options)
+            document_results = self._aggregate_document_scores_with_method(chunk_results, document_scoring_method,
+                                                                           document_scoring_options)
             return document_results[:k]
         else:
             chunk_results.sort(key=lambda x: x.score, reverse=True)
@@ -342,14 +359,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ----------------
     # Hybrid (sync)
     # ----------------
-    def _hybrid_search(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+    def _hybrid_search(
+            self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int,
+            score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None
+            ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.info("FTS not available, falling back to vector search")
-            return self._vector_search(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            return self._vector_search(query, return_type, k, score_threshold, filters, context_window,
+                                       semantic_dedup_threshold, document_scoring_method, document_scoring_options)
         search_k = min(k * 4, 100)
         vector_results = self._vector_search(query, 'chunks', search_k, 0.0, filters, 0, None)
         keyword_results = self._keyword_search(query, 'chunks', search_k, 0.0, filters, 0, None)
-        combined_results = self._combine_search_results(vector_results=vector_results, keyword_results=keyword_results, vector_weight=vector_weight, k=search_k, score_threshold=0.0)
+        combined_results = self._combine_search_results(vector_results=vector_results, keyword_results=keyword_results,
+                                                        vector_weight=vector_weight, k=search_k, score_threshold=0.0)
         if semantic_dedup_threshold is not None:
             combined_results = self._apply_semantic_deduplication(combined_results, semantic_dedup_threshold)
         combined_results = [r for r in combined_results if r.score >= score_threshold]
@@ -362,7 +386,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == 'documents':
-            document_results = self._aggregate_document_scores_with_method(combined_results, document_scoring_method, document_scoring_options)
+            document_results = self._aggregate_document_scores_with_method(combined_results, document_scoring_method,
+                                                                           document_scoring_options)
             return document_results[:k]
         else:
             combined_results.sort(key=lambda x: x.score, reverse=True)
@@ -430,13 +455,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         with self.connection_pool.get_connection() as conn:
             placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
             query = f'''
-                SELECT document_id, chunk_index, faiss_id 
-                FROM chunks 
+                SELECT document_id, chunk_index, faiss_id
+                FROM chunks
                 WHERE (document_id, chunk_index) IN ({placeholders})
             '''
             params = [item for pair in chunk_identifiers for item in pair]
             cursor = conn.execute(query, params)
-            faiss_id_mapping = { (row['document_id'], row['chunk_index']): row['faiss_id'] for row in cursor.fetchall() }
+            faiss_id_mapping = {(row['document_id'], row['chunk_index']): row['faiss_id'] for row in cursor.fetchall()}
         faiss_ids = []
         result_mapping = {}
         for result in chunk_results:
@@ -503,7 +528,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 placeholders = ','.join(['?'] * len(all_chunk_indices))
                 cursor = conn.execute(f'''
                     SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col
-                    FROM chunks 
+                    FROM chunks
                     WHERE document_id = ? AND chunk_index IN ({placeholders})
                     ORDER BY chunk_index
                 ''', [doc_id] + list(all_chunk_indices))
@@ -593,9 +618,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 doc_chunks_to_enrich[doc_id].append((chunk_index, result))
             for doc_id, chunk_requests in doc_chunks_to_enrich.items():
                 cursor = conn.execute('''
-                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, 
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col,
                            end_line, end_col, faiss_id
-                    FROM chunks 
+                    FROM chunks
                     WHERE document_id = ? AND faiss_id IS NOT NULL
                     ORDER BY chunk_index
                 ''', [doc_id])
@@ -648,7 +673,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         if other_chunk_idx == chunk_index:
                             continue
                         other_embedding = faiss_id_to_embedding[other_chunk['faiss_id']]
-                        similarity = float(np.dot(target_embedding, other_embedding) / (np.linalg.norm(target_embedding) * np.linalg.norm(other_embedding)))
+                        similarity = float(np.dot(target_embedding, other_embedding) / (
+                                    np.linalg.norm(target_embedding) * np.linalg.norm(other_embedding)))
                         similarities.append((similarity, other_chunk_idx))
                     similarities.sort(reverse=True, key=lambda x: x[0])
                     for similarity, other_chunk_idx in similarities[: context_window - 1]:
@@ -710,7 +736,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # -------------------------------
     # Aggregation/scoring (sync/async)
     # -------------------------------
-    def _aggregate_document_scores_with_method(self, chunk_results: List[QueryResult], method: DocumentScoringMethod = "frequency_boost", method_options: dict = None) -> List[QueryResult]:
+    def _aggregate_document_scores_with_method(
+            self, chunk_results: List[QueryResult], method: DocumentScoringMethod = "frequency_boost",
+            method_options: dict = None
+            ) -> List[QueryResult]:
         if not chunk_results:
             return []
         method_options = method_options or {}
@@ -725,8 +754,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             placeholders = ','.join(['?'] * len(all_doc_ids))
             cursor = conn.execute(
                 f'''
-                SELECT id, content 
-                FROM documents 
+                SELECT id, content
+                FROM documents
                 WHERE id IN ({placeholders})
                 ''',
                 all_doc_ids,
@@ -766,7 +795,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 else:
                     quality_weights = [score / best_score for score in scores]
                 effective_chunk_count = sum(quality_weights)
-                frequency_multiplier = (1.0 + (math.log2(2 + effective_chunk_count) - 1) * method_options.get("frequency_bias", 0.3))
+                frequency_multiplier = (
+                            1.0 + (math.log2(2 + effective_chunk_count) - 1) * method_options.get("frequency_bias",
+                                                                                                  0.3))
                 method_metadata["effective_chunk_count"] = effective_chunk_count
                 method_metadata["frequency_multiplier"] = frequency_multiplier
                 final_score = min(1.0, best_score * frequency_multiplier)
@@ -821,7 +852,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     mean_score = statistics.mean(scores)
                     std_score = statistics.stdev(scores) if len(scores) > 1 else 0
                     if std_score > 0:
-                        filtered_scores = [score for score in scores if abs(score - mean_score) <= outlier_threshold * std_score]
+                        filtered_scores = [score for score in scores if
+                                           abs(score - mean_score) <= outlier_threshold * std_score]
                     else:
                         filtered_scores = scores
                     if not filtered_scores:
@@ -879,7 +911,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ----------------------
     # Multi-column search
     # ----------------------
-    def query_multi_column(self, query: str, *, columns: Optional[List[str]] = None, search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector', return_type: Literal['documents', 'chunks', 'enriched'] = 'documents', k: int = 10, score_threshold: float = 0.0, filters: Optional[Dict[str, Any]] = None, vector_weight: float = 0.7, document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+    def query_multi_column(
+            self, query: str, *, columns: Optional[List[str]] = None,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
+            return_type: Literal['documents', 'chunks', 'enriched'] = 'documents', k: int = 10,
+            score_threshold: float = 0.0, filters: Optional[Dict[str, Any]] = None, vector_weight: float = 0.7,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None
+            ) -> List[QueryResult]:
         """
         Query across multiple columns (main content + embedding-enabled metadata fields)
 
@@ -947,7 +985,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             metadata_columns = [col for col in search_columns if col != 'content']
             if metadata_columns and search_type in ['vector', 'hybrid']:
                 for field_name in metadata_columns:
-                    field_results = self._search_metadata_field(query=query, field_name=field_name, k=k * 2, score_threshold=score_threshold, filters=filters)
+                    field_results = self._search_metadata_field(query=query, field_name=field_name, k=k * 2,
+                                                                score_threshold=score_threshold, filters=filters)
                     for result in field_results:
                         result.metadata = result.metadata or {}
                         result.metadata['_search_column'] = field_name
@@ -955,11 +994,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
             all_results.sort(key=lambda x: x.score, reverse=True)
             limited_results = all_results[:k]
             if return_type == 'documents':
-                return self._aggregate_document_scores_with_method(limited_results, document_scoring_method, document_scoring_options)
+                return self._aggregate_document_scores_with_method(limited_results, document_scoring_method,
+                                                                   document_scoring_options)
             else:
                 return limited_results
 
-    def _search_metadata_field(self, query: str, field_name: str, k: int, score_threshold: float, filters: Optional[Dict[str, Any]]) -> List[QueryResult]:
+    def _search_metadata_field(
+            self, query: str, field_name: str, k: int, score_threshold: float, filters: Optional[Dict[str, Any]]
+            ) -> List[QueryResult]:
         if hasattr(self.embedding_provider, 'embed_query'):
             query_embedding = self.embedding_provider.embed_query(query)
         else:
@@ -1015,7 +1057,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         return {col: row[col] for col in columns[1:]}
 
     @staticmethod
-    def _combine_search_results(vector_results: List[QueryResult], keyword_results: List[QueryResult], vector_weight: float, k: int, score_threshold: float) -> List[QueryResult]:
+    def _combine_search_results(
+            vector_results: List[QueryResult], keyword_results: List[QueryResult], vector_weight: float, k: int,
+            score_threshold: float
+            ) -> List[QueryResult]:
         combined_results: Dict[str, Dict[str, Any]] = {}
         for result in vector_results:
             combined_results[result.id] = {"result": result, "vector_score": result.score, "keyword_score": 0.0}
@@ -1026,7 +1071,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 combined_results[result.id] = {"result": result, "vector_score": 0.0, "keyword_score": result.score}
         final_results: List[QueryResult] = []
         for result_data in combined_results.values():
-            final_score = vector_weight * result_data["vector_score"] + (1.0 - vector_weight) * result_data["keyword_score"]
+            final_score = vector_weight * result_data["vector_score"] + (1.0 - vector_weight) * result_data[
+                "keyword_score"]
             if final_score >= score_threshold:
                 result = result_data["result"]
                 result.score = final_score
@@ -1037,18 +1083,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ----------------
     # Async Search API
     # ----------------
-    async def query_async(self,
-                          query: str,
-                          search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
-                          return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
-                          k: int = 10, score_threshold: float = 0.0,
-                          filters: Optional[Dict[str, Any]] = None,
-                          vector_weight: float = 0.7,
-                          context_window: int = 2,
-                          semantic_dedup_threshold: Optional[float] = None,
-                          document_scoring_method: DocumentScoringMethod = "frequency_boost",
-                          document_scoring_options: Optional[dict] = None
-                          ) -> List[QueryResult]:
+    async def query_async(
+            self,
+            query: str,
+            search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+            k: int = 10, score_threshold: float = 0.0,
+            filters: Optional[Dict[str, Any]] = None,
+            vector_weight: float = 0.7,
+            context_window: int = 2,
+            semantic_dedup_threshold: Optional[float] = None,
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None
+            ) -> List[QueryResult]:
         """
         Async query the database using vector, keyword, or hybrid search
 
@@ -1087,33 +1134,52 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_embedding = None
         if search_type in ['vector', 'hybrid']:
             query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
-        return await self._search_with_embedding_async(query, query_embedding, search_type, return_type, k, score_threshold, filters, vector_weight, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+        return await self._search_with_embedding_async(query, query_embedding, search_type, return_type, k,
+                                                       score_threshold, filters, vector_weight, context_window,
+                                                       semantic_dedup_threshold, document_scoring_method,
+                                                       document_scoring_options)
 
-    async def _search_with_embedding_async(self, query: str, query_embedding: Optional[np.ndarray], search_type: Literal['vector', 'keyword', 'hybrid'], return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None) -> List[QueryResult]:
+    async def _search_with_embedding_async(
+            self, query: str, query_embedding: Optional[np.ndarray],
+            search_type: Literal['vector', 'keyword', 'hybrid'],
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float,
+            filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: dict = None
+            ) -> List[QueryResult]:
         if search_type == 'vector':
-            results = await self._vector_search_with_embedding_async(query_embedding, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            results = await self._vector_search_with_embedding_async(query_embedding, return_type, k, score_threshold,
+                                                                     filters, context_window, semantic_dedup_threshold,
+                                                                     document_scoring_method, document_scoring_options)
         elif search_type == 'keyword':
-            results = await self._keyword_search_async(query, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            results = await self._keyword_search_async(query, return_type, k, score_threshold, filters, context_window,
+                                                       semantic_dedup_threshold, document_scoring_method,
+                                                       document_scoring_options)
         elif search_type == 'hybrid':
-            results = await self._hybrid_search_with_embedding_async(query, query_embedding, return_type, k, score_threshold, filters, vector_weight, context_window, semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+            results = await self._hybrid_search_with_embedding_async(query, query_embedding, return_type, k,
+                                                                     score_threshold, filters, vector_weight,
+                                                                     context_window, semantic_dedup_threshold,
+                                                                     document_scoring_method, document_scoring_options)
         else:
             raise ValueError(f"Unknown search type: {search_type}")
         return results
 
-    async def _vector_search_with_embedding_async(self,
-                                                  query_embedding: np.ndarray,
-                                                  return_type: Literal['documents', 'chunks', 'context', 'enriched'],
-                                                  k: int, score_threshold: float,
-                                                  filters: Optional[Dict[str, Any]],
-                                                  context_window: int,
-                                                  semantic_dedup_threshold: Optional[float],
-                                                  document_scoring_method: DocumentScoringMethod = "frequency_boost",
-                                                  document_scoring_options: Optional[dict] = None
-                                                  ) -> List[QueryResult]:
+    async def _vector_search_with_embedding_async(
+            self,
+            query_embedding: np.ndarray,
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'],
+            k: int, score_threshold: float,
+            filters: Optional[Dict[str, Any]],
+            context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None
+            ) -> List[QueryResult]:
 
         loop = asyncio.get_event_loop()
         search_k = min(k * 2, 100)
-        distances, indices = await loop.run_in_executor(None, lambda: self.index.search(query_embedding.reshape(1, -1), search_k))
+        distances, indices = await loop.run_in_executor(None, lambda: self.index.search(query_embedding.reshape(1, -1),
+                                                                                        search_k))
         distances = distances[0].tolist()
         indices = indices[0].tolist()
         valid_results = [(dist, idx) for dist, idx in zip(distances, indices, strict=False) if idx != -1]
@@ -1143,10 +1209,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_results.sort(key=lambda x: x.score, reverse=True)
         if semantic_dedup_threshold is not None:
             query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
-        final_results = await self._process_search_results_async(query_results, return_type, document_scoring_method, document_scoring_options, context_window)
+        final_results = await self._process_search_results_async(query_results, return_type, document_scoring_method,
+                                                                 document_scoring_options, context_window)
         return final_results[:k]
 
-    async def _keyword_search_async(self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: Optional[dict] = None) -> List[QueryResult]:
+    async def _keyword_search_async(
+            self, query: str, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int,
+            score_threshold: float, filters: Optional[Dict[str, Any]], context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None
+            ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.warning("FTS not enabled, returning empty results")
             return []
@@ -1208,22 +1281,40 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 ))
         if semantic_dedup_threshold is not None:
             query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
-        final_results = await self._process_search_results_async(query_results, return_type, document_scoring_method, document_scoring_options, context_window)
+        final_results = await self._process_search_results_async(query_results, return_type, document_scoring_method,
+                                                                 document_scoring_options, context_window)
         return final_results[:k]
 
-    async def _hybrid_search_with_embedding_async(self, query: str, query_embedding: np.ndarray, return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float, filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int, semantic_dedup_threshold: Optional[float], document_scoring_method: DocumentScoringMethod = "frequency_boost", document_scoring_options: Optional[dict] = None) -> List[QueryResult]:
+    async def _hybrid_search_with_embedding_async(
+            self, query: str, query_embedding: np.ndarray,
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'], k: int, score_threshold: float,
+            filters: Optional[Dict[str, Any]], vector_weight: float, context_window: int,
+            semantic_dedup_threshold: Optional[float],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None
+            ) -> List[QueryResult]:
         if not self.fts_enabled:
-            return await self._vector_search_with_embedding_async(query_embedding, return_type, k, score_threshold, filters, context_window, semantic_dedup_threshold, document_scoring_method)
+            return await self._vector_search_with_embedding_async(query_embedding, return_type, k, score_threshold,
+                                                                  filters, context_window, semantic_dedup_threshold,
+                                                                  document_scoring_method)
         search_k = min(k * 4, 100)
-        vector_task = asyncio.create_task(self._vector_search_with_embedding_async(query_embedding, 'chunks', search_k, 0.0, filters, 0, None, "best"))
-        keyword_task = asyncio.create_task(self._keyword_search_async(query, 'chunks', search_k, 0.0, filters, 0, None, "best"))
+        vector_task = asyncio.create_task(
+            self._vector_search_with_embedding_async(query_embedding, 'chunks', search_k, 0.0, filters, 0, None,
+                                                     "best"))
+        keyword_task = asyncio.create_task(
+            self._keyword_search_async(query, 'chunks', search_k, 0.0, filters, 0, None, "best"))
         vector_results, keyword_results = await asyncio.gather(vector_task, keyword_task)
-        combined_results = await self._combine_search_results_async(vector_results=vector_results, keyword_results=keyword_results, vector_weight=vector_weight, k=search_k, score_threshold=0.0)
+        combined_results = await self._combine_search_results_async(vector_results=vector_results,
+                                                                    keyword_results=keyword_results,
+                                                                    vector_weight=vector_weight, k=search_k,
+                                                                    score_threshold=0.0)
         if semantic_dedup_threshold is not None:
-            combined_results = await self._apply_semantic_deduplication_async(combined_results, semantic_dedup_threshold)
+            combined_results = await self._apply_semantic_deduplication_async(combined_results,
+                                                                              semantic_dedup_threshold)
         if score_threshold > 0.0:
             combined_results = [r for r in combined_results if r.score >= score_threshold]
-        final_results = await self._process_search_results_async(combined_results, return_type, document_scoring_method, document_scoring_options, context_window)
+        final_results = await self._process_search_results_async(combined_results, return_type, document_scoring_method,
+                                                                 document_scoring_options, context_window)
         return final_results[:k]
 
     async def _get_chunks_by_faiss_ids_async(self, faiss_ids: List[int]) -> List[Dict[str, Any]]:
@@ -1242,7 +1333,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         sql = f"""
             SELECT {', '.join(chunk_columns)}
             FROM chunks c
-            JOIN documents d ON d.id = c.document_id  
+            JOIN documents d ON d.id = c.document_id
             WHERE c.faiss_id IN ({placeholders})
         """
         async with self.async_connection_pool.get_connection_context() as conn:
@@ -1280,7 +1371,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             })
         return chunks_data
 
-    async def _apply_metadata_filters_async(self, chunks_data: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _apply_metadata_filters_async(self, chunks_data: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[
+        Dict[str, Any]]:
         if not filters or not chunks_data:
             return chunks_data
         doc_ids = list(set(chunk['document_id'] for chunk in chunks_data))
@@ -1324,21 +1416,31 @@ class SearchMixin(LocalVectorDBBase, ABC):
             doc_metadata[doc_id] = metadata
         return doc_metadata
 
-    async def _combine_search_results_async(self, vector_results: List[QueryResult], keyword_results: List[QueryResult], vector_weight: float, k: int, score_threshold: float) -> List[QueryResult]:
+    async def _combine_search_results_async(
+            self, vector_results: List[QueryResult], keyword_results: List[QueryResult], vector_weight: float, k: int,
+            score_threshold: float
+            ) -> List[QueryResult]:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._combine_search_results, vector_results, keyword_results, vector_weight, k, score_threshold)
+        return await loop.run_in_executor(None, self._combine_search_results, vector_results, keyword_results,
+                                          vector_weight, k, score_threshold)
 
-    async def _process_search_results_async(self, results: List[QueryResult], return_type: Literal['documents', 'chunks', 'context', 'enriched'], document_scoring_method: DocumentScoringMethod, document_scoring_options: Optional[dict], context_window: int) -> List[QueryResult]:
+    async def _process_search_results_async(
+            self, results: List[QueryResult], return_type: Literal['documents', 'chunks', 'context', 'enriched'],
+            document_scoring_method: DocumentScoringMethod, document_scoring_options: Optional[dict],
+            context_window: int
+            ) -> List[QueryResult]:
         if return_type == 'chunks':
             return results
         if return_type == 'documents':
-            return await self._aggregate_document_scores_with_method_async(results, document_scoring_method, document_scoring_options)
+            return await self._aggregate_document_scores_with_method_async(results, document_scoring_method,
+                                                                           document_scoring_options)
         elif return_type == 'enriched':
             return await self._enrich_with_intra_doc_context_async(results, context_window)
         else:
             return await self._add_context_window_async(results, context_window)
 
-    async def _apply_semantic_deduplication_async(self, results: List[QueryResult], threshold: float) -> List[QueryResult]:
+    async def _apply_semantic_deduplication_async(self, results: List[QueryResult], threshold: float) -> List[
+        QueryResult]:
         if not results or threshold is None or threshold <= 0:
             return results
         chunk_results = [r for r in results if r.type == 'chunk']
@@ -1348,14 +1450,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
             query = f'''
-                SELECT document_id, chunk_index, faiss_id 
-                FROM chunks 
+                SELECT document_id, chunk_index, faiss_id
+                FROM chunks
                 WHERE (document_id, chunk_index) IN ({placeholders})
             '''
             params = [item for pair in chunk_identifiers for item in pair]
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
-            faiss_id_mapping = { (row['document_id'], row['chunk_index']): row['faiss_id'] for row in rows }
+            faiss_id_mapping = {(row['document_id'], row['chunk_index']): row['faiss_id'] for row in rows}
         faiss_ids, result_mapping = [], {}
         for result in chunk_results:
             doc_id, chunk_idx = self._split_chunk_id(result.id)
@@ -1367,6 +1469,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             return results
         loop = asyncio.get_event_loop()
         embeddings_matrix = await loop.run_in_executor(None, self._reconstruct_embeddings_batch, faiss_ids)
+
         def compute_keep_mask():
             norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
             normalized_embeddings = embeddings_matrix / np.maximum(norms, 1e-8)
@@ -1378,11 +1481,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
             should_remove = _np.any(upper_tri, axis=0)
             keep_mask = ~should_remove
             return keep_mask
+
         keep_mask = await loop.run_in_executor(None, compute_keep_mask)
         final_chunk_results = [result_mapping[faiss_ids[i]] for i in range(len(faiss_ids)) if keep_mask[i]]
         return final_chunk_results
 
-    async def _aggregate_document_scores_with_method_async(self, chunk_results: List[QueryResult], method: DocumentScoringMethod = "frequency_boost", method_options: dict = None) -> List[QueryResult]:
+    async def _aggregate_document_scores_with_method_async(
+            self, chunk_results: List[QueryResult], method: DocumentScoringMethod = "frequency_boost",
+            method_options: dict = None
+            ) -> List[QueryResult]:
         if not chunk_results:
             return []
         method_options = method_options or {}
@@ -1397,8 +1504,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             placeholders = ','.join(['?'] * len(all_doc_ids))
             cursor = await conn.execute(
                 f'''
-                SELECT id, content 
-                FROM documents 
+                SELECT id, content
+                FROM documents
                 WHERE id IN ({placeholders})
                 ''',
                 all_doc_ids,
@@ -1408,7 +1515,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 doc_content_map[row['id']] = row['content']
             doc_metadata_batch = await self._get_document_metadata_async(all_doc_ids)
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._compute_document_scores, method, method_options, doc_groups, doc_content_map, doc_metadata_batch)
+        return await loop.run_in_executor(None, self._compute_document_scores, method, method_options, doc_groups,
+                                          doc_content_map, doc_metadata_batch)
 
     async def _add_context_window_async(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
         if context_window <= 0 or not results:
@@ -1438,7 +1546,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 placeholders = ','.join(['?'] * len(all_chunk_indices))
                 cursor = await conn.execute(f'''
                     SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col
-                    FROM chunks 
+                    FROM chunks
                     WHERE document_id = ? AND chunk_index IN ({placeholders})
                     ORDER BY chunk_index
                 ''', [doc_id] + list(all_chunk_indices))
@@ -1501,7 +1609,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     context_results.append(context_result)
         return context_results
 
-    async def _enrich_with_intra_doc_context_async(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+    async def _enrich_with_intra_doc_context_async(self, results: List[QueryResult], context_window: int) -> List[
+        QueryResult]:
         if context_window <= 0 or not results:
             return results
         enriched_results: List[QueryResult] = []
@@ -1516,9 +1625,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 doc_chunks_to_enrich[doc_id].append((chunk_index, result))
             for doc_id, chunk_requests in doc_chunks_to_enrich.items():
                 cursor = await conn.execute('''
-                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, 
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col,
                            end_line, end_col, faiss_id
-                    FROM chunks 
+                    FROM chunks
                     WHERE document_id = ? AND faiss_id IS NOT NULL
                     ORDER BY chunk_index
                 ''', [doc_id])
@@ -1568,6 +1677,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     target_embedding = faiss_id_to_embedding[target_faiss_id]
                     relevant_chunks.add(chunk_index)
                     similarity_scores[chunk_index] = max(similarity_scores.get(chunk_index, 0), 1.0)
+
                     def calc_sims():
                         sims = []
                         import numpy as _np
@@ -1575,9 +1685,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                             if other_chunk_idx == chunk_index:
                                 continue
                             other_embedding = faiss_id_to_embedding[other_chunk['faiss_id']]
-                            similarity = float(_np.dot(target_embedding, other_embedding) / (_np.linalg.norm(target_embedding) * _np.linalg.norm(other_embedding)))
+                            similarity = float(_np.dot(target_embedding, other_embedding) / (
+                                        _np.linalg.norm(target_embedding) * _np.linalg.norm(other_embedding)))
                             sims.append((similarity, other_chunk_idx, other_chunk))
                         return sims
+
                     similarities_data = await loop.run_in_executor(None, calc_sims)
                     similarities_data.sort(reverse=True, key=lambda x: x[0])
                     for similarity, other_chunk_idx, _ in similarities_data[: context_window - 1]:
@@ -1646,7 +1758,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
     ) -> List[QueryResult]:
         """
         Async search a specific metadata field's embeddings
-        
+
         Parameters
         ----------
         query : str
@@ -1659,7 +1771,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Minimum score threshold
         filters : Optional[Dict[str, Any]]
             Metadata filters
-            
+
         Returns
         -------
         List[QueryResult]
@@ -1741,6 +1853,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             # Apply metadata filters if provided
             if filters:
                 loop = asyncio.get_event_loop()
+
                 # Use the existing sync filter function in executor
                 def apply_filters():
                     return [r for r in results if matches_metadata_filter(r.metadata, filters)]

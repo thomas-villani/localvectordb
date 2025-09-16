@@ -60,7 +60,9 @@ class RTFExtractor(BaseExtractor):
         except ImportError:
             return False
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Extract text from RTF files."""
         try:
             from striprtf.striprtf import rtf_to_text
@@ -160,7 +162,9 @@ class EPubExtractor(BaseExtractor):
         except ImportError:
             return False
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Extract text from EPUB files."""
         try:
             import io

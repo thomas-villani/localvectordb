@@ -46,7 +46,7 @@ def inspector_enabled():
 
 def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
     """Decorator to require authentication for inspector routes with permission checking
-    
+
     Parameters
     ----------
     required_permission : PermissionLevel

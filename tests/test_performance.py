@@ -32,7 +32,7 @@ def create_mock_connection():
     mock_conn.commit = Mock()
     mock_conn.rollback = Mock()
     mock_conn.close = Mock()
-    
+
     # Add context manager support
     mock_conn.__enter__ = Mock(return_value=mock_conn)
     mock_conn.__exit__ = Mock(return_value=None)

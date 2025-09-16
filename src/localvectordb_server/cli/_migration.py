@@ -13,12 +13,12 @@
 
 Provides command-line interface for metadata schema migration operations including:
 - Viewing migration status
-- Applying pending schema migrations 
+- Applying pending schema migrations
 - Rolling back to previous schema versions
 - Creating new migration templates for schema changes
 - Managing migration dependencies
 
-These commands focus on evolving the metadata schema using LocalVectorDB's 
+These commands focus on evolving the metadata schema using LocalVectorDB's
 built-in DatabaseSchema functionality rather than raw SQL operations.
 """
 
@@ -38,11 +38,11 @@ from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print
 def migrate_group(ctx):
     """
     Metadata schema migration and evolution commands.
-    
-    Provides comprehensive metadata schema migration functionality including 
-    adding/removing/modifying metadata fields, version management, and rollback 
+
+    Provides comprehensive metadata schema migration functionality including
+    adding/removing/modifying metadata fields, version management, and rollback
     capabilities for LocalVectorDB databases.
-    
+
     \b
     Examples:
         \b
@@ -65,10 +65,10 @@ def migrate_group(ctx):
 def migration_status(ctx, database_name, migrations_dir, output_json):
     """
     Show migration status for a database.
-    
+
     Displays current database version, available migrations, applied migrations,
     and pending migrations that need to be applied.
-    
+
     \b
     Examples:
         \b
@@ -178,11 +178,11 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
                      backup_location, dry_run, output_json):
     """
     Apply pending migrations to a database.
-    
+
     Applies all pending migrations up to the specified target version.
     If no target version is specified, applies all pending migrations.
     Creates a backup before migration unless disabled.
-    
+
     \b
     Examples:
         \b
@@ -304,10 +304,10 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
                         backup, backup_location, dry_run, output_json):
     """
     Rollback database to a previous version.
-    
+
     Rolls back applied migrations to reach the specified target version.
     This will undo schema changes and data transformations made by newer migrations.
-    
+
     \b
     Examples:
         \b
@@ -433,16 +433,16 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
 def create_migration(description, version, migrations_dir, template, output_json):
     """
     Create a new migration template file.
-    
+
     Creates a new migration file with the specified version and description.
     The template type determines the structure of the generated migration.
-    
+
     \b
     Template types:
         basic: Minimal migration template with empty up/down methods
         schema: Template for database schema changes (tables, indexes)
         data: Template for data transformations and migrations
-    
+
     \b
     Examples:
         \b
@@ -532,10 +532,10 @@ def create_migration(description, version, migrations_dir, template, output_json
 def list_migrations(migrations_dir, show_dependencies, output_json):
     """
     List available migration files.
-    
+
     Shows all discovered migration files with their versions, descriptions,
     and optionally their dependency relationships.
-    
+
     \b
     Examples:
         \b

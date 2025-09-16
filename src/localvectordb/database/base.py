@@ -305,7 +305,6 @@ class BaseVectorDB(ABC):
     ) -> List[str]:
         pass
 
-
     # Core async database operations
     @abstractmethod
     async def upsert_async(
@@ -487,32 +486,32 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
     """The abstract base class that defines the attributes and helper methods used by the various mixins."""
 
     def __init__(
-        self,
-        name: str,
-        base_path: Union[str, Path] = ".lvdb",
-        *,
-        # Metadata schema
-        metadata_schema: Optional[Dict[str, Any]] = None,
-        # ID generation patterns
-        doc_id_pattern: str = "doc_{idx}",
-        # Embedding configuration
-        embedding_provider: str = "ollama",
-        embedding_model: str = "nomic-embed-text",
-        embedding_config: Optional[Dict[str, Any]] = None,
-        # Chunking configuration
-        chunking_method: Union[str, Any] = "sentences",
-        chunk_size: int = 500,
-        chunk_overlap: int = 1,
-        # Index type
-        faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
-        faiss_index_hnsw_flat_neighbors: Optional[int] = None,
-        faiss_index_lsh_bits: Optional[int] = None,
-        # Performance settings
-        enable_gpu: bool = False,
-        enable_fts: bool = True,
-        connection_pool_size: int = 10,
-        # Other
-        create_if_not_exists: bool = True,
+            self,
+            name: str,
+            base_path: Union[str, Path] = ".lvdb",
+            *,
+            # Metadata schema
+            metadata_schema: Optional[Dict[str, Any]] = None,
+            # ID generation patterns
+            doc_id_pattern: str = "doc_{idx}",
+            # Embedding configuration
+            embedding_provider: str = "ollama",
+            embedding_model: str = "nomic-embed-text",
+            embedding_config: Optional[Dict[str, Any]] = None,
+            # Chunking configuration
+            chunking_method: Union[str, Any] = "sentences",
+            chunk_size: int = 500,
+            chunk_overlap: int = 1,
+            # Index type
+            faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
+            faiss_index_hnsw_flat_neighbors: Optional[int] = None,
+            faiss_index_lsh_bits: Optional[int] = None,
+            # Performance settings
+            enable_gpu: bool = False,
+            enable_fts: bool = True,
+            connection_pool_size: int = 10,
+            # Other
+            create_if_not_exists: bool = True,
     ):
         super().__init__()
         self._read_write_lock: ReadWriteLock = None
@@ -544,11 +543,12 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    def _generate_metadata_embeddings(self,
-                                      metadata: Dict[str, Any],
-                                      embedding_enabled_fields: Dict[str, 'MetadataField'],
-                                      batch_size: int = 100
-                                      ) -> Dict[str, np.ndarray]:
+    def _generate_metadata_embeddings(
+            self,
+            metadata: Dict[str, Any],
+            embedding_enabled_fields: Dict[str, 'MetadataField'],
+            batch_size: int = 100
+            ) -> Dict[str, np.ndarray]:
         pass
 
     @abstractmethod
@@ -580,18 +580,21 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    async def _generate_metadata_embeddings_async(self,
-                                                  metadata: Dict[str, Any],
-                                                  embedding_enabled_fields: Dict[str, 'MetadataField'],
-                                                  batch_size: int = 100) -> Dict[str, np.ndarray]:
+    async def _generate_metadata_embeddings_async(
+            self,
+            metadata: Dict[str, Any],
+            embedding_enabled_fields: Dict[str, 'MetadataField'],
+            batch_size: int = 100
+            ) -> Dict[str, np.ndarray]:
         pass
 
     @abstractmethod
-    async def _store_metadata_embeddings_async(self,
-                                               conn: aiosqlite.Connection,
-                                               document_id: str,
-                                               field_embeddings: Dict[str, np.ndarray]
-                                               ) -> None:
+    async def _store_metadata_embeddings_async(
+            self,
+            conn: aiosqlite.Connection,
+            document_id: str,
+            field_embeddings: Dict[str, np.ndarray]
+            ) -> None:
         pass
 
     @abstractmethod
@@ -599,15 +602,16 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    def _get_changed_embedding_fields(self,
-                                      old_metadata: Dict[str, Any],
-                                      new_metadata: Dict[str, Any]) -> Dict[str, 'MetadataField']:
+    def _get_changed_embedding_fields(
+            self,
+            old_metadata: Dict[str, Any],
+            new_metadata: Dict[str, Any]
+            ) -> Dict[str, 'MetadataField']:
         pass
 
     @abstractmethod
     async def _validate_metadata_async(self, metadata: Dict[str, Any]) -> None:
         pass
-
 
     @abstractmethod
     def _save_next_doc_id(self) -> None:

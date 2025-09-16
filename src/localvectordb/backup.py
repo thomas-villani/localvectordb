@@ -59,10 +59,10 @@ class CompressionAlgorithm(Enum):
 class BackupMetadata:
     """
     Metadata for backup files.
-    
+
     Contains information about the backup including version, timestamp,
     checksums, and configuration details needed for restoration.
-    
+
     Parameters
     ----------
     backup_id : str
@@ -90,18 +90,18 @@ class BackupMetadata:
     """
 
     def __init__(
-        self,
-        backup_id: str,
-        backup_type: BackupType,
-        database_name: str,
-        database_version: str,
-        created_at: datetime,
-        file_paths: Dict[str, str],
-        checksums: Dict[str, str],
-        compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
-        size_bytes: int = 0,
-        parent_backup_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+            self,
+            backup_id: str,
+            backup_type: BackupType,
+            database_name: str,
+            database_version: str,
+            created_at: datetime,
+            file_paths: Dict[str, str],
+            checksums: Dict[str, str],
+            compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
+            size_bytes: int = 0,
+            parent_backup_id: Optional[str] = None,
+            metadata: Optional[Dict[str, Any]] = None
     ):
         self.backup_id = backup_id
         self.backup_type = backup_type
@@ -152,7 +152,7 @@ class BackupMetadata:
 class BackupConfig:
     """
     Configuration for backup operations.
-    
+
     Parameters
     ----------
     backup_location : Union[str, Path]
@@ -170,13 +170,13 @@ class BackupConfig:
     """
 
     def __init__(
-        self,
-        backup_location: Union[str, Path] = "./backups",
-        compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
-        verify_integrity: bool = True,
-        retention_days: int = 30,
-        max_backup_size_gb: float = 0.0,
-        include_faiss_index: bool = True
+            self,
+            backup_location: Union[str, Path] = "./backups",
+            compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
+            verify_integrity: bool = True,
+            retention_days: int = 30,
+            max_backup_size_gb: float = 0.0,
+            include_faiss_index: bool = True
     ):
         self.backup_location: Path = Path(backup_location)
         self.compression_algorithm = compression_algorithm
@@ -192,11 +192,11 @@ class BackupConfig:
 class BackupManager:
     """
     Main backup and restore manager for LocalVectorDB.
-    
+
     Provides comprehensive backup and recovery capabilities including full backups,
     incremental backups, and point-in-time recovery using SQLite's backup API
     and FAISS index management.
-    
+
     Parameters
     ----------
     database_path : Union[str, Path]
@@ -205,31 +205,31 @@ class BackupManager:
         Path to the FAISS index file. If None, inferred from database_path.
     config : BackupConfig, optional
         Backup configuration. If None, uses default configuration.
-    
+
     Examples
     --------
     Create a full backup::
-    
+
         manager = BackupManager("/path/to/mydb.sqlite")
         backup_id = manager.create_backup(BackupType.FULL)
         print(f"Backup created: {backup_id}")
-    
+
     Restore from backup::
-    
+
         manager.restore_backup(backup_id, "/path/to/restore/location")
-    
+
     List available backups::
-    
+
         backups = manager.list_backups()
         for backup in backups:
             print(f"{backup.backup_id}: {backup.created_at}")
     """
 
     def __init__(
-        self,
-        database_path: Union[str, Path],
-        faiss_index_path: Optional[Union[str, Path]] = None,
-        config: Optional[BackupConfig] = None
+            self,
+            database_path: Union[str, Path],
+            faiss_index_path: Optional[Union[str, Path]] = None,
+            config: Optional[BackupConfig] = None
     ):
         self.database_path = Path(database_path)
 
@@ -254,11 +254,11 @@ class BackupManager:
         return sha256_hash.hexdigest()
 
     def _create_backup_manifest(
-        self,
-        backup_id: str,
-        backup_type: BackupType,
-        temp_dir: Path,
-        parent_backup_id: Optional[str] = None
+            self,
+            backup_id: str,
+            backup_type: BackupType,
+            temp_dir: Path,
+            parent_backup_id: Optional[str] = None
     ) -> BackupMetadata:
         """Create backup manifest with metadata and checksums."""
 
@@ -334,14 +334,14 @@ class BackupManager:
         return backup_path
 
     def create_backup(
-        self,
-        backup_type: BackupType = BackupType.FULL,
-        parent_backup_id: Optional[str] = None,
-        backup_id: Optional[str] = None
+            self,
+            backup_type: BackupType = BackupType.FULL,
+            parent_backup_id: Optional[str] = None,
+            backup_id: Optional[str] = None
     ) -> str:
         """
         Create a new backup of the database.
-        
+
         Parameters
         ----------
         backup_type : BackupType
@@ -350,12 +350,12 @@ class BackupManager:
             ID of parent backup (required for incremental backups)
         backup_id : str, optional
             Custom backup ID. If None, generates a UUID.
-        
+
         Returns
         -------
         str
             Unique backup ID
-        
+
         Raises
         ------
         FileNotFoundError
@@ -437,8 +437,8 @@ class BackupManager:
         try:
             with sqlite3.connect(self.database_path) as conn:
                 conn.execute("""
-                    INSERT INTO backup_log 
-                    (id, backup_type, created_at, database_version, file_path, 
+                    INSERT INTO backup_log
+                    (id, backup_type, created_at, database_version, file_path,
                      checksum, parent_backup_id, metadata, size_bytes, compression_algorithm)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -460,14 +460,14 @@ class BackupManager:
     def _verify_archive_checksums(self, tar: tarfile.TarFile, metadata: BackupMetadata) -> None:
         """
         Verify checksums of files in the archive without extracting them.
-        
+
         Parameters
         ----------
         tar : tarfile.TarFile
             Open tar file to verify
         metadata : BackupMetadata
             Backup metadata containing expected checksums
-            
+
         Raises
         ------
         ValueError
@@ -538,12 +538,12 @@ class BackupManager:
     def list_backups(self, backup_type: Optional[BackupType] = None) -> List[BackupMetadata]:
         """
         List available backups.
-        
+
         Parameters
         ----------
         backup_type : BackupType, optional
             Filter by backup type. If None, returns all backups.
-        
+
         Returns
         -------
         List[BackupMetadata]
@@ -615,14 +615,14 @@ class BackupManager:
         return sorted(backups, key=lambda x: x.created_at, reverse=True)
 
     def restore_backup(
-        self,
-        backup_id: str,
-        restore_location: Optional[Union[str, Path]] = None,
-        overwrite_existing: bool = False
+            self,
+            backup_id: str,
+            restore_location: Optional[Union[str, Path]] = None,
+            overwrite_existing: bool = False
     ) -> Path:
         """
         Restore database from backup.
-        
+
         Parameters
         ----------
         backup_id : str
@@ -631,12 +631,12 @@ class BackupManager:
             Directory to restore to. If None, restores to original location.
         overwrite_existing : bool
             Whether to overwrite existing files
-        
+
         Returns
         -------
         Path
             Path to restored database directory
-        
+
         Raises
         ------
         FileNotFoundError
@@ -706,15 +706,15 @@ class BackupManager:
     def _find_backup_file_by_manifest(self, backup_id: str) -> Optional[Path]:
         """
         Find backup file by exact backup ID match from manifest.
-        
+
         This method safely parses the manifest.json from each backup file
         to find an exact match, avoiding substring collision issues.
-        
+
         Parameters
         ----------
         backup_id : str
             Exact backup ID to search for
-            
+
         Returns
         -------
         Optional[Path]
@@ -750,7 +750,7 @@ class BackupManager:
     def _find_backup_file(self, backup_id: str) -> Optional[Path]:
         """
         Find backup file by ID using manifest-based exact matching.
-        
+
         Falls back to filename-based search if manifest parsing fails
         for all files (for backward compatibility).
         """
@@ -771,14 +771,14 @@ class BackupManager:
     def _is_within_directory(self, directory: Path, target: Path) -> bool:
         """
         Check if target path is within the given directory.
-        
+
         Parameters
         ----------
         directory : Path
             Base directory path
         target : Path
             Target path to check
-            
+
         Returns
         -------
         bool
@@ -794,14 +794,14 @@ class BackupManager:
     def _safe_extract(self, tar: tarfile.TarFile, path: Path) -> None:
         """
         Safely extract tar archive, preventing path traversal attacks.
-        
+
         Parameters
         ----------
         tar : tarfile.TarFile
             Tar file to extract
         path : Path
             Destination path for extraction
-            
+
         Raises
         ------
         ValueError
@@ -849,7 +849,8 @@ class BackupManager:
 
         # Verify backup ID matches
         if extracted_metadata.backup_id != expected_metadata.backup_id:
-            raise ValueError(f"Backup ID mismatch: expected {expected_metadata.backup_id}, got {extracted_metadata.backup_id}")
+            raise ValueError(
+                f"Backup ID mismatch: expected {expected_metadata.backup_id}, got {extracted_metadata.backup_id}")
 
         # Verify checksums of extracted files
         for filename, expected_checksum in extracted_metadata.checksums.items():
@@ -862,7 +863,8 @@ class BackupManager:
 
             actual_checksum = self._calculate_file_checksum(file_path)
             if actual_checksum != expected_checksum:
-                raise ValueError(f"Checksum mismatch for {filename}: expected {expected_checksum}, got {actual_checksum}")
+                raise ValueError(
+                    f"Checksum mismatch for {filename}: expected {expected_checksum}, got {actual_checksum}")
 
         logger.debug("Backup integrity verification passed")
 
@@ -886,12 +888,12 @@ class BackupManager:
     def delete_backup(self, backup_id: str) -> bool:
         """
         Delete a backup.
-        
+
         Parameters
         ----------
         backup_id : str
             ID of backup to delete
-        
+
         Returns
         -------
         bool
@@ -920,12 +922,12 @@ class BackupManager:
     def cleanup_old_backups(self, retention_days: Optional[int] = None) -> int:
         """
         Clean up old backups based on retention policy.
-        
+
         Parameters
         ----------
         retention_days : int, optional
             Number of days to retain backups. If None, uses config value.
-        
+
         Returns
         -------
         int
@@ -959,12 +961,12 @@ class BackupManager:
     def verify_backup(self, backup_id: str) -> bool:
         """
         Verify backup integrity without restoring.
-        
+
         Parameters
         ----------
         backup_id : str
             ID of backup to verify
-        
+
         Returns
         -------
         bool
@@ -989,12 +991,12 @@ class BackupManager:
     def get_backup_info(self, backup_id: str) -> Optional[BackupMetadata]:
         """
         Get detailed information about a backup.
-        
+
         Parameters
         ----------
         backup_id : str
             ID of backup to get info for
-        
+
         Returns
         -------
         BackupMetadata or None
@@ -1006,10 +1008,10 @@ class BackupManager:
 class IncrementalBackupManager:
     """
     Specialized manager for incremental backups using WAL tracking.
-    
+
     Implements incremental backup functionality by tracking changes in SQLite's
     Write-Ahead Log (WAL) and maintaining FAISS index deltas.
-    
+
     Parameters
     ----------
     backup_manager : BackupManager
@@ -1024,25 +1026,25 @@ class IncrementalBackupManager:
         self.version_manager = backup_manager.version_manager
 
     def create_incremental_backup(
-        self,
-        parent_backup_id: str,
-        backup_id: Optional[str] = None
+            self,
+            parent_backup_id: str,
+            backup_id: Optional[str] = None
     ) -> str:
         """
         Create an incremental backup based on changes since parent backup.
-        
+
         Parameters
         ----------
         parent_backup_id : str
             ID of the parent (full or incremental) backup
         backup_id : str, optional
             Custom backup ID. If None, generates a UUID.
-        
+
         Returns
         -------
         str
             Unique backup ID for the incremental backup
-        
+
         Raises
         ------
         ValueError
@@ -1139,7 +1141,7 @@ class IncrementalBackupManager:
     def _get_changes_since_backup(self, parent_backup: BackupMetadata) -> Dict[str, Any]:
         """
         Get database changes since the parent backup was created.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -1161,7 +1163,7 @@ class IncrementalBackupManager:
             # Get documents modified since parent backup
             cursor = conn.execute("""
                 SELECT id, content, content_hash, updated_at
-                FROM documents 
+                FROM documents
                 WHERE updated_at > ?
                 ORDER BY updated_at
             """, (parent_timestamp.isoformat(),))
@@ -1183,10 +1185,10 @@ class IncrementalBackupManager:
                 placeholders = ','.join(['?'] * len(doc_ids))
 
                 cursor = conn.execute(f"""
-                    SELECT document_id, chunk_index, content, content_hash, 
+                    SELECT document_id, chunk_index, content, content_hash,
                            start_pos, end_pos, start_line, start_col, end_line, end_col,
                            tokens, faiss_id
-                    FROM chunks 
+                    FROM chunks
                     WHERE document_id IN ({placeholders})
                     ORDER BY document_id, chunk_index
                 """, doc_ids)
@@ -1228,7 +1230,7 @@ class IncrementalBackupManager:
                         })
 
         logger.debug(f"Found {len(changes['changed_documents'])} changed documents, "
-                    f"{len(changes['faiss_changes'])} FAISS changes")
+                     f"{len(changes['faiss_changes'])} FAISS changes")
 
         return changes
 
@@ -1244,7 +1246,7 @@ class IncrementalBackupManager:
         try:
             # Copy schema from original database
             cursor = orig_conn.execute("""
-                SELECT sql FROM sqlite_master 
+                SELECT sql FROM sqlite_master
                 WHERE type IN ('table', 'index', 'trigger') AND sql IS NOT NULL
                 ORDER BY type DESC
             """)
@@ -1260,7 +1262,7 @@ class IncrementalBackupManager:
             # Insert changed documents
             for doc in changes['changed_documents']:
                 inc_conn.execute("""
-                    INSERT OR REPLACE INTO documents 
+                    INSERT OR REPLACE INTO documents
                     (id, content, content_hash, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?)
                 """, (
@@ -1426,20 +1428,20 @@ class IncrementalBackupManager:
             logger.debug("Could not update last backup timestamp")
 
     def restore_incremental_backup_chain(
-        self,
-        target_backup_id: str,
-        restore_location: Union[str, Path]
+            self,
+            target_backup_id: str,
+            restore_location: Union[str, Path]
     ) -> Path:
         """
         Restore database by applying a chain of incremental backups.
-        
+
         Parameters
         ----------
         target_backup_id : str
             ID of the target backup (can be full or incremental)
         restore_location : Union[str, Path]
             Directory to restore to
-        
+
         Returns
         -------
         Path
@@ -1559,7 +1561,7 @@ class IncrementalBackupManager:
             cursor = inc_conn.execute(f"SELECT {column_names_str} FROM documents")
             for row in cursor.fetchall():
                 working_conn.execute(f"""
-                    INSERT OR REPLACE INTO documents 
+                    INSERT OR REPLACE INTO documents
                     ({column_names_str})
                     VALUES ({placeholders})
                 """, row)
@@ -1665,10 +1667,10 @@ class IncrementalBackupManager:
 class PointInTimeRecoveryManager:
     """
     Point-in-time recovery (PITR) manager for LocalVectorDB.
-    
+
     Provides the ability to restore a database to any point in time within
     the backup retention window by combining full and incremental backups.
-    
+
     Parameters
     ----------
     backup_manager : BackupManager
@@ -1686,7 +1688,7 @@ class PointInTimeRecoveryManager:
     def get_recovery_timeline(self) -> List[Dict[str, Any]]:
         """
         Get the available recovery timeline showing all recovery points.
-        
+
         Returns
         -------
         List[Dict[str, Any]]
@@ -1710,20 +1712,20 @@ class PointInTimeRecoveryManager:
         return sorted(recovery_points, key=lambda x: x['timestamp'])
 
     def find_recovery_point(
-        self,
-        target_timestamp: datetime,
-        tolerance_minutes: int = 60
+            self,
+            target_timestamp: datetime,
+            tolerance_minutes: int = 60
     ) -> Optional[Dict[str, Any]]:
         """
         Find the best recovery point for a target timestamp.
-        
+
         Parameters
         ----------
         target_timestamp : datetime
             Target timestamp for recovery
         tolerance_minutes : int
             Maximum tolerance in minutes to find a recovery point
-        
+
         Returns
         -------
         Dict[str, Any] or None
@@ -1750,15 +1752,15 @@ class PointInTimeRecoveryManager:
         return None
 
     def restore_to_point_in_time(
-        self,
-        target_timestamp: datetime,
-        restore_location: Union[str, Path],
-        tolerance_minutes: int = 60,
-        dry_run: bool = False
+            self,
+            target_timestamp: datetime,
+            restore_location: Union[str, Path],
+            tolerance_minutes: int = 60,
+            dry_run: bool = False
     ) -> Dict[str, Any]:
         """
         Restore database to a specific point in time.
-        
+
         Parameters
         ----------
         target_timestamp : datetime
@@ -1769,7 +1771,7 @@ class PointInTimeRecoveryManager:
             Maximum tolerance in minutes to find a recovery point
         dry_run : bool
             If True, only validate the recovery without actually restoring
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -1793,7 +1795,7 @@ class PointInTimeRecoveryManager:
         time_diff = abs(target_timestamp - actual_timestamp)
 
         logger.info(f"Found recovery point: {recovery_point['backup_id']} at {actual_timestamp} "
-                   f"(diff: {time_diff.total_seconds():.1f} seconds)")
+                    f"(diff: {time_diff.total_seconds():.1f} seconds)")
 
         if dry_run:
             return {
@@ -1871,7 +1873,7 @@ class PointInTimeRecoveryManager:
     def validate_recovery_timeline(self) -> Dict[str, Any]:
         """
         Validate the recovery timeline for consistency and completeness.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -1898,7 +1900,7 @@ class PointInTimeRecoveryManager:
                 parent_found = any(p['backup_id'] == parent_id for p in timeline)
                 if not parent_found:
                     issues.append(f"Incremental backup {inc_backup['backup_id']} references "
-                                f"missing parent {parent_id}")
+                                  f"missing parent {parent_id}")
 
         # Check for orphaned incremental backups
         for inc_backup in incremental_backups:
@@ -1906,20 +1908,20 @@ class PointInTimeRecoveryManager:
                 chain = self._get_recovery_chain(inc_backup['backup_id'])
                 if not any(c['backup_type'] == 'full' for c in chain):
                     warnings.append(f"Incremental backup {inc_backup['backup_id']} "
-                                   f"has no full backup in its chain")
+                                    f"has no full backup in its chain")
             except Exception as e:
                 issues.append(f"Failed to validate chain for {inc_backup['backup_id']}: {e}")
 
         # Check for timeline gaps
         if len(timeline) > 1:
             for i in range(1, len(timeline)):
-                prev_backup = timeline[i-1]
+                prev_backup = timeline[i - 1]
                 curr_backup = timeline[i]
 
                 time_gap = curr_backup['timestamp'] - prev_backup['timestamp']
                 if time_gap.total_seconds() > 24 * 3600:  # More than 24 hours
                     warnings.append(f"Large time gap ({time_gap.days} days) between "
-                                   f"{prev_backup['backup_id']} and {curr_backup['backup_id']}")
+                                    f"{prev_backup['backup_id']} and {curr_backup['backup_id']}")
 
         # Calculate recovery window
         recovery_window = None
@@ -1944,14 +1946,14 @@ class PointInTimeRecoveryManager:
         }
 
     def cleanup_recovery_timeline(
-        self,
-        max_age_days: Optional[int] = None,
-        keep_full_backups: int = 3,
-        dry_run: bool = False
+            self,
+            max_age_days: Optional[int] = None,
+            keep_full_backups: int = 3,
+            dry_run: bool = False
     ) -> Dict[str, Any]:
         """
         Clean up old backups while maintaining recovery timeline integrity.
-        
+
         Parameters
         ----------
         max_age_days : int, optional
@@ -1960,7 +1962,7 @@ class PointInTimeRecoveryManager:
             Minimum number of full backups to keep regardless of age
         dry_run : bool
             If True, only simulate cleanup without actually deleting
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -1972,7 +1974,7 @@ class PointInTimeRecoveryManager:
 
         cutoff_date = datetime.now(UTC) - timedelta(days=max_age_days)
         logger.info(f"Cleaning up recovery timeline (max_age: {max_age_days} days, "
-                   f"keep_full: {keep_full_backups})")
+                    f"keep_full: {keep_full_backups})")
 
         timeline = self.get_recovery_timeline()
         full_backups = [p for p in timeline if p['backup_type'] == 'full']
@@ -1996,7 +1998,7 @@ class PointInTimeRecoveryManager:
                     try:
                         chain = self._get_recovery_chain(backup['backup_id'])
                         full_in_chain = any(c['backup_id'] in recent_full_ids and
-                                          c['backup_type'] == 'full' for c in chain)
+                                            c['backup_type'] == 'full' for c in chain)
                         if full_in_chain:
                             backups_to_keep.append(backup)
                         else:
@@ -2035,17 +2037,17 @@ class PointInTimeRecoveryManager:
         }
 
     def get_recovery_recommendations(
-        self,
-        target_timestamp: datetime
+            self,
+            target_timestamp: datetime
     ) -> Dict[str, Any]:
         """
         Get recommendations for recovering to a specific point in time.
-        
+
         Parameters
         ----------
         target_timestamp : datetime
             Target timestamp for recovery
-        
+
         Returns
         -------
         Dict[str, Any]

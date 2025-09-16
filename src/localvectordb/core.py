@@ -33,7 +33,7 @@ DocumentScoringMethod = Literal["best", "average", "worst", "weighted_average", 
 Document scoring methods for aggregating chunk scores:
 
 - "best": Highest chunk score (single best passage matters)
-- "worst": Lowest chunk score (all content must meet threshold)  
+- "worst": Lowest chunk score (all content must meet threshold)
 - "average": Mean of all chunk scores (overall quality)
 - "weighted_average": Score-weighted average (emphasizes top chunks)
 - "frequency_boost": Boosts score by number of quality chunks (default, good for comprehensive docs)

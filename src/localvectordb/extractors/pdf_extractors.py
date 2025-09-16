@@ -22,7 +22,6 @@ from localvectordb.extractors import BaseExtractor, ExtractionResult
 
 logger = logging.getLogger(__name__)
 
-
 _PDF_METADATA_SCHEMA = {
     "total_pages": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
     "pages_with_text": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
@@ -64,7 +63,9 @@ class PDFPlumberExtractor(BaseExtractor):
         except ImportError:
             return False
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Extract text from PDF using pdfplumber."""
         try:
             import pdfplumber
@@ -165,7 +166,9 @@ class PyPDFExtractor(BaseExtractor):
         except ImportError:
             return False
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Extract text from PDF using PyPDF2."""
         try:
             import pypdf

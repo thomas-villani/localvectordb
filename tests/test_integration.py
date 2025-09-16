@@ -65,7 +65,7 @@ class TestLocalVectorDBIntegration:
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
-            
+
             # Mock DatabaseSchema
             mock_schema_instance = Mock()
             mock_schema_instance.initialize = Mock()
@@ -321,7 +321,7 @@ class TestLocalVectorDBIntegration:
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
-                
+
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
@@ -413,10 +413,10 @@ class TestLocalVectorDBIntegration:
             """Test that chunker factory creates working chunkers."""
             methods = ['sentences', 'tokens', 'words', 'lines', 'paragraphs']
 
-            test_text = """This is the first paragraph with multiple sentences. 
+            test_text = """This is the first paragraph with multiple sentences.
             It contains various types of content that should be chunked appropriately.
 
-            This is the second paragraph. It also has multiple sentences that need 
+            This is the second paragraph. It also has multiple sentences that need
             to be processed correctly by the chunking algorithm.
 
             This is the third paragraph for testing purposes."""
@@ -444,7 +444,7 @@ class TestLocalVectorDBIntegration:
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
-                
+
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
@@ -554,7 +554,7 @@ class TestLocalVectorDBIntegration:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_provider.number_of_calls = 0  # Explicitly reset
                 mock_embedding.return_value = mock_provider
-                
+
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
@@ -646,13 +646,13 @@ class TestLocalVectorDBIntegration:
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
-                
+
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
                 mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
-                
+
                 mock_index = Mock()
                 mock_index.ntotal = 0
                 mock_faiss.return_value = mock_index
@@ -749,13 +749,13 @@ class TestLocalVectorDBIntegration:
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
-                
+
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
                 mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
-                
+
                 mock_index = Mock()
                 mock_index.ntotal = 0
                 mock_index.search.return_value = (np.array([[0.1, 0.2]]), np.array([[0, 1]]))
@@ -894,13 +894,13 @@ class TestLocalVectorDBIntegration:
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
-                
+
                 # Mock DatabaseSchema
                 mock_schema_instance = Mock()
                 mock_schema_instance.initialize = Mock()
                 mock_schema_instance.BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
                 mock_schema.return_value = mock_schema_instance
-                
+
                 mock_index = Mock()
                 mock_index.ntotal = 0
                 mock_faiss.return_value = mock_index
@@ -953,7 +953,7 @@ class TestLocalVectorDBIntegration:
 @pytest.mark.integration
 class TestMultiColumnIntegration:
     """Integration tests for multi-column embedding functionality."""
-    
+
     @pytest.fixture
     def multi_column_db(self, temp_dir):
         """Create a database with multi-column search capabilities."""
@@ -980,15 +980,15 @@ class TestMultiColumnIntegration:
                 embedding_enabled=True
             )
         }
-        
+
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-            
+
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
-            
+
             # Mock FAISS index
             mock_index = Mock()
             mock_index.ntotal = 0
@@ -1001,7 +1001,7 @@ class TestMultiColumnIntegration:
             mock_index.reconstruct = Mock(return_value=np.random.rand(384))
             mock_faiss.return_value = mock_index
             mock_faiss_idmap.return_value = mock_index
-            
+
             db = LocalVectorDB(
                 name="multi_column_test",
                 base_path=temp_dir,
@@ -1011,10 +1011,10 @@ class TestMultiColumnIntegration:
                 chunk_size=500,
                 chunking_method="sentences"
             )
-            
+
             yield db
             db.close()
-    
+
     def test_multi_column_workflow(self, multi_column_db):
         """Test complete workflow with multi-column embeddings."""
         # Test documents
@@ -1023,7 +1023,7 @@ class TestMultiColumnIntegration:
             "A detailed study on neural networks and deep learning architectures.",
             "Research on natural language processing using transformer models."
         ]
-        
+
         metadata = [
             {
                 'title': 'Machine Learning Algorithms',
@@ -1053,11 +1053,11 @@ class TestMultiColumnIntegration:
                 'keywords': ['nlp', 'transformers', 'attention']
             }
         ]
-        
+
         # Test upsert with metadata
         doc_ids = multi_column_db.upsert(documents, metadata=metadata)
         assert len(doc_ids) == 3
-        
+
         # Verify embedding-enabled fields are identified
         embedding_fields = multi_column_db._get_embedding_enabled_fields()
         assert 'title' in embedding_fields
@@ -1065,7 +1065,7 @@ class TestMultiColumnIntegration:
         assert 'summary' in embedding_fields
         assert 'keywords' in embedding_fields
         assert 'author' not in embedding_fields  # Not embedding-enabled
-        
+
         # Check that column_embeddings table exists and has data
         with multi_column_db.connection_pool.get_connection() as conn:
             # Check table exists
@@ -1073,13 +1073,13 @@ class TestMultiColumnIntegration:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'"
             )
             assert cursor.fetchone() is not None
-            
+
             # Check FTS tables for fts_enabled fields
             cursor = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='fts_title'"
             )
             assert cursor.fetchone() is not None
-    
+
     def test_multi_column_query(self, multi_column_db):
         """Test multi-column query functionality."""
         # Add test data
@@ -1093,13 +1093,13 @@ class TestMultiColumnIntegration:
             'category': 'AI',
             'keywords': ['ai', 'machine learning']
         }]
-        
+
         multi_column_db.upsert(documents, metadata=metadata)
-        
+
         # Mock the query methods to avoid complex FAISS interactions
         with patch.object(multi_column_db, 'query') as mock_query, \
                 patch.object(multi_column_db, '_search_metadata_field') as mock_search:
-            
+
             # Setup mock returns
             mock_result = Mock()
             mock_result.score = 0.9
@@ -1107,14 +1107,14 @@ class TestMultiColumnIntegration:
             mock_result.metadata = {'title': 'AI Overview'}
             mock_result.type = 'chunk'
             mock_result.document_id = 'doc_1'  # Add proper document ID
-            
+
             mock_query.return_value = [mock_result]
             mock_search.return_value = []
-            
+
             # Test query_multi_column
             results = multi_column_db.query_multi_column("machine learning", k=5)
             assert isinstance(results, list)
-            
+
             # Test with specific columns
             results = multi_column_db.query_multi_column(
                 "AI",
@@ -1122,11 +1122,11 @@ class TestMultiColumnIntegration:
                 k=3
             )
             assert isinstance(results, list)
-    
+
     def test_metadata_field_validation(self):
         """Test validation of metadata field attributes."""
         from localvectordb.core import MetadataField, MetadataFieldType
-        
+
         # Valid cases
         text_field = MetadataField(
             type=MetadataFieldType.TEXT,
@@ -1135,42 +1135,42 @@ class TestMultiColumnIntegration:
         )
         assert text_field.embedding_enabled is True
         assert text_field.fts_enabled is True
-        
+
         json_field = MetadataField(
             type=MetadataFieldType.JSON,
             embedding_enabled=True
         )
         assert json_field.embedding_enabled is True
-        
+
         # Invalid cases
         with pytest.raises(ValueError, match="embedding_enabled can only be True"):
             MetadataField(
                 type=MetadataFieldType.INTEGER,
                 embedding_enabled=True
             )
-        
+
         with pytest.raises(ValueError, match="fts_enabled can only be True"):
             MetadataField(
                 type=MetadataFieldType.BOOLEAN,
                 fts_enabled=True
             )
-    
+
     def test_schema_migration(self, temp_dir):
         """Test that existing databases are migrated to support new schema fields."""
         from localvectordb.database import LocalVectorDB
-        
+
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-            
+
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
-            
+
             mock_index = Mock()
             mock_index.ntotal = 0
             mock_faiss.return_value = mock_index
             mock_faiss_idmap.return_value = mock_index
-            
+
             # Create database (migration should happen automatically)
             db = LocalVectorDB(
                 name="migration_test",
@@ -1179,7 +1179,7 @@ class TestMultiColumnIntegration:
                     'title': MetadataField(type=MetadataFieldType.TEXT)
                 }
             )
-            
+
             # Verify migration
             with db.connection_pool.get_connection() as conn:
                 # Check metadata_schema has new columns
@@ -1187,11 +1187,11 @@ class TestMultiColumnIntegration:
                 columns = {row[1] for row in cursor.fetchall()}
                 assert 'embedding_enabled' in columns
                 assert 'fts_enabled' in columns
-                
+
                 # Check column_embeddings table exists
                 cursor = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'"
                 )
                 assert cursor.fetchone() is not None
-            
+
             db.close()

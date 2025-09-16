@@ -266,7 +266,7 @@ def register_mcp_tool(func):
 async def list_databases() -> Dict[str, Any]:
     """
     List all available vector databases
-    
+
     Returns:
         Dictionary with database names and count
     """
@@ -286,10 +286,10 @@ async def list_databases() -> Dict[str, Any]:
 async def get_database_info(database_name: str) -> Dict[str, Any]:
     """
     Get detailed information about a specific database
-    
+
     Args:
         database_name: Name of the database
-        
+
     Returns:
         Database statistics and configuration
     """
@@ -350,7 +350,7 @@ async def query_database(
 ) -> Dict[str, Any]:
     """
     Search a database using vector, keyword, or hybrid search
-    
+
     Args:
         database_name: Name of the database to search
         query: Search query text
@@ -363,7 +363,7 @@ async def query_database(
         context_window: Window size for context return type
         semantic_dedup_threshold: Threshold for semantic deduplication
         document_scoring_method: Method for scoring documents
-        
+
     Returns:
         Search results with scores and metadata
     """
@@ -443,13 +443,13 @@ async def filter_documents(
 ) -> Dict[str, Any]:
     """
     Filter documents by metadata
-    
+
     Args:
         database_name: Name of the database
         filters: Metadata filters (MongoDB-style)
         limit: Maximum number of results
         offset: Number of results to skip
-        
+
     Returns:
         Filtered documents
     """
@@ -499,11 +499,11 @@ async def get_document(
 ) -> Dict[str, Any]:
     """
     Retrieve a specific document by ID
-    
+
     Args:
         database_name: Name of the database
         document_id: ID of the document
-        
+
     Returns:
         Document content and metadata
     """
@@ -543,11 +543,11 @@ async def check_documents_exist(
 ) -> Dict[str, Any]:
     """
     Check if documents exist in the database
-    
+
     Args:
         database_name: Name of the database
         document_ids: List of document IDs to check
-        
+
     Returns:
         Dictionary mapping document IDs to existence status
     """
@@ -575,10 +575,10 @@ async def check_documents_exist(
 async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
     """
     Get the metadata schema for a database
-    
+
     Args:
         database_name: Name of the database
-        
+
     Returns:
         Metadata schema definition
     """
@@ -606,7 +606,7 @@ async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
 async def get_system_info() -> Dict[str, Any]:
     """
     Get system information and configuration
-    
+
     Returns:
         System version, configuration, and status
     """
@@ -638,7 +638,7 @@ async def create_database(
 ) -> Dict[str, Any]:
     """
     Create a new vector database
-    
+
     Args:
         name: Database name
         metadata_schema: Schema for document metadata (field_name -> type or config dict)
@@ -647,7 +647,7 @@ async def create_database(
         chunking_method: Method for chunking documents
         chunk_size: Maximum chunk size
         chunk_overlap: Overlap between chunks
-        
+
     Returns:
         Database configuration and status
     """
@@ -698,10 +698,10 @@ async def create_database(
 async def delete_database(name: str) -> Dict[str, Any]:
     """
     Delete a vector database
-    
+
     Args:
         name: Database name to delete
-        
+
     Returns:
         Deletion status
     """
@@ -733,7 +733,7 @@ async def upsert_documents(
 ) -> Dict[str, Any]:
     """
     Insert or update documents in the database
-    
+
     Args:
         database_name: Name of the database
         documents: Document(s) to upsert
@@ -741,7 +741,7 @@ async def upsert_documents(
         ids: Optional document IDs
         batch_size: Batch size for processing
         similarity_threshold: Threshold for similarity detection
-        
+
     Returns:
         Document IDs and operation status
     """
@@ -799,13 +799,13 @@ async def update_document(
 ) -> Dict[str, Any]:
     """
     Update a document's content and/or metadata
-    
+
     Args:
         database_name: Name of the database
         document_id: ID of the document to update
         content: New content (optional)
         metadata: New or updated metadata (optional)
-        
+
     Returns:
         Update status
     """
@@ -849,11 +849,11 @@ async def delete_document(
 ) -> Dict[str, Any]:
     """
     Delete a document from the database
-    
+
     Args:
         database_name: Name of the database
         document_id: ID of the document to delete
-        
+
     Returns:
         Deletion status
     """
@@ -894,11 +894,11 @@ async def update_metadata_schema(
 ) -> Dict[str, Any]:
     """
     Update the metadata schema for a database
-    
+
     Args:
         database_name: Name of the database
         metadata_schema: New metadata schema definition
-        
+
     Returns:
         Update status
     """

@@ -104,7 +104,9 @@ class BaseExtractor(ABC):
         pass
 
     @abstractmethod
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """
         Implementation-specific text extraction.
 
@@ -157,7 +159,9 @@ class BaseExtractor(ABC):
 
         return False
 
-    def extract_text(self, file_content: bytes, filename: str, mimetype: Optional[str] = None, **kwargs) -> ExtractionResult:
+    def extract_text(
+            self, file_content: bytes, filename: str, mimetype: Optional[str] = None, **kwargs
+            ) -> ExtractionResult:
         """
         Extract text from file content.
 
@@ -215,6 +219,7 @@ class BaseExtractor(ABC):
             'priority': self.priority
         }
 
+
 class ExtractorRegistry:
     """
     Registry for file content extractors.
@@ -266,7 +271,6 @@ class ExtractorRegistry:
                 logger.info(f"Discovered file extractor plugin: {ep.name}")
             except Exception as e:
                 logger.warning(f"Failed to load file extractor plugin {ep.name}: {e}")
-
 
         cls._plugins_discovered = True
 

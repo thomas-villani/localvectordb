@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # tests/test_config.py
 # Copyright (c) 2023-2025 Tom Villani, Ph.D.
 #

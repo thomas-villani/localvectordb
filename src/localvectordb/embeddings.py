@@ -406,7 +406,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     def _get_model_dimension_sync(self) -> int:
         """
         Get model dimension using synchronous HTTP client to avoid event loop issues.
-        
+
         Returns
         -------
         int
@@ -690,7 +690,7 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
     def _get_model_dimension_sync(self) -> int:
         """
         Determine embedding dimension via synchronous API call.
-        
+
         Returns
         -------
         int

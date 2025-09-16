@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # tests/test_query_builder.py
 """
 Tests for localvectordb.query_builder module.
@@ -607,10 +607,10 @@ class TestQueryBuilderUtilityMethods:
         # Testing that _return_type is properly set by these methods
         result = builder.documents()
         assert result._return_type == "documents"
-        
+
         result = builder.chunks()
         assert result._return_type == "chunks"
-        
+
         result = builder.context()
         assert result._return_type == "context"
 

@@ -22,6 +22,7 @@ from localvectordb.versioning import DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
 
+
 class DatabaseSchema:
     """
     Manages the SQLite database schema for LocalVectorDB, including support for custom document metadata fields.
@@ -92,7 +93,7 @@ class DatabaseSchema:
 
     Notes
     -----
-    - Reserved column names (`id`, `content`, `content_hash`, `created_at`, `updated_at`) cannot be used as metadata fields.
+    - Reserved column names (`id`, `content`, `content_hash`, `created_at`, `updated_at`) cannot be used.
     - Supported metadata field types are: `'text'`, `'integer'`, `'real'`, `'boolean'`, `'date'`, `'json'`.
     - The `initialize` method creates all necessary tables and indexes, and adds metadata columns as needed.
     - Metadata fields can be indexed for faster search and can have default values.
@@ -213,15 +214,15 @@ class DatabaseSchema:
     def _check_trigram_tokenizer_availability(self, conn: sqlite3.Connection) -> bool:
         """
         Check if SQLite FTS5 trigram tokenizer is available.
-        
+
         The trigram tokenizer requires compile-time SQLite extension support
         and may not be available in all SQLite installations.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection
             SQLite database connection
-            
+
         Returns
         -------
         bool
@@ -246,15 +247,15 @@ class DatabaseSchema:
     async def _check_trigram_tokenizer_availability_async(self, conn) -> bool:
         """
         Check if SQLite FTS5 trigram tokenizer is available (async version).
-        
+
         The trigram tokenizer requires compile-time SQLite extension support
         and may not be available in all SQLite installations.
-        
+
         Parameters
         ----------
         conn : aiosqlite.Connection
             Async SQLite database connection
-            
+
         Returns
         -------
         bool
@@ -279,12 +280,12 @@ class DatabaseSchema:
     def _get_sqlite_version(self, conn: sqlite3.Connection) -> tuple:
         """
         Get SQLite version as a tuple for comparison.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection
             SQLite database connection
-            
+
         Returns
         -------
         tuple
@@ -296,12 +297,12 @@ class DatabaseSchema:
     def _supports_drop_column(self, conn: sqlite3.Connection) -> bool:
         """
         Check if SQLite version supports DROP COLUMN (requires 3.35+).
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection
             SQLite database connection
-            
+
         Returns
         -------
         bool
@@ -313,14 +314,14 @@ class DatabaseSchema:
     def _rebuild_table_for_column_drop(self, conn: sqlite3.Connection, field_name: str) -> None:
         """
         Rebuild documents table without the specified column using SQLite-compatible operations.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection
             SQLite database connection
         field_name : str
             Name of the column to drop
-            
+
         Raises
         ------
         Exception
@@ -406,10 +407,12 @@ class DatabaseSchema:
                 except Exception as e:
                     logger.warning(f"Failed to recreate index for {indexed_field}: {e}")
 
-    def _rebuild_table_for_column_type_change(self, conn: sqlite3.Connection, field_name: str, new_sqlite_type: str) -> None:
+    def _rebuild_table_for_column_type_change(
+            self, conn: sqlite3.Connection, field_name: str, new_sqlite_type: str
+            ) -> None:
         """
         Rebuild documents table with a changed column type using SQLite-compatible operations.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection
@@ -418,7 +421,7 @@ class DatabaseSchema:
             Name of the column to change type for
         new_sqlite_type : str
             New SQLite type (e.g., 'TEXT', 'INTEGER', 'REAL')
-            
+
         Raises
         ------
         Exception
@@ -483,7 +486,7 @@ class DatabaseSchema:
             except Exception as e:
                 logger.warning(f"Failed to recreate index for {indexed_field}: {e}")
 
-    def initialize(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None):
+    def initialize(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection=None):
         """Initialize database schema"""
         with self._read_write_lock.write_lock():
             if db_connection is None:
@@ -493,7 +496,7 @@ class DatabaseSchema:
                 conn.execute("PRAGMA foreign_keys = ON")
 
                 # Create base tables
-                for table_name, ddl in self.BASE_SCHEMA.items():
+                for _, ddl in self.BASE_SCHEMA.items():
                     conn.execute(ddl)
 
                 # Create base indexes
@@ -541,7 +544,7 @@ class DatabaseSchema:
                                           required=required, default_value=default_value)
 
             # Store schema definition
-            conn.execute("""INSERT OR REPLACE INTO metadata_schema 
+            conn.execute("""INSERT OR REPLACE INTO metadata_schema
                 (field_name, field_type, indexed, required, default_value, embedding_enabled, fts_enabled)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -609,35 +612,35 @@ class DatabaseSchema:
                     logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
 
                 conn.execute(f'''
-                    CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                    CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                     USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
                 ''')
                 logger.info(f"Created FTS table: {fts_table_name}")
 
                 # Create triggers to keep FTS in sync
                 conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert 
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert
                     AFTER INSERT ON documents
                     WHEN NEW.{field_name} IS NOT NULL
                     BEGIN
-                        INSERT INTO {fts_table_name}(document_id, content) 
+                        INSERT INTO {fts_table_name}(document_id, content)
                         VALUES (NEW.id, NEW.{field_name});
                     END
                 ''')
 
                 conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update 
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update
                     AFTER UPDATE OF {field_name} ON documents
                     WHEN NEW.{field_name} IS NOT NULL
                     BEGIN
                         DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
-                        INSERT INTO {fts_table_name}(document_id, content) 
+                        INSERT INTO {fts_table_name}(document_id, content)
                         VALUES (NEW.id, NEW.{field_name});
                     END
                 ''')
 
                 conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete 
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete
                     AFTER DELETE ON documents
                     BEGIN
                         DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
@@ -664,8 +667,8 @@ class DatabaseSchema:
 
                 # Auto-enable FTS for indexed TEXT fields
                 conn.execute("""
-                    UPDATE metadata_schema 
-                    SET fts_enabled = TRUE 
+                    UPDATE metadata_schema
+                    SET fts_enabled = TRUE
                     WHERE field_type = 'text' AND indexed = TRUE
                 """)
 
@@ -673,7 +676,9 @@ class DatabaseSchema:
             conn.execute(self.BASE_COLUMN_EMBEDDINGS_SCHEMA)
 
             # Create indexes for column_embeddings if not already present
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON column_embeddings(document_id, field_name)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON "
+                "column_embeddings(document_id, field_name)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)")
 
             conn.commit()
@@ -701,7 +706,7 @@ class DatabaseSchema:
 
                 # Check if migration_log table exists (might be an older database)
                 cursor = conn.execute("""
-                    SELECT name FROM sqlite_master 
+                    SELECT name FROM sqlite_master
                     WHERE type='table' AND name='migration_log'
                 """)
                 if not cursor.fetchone():
@@ -767,7 +772,7 @@ class DatabaseSchema:
             db_connection=None,
             drop_columns: bool = False,
             column_mapping: Optional[Dict[str, str]] = None
-            ) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """
         Update the metadata schema, adding new fields and updating existing ones
 
@@ -867,7 +872,7 @@ class DatabaseSchema:
                             # New field - add it
                             try:
                                 # Store schema definition
-                                conn.execute("""INSERT OR REPLACE INTO metadata_schema 
+                                conn.execute("""INSERT OR REPLACE INTO metadata_schema
                                     (field_name, field_type, indexed, required, default_value)
                                     VALUES (?, ?, ?, ?, ?)
                                 """, (
@@ -928,7 +933,7 @@ class DatabaseSchema:
                             if field_changed:
                                 try:
                                     # Update schema definition
-                                    conn.execute("""UPDATE metadata_schema 
+                                    conn.execute("""UPDATE metadata_schema
                                         SET field_type = ?, indexed = ?, required = ?, default_value = ?
                                         WHERE field_name = ?
                                     """, (
@@ -946,7 +951,8 @@ class DatabaseSchema:
                                             index_name = f'idx_documents_{field_name}'
                                             try:
                                                 conn.execute(
-                                                    f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+                                                    f'CREATE INDEX IF NOT EXISTS {index_name} '
+                                                    f'ON documents({field_name})')
                                             except Exception as e:
                                                 changes['errors'].append(
                                                     f"Failed to create index on '{field_name}': {str(e)}")
@@ -977,7 +983,8 @@ class DatabaseSchema:
                                             new_sqlite_type = sqlite_type_map.get(new_type_str, 'TEXT')
 
                                             # Perform the type change using table rebuild
-                                            self._rebuild_table_for_column_type_change(conn, field_name, new_sqlite_type)
+                                            self._rebuild_table_for_column_type_change(conn, field_name,
+                                                                                       new_sqlite_type)
 
                                             logger.info(f"Changed column '{field_name}' data type from {old_type_str} "
                                                         f"to {new_type_str}")
@@ -985,8 +992,8 @@ class DatabaseSchema:
                                         except Exception as e:
                                             changes['errors'].append(
                                                 f"Failed to change column type for '{field_name}': {str(e)}")
-                                            changes['warnings'].append(
-                                                f"Type change failed for '{field_name}', schema updated but column type unchanged")
+                                            changes['warnings'].append(f"Type change failed for '{field_name}', "
+                                                                       f"schema updated but column type unchanged")
 
                                     changes['modified_fields'].append({
                                         'field_name': field_name,
@@ -1017,7 +1024,9 @@ class DatabaseSchema:
 
                                 # Skip dropping the actual column if it was remapped
                                 if column_mapping and field_name in column_mapping:
-                                    logger.info(f"Skipping column drop for '{field_name}' as it was remapped to '{column_mapping[field_name]}'")
+                                    logger.info(
+                                        f"Skipping column drop for '{field_name}' as it was remapped to "
+                                        f"'{column_mapping[field_name]}'")
                                     continue
 
                                 # Optionally drop the actual column
@@ -1041,7 +1050,8 @@ class DatabaseSchema:
                                                     conn.execute(f'DROP TABLE IF EXISTS {fts_table_name}')
                                                     logger.debug(f"Dropped FTS triggers and table for '{field_name}'")
                                                 except Exception as e:
-                                                    logger.warning(f"Failed to drop FTS components for '{field_name}': {e}")
+                                                    logger.warning(
+                                                        f"Failed to drop FTS components for '{field_name}': {e}")
 
                                             # Drop any indexes on this column
                                             index_name = f'idx_documents_{field_name}'
@@ -1051,7 +1061,8 @@ class DatabaseSchema:
                                             except Exception:
                                                 pass  # Index might not exist, that's okay
 
-                                            # Now drop the column - use native DROP COLUMN if supported, otherwise rebuild table
+                                            # Now drop the column - use native DROP COLUMN if supported,
+                                            # otherwise rebuild table
                                             if self._supports_drop_column(conn):
                                                 conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
                                                 logger.info(f"Dropped column '{field_name}' using native DROP COLUMN")
@@ -1091,7 +1102,7 @@ class DatabaseSchema:
             current_schema: Dict[str, MetadataField],
             new_schema: Dict[str, MetadataField],
             reserved_columns: list
-            ) -> None:
+    ) -> None:
         """Validate the column mapping configuration"""
         for old_col, new_col in column_mapping.items():
             # Check that old column exists
@@ -1146,7 +1157,7 @@ class DatabaseSchema:
             column_mapping: Dict[str, str],
             current_schema: Dict[str, MetadataField],
             new_schema: Dict[str, MetadataField]
-            ) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Perform the actual column remapping operations"""
         remap_changes = {
             'remapped_columns': [],
@@ -1194,7 +1205,7 @@ class DatabaseSchema:
             new_col: str,
             old_field: MetadataField,
             new_field: MetadataField
-            ) -> int:
+    ) -> int:
         """Transfer data from old column to new column with type conversion"""
 
         # Check if both columns exist in the documents table
@@ -1220,7 +1231,7 @@ class DatabaseSchema:
             new_col: str,
             old_type: MetadataFieldType,
             new_type: MetadataFieldType
-            ) -> str:
+    ) -> str:
         """Generate SQL for transferring data between columns with type conversion.
 
         **Warning:** input must be pre-validated before using this function.
@@ -1259,7 +1270,7 @@ class DatabaseSchema:
             conn: sqlite3.Connection,
             field_name: str,
             field_def: MetadataField
-            ) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Populate default values for a new field in existing documents"""
         if field_def.default_value is None:
             return {'field_name': field_name, 'rows_updated': 0}
@@ -1285,7 +1296,9 @@ class DatabaseSchema:
         }
 
     # Async methods for DatabaseSchema
-    async def initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None) -> None:
+    async def initialize_async(
+            self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection=None
+            ) -> None:
         """Initialize database schema asynchronously"""
 
         # Determine if we need to manage the connection lifecycle
@@ -1299,7 +1312,7 @@ class DatabaseSchema:
             await db_connection.execute("PRAGMA foreign_keys = ON")
 
             # Create base tables
-            for table_name, ddl in self.BASE_SCHEMA.items():
+            for _, ddl in self.BASE_SCHEMA.items():
                 await db_connection.execute(ddl)
 
             # Create base indexes
@@ -1347,7 +1360,7 @@ class DatabaseSchema:
                                           required=required, default_value=default_value)
 
             # Store schema definition
-            await conn.execute("""INSERT OR REPLACE INTO metadata_schema 
+            await conn.execute("""INSERT OR REPLACE INTO metadata_schema
                 (field_name, field_type, indexed, required, default_value)
                 VALUES (?, ?, ?, ?, ?)
             """, (
@@ -1413,42 +1426,43 @@ class DatabaseSchema:
                     logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
 
                 await conn.execute(f'''
-                    CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                    CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                     USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
                 ''')
                 logger.info(f"Created FTS table: {fts_table_name}")
 
                 # Create triggers to keep FTS in sync
                 await conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert 
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert
                     AFTER INSERT ON documents
                     WHEN NEW.{field_name} IS NOT NULL
                     BEGIN
-                        INSERT INTO {fts_table_name}(document_id, content) 
+                        INSERT INTO {fts_table_name}(document_id, content)
                         VALUES (NEW.id, NEW.{field_name});
                     END
                 ''')
 
                 await conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update 
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update
                     AFTER UPDATE OF {field_name} ON documents
                     WHEN NEW.{field_name} IS NOT NULL
                     BEGIN
                         DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
-                        INSERT INTO {fts_table_name}(document_id, content) 
+                        INSERT INTO {fts_table_name}(document_id, content)
                         VALUES (NEW.id, NEW.{field_name});
                     END
                 ''')
 
                 await conn.execute(f'''
-                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete 
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete
                     AFTER DELETE ON documents
                     BEGIN
                         DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
                     END
                 ''')
 
-    async def load_metadata_schema_async(self, db_connection: Optional[aiosqlite.Connection] = None) -> Dict[str, MetadataField]:
+    async def load_metadata_schema_async(self, db_connection: Optional[aiosqlite.Connection] = None) -> Dict[
+        str, MetadataField]:
         """Load metadata schema from database asynchronously"""
 
         # Determine if we need to manage the connection lifecycle
@@ -1523,7 +1537,6 @@ class DatabaseSchema:
             Summary of changes made including added, removed, modified fields,
             and column remapping operations
         """
-
 
         # Determine if we need to manage the connection lifecycle
         owns_connection = db_connection is None
@@ -1661,7 +1674,7 @@ class DatabaseSchema:
                 # Update metadata_schema table for all fields in new schema
                 for field_name, field_def in new_schema.items():
                     await db_connection.execute("""
-                        INSERT OR REPLACE INTO metadata_schema 
+                        INSERT OR REPLACE INTO metadata_schema
                         (field_name, field_type, indexed, required, default_value)
                         VALUES (?, ?, ?, ?, ?)
                     """, (
@@ -1680,10 +1693,10 @@ class DatabaseSchema:
         except Exception as e:
             try:
                 await db_connection.execute("ROLLBACK")
-            except:
+            except Exception:
                 pass  # Ignore rollback errors
             changes['errors'].append(f"Schema update failed: {str(e)}")
-            raise
+            raise e
         finally:
             if owns_connection and db_connection:
                 await db_connection.close()
@@ -1822,7 +1835,7 @@ class DatabaseSchema:
 
 def get_common_metadata_schemas(
         schema: Optional[str] = None
-    ) -> dict[str, dict[str, MetadataField]] | dict[str, MetadataField]:
+) -> dict[str, dict[str, MetadataField]] | dict[str, MetadataField]:
     """Get predefined metadata schemas for common use cases"""
 
     schemas = {
@@ -1844,7 +1857,8 @@ def get_common_metadata_schemas(
         "research_papers": {
             "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True, fts_enabled=True),
             "authors": MetadataField(type=MetadataFieldType.JSON, indexed=False),
-            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True, fts_enabled=True),
+            "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True,
+                                      fts_enabled=True),
             "publication_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
             "journal": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
             "doi": MetadataField(type=MetadataFieldType.TEXT, indexed=True),

@@ -65,7 +65,9 @@ class HTMLExtractor(BaseExtractor):
         except ImportError:
             return False
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Extract text from HTML files."""
         try:
             from bs4 import BeautifulSoup

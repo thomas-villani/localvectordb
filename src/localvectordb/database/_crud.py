@@ -218,7 +218,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     try:
                         if changed_embedding_fields:
                             self._remove_metadata_embeddings(conn, doc_id)
-                            new_field_embeddings = self._generate_metadata_embeddings(updated_metadata, changed_embedding_fields, batch_size=100)
+                            new_field_embeddings = self._generate_metadata_embeddings(updated_metadata,
+                                                                                      changed_embedding_fields,
+                                                                                      batch_size=100)
                             if new_field_embeddings:
                                 self._store_metadata_embeddings(conn, doc_id, new_field_embeddings)
                                 logger.debug(
@@ -244,7 +246,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
     # --------
     # Filter
     # --------
-    def filter(self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> List[Document]:
+    def filter(
+            self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
+            offset: int = 0
+            ) -> List[Document]:
         """
         Filter documents using enhanced metadata filtering
 
@@ -589,7 +594,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
         result = [doc_id in existing for doc_id in ids_list]
         return result[0] if single else result
 
-    async def filter_async(self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> List[Document]:
+    async def filter_async(
+            self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
+            offset: int = 0
+            ) -> List[Document]:
         """
         Async filter documents by metadata criteria
 
@@ -668,7 +676,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
             documents.append(document)
         return documents
 
-    async def update_async(self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> bool:
+    async def update_async(
+            self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
+            ) -> bool:
         """
         Update a document's content and/or metadata asynchronously.
 
@@ -742,10 +752,13 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 try:
                     if changed_embedding_fields:
                         await self._remove_metadata_embeddings_async(conn, doc_id)
-                        new_field_embeddings = await self._generate_metadata_embeddings_async(updated_metadata, changed_embedding_fields, batch_size=100)
+                        new_field_embeddings = await self._generate_metadata_embeddings_async(updated_metadata,
+                                                                                              changed_embedding_fields,
+                                                                                              batch_size=100)
                         if new_field_embeddings:
                             await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
-                            logger.debug(f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}")
+                            logger.debug(
+                                f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}")
                     set_clauses = ['updated_at = ?']
                     values = [datetime.now(UTC)]
                     for field_name, value in updated_metadata.items():
@@ -754,7 +767,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                             values.append(value)
                     values.append(doc_id)
                     update_sql = f"""
-                        UPDATE documents 
+                        UPDATE documents
                         SET {', '.join(set_clauses)}
                         WHERE id = ?
                     """

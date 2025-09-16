@@ -222,19 +222,19 @@ class KeyManager:
 
             # Create indexes for performance
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_api_keys_active 
+                CREATE INDEX IF NOT EXISTS idx_api_keys_active
                 ON api_keys(active)
             """)
 
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_api_keys_expires 
+                CREATE INDEX IF NOT EXISTS idx_api_keys_expires
                 ON api_keys(expires_at)
             """)
 
             # Only create permission index after ensuring column exists
             try:
                 conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_api_keys_permission 
+                    CREATE INDEX IF NOT EXISTS idx_api_keys_permission
                     ON api_keys(permission_level)
                 """)
             except Exception as e:
@@ -280,12 +280,12 @@ class KeyManager:
                 if 'permission_level' not in columns:
                     logger.info("Adding permission_level column to api_keys table")
                     conn.execute("""
-                        ALTER TABLE api_keys 
+                        ALTER TABLE api_keys
                         ADD COLUMN permission_level TEXT NOT NULL DEFAULT 'read_write'
                     """)
                     # Create index on the new column
                     conn.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_api_keys_permission 
+                        CREATE INDEX IF NOT EXISTS idx_api_keys_permission
                         ON api_keys(permission_level)
                     """)
                     logger.info("Successfully added permission_level column and index")
@@ -373,7 +373,7 @@ class KeyManager:
         # Store in database
         with self._get_connection() as conn:
             conn.execute("""
-                INSERT INTO api_keys 
+                INSERT INTO api_keys
                 (id, key_hash, description, created_at, expires_at, created_by, active, permission_level)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -419,7 +419,7 @@ class KeyManager:
         with self._get_connection() as conn:
             # Get all active keys
             cursor = conn.execute("""
-                SELECT id, key_hash, expires_at FROM api_keys 
+                SELECT id, key_hash, expires_at FROM api_keys
                 WHERE active = TRUE
             """)
 
@@ -474,7 +474,7 @@ class KeyManager:
         with self._get_connection() as conn:
             # Get all active keys with permission levels
             cursor = conn.execute("""
-                SELECT id, key_hash, expires_at, permission_level FROM api_keys 
+                SELECT id, key_hash, expires_at, permission_level FROM api_keys
                 WHERE active = TRUE
             """)
 
@@ -656,12 +656,12 @@ class KeyManager:
         with self._get_connection() as conn:
             if soft_delete:
                 cursor = conn.execute("""
-                    UPDATE api_keys SET active = FALSE 
+                    UPDATE api_keys SET active = FALSE
                     WHERE expires_at IS NOT NULL AND expires_at <= ? AND active = TRUE
                 """, (now,))
             else:
                 cursor = conn.execute("""
-                    DELETE FROM api_keys 
+                    DELETE FROM api_keys
                     WHERE expires_at IS NOT NULL AND expires_at <= ?
                 """, (now,))
 
@@ -697,7 +697,7 @@ class KeyManager:
             # Expired keys
             now = datetime.now(UTC).isoformat()
             cursor = conn.execute("""
-                SELECT COUNT(*) as count FROM api_keys 
+                SELECT COUNT(*) as count FROM api_keys
                 WHERE expires_at IS NOT NULL AND expires_at <= ?
             """, (now,))
             stats['expired_keys'] = cursor.fetchone()['count']
@@ -705,7 +705,7 @@ class KeyManager:
             # Keys expiring soon (next 7 days)
             future = (datetime.now(UTC) + timedelta(days=7)).isoformat()
             cursor = conn.execute("""
-                SELECT COUNT(*) as count FROM api_keys 
+                SELECT COUNT(*) as count FROM api_keys
                 WHERE expires_at IS NOT NULL AND expires_at <= ? AND expires_at > ? AND active = TRUE
             """, (future, now))
             stats['expiring_soon'] = cursor.fetchone()['count']
@@ -713,7 +713,7 @@ class KeyManager:
             # Recently used keys (last 24 hours)
             recent = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
             cursor = conn.execute("""
-                SELECT COUNT(*) as count FROM api_keys 
+                SELECT COUNT(*) as count FROM api_keys
                 WHERE last_used IS NOT NULL AND last_used >= ? AND active = TRUE
             """, (recent,))
             stats['recently_used'] = cursor.fetchone()['count']

@@ -36,27 +36,27 @@ CURRENT_SCHEMA_VERSION = "1.0.0"
 class DatabaseVersion:
     """
     Represents a database version with semantic versioning support.
-    
+
     Supports semantic versioning format (MAJOR.MINOR.PATCH) and provides
     comparison operations and conversion to/from SQLite's integer user_version.
-    
+
     Parameters
     ----------
     version : str
         Version string in semantic versioning format (e.g., "1.0.0")
-        
+
     Examples
     --------
     Basic usage::
-    
+
         version = DatabaseVersion("1.2.3")
         print(version.major)  # 1
         print(version.minor)  # 2
         print(version.patch)  # 3
         print(version.to_sqlite_version())  # 1002003
-        
+
     Version comparison::
-    
+
         v1 = DatabaseVersion("1.0.0")
         v2 = DatabaseVersion("1.1.0")
         print(v1 < v2)  # True
@@ -85,10 +85,10 @@ class DatabaseVersion:
     def to_sqlite_version(self) -> int:
         """
         Convert version to SQLite PRAGMA user_version integer format.
-        
+
         Uses format: MAJOR * 1,000,000 + MINOR * 1,000 + PATCH
         This allows for versions up to 999.999.999 which should be sufficient.
-        
+
         Returns
         -------
         int
@@ -100,12 +100,12 @@ class DatabaseVersion:
     def from_sqlite_version(cls, sqlite_version: int) -> 'DatabaseVersion':
         """
         Create DatabaseVersion from SQLite PRAGMA user_version integer.
-        
+
         Parameters
         ----------
         sqlite_version : int
             Integer from SQLite PRAGMA user_version
-            
+
         Returns
         -------
         DatabaseVersion
@@ -123,16 +123,16 @@ class DatabaseVersion:
     def is_compatible_with(self, other: 'DatabaseVersion') -> bool:
         """
         Check if this version is compatible with another version.
-        
+
         Versions are considered compatible if they have the same major version.
         This follows semantic versioning rules where major version changes
         indicate breaking changes.
-        
+
         Parameters
         ----------
         other : DatabaseVersion
             Version to compare against
-            
+
         Returns
         -------
         bool
@@ -175,10 +175,10 @@ class DatabaseVersion:
 class VersionManager:
     """
     Manages database version tracking and migration metadata.
-    
+
     Handles SQLite PRAGMA user_version, version metadata in the config table,
     and migration tracking through the migration_log table.
-    
+
     Parameters
     ----------
     db_path : Union[str, Path]
@@ -191,14 +191,14 @@ class VersionManager:
     def get_database_version(self, conn: Optional[sqlite3.Connection] = None) -> DatabaseVersion:
         """
         Get the current database version.
-        
+
         Reads from PRAGMA user_version and falls back to config table if needed.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection, optional
             Database connection to use. If None, creates a new connection.
-            
+
         Returns
         -------
         DatabaseVersion
@@ -236,7 +236,7 @@ class VersionManager:
     def set_database_version(self, version: DatabaseVersion, conn: Optional[sqlite3.Connection] = None) -> None:
         """
         Set the database version using both PRAGMA user_version and config table.
-        
+
         Parameters
         ----------
         version : DatabaseVersion
@@ -255,13 +255,13 @@ class VersionManager:
 
                 # Also store in config table for additional metadata
                 conn.execute("""
-                    INSERT OR REPLACE INTO config (key, value) 
+                    INSERT OR REPLACE INTO config (key, value)
                     VALUES (?, ?)
                 """, ("db_version", str(version)))
 
                 # Store version metadata
                 conn.execute("""
-                    INSERT OR REPLACE INTO config (key, value) 
+                    INSERT OR REPLACE INTO config (key, value)
                     VALUES (?, ?)
                 """, ("version_updated_at", datetime.now(UTC).isoformat()))
 
@@ -274,12 +274,12 @@ class VersionManager:
     def get_migration_history(self, conn: Optional[sqlite3.Connection] = None) -> List[Dict]:
         """
         Get the history of applied migrations.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection, optional
             Database connection to use. If None, creates a new connection.
-            
+
         Returns
         -------
         List[Dict]
@@ -292,7 +292,7 @@ class VersionManager:
         try:
             cursor = conn.execute("""
                 SELECT version, applied_at, rollback_script, checksum
-                FROM migration_log 
+                FROM migration_log
                 ORDER BY applied_at ASC
             """)
 
@@ -319,7 +319,7 @@ class VersionManager:
                         checksum: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> None:
         """
         Record a completed migration in the migration log.
-        
+
         Parameters
         ----------
         version : str
@@ -352,14 +352,14 @@ class VersionManager:
                        conn: Optional[sqlite3.Connection] = None) -> bool:
         """
         Check if database needs migration to target version.
-        
+
         Parameters
         ----------
         target_version : DatabaseVersion, optional
             Target version to check against. Defaults to CURRENT_SCHEMA_VERSION.
         conn : sqlite3.Connection, optional
             Database connection to use. If None, creates a new connection.
-            
+
         Returns
         -------
         bool
@@ -374,9 +374,9 @@ class VersionManager:
     def initialize_version_tracking(self, conn: Optional[sqlite3.Connection] = None) -> None:
         """
         Initialize version tracking for a new database.
-        
+
         Sets the database to the current schema version and records initial state.
-        
+
         Parameters
         ----------
         conn : sqlite3.Connection, optional

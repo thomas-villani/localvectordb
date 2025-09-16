@@ -835,7 +835,7 @@ class TestRemoteVectorDBFileOperations:
         # Test single file
         result = db.upsert_from_file(test_file1)
         assert result == ["doc1", "doc2"]
-        
+
         # Verify the request was made
         assert mock_httpx_client.request.called
 
@@ -870,7 +870,7 @@ class TestRemoteVectorDBFileOperations:
             errors="raise"
         )
         assert result == ["new_doc"]
-        
+
         # Verify the request was made
         assert mock_httpx_client.request.called
 
@@ -916,7 +916,7 @@ class TestRemoteVectorDBChunkOperations:
     def test_upsert_from_chunks(self, mock_httpx_client):
         """Test upserting documents from chunks."""
         from localvectordb.core import Chunk, ChunkPosition
-        
+
         # Mock the response
         mock_httpx_client.post.return_value.json.return_value = {
             "ids": ["doc1", "doc2"],
@@ -999,7 +999,7 @@ class TestRemoteVectorDBChunkOperations:
     def test_insert_from_chunks(self, mock_httpx_client):
         """Test inserting documents from chunks with conflict handling."""
         from localvectordb.core import Chunk, ChunkPosition
-        
+
         # Mock the response
         mock_httpx_client.post.return_value.json.return_value = {
             "ids": ["new_doc"],
@@ -1071,7 +1071,7 @@ class TestRemoteVectorDBAsyncFileOperations:
     async def test_upsert_from_file_async(self, tmp_path):
         """Test async file upsert."""
         from unittest.mock import AsyncMock, patch, Mock
-        
+
         # Create test file
         test_file = tmp_path / "async_test.txt"
         test_file.write_text("Async test content")
@@ -1084,7 +1084,7 @@ class TestRemoteVectorDBAsyncFileOperations:
                 "document_ids": ["async_doc"],
                 "status": "success"
             })
-            
+
             mock_client.request.return_value = mock_response
             mock_get_response = Mock()
             mock_get_response.json = AsyncMock(return_value={
@@ -1115,7 +1115,7 @@ class TestRemoteVectorDBAsyncFileOperations:
     async def test_insert_from_file_async(self, tmp_path):
         """Test async file insert."""
         from unittest.mock import AsyncMock, patch, Mock
-        
+
         # Create test file
         test_file = tmp_path / "async_test.txt"
         test_file.write_text("Async test content")
@@ -1128,7 +1128,7 @@ class TestRemoteVectorDBAsyncFileOperations:
                 "document_ids": ["new_async_doc"],
                 "status": "success"
             })
-            
+
             mock_client.request.return_value = mock_response
             mock_get_response = Mock()
             mock_get_response.json = AsyncMock(return_value={
@@ -1170,10 +1170,10 @@ class TestRemoteVectorDBAsyncChunkOperations:
         """Test async chunk upsert."""
         from localvectordb.core import Chunk, ChunkPosition
         from unittest.mock import AsyncMock, Mock
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
-            
+
             # Create a proper mock response that won't interfere with status_code checks
             mock_response = Mock()
             mock_response.status_code = 200  # This needs to be a plain int
@@ -1181,7 +1181,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
                 "ids": ["async_chunk_doc"],
                 "status": "success"
             })
-            
+
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
             mock_get_response = Mock()
@@ -1224,10 +1224,10 @@ class TestRemoteVectorDBAsyncChunkOperations:
     async def test_insert_from_chunks_async(self):
         """Test async chunk insert."""
         from unittest.mock import AsyncMock, Mock
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
-            
+
             # Create a proper mock response
             mock_response = Mock()
             mock_response.status_code = 200
@@ -1235,7 +1235,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
                 "ids": ["new_async_chunk"],
                 "status": "success"
             })
-            
+
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
             mock_get_response = Mock()

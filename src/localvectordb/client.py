@@ -753,17 +753,17 @@ class RemoteVectorDB(BaseVectorDB):
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
         """
         Count documents matching filters.
-        
+
         Parameters
         ----------
         filters : Dict[str, Any], optional
             Metadata filters to apply
-            
+
         Returns
         -------
         int
             Number of matching documents
-            
+
         Raises
         ------
         NotImplementedError
@@ -979,7 +979,7 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> List[str]:
         """
         Upsert documents from pre-chunked data.
-        
+
         Parameters
         ----------
         chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
@@ -992,7 +992,7 @@ class RemoteVectorDB(BaseVectorDB):
             Number of embeddings to generate at once
         similarity_threshold : Optional[float], default=None
             If provided, filters out chunks that are too similar to existing chunks
-            
+
         Returns
         -------
         List[str]
@@ -1044,7 +1044,7 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> List[str]:
         """
         Insert documents from pre-chunked data with conflict handling.
-        
+
         Parameters
         ----------
         chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
@@ -1057,12 +1057,12 @@ class RemoteVectorDB(BaseVectorDB):
             If provided, filters out chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"], default="raise"
             How to handle document ID conflicts
-            
+
         Returns
         -------
         List[str]
             List of document IDs that were actually inserted
-            
+
         Raises
         ------
         DuplicateDocumentIDError
@@ -1359,7 +1359,7 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> List[QueryResult]:
         """
         Query across multiple columns (main content + embedding-enabled metadata fields)
-        
+
         Parameters
         ----------
         query : str
@@ -1383,7 +1383,7 @@ class RemoteVectorDB(BaseVectorDB):
             Method for aggregating chunk scores into document scores
         document_scoring_options : dict, optional
             Parameters for the scoring method
-            
+
         Returns
         -------
         List[QueryResult]
@@ -1748,11 +1748,11 @@ class RemoteVectorDB(BaseVectorDB):
     def healthy(self) -> bool:
         """
         Check if the remote database server is healthy and accessible.
-        
+
         This property performs a lightweight ping to the server to verify
         connectivity and server responsiveness. Results are cached for 60 seconds
         to avoid excessive network requests.
-        
+
         Returns
         -------
         bool
@@ -1768,10 +1768,10 @@ class RemoteVectorDB(BaseVectorDB):
     def closed(self) -> bool:
         """
         Check if the connection to the remote database is closed.
-        
+
         Note: This is a legacy property name. For checking server health,
         use the 'healthy' property instead.
-        
+
         Returns
         -------
         bool
@@ -2318,7 +2318,7 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> List[str]:
         """
         Upsert documents from pre-chunked data (async).
-        
+
         Parameters
         ----------
         chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
@@ -2331,7 +2331,7 @@ class RemoteVectorDB(BaseVectorDB):
             Number of embeddings to generate at once
         similarity_threshold : Optional[float], default=None
             If provided, filters out chunks that are too similar to existing chunks
-            
+
         Returns
         -------
         List[str]
@@ -2384,7 +2384,7 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> List[str]:
         """
         Insert documents from pre-chunked data with conflict handling (async).
-        
+
         Parameters
         ----------
         chunks_by_document : Dict[str, Union[List[Chunk], List[str]]]
@@ -2397,12 +2397,12 @@ class RemoteVectorDB(BaseVectorDB):
             If provided, filters out chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"], default="raise"
             How to handle document ID conflicts
-            
+
         Returns
         -------
         List[str]
             List of document IDs that were actually inserted
-            
+
         Raises
         ------
         DuplicateDocumentIDError
@@ -2540,17 +2540,17 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> int:
         """
         Count documents matching filters asynchronously.
-        
+
         Parameters
         ----------
         filters : Dict[str, Any], optional
             Metadata filters to apply
-            
+
         Returns
         -------
         int
             Number of matching documents
-            
+
         Raises
         ------
         NotImplementedError
@@ -2693,7 +2693,7 @@ class RemoteVectorDB(BaseVectorDB):
     ) -> List[QueryResult]:
         """
         Async query across multiple columns (main content + embedding-enabled metadata fields)
-        
+
         Parameters
         ----------
         query : str
@@ -2717,7 +2717,7 @@ class RemoteVectorDB(BaseVectorDB):
             Method for aggregating chunk scores into document scores
         document_scoring_options : dict, optional
             Parameters for the scoring method
-            
+
         Returns
         -------
         List[QueryResult]

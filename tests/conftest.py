@@ -6,7 +6,7 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # tests/conftest.py
 # tests/conftest.py
 """
@@ -33,17 +33,17 @@ def global_cleanup():
     """Global cleanup fixture to prevent test interference."""
     # Store initial state
     initial_modules = set(sys.modules.keys())
-    
+
     # Import registry here to avoid circular imports
     from localvectordb.embeddings import EmbeddingRegistry
     initial_providers = EmbeddingRegistry._providers.copy()
-    
+
     yield
-    
+
     # Cleanup after test
     # 1. Clean up EmbeddingRegistry state
     EmbeddingRegistry._providers = initial_providers
-    
+
     # 2. Remove dynamically loaded migration test modules
     modules_to_remove = []
     for module_name in sys.modules:

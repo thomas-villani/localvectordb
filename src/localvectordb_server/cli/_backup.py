@@ -41,10 +41,10 @@ from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print
 def backup_group(ctx):
     """
     Backup and restore operations for databases.
-    
+
     Provides comprehensive backup functionality including full backups,
     incremental backups, and point-in-time recovery capabilities.
-    
+
     \b
     Examples:
         \b
@@ -83,11 +83,11 @@ def create_backup(ctx, database_name, backup_type, parent, location,
                   compression, no_verify, exclude_faiss, output_json):
     """
     Create a backup of the specified database.
-    
-    Creates either a full backup (complete database snapshot) or an incremental 
+
+    Creates either a full backup (complete database snapshot) or an incremental
     backup (changes since parent backup). Full backups are self-contained while
     incremental backups require the parent backup chain for restoration.
-    
+
     \b
     Examples:
         \b
@@ -198,10 +198,10 @@ def create_backup(ctx, database_name, backup_type, parent, location,
 def list_backups(ctx, database, type, limit, output_json, location):
     """
     List available backups.
-    
+
     Shows all available backups with their metadata including creation time,
     type, size, and parent relationships for incremental backups.
-    
+
     \b
     Examples:
         \b
@@ -330,11 +330,11 @@ def list_backups(ctx, database, type, limit, output_json, location):
 def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json):
     """
     Restore a database from backup.
-    
+
     Restores a database from either a full backup or by applying an incremental
     backup chain. For incremental backups, automatically finds and applies the
     complete backup chain starting from the base full backup.
-    
+
     \b
     Examples:
         \b
@@ -463,10 +463,10 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
 def verify_backup(backup_id, location, output_json):
     """
     Verify backup integrity.
-    
+
     Verifies that a backup file is valid and can be restored by checking
     file structure, checksums, and metadata consistency.
-    
+
     \b
     Examples:
         \b
@@ -565,10 +565,10 @@ def verify_backup(backup_id, location, output_json):
 def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
     """
     Clean up old backups based on retention policy.
-    
+
     Removes old backups while maintaining backup chain integrity and keeping
     a minimum number of full backups for recovery purposes.
-    
+
     \b
     Examples:
         \b
@@ -676,12 +676,12 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
 def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run, output_json):
     """
     Perform point-in-time recovery to a specific timestamp.
-    
+
     Restores the database to the state it was in at the specified timestamp
     by finding the closest backup point and applying the backup chain.
-    
+
     Timestamp format: YYYY-MM-DD HH:MM:SS or ISO format
-    
+
     \b
     Examples:
         \b

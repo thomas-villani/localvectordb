@@ -38,18 +38,19 @@ from localvectordb.extractors import ExtractorRegistry
 
 logger = logging.getLogger(__name__)
 
+
 class PipelineMixin(LocalVectorDBBase, ABC):
 
     # -----------------
     # Public APIs (sync)
     # -----------------
     def upsert(
-        self,
-        documents: Union[str, List[str]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None,
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
         Insert or update documents in the database with pipeline processing
@@ -100,13 +101,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             return result_ids
 
     def upsert_from_file(
-        self,
-        file_paths: Union[str, Path, List[Union[str, Path]]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None,
-        extractor_kwargs: Optional[Dict[str, Any]] = None,
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Insert or update documents from files using file extraction.
@@ -183,11 +184,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
 
     def upsert_from_chunks(
-        self,
-        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None,
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
         Insert or update documents from pre-chunked data with pipeline processing.
@@ -245,13 +246,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             return result_ids
 
     def insert(
-        self,
-        documents: Union[str, List[str]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None,
-        errors: Literal["ignore", "raise"] = "raise",
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         """
         Insert new documents into the database with pipeline processing
@@ -320,14 +321,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             return result_ids
 
     def insert_from_file(
-        self,
-        file_paths: Union[str, Path, List[Union[str, Path]]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None,
-        errors: Literal["ignore", "raise"] = "raise",
-        extractor_kwargs: Optional[Dict[str, Any]] = None,
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Insert new documents from files using file extraction.
@@ -407,12 +408,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
 
     def insert_from_chunks(
-        self,
-        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None,
-        errors: Literal["ignore", "raise"] = "raise",
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = 100,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         """
         Insert documents from pre-chunked data with conflict handling.
@@ -538,10 +539,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # --------------------
     # Similarity filtering
     # --------------------
-    def _filter_similar_chunks_vectorized(self, embeddings: np.ndarray, chunks: List[Chunk], doc_chunk_mapping: List[Tuple], similarity_threshold: float, existing_chunk_hashes: Optional[set] = None):
+    def _filter_similar_chunks_vectorized(
+            self, embeddings: np.ndarray, chunks: List[Chunk], doc_chunk_mapping: List[Tuple],
+            similarity_threshold: float, existing_chunk_hashes: Optional[set] = None
+            ):
         """
         Filter similar chunks based on content hash and vector similarity.
-        
+
         Parameters:
             existing_chunk_hashes: Optional pre-computed set of chunk hashes to avoid repeated DB queries.
                                   If None, will query from database (expensive on large datasets).
@@ -594,7 +598,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # ------------------
     # Bulk DB operations
     # ------------------
-    def _insert_documents_bulk(self, conn, documents_data: List[Tuple[str, str, str, Dict[str, Any]]], mode: Literal["insert", "replace"] = "replace") -> None:
+    def _insert_documents_bulk(
+            self, conn, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
+            mode: Literal["insert", "replace"] = "replace"
+            ) -> None:
         if not documents_data:
             return
         base_columns = self.schema.BASE_COLUMNS.copy()
@@ -637,8 +644,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             )
         conn.executemany(
             '''
-            INSERT INTO chunks 
-            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line, 
+            INSERT INTO chunks
+            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line,
             start_col, end_line, end_col, tokens, faiss_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
@@ -648,20 +655,22 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # -----------------
     # Pipelines (sync)
     # -----------------
-    def _process_with_pipeline(self,
-                               documents: List[str],
-                               metadata_batch: List[Dict[str, Any]],
-                               ids: List[str], batch_size: int,
-                               similarity_threshold: Optional[float],
-                               # queue_size: int = 3,
-                               mode: Literal["upsert", "insert"] = "upsert"
-                               ) -> List[str]:
+    def _process_with_pipeline(
+            self,
+            documents: List[str],
+            metadata_batch: List[Dict[str, Any]],
+            ids: List[str], batch_size: int,
+            similarity_threshold: Optional[float],
+            # queue_size: int = 3,
+            mode: Literal["upsert", "insert"] = "upsert"
+            ) -> List[str]:
         queue_size = self.pipeline_queue_size
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(ids)
         chunk_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         result_queue: queue.Queue = queue.Queue()
         total_docs = len(documents)
+
         def chunking_worker():
             try:
                 for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids, strict=False)):
@@ -672,7 +681,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     reused_chunk_indices = set()
                     for chunk in chunks:
                         existing_chunk = existing_chunks.get(chunk.index)
-                        if (existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk['faiss_id'] is not None):
+                        if (existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk[
+                            'faiss_id'] is not None):
                             chunk.faiss_id = existing_chunk['faiss_id']
                             unchanged_chunks.append(chunk)
                             reused_chunk_indices.add(chunk.index)
@@ -703,6 +713,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 logger.error(f"Chunking worker error: {e}")
                 chunk_queue.put(None)
                 raise
+
         def embedding_worker():
             try:
                 embedding_enabled_fields = self._get_embedding_enabled_fields()
@@ -722,7 +733,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
                     if embedding_enabled_fields:
                         metadata = chunk_data['metadata']
-                        field_embeddings = self._generate_metadata_embeddings(metadata, embedding_enabled_fields, batch_size)
+                        field_embeddings = self._generate_metadata_embeddings(metadata, embedding_enabled_fields,
+                                                                              batch_size)
                         chunk_data['field_embeddings'] = field_embeddings
                     else:
                         chunk_data['field_embeddings'] = {}
@@ -732,6 +744,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 logger.error(f"Embedding worker error: {e}")
                 embedding_queue.put(None)
                 raise
+
         def database_worker():
             try:
                 while True:
@@ -744,7 +757,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     new_embeddings = chunk_data['new_embeddings']
                     field_embeddings = chunk_data['field_embeddings']
                     if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
-                        doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'], chunk_data['content_hash'])
+                        doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'],
+                                    chunk_data['content_hash'])
                         doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
                         filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
                             new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
@@ -753,7 +767,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         new_embeddings = filtered_embeddings
                     all_chunks = unchanged_chunks + chunks_needing_embedding
                     if len(all_chunks) > 0 or mode == "upsert":
-                        documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'], chunk_data['metadata'])]
+                        documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'],
+                                           chunk_data['metadata'])]
                         chunks_data = [(chunk_data['doc_id'], chunk) for chunk in all_chunks]
                         with self.connection_pool.get_connection() as conn:
                             conn.execute('BEGIN')
@@ -761,7 +776,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data['doc_id'])
                                     self._remove_old_chunks_batch(
-                                        conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
+                                        conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'],
+                                        chunk_data['faiss_ids_to_remove']
                                     )
                                 self._insert_documents_bulk(conn, documents_data, mode=mode)
                                 if new_embeddings.size > 0:
@@ -779,6 +795,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 logger.error(f"Database worker error: {e}")
                 result_queue.put(None)
                 raise
+
         workers = [
             threading.Thread(target=chunking_worker, name="ChunkingWorker"),
             threading.Thread(target=embedding_worker, name="EmbeddingWorker"),
@@ -800,13 +817,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     logger.warning(f"Worker {w.name} did not complete in time")
         return processed_ids
 
-    def _process_from_chunks_pipeline(self,
-                                      chunks_by_document: Dict[str, List[Chunk]],
-                                      metadata_batch: Dict[str, Dict[str, Any]],
-                                      batch_size: int,
-                                      similarity_threshold: Optional[float],
-                                      mode: Literal["upsert", "insert"] = "upsert"
-                                      ) -> List[str]:
+    def _process_from_chunks_pipeline(
+            self,
+            chunks_by_document: Dict[str, List[Chunk]],
+            metadata_batch: Dict[str, Dict[str, Any]],
+            batch_size: int,
+            similarity_threshold: Optional[float],
+            mode: Literal["upsert", "insert"] = "upsert"
+            ) -> List[str]:
 
         queue_size = self.pipeline_queue_size
         doc_ids = list(chunks_by_document.keys())
@@ -824,7 +842,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     reused_chunk_indices = set()
                     for chunk in chunks:
                         existing_chunk = existing_chunks.get(chunk.index)
-                        if (existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk['faiss_id'] is not None):
+                        if (existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk[
+                            'faiss_id'] is not None):
                             chunk.faiss_id = existing_chunk['faiss_id']
                             unchanged_chunks.append(chunk)
                             reused_chunk_indices.add(chunk.index)
@@ -876,7 +895,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
                     if embedding_enabled_fields:
                         metadata = chunk_data['metadata']
-                        field_embeddings = self._generate_metadata_embeddings(metadata, embedding_enabled_fields, batch_size)
+                        field_embeddings = self._generate_metadata_embeddings(metadata, embedding_enabled_fields,
+                                                                              batch_size)
                         chunk_data['field_embeddings'] = field_embeddings
                     else:
                         chunk_data['field_embeddings'] = {}
@@ -899,7 +919,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     new_embeddings = chunk_data['new_embeddings']
                     field_embeddings = chunk_data['field_embeddings']
                     if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
-                        doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'], chunk_data['content_hash'])
+                        doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'],
+                                    chunk_data['content_hash'])
                         doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
                         filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
                             new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
@@ -908,7 +929,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         new_embeddings = filtered_embeddings
                     all_chunks = unchanged_chunks + chunks_needing_embedding
                     if len(all_chunks) > 0 or mode == "upsert":
-                        documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'], chunk_data['metadata'])]
+                        documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'],
+                                           chunk_data['metadata'])]
                         chunks_data = [(chunk_data['doc_id'], chunk) for chunk in all_chunks]
                         with self.connection_pool.get_connection() as conn:
                             conn.execute('BEGIN')
@@ -916,7 +938,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data['doc_id'])
                                     self._remove_old_chunks_batch(
-                                        conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
+                                        conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'],
+                                        chunk_data['faiss_ids_to_remove']
                                     )
                                 self._insert_documents_bulk(conn, documents_data, mode=mode)
                                 if new_embeddings.size > 0:
@@ -934,6 +957,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.error(f"Database worker error: {e}")
                 raise
+
         workers = [
             threading.Thread(target=chunk_comparison_worker, name="ChunkComparisonWorker"),
             threading.Thread(target=embedding_worker, name="EmbeddingWorker"),
@@ -963,11 +987,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 doc_id = row['document_id']
                 if doc_id not in existing:
                     existing[doc_id] = {}
-                existing[doc_id][row['chunk_index']] = {'content_hash': row['content_hash'], 'faiss_id': row['faiss_id']}
+                existing[doc_id][row['chunk_index']] = {
+                    'content_hash': row['content_hash'], 'faiss_id': row['faiss_id']
+                }
         logger.debug(f"Fetched existing chunks for {len(existing)} documents")
         return existing
 
-    def _remove_old_chunks_batch(self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]) -> None:
+    def _remove_old_chunks_batch(
+            self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
+            ) -> None:
         if chunk_indices_to_remove:
             placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
             conn.execute(
@@ -984,14 +1012,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # Public APIs (async)
     # ------------------
     async def upsert_async(
-        self,
-        documents: Union[str, List[str]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = None,
-        similarity_threshold: Optional[float] = None,
-        max_concurrent_chunks: int = 3,
-        max_concurrent_embeddings: int = 2,
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         """
         Async upsert with pipeline processing for maximum throughput
@@ -1045,7 +1073,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         ids = new_ids
         self._validate_metadata_batch(metadata)
         result_ids = await self._async_pipeline_process(
-            documents, metadata, ids, batch_size, similarity_threshold, max_concurrent_chunks, max_concurrent_embeddings, mode="upsert"
+            documents, metadata, ids, batch_size, similarity_threshold, max_concurrent_chunks,
+            max_concurrent_embeddings, mode="upsert"
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
@@ -1053,15 +1082,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         return result_ids
 
     async def upsert_from_file_async(
-        self,
-        file_paths: Union[str, Path, List[Union[str, Path]]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = None,
-        similarity_threshold: Optional[float] = None,
-        max_concurrent_chunks: int = 3,
-        max_concurrent_embeddings: int = 2,
-        extractor_kwargs: Optional[Dict[str, Any]] = None,
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Async insert or update documents from files using file extraction.
@@ -1112,6 +1141,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             raise ValueError("Number of metadata entries must match number of files")
         if ids is not None and len(ids) != len(file_paths):
             raise ValueError("Number of IDs must match number of files")
+
         async def extract_file_text(file_path: Path, index: int):
             def _extract():
                 if not file_path.exists():
@@ -1122,7 +1152,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 if not extraction_result.success:
                     raise ValueError(f"Failed to extract text from {file_path}: {extraction_result.error}")
                 return extraction_result
+
             return await loop.run_in_executor(None, _extract)
+
         extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
         extraction_results = await asyncio.gather(*extraction_tasks)
         documents, merged_metadata, final_ids = [], [], []
@@ -1148,13 +1180,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
 
     async def upsert_from_chunks_async(
-        self,
-        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = None,
-        similarity_threshold: Optional[float] = None,
-        max_concurrent_chunks: int = 3,
-        max_concurrent_embeddings: int = 2,
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         """
         Async version of upsert_from_chunks - Insert or update documents from pre-chunked data.
@@ -1220,15 +1252,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         return result_ids
 
     async def insert_async(
-        self,
-        documents: Union[str, List[str]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = None,
-        similarity_threshold: Optional[float] = None,
-        errors: Literal["ignore", "raise"] = "raise",
-        max_concurrent_chunks: int = 3,
-        max_concurrent_embeddings: int = 2,
+            self,
+            documents: Union[str, List[str]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         """
         Insert new documents into the database with async pipeline
@@ -1289,7 +1321,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         meta_to_process = [item[1] for item in docs_to_insert]
         ids_to_process = [item[2] for item in docs_to_insert]
         result_ids = await self._async_pipeline_process(
-            docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, max_concurrent_chunks, max_concurrent_embeddings, mode="insert"
+            docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, max_concurrent_chunks,
+            max_concurrent_embeddings, mode="insert"
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
@@ -1297,16 +1330,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         return result_ids
 
     async def insert_from_file_async(
-        self,
-        file_paths: Union[str, Path, List[Union[str, Path]]],
-        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = None,
-        similarity_threshold: Optional[float] = None,
-        errors: Literal["ignore", "raise"] = "raise",
-        max_concurrent_chunks: int = 3,
-        max_concurrent_embeddings: int = 2,
-        extractor_kwargs: Optional[Dict[str, Any]] = None,
+            self,
+            file_paths: Union[str, Path, List[Union[str, Path]]],
+            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+            ids: Optional[Union[str, List[str]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
+            extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Async insert new documents from files using file extraction.
@@ -1372,7 +1405,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 if not extraction_result.success:
                     raise ValueError(f"Failed to extract text from {file_path}: {extraction_result.error}")
                 return extraction_result
+
             return await loop.run_in_executor(None, _extract)
+
         extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
         extraction_results = await asyncio.gather(*extraction_tasks)
         documents, merged_metadata, final_ids = [], [], []
@@ -1399,14 +1434,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
 
     async def insert_from_chunks_async(
-        self,
-        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = None,
-        similarity_threshold: Optional[float] = None,
-        errors: Literal["ignore", "raise"] = "raise",
-        max_concurrent_chunks: int = 3,
-        max_concurrent_embeddings: int = 2,
+            self,
+            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+            batch_size: int = None,
+            similarity_threshold: Optional[float] = None,
+            errors: Literal["ignore", "raise"] = "raise",
+            max_concurrent_chunks: int = 3,
+            max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         """
         Async version of insert_from_chunks - Insert documents from pre-chunked data with conflict handling.
@@ -1503,15 +1538,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # Pipelines (async)
     # -------------------
     async def _async_pipeline_process(
-        self,
-        documents: List[str],
-        metadata_batch: List[Dict[str, Any]],
-        ids: List[str],
-        batch_size: int,
-        similarity_threshold: Optional[float],
-        max_concurrent_chunks: int,
-        max_concurrent_embeddings: int,
-        mode: Literal["upsert", "insert"] = "upsert",
+            self,
+            documents: List[str],
+            metadata_batch: List[Dict[str, Any]],
+            ids: List[str],
+            batch_size: int,
+            similarity_threshold: Optional[float],
+            max_concurrent_chunks: int,
+            max_concurrent_embeddings: int,
+            mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
         existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(ids)
         chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
@@ -1519,12 +1554,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         chunk_semaphore = asyncio.Semaphore(max_concurrent_chunks)
         embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
         result_ids: List[str] = []
+
         async def chunking_producer():
             try:
                 tasks = []
                 for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids, strict=False)):
                     task = asyncio.create_task(
-                        self._chunk_document_with_comparison_async(i, doc_id, doc_text, metadata, existing_chunks_by_doc.get(doc_id, {}), chunk_semaphore)
+                        self._chunk_document_with_comparison_async(i, doc_id, doc_text, metadata,
+                                                                   existing_chunks_by_doc.get(doc_id, {}),
+                                                                   chunk_semaphore)
                     )
                     tasks.append(task)
                 for task in asyncio.as_completed(tasks):
@@ -1535,6 +1573,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 logger.error(f"Async chunking error: {e}")
                 await chunk_queue.put(None)
                 raise
+
         async def embedding_processor():
             try:
                 while True:
@@ -1545,14 +1584,17 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     async with embedding_semaphore:
                         chunk_texts_for_embedding = chunk_data['chunk_texts_for_embedding']
                         if chunk_texts_for_embedding:
-                            new_embeddings = await self.embedding_provider.embed_batch(chunk_texts_for_embedding, batch_size)
+                            new_embeddings = await self.embedding_provider.embed_batch(chunk_texts_for_embedding,
+                                                                                       batch_size)
                             chunk_data['new_embeddings'] = new_embeddings
                         else:
                             chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
                         embedding_enabled_fields = self._get_embedding_enabled_fields()
                         if embedding_enabled_fields:
                             metadata = chunk_data['metadata']
-                            field_embeddings = await self._generate_metadata_embeddings_async(metadata, embedding_enabled_fields, batch_size)
+                            field_embeddings = await self._generate_metadata_embeddings_async(metadata,
+                                                                                              embedding_enabled_fields,
+                                                                                              batch_size)
                             chunk_data['field_embeddings'] = field_embeddings
                         else:
                             chunk_data['field_embeddings'] = {}
@@ -1561,6 +1603,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 logger.error(f"Async embedding error: {e}")
                 await embedding_queue.put(None)
                 raise
+
         async def database_processor():
             try:
                 while True:
@@ -1573,31 +1616,35 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.error(f"Async database error: {e}")
                 raise
+
         await asyncio.gather(chunking_producer(), embedding_processor(), database_processor())
         return result_ids
 
     async def _async_process_from_chunks_pipeline(
-        self,
-        chunks_by_document: Dict[str, List[Chunk]],
-        metadata_batch: Dict[str, Dict[str, Any]],
-        batch_size: int,
-        similarity_threshold: Optional[float],
-        max_concurrent_chunks: int,
-        max_concurrent_embeddings: int,
-        mode: Literal["upsert", "insert"] = "upsert",
+            self,
+            chunks_by_document: Dict[str, List[Chunk]],
+            metadata_batch: Dict[str, Dict[str, Any]],
+            batch_size: int,
+            similarity_threshold: Optional[float],
+            max_concurrent_chunks: int,
+            max_concurrent_embeddings: int,
+            mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
         doc_ids = list(chunks_by_document.keys())
         existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(doc_ids)
         embedding_queue: asyncio.Queue = asyncio.Queue(maxsize=3)
         embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
         result_ids: List[str] = []
+
         async def chunk_comparison_producer():
             try:
                 tasks = []
                 for doc_id, chunks in chunks_by_document.items():
                     metadata = metadata_batch.get(doc_id, {})
                     task = asyncio.create_task(
-                        self._compare_chunks_and_prepare_async(doc_id, chunks, metadata, existing_chunks_by_doc.get(doc_id, {}), batch_size, embedding_semaphore)
+                        self._compare_chunks_and_prepare_async(doc_id, chunks, metadata,
+                                                               existing_chunks_by_doc.get(doc_id, {}), batch_size,
+                                                               embedding_semaphore)
                     )
                     tasks.append(task)
                 for task in asyncio.as_completed(tasks):
@@ -1609,6 +1656,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 logger.error(f"Chunk comparison producer error: {e}")
                 await embedding_queue.put(None)
                 raise
+
         async def database_consumer():
             try:
                 while True:
@@ -1621,16 +1669,21 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.error(f"Database consumer error: {e}")
                 raise
+
         await asyncio.gather(chunk_comparison_producer(), database_consumer())
         return result_ids
 
-    async def _compare_chunks_and_prepare_async(self, doc_id: str, chunks: List[Chunk], metadata: Dict[str, Any], existing_chunks: Dict[int, Dict[str, Any]], batch_size: int, embedding_semaphore: asyncio.Semaphore):
+    async def _compare_chunks_and_prepare_async(
+            self, doc_id: str, chunks: List[Chunk], metadata: Dict[str, Any],
+            existing_chunks: Dict[int, Dict[str, Any]], batch_size: int, embedding_semaphore: asyncio.Semaphore
+            ):
         try:
             unchanged_chunks, chunks_needing_embedding, chunk_texts_for_embedding = [], [], []
             reused_chunk_indices = set()
             for chunk in chunks:
                 existing_chunk = existing_chunks.get(chunk.index)
-                if existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk['faiss_id'] is not None:
+                if existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk[
+                    'faiss_id'] is not None:
                     chunk.faiss_id = existing_chunk['faiss_id']
                     unchanged_chunks.append(chunk)
                     reused_chunk_indices.add(chunk.index)
@@ -1653,7 +1706,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             embedding_enabled_fields = self._get_embedding_enabled_fields()
             field_embeddings = {}
             if embedding_enabled_fields:
-                field_embeddings = await self._generate_metadata_embeddings_async(metadata, embedding_enabled_fields, batch_size)
+                field_embeddings = await self._generate_metadata_embeddings_async(metadata, embedding_enabled_fields,
+                                                                                  batch_size)
             doc_text = "\n".join([chunk.content for chunk in chunks])
             content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
             return {
@@ -1686,11 +1740,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 doc_id = row['document_id']
                 if doc_id not in existing:
                     existing[doc_id] = {}
-                existing[doc_id][row['chunk_index']] = {'content_hash': row['content_hash'], 'faiss_id': row['faiss_id']}
+                existing[doc_id][row['chunk_index']] = {
+                    'content_hash': row['content_hash'], 'faiss_id': row['faiss_id']
+                }
         logger.debug(f"Fetched existing chunks for {len(existing)} documents")
         return existing
 
-    async def _chunk_document_with_comparison_async(self, doc_index: int, doc_id: str, doc_text: str, metadata: Dict[str, Any], existing_chunks: Dict[int, Dict[str, Any]], semaphore: asyncio.Semaphore):
+    async def _chunk_document_with_comparison_async(
+            self, doc_index: int, doc_id: str, doc_text: str, metadata: Dict[str, Any],
+            existing_chunks: Dict[int, Dict[str, Any]], semaphore: asyncio.Semaphore
+            ):
         async with semaphore:
             loop = asyncio.get_event_loop()
             chunks = await loop.run_in_executor(None, self.chunker.chunk, doc_text)
@@ -1699,7 +1758,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             reused_chunk_indices = set()
             for chunk in chunks:
                 existing_chunk = existing_chunks.get(chunk.index)
-                if existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk['faiss_id'] is not None:
+                if existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk[
+                    'faiss_id'] is not None:
                     chunk.faiss_id = existing_chunk['faiss_id']
                     unchanged_chunks.append(chunk)
                     reused_chunk_indices.add(chunk.index)
@@ -1725,7 +1785,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 'faiss_ids_to_remove': faiss_ids_to_remove,
             }
 
-    async def _process_document_data_async(self, chunk_data: Dict[str, Any], similarity_threshold: Optional[float], mode: Literal["upsert", "insert"] = "upsert") -> Optional[str]:
+    async def _process_document_data_async(
+            self, chunk_data: Dict[str, Any], similarity_threshold: Optional[float],
+            mode: Literal["upsert", "insert"] = "upsert"
+            ) -> Optional[str]:
         doc_id = chunk_data['doc_id']
         try:
             unchanged_chunks = chunk_data['unchanged_chunks']
@@ -1735,16 +1798,19 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
             if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
                 loop = asyncio.get_event_loop()
-                doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'], chunk_data['content_hash'])
+                doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'],
+                            chunk_data['content_hash'])
                 doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
                 filtered_chunks, filtered_embeddings, _ = await loop.run_in_executor(
-                    None, self._filter_similar_chunks_vectorized, new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
+                    None, self._filter_similar_chunks_vectorized, new_embeddings, chunks_needing_embedding,
+                    doc_chunk_mapping, similarity_threshold
                 )
                 chunks_needing_embedding = filtered_chunks
                 new_embeddings = filtered_embeddings
             all_chunks = unchanged_chunks + chunks_needing_embedding
             if len(all_chunks) > 0 or mode == "upsert":
-                documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'], chunk_data['metadata'])]
+                documents_data = [
+                    (chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'], chunk_data['metadata'])]
                 chunks_data = [(chunk_data['doc_id'], chunk) for chunk in all_chunks]
                 async with self.async_connection_pool.get_connection_context() as conn:
                     try:
@@ -1753,7 +1819,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         # Remove old chunks and metadata embeddings on upsert
                         if mode == "upsert":
                             await self._remove_old_chunks_batch_async(
-                                conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
+                                conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'],
+                                chunk_data['faiss_ids_to_remove']
                             )
                             # Always remove metadata embeddings on upsert to prevent orphaned entries
                             await self._remove_metadata_embeddings_async(conn, doc_id)
@@ -1761,7 +1828,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
                         if new_embeddings.size > 0:
                             loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding)
+                            await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, new_embeddings,
+                                                       chunks_needing_embedding)
                         await self._insert_chunks_bulk_async(conn, chunks_data)
 
                         # Store metadata embeddings if present
@@ -1777,7 +1845,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             logger.error(f"Error processing document data for {doc_id}: {e}")
             return None
 
-    async def _remove_old_chunks_batch_async(self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]) -> None:
+    async def _remove_old_chunks_batch_async(
+            self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
+            ) -> None:
         if faiss_ids_to_remove:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
@@ -1791,7 +1861,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             f"Removed {len(chunk_indices_to_remove)} old chunks and {len(faiss_ids_to_remove)} FAISS vectors for document {doc_id}"
         )
 
-    async def _insert_documents_bulk_async(self, conn: aiosqlite.Connection, documents_data: List[Tuple[str, str, str, Dict[str, Any]]], mode: Literal["insert", "replace"] = "replace") -> None:
+    async def _insert_documents_bulk_async(
+            self, conn: aiosqlite.Connection, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
+            mode: Literal["insert", "replace"] = "replace"
+            ) -> None:
         if not documents_data:
             return
         base_columns = self.schema.BASE_COLUMNS.copy()
@@ -1834,8 +1907,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             )
         await conn.executemany(
             '''
-            INSERT INTO chunks 
-            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line, 
+            INSERT INTO chunks
+            (document_id, chunk_index, content, content_hash, start_pos, end_pos, start_line,
             start_col, end_line, end_col, tokens, faiss_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',

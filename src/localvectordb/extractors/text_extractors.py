@@ -63,7 +63,7 @@ class TextFileExtractor(BaseExtractor):
                 ".ksh", ".ps1", ".psm1", ".psd1", ".bat", ".cmd", ".ahk", ".wsf", ".wsc", ".nsi", ".nsh", ".iss",
                 ".reg", ".inf", ".url", ".desktop", ".service", ".timer", ".socket", ".target", ".path", ".mount",
                 ".http", ".rest", ".har", ".ics", ".vcf", ".eml", ".mbox", ".pem", ".key", ".crt", ".cer", ".csr",
-                ".pub", ".asc", ".dic", ".aff", ".patch", ".diff" ]
+                ".pub", ".asc", ".dic", ".aff", ".patch", ".diff"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
@@ -103,7 +103,9 @@ class TextFileExtractor(BaseExtractor):
     def _check_availability(self) -> bool:
         return True  # Always available
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Extract text from plain text files."""
         encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
 
@@ -179,7 +181,9 @@ class TextFallbackExtractor(BaseExtractor):
         """Always returns True as this is the fallback extractor."""
         return True
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs) -> ExtractionResult:
+    def _extract_text_impl(
+            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+            ) -> ExtractionResult:
         """Attempt to extract text using fallback methods."""
 
         # Try UTF-8 with error handling

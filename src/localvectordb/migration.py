@@ -23,7 +23,7 @@ The migration system handles:
 
 Classes:
     Migration: Base class for metadata schema migrations
-    MigrationEngine: Core migration management engine  
+    MigrationEngine: Core migration management engine
     MigrationScript: Individual migration script representation
 """
 
@@ -113,14 +113,14 @@ def deserialize_schema_changes(json_str: str) -> Dict[str, Any]:
 class Migration(ABC):
     """
     Abstract base class for metadata schema migrations.
-    
+
     All migration classes must inherit from this base class and implement
-    the get_schema_changes() and get_rollback_changes() methods for 
+    the get_schema_changes() and get_rollback_changes() methods for
     forward and backward migrations.
-    
+
     This class focuses on metadata schema evolution rather than raw SQL
     operations, leveraging the existing DatabaseSchema functionality.
-    
+
     Attributes
     ----------
     version : str
@@ -143,7 +143,7 @@ class Migration(ABC):
     def get_schema_changes(self) -> Dict[str, Any]:
         """
         Get the schema changes to apply in the forward migration.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -153,20 +153,20 @@ class Migration(ABC):
                 'column_mapping': Dict[str, str],        # Rename mappings: old -> new
                 'drop_columns': bool                     # Whether to drop unused columns
             }
-        
+
         Examples
         --------
         Add new fields::
-        
+
             return {
                 'new_schema': {
                     'user_id': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
                     'priority': MetadataField(type=MetadataFieldType.INTEGER, default_value=0)
                 }
             }
-        
+
         Rename and modify fields::
-        
+
             return {
                 'new_schema': {
                     'author_name': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -184,7 +184,7 @@ class Migration(ABC):
     def get_rollback_changes(self) -> Dict[str, Any]:
         """
         Get the schema changes to apply for rollback.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -195,12 +195,12 @@ class Migration(ABC):
     def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
         """
         Validate that prerequisites for this migration are met.
-        
+
         Parameters
         ----------
         current_schema : Dict[str, MetadataField]
             Current metadata schema
-        
+
         Returns
         -------
         bool
@@ -212,7 +212,7 @@ class Migration(ABC):
 class MigrationScript:
     """
     Represents a single migration script file.
-    
+
     Parameters
     ----------
     file_path : Path
@@ -246,11 +246,11 @@ class MigrationScript:
 class MigrationEngine:
     """
     Core database migration management engine.
-    
+
     Handles discovery, validation, execution, and rollback of database migrations.
     Integrates with the backup system for safety and the versioning system for
     tracking applied migrations.
-    
+
     Parameters
     ----------
     database_path : Union[str, Path]
@@ -290,7 +290,7 @@ class MigrationEngine:
     def discover_migrations(self) -> Dict[str, MigrationScript]:
         """
         Discover and load all migration scripts from the migrations directory.
-        
+
         Returns
         -------
         Dict[str, MigrationScript]
@@ -353,12 +353,12 @@ class MigrationEngine:
     def get_migration_order(self) -> List[str]:
         """
         Get the correct order for applying migrations based on dependencies.
-        
+
         Returns
         -------
         List[str]
             List of version strings in the order they should be applied
-        
+
         Raises
         ------
         ValueError
@@ -409,7 +409,7 @@ class MigrationEngine:
     def get_applied_migrations(self) -> List[Dict[str, Any]]:
         """
         Get list of migrations that have been applied to the database.
-        
+
         Returns
         -------
         List[Dict[str, Any]]
@@ -442,12 +442,12 @@ class MigrationEngine:
     def get_pending_migrations(self, target_version: Optional[str] = None) -> List[str]:
         """
         Get list of migrations that need to be applied.
-        
+
         Parameters
         ----------
         target_version : str, optional
             Target version to migrate to. If None, migrates to latest.
-        
+
         Returns
         -------
         List[str]
@@ -477,7 +477,7 @@ class MigrationEngine:
     ) -> Dict[str, Any]:
         """
         Apply pending migrations up to the target version.
-        
+
         Parameters
         ----------
         target_version : str, optional
@@ -486,7 +486,7 @@ class MigrationEngine:
             If True, validate migrations without applying them
         create_backup : bool, optional
             Whether to create a backup before migration. If None, uses auto_backup setting.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -639,7 +639,7 @@ class MigrationEngine:
     ) -> Dict[str, Any]:
         """
         Rollback migrations to a target version.
-        
+
         Parameters
         ----------
         target_version : str
@@ -648,7 +648,7 @@ class MigrationEngine:
             If True, validate rollback without applying it
         create_backup : bool, optional
             Whether to create a backup before rollback. If None, uses auto_backup setting.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -833,7 +833,7 @@ class MigrationEngine:
     def get_migration_status(self) -> Dict[str, Any]:
         """
         Get comprehensive status of database migrations.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -865,7 +865,7 @@ class MigrationEngine:
     ) -> Path:
         """
         Create a new migration template file.
-        
+
         Parameters
         ----------
         version : str
@@ -874,7 +874,7 @@ class MigrationEngine:
             Description of the migration
         template_type : str
             Type of template to create ("basic", "schema", "data")
-        
+
         Returns
         -------
         Path
@@ -926,63 +926,63 @@ class Migration_{version.replace('.', '_')}(Migration):
     """
     {description}
     """
-    
+
     version = "{version}"
     description = "{description}"
     dependencies = []  # Add version dependencies here
-    
+
     def get_schema_changes(self) -> Dict[str, Any]:
         """Get schema changes to apply in forward migration."""
-        
+
         # Load current schema first (optional - for reference)
         # current_schema = self.database_schema.load_metadata_schema()
-        
+
         # Define the new complete metadata schema after this migration
         new_schema = {{
             # Example: Add new fields
             'user_id': MetadataField(
-                type=MetadataFieldType.TEXT, 
+                type=MetadataFieldType.TEXT,
                 indexed=True,
                 required=False,
                 default_value=None
             ),
             'priority': MetadataField(
                 type=MetadataFieldType.INTEGER,
-                indexed=True, 
+                indexed=True,
                 required=False,
                 default_value=0
             ),
             # Add existing fields that should remain...
         }}
-        
+
         return {{
             'new_schema': new_schema,
             'column_mapping': {{}},  # Optional: rename columns {{'old_name': 'new_name'}}
             'drop_columns': False    # Whether to drop unused columns
         }}
-    
+
     def get_rollback_changes(self) -> Dict[str, Any]:
         """Get schema changes to apply for rollback."""
-        
+
         # Define the schema state before this migration (for rollback)
         rollback_schema = {{
             # Define schema without the changes from this migration
             # Remove fields that were added, restore old names, etc.
         }}
-        
+
         return {{
             'new_schema': rollback_schema,
             'column_mapping': {{}},  # Reverse any column renames
             'drop_columns': False
         }}
-    
+
     def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
         """Validate migration prerequisites."""
-        
+
         # Example: Check if required fields exist
         # if 'required_field' not in current_schema:
         #     return False
-        
+
         return True
 '''
 
@@ -999,24 +999,24 @@ from localvectordb.core import MetadataField, MetadataFieldType
 class Migration_{version.replace('.', '_')}(Migration):
     """
     {description}
-    
+
     Note: This migration only changes data/default values, not schema structure.
     Use 'schema' template if you need to add/remove/modify fields.
     """
-    
+
     version = "{version}"
     description = "{description}"
     dependencies = []  # Add version dependencies here
-    
+
     def get_schema_changes(self) -> Dict[str, Any]:
         """Get schema changes - data-only migration keeps existing schema."""
-        
+
         # For data-only migrations, we usually don't change the schema structure
         # but might update default values or field properties
-        
+
         # Load current schema and modify only default values or properties
         # current_schema = self.database_schema.load_metadata_schema()
-        
+
         # Example: Update default values
         updated_schema = {{
             # Keep existing fields but update properties
@@ -1025,16 +1025,16 @@ class Migration_{version.replace('.', '_')}(Migration):
             #     default_value='new_default_value'  # Changed default
             # )
         }}
-        
+
         return {{
             'new_schema': updated_schema,
             'column_mapping': {{}},
             'drop_columns': False
         }}
-    
+
     def get_rollback_changes(self) -> Dict[str, Any]:
         """Get rollback changes - restore previous default values."""
-        
+
         # Restore previous default values
         rollback_schema = {{
             # Restore previous field properties
@@ -1043,22 +1043,22 @@ class Migration_{version.replace('.', '_')}(Migration):
             #     default_value='old_default_value'  # Restore old default
             # )
         }}
-        
+
         return {{
             'new_schema': rollback_schema,
             'column_mapping': {{}},
             'drop_columns': False
         }}
-    
+
     def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
         """Validate that required fields exist for data migration."""
-        
+
         # Example: Ensure required fields exist
         # required_fields = ['field1', 'field2']
         # for field in required_fields:
         #     if field not in current_schema:
         #         return False
-        
+
         return True
 '''
 
@@ -1076,14 +1076,14 @@ class Migration_{version.replace('.', '_')}(Migration):
     """
     {description}
     """
-    
+
     version = "{version}"
     description = "{description}"
     dependencies = []  # Add version dependencies here
-    
+
     def get_schema_changes(self) -> Dict[str, Any]:
         """Get schema changes to apply in forward migration."""
-        
+
         # TODO: Define your metadata schema changes
         new_schema = {{
             # Example: Add new fields
@@ -1094,35 +1094,35 @@ class Migration_{version.replace('.', '_')}(Migration):
             #     default_value=None
             # ),
         }}
-        
+
         return {{
             'new_schema': new_schema,
             'column_mapping': {{}},  # Optional: {{'old_name': 'new_name'}}
             'drop_columns': False    # Set to True to drop unused columns
         }}
-    
+
     def get_rollback_changes(self) -> Dict[str, Any]:
         """Get schema changes to apply for rollback."""
-        
+
         # TODO: Define rollback schema (state before this migration)
         rollback_schema = {{
             # Revert the changes made in get_schema_changes()
         }}
-        
+
         return {{
             'new_schema': rollback_schema,
             'column_mapping': {{}},
             'drop_columns': False
         }}
-    
+
     def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
         """Validate migration prerequisites."""
-        
+
         # TODO: Add prerequisite validation
         # Example:
         # if 'required_field' not in current_schema:
         #     return False
-        
+
         return True
 '''
 

@@ -333,12 +333,12 @@ def validate_api_key_with_permissions(token: str) -> tuple[bool, PermissionLevel
 def _require_permission(required_permission: PermissionLevel):
     """
     Internal function to create permission-based decorators.
-    
+
     Parameters
     ----------
     required_permission : PermissionLevel
         The minimum permission level required
-    
+
     Returns
     -------
     callable
@@ -439,7 +439,7 @@ def _require_permission(required_permission: PermissionLevel):
 def require_read_permission(f):
     """
     Decorator to require read permission (READ_ONLY or READ_WRITE).
-    
+
     This decorator allows both read-only and read-write API keys to access the endpoint.
     """
     return _require_permission(PermissionLevel.READ_ONLY)(f)
@@ -448,7 +448,7 @@ def require_read_permission(f):
 def require_write_permission(f):
     """
     Decorator to require write permission (READ_WRITE only).
-    
+
     This decorator only allows read-write API keys to access the endpoint.
     """
     return _require_permission(PermissionLevel.READ_WRITE)(f)

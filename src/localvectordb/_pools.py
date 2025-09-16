@@ -154,7 +154,7 @@ class ConnectionPool:
         """Cleanup on garbage collection"""
         try:
             self.close_all()
-        except:
+        except Exception:
             pass  # Ignore errors during cleanup
 
 
