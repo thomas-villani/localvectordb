@@ -169,27 +169,39 @@ def _fix_types(item):
 
 def from_uri(db_uri: str) -> Union[LocalVectorDB, RemoteVectorDB]:
     parsed = urlparse(db_uri)
-    # TODO: if http/https, use remote.
-    if parsed.scheme != "lvdb":
-        raise ValueError(f"Invalid database URI: scheme must be 'lvdb', found: '{parsed.scheme}'")
 
-    # The following should only be true if using absolute path
-    absolute_path = parsed.hostname is None
-
-    if absolute_path:
-        full_path, db_name = parsed.path.rsplit("/", 1)
-        if not os.path.exists(full_path):
-            raise ValueError(f"Invalid database URI: db folder not found: '{full_path}'")
-    else:
-        complete = parsed.netloc + parsed.path
-        full_path, db_name = complete.rsplit("/", 1)
-        if parsed.port or not os.path.exists(full_path):
-            full_path = "http://" + full_path
-
-    if not db_name:
-        raise ValueError("Must provide a valid database URI, expected database name specified as path.")
-
+    if parsed.scheme not in ("lvdb", "lvdb+http", "lvdb+https", "http", "https"):
+        raise ValueError(f"Invalid database URI: expected 'lvdb', 'lvdb+http', 'lvdb+https', 'http', 'https'. "
+                         f"Found: '{parsed.scheme}'")
     query_params = {}
+    if parsed.scheme == "lvdb":
+        # The following should only be true if using absolute path
+        absolute_path = parsed.hostname is None
+
+        if absolute_path:
+            full_path, db_name = parsed.path.rsplit("/", 1)
+            if not os.path.exists(full_path):
+                raise ValueError(f"Invalid database URI: db folder not found: '{full_path}'")
+        else:
+            complete = parsed.netloc + parsed.path
+            full_path, db_name = complete.rsplit("/", 1)
+            if parsed.port:
+                raise ValueError(f"Invalid database URI: port can only be specified with lvdb+http://, http://, "
+                                 f"or https://")
+
+        if not db_name:
+            raise ValueError("Must provide a valid database URI, expected database name specified as path.")
+    else:
+        if parsed.port:
+            complete = f"{parsed.netloc}:{parsed.port}{parsed.path}"
+        else:
+            complete = parsed.netloc + parsed.path
+        server_path, db_name = complete.rsplit("/", 1)
+        full_path = f"{("https" if parsed.scheme in ("https", "lvdb+https") else "http")}://{server_path}"
+        if parsed.username:
+            query_params["api_key"] = parsed.username
+
+
     if parsed.query:
         parsed_query = parse_qs(parsed.query)
         query_params = {k: _fix_types(v if len(v) > 1 else v[0]) for k, v in parsed_query.items()}

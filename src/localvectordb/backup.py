@@ -457,6 +457,51 @@ class BackupManager:
             # backup_log table might not exist in older databases
             logger.warning(f"Could not record backup in database: {e}")
 
+    def _verify_archive_checksums(self, tar: tarfile.TarFile, metadata: BackupMetadata) -> None:
+        """
+        Verify checksums of files in the archive without extracting them.
+        
+        Parameters
+        ----------
+        tar : tarfile.TarFile
+            Open tar file to verify
+        metadata : BackupMetadata
+            Backup metadata containing expected checksums
+            
+        Raises
+        ------
+        ValueError
+            If any file checksum doesn't match expected value
+        """
+        for member in tar.getmembers():
+            if not member.isfile() or member.name == "manifest.json":
+                continue  # Skip non-files and manifest
+                
+            expected_checksum = metadata.checksums.get(member.name)
+            if expected_checksum is None:
+                raise ValueError(f"No expected checksum found for file: {member.name}")
+            
+            # Stream the file and compute hash without extracting
+            file_data = tar.extractfile(member)
+            if file_data is None:
+                raise ValueError(f"Could not read file from archive: {member.name}")
+            
+            sha256_hash = hashlib.sha256()
+            while True:
+                chunk = file_data.read(4096)
+                if not chunk:
+                    break
+                sha256_hash.update(chunk)
+            
+            actual_checksum = sha256_hash.hexdigest()
+            if actual_checksum != expected_checksum:
+                raise ValueError(
+                    f"Checksum mismatch for {member.name}: "
+                    f"expected {expected_checksum}, got {actual_checksum}"
+                )
+        
+        logger.debug("Archive checksum verification passed")
+
     def _verify_backup_integrity(self, backup_path: Path) -> None:
         """Verify backup integrity by checking file structure and checksums."""
         logger.debug(f"Verifying backup integrity: {backup_path}")
@@ -480,6 +525,9 @@ class BackupManager:
                     missing = expected_files - tar_members
                     extra = tar_members - expected_files
                     raise ValueError(f"Backup integrity check failed. Missing: {missing}, Extra: {extra}")
+
+                # Verify content checksums of all archived files
+                self._verify_archive_checksums(tar, metadata)
 
                 logger.debug("Backup integrity verification passed")
 
@@ -655,19 +703,138 @@ class BackupManager:
                 return backup
         return None
 
+    def _find_backup_file_by_manifest(self, backup_id: str) -> Optional[Path]:
+        """
+        Find backup file by exact backup ID match from manifest.
+        
+        This method safely parses the manifest.json from each backup file
+        to find an exact match, avoiding substring collision issues.
+        
+        Parameters
+        ----------
+        backup_id : str
+            Exact backup ID to search for
+            
+        Returns
+        -------
+        Optional[Path]
+            Path to backup file if found, None otherwise
+        """
+        for backup_file in self.config.backup_location.glob("*.lvdb-backup"):
+            try:
+                with tarfile.open(backup_file, "r:*") as tar:
+                    # Try to extract and parse manifest
+                    try:
+                        manifest_info = tar.getmember("manifest.json")
+                        manifest_file = tar.extractfile(manifest_info)
+                        if manifest_file is None:
+                            continue  # Skip if manifest can't be read
+                        
+                        manifest_data = json.load(manifest_file)
+                        file_backup_id = manifest_data.get('backup_id')
+                        
+                        if file_backup_id == backup_id:
+                            return backup_file
+                            
+                    except (KeyError, json.JSONDecodeError):
+                        # Manifest missing or corrupted, skip this file
+                        continue
+                        
+            except Exception as e:
+                # Archive corrupted or unreadable, log warning and continue
+                logger.warning(f"Could not read backup file {backup_file}: {e}")
+                continue
+        
+        return None
+
     def _find_backup_file(self, backup_id: str) -> Optional[Path]:
-        """Find backup file by ID."""
+        """
+        Find backup file by ID using manifest-based exact matching.
+        
+        Falls back to filename-based search if manifest parsing fails
+        for all files (for backward compatibility).
+        """
+        # Primary method: exact manifest matching
+        backup_file = self._find_backup_file_by_manifest(backup_id)
+        if backup_file is not None:
+            return backup_file
+        
+        # Fallback method: filename substring matching (legacy)
+        logger.warning(f"Manifest-based search failed for {backup_id}, falling back to filename matching")
         for backup_file in self.config.backup_location.glob("*.lvdb-backup"):
             if backup_id[:8] in backup_file.name:
+                logger.warning(f"Using potentially unsafe filename match for {backup_id}: {backup_file}")
                 return backup_file
+        
         return None
+
+    def _is_within_directory(self, directory: Path, target: Path) -> bool:
+        """
+        Check if target path is within the given directory.
+        
+        Parameters
+        ----------
+        directory : Path
+            Base directory path
+        target : Path
+            Target path to check
+            
+        Returns
+        -------
+        bool
+            True if target is within directory, False otherwise
+        """
+        try:
+            directory = directory.resolve()
+            target = target.resolve()
+            return str(target).startswith(str(directory))
+        except Exception:
+            return False
+
+    def _safe_extract(self, tar: tarfile.TarFile, path: Path) -> None:
+        """
+        Safely extract tar archive, preventing path traversal attacks.
+        
+        Parameters
+        ----------
+        tar : tarfile.TarFile
+            Tar file to extract
+        path : Path
+            Destination path for extraction
+            
+        Raises
+        ------
+        ValueError
+            If archive contains unsafe paths or file types
+        """
+        for member in tar.getmembers():
+            member_path = path / member.name
+            
+            # Reject symlinks and hard links to prevent link-based attacks
+            if member.islnk() or member.issym():
+                raise ValueError(f"Refusing to extract archives with (sym)links: {member.name}")
+            
+            # Reject absolute paths and path traversal attempts
+            if member.name.startswith("/") or ".." in Path(member.name).parts:
+                raise ValueError(f"Unsafe path in tar: {member.name}")
+            
+            # Verify extracted path stays within destination directory
+            if not self._is_within_directory(path, member_path):
+                raise ValueError(f"Path traversal detected: {member.name}")
+            
+            # Reject device files and other special file types
+            if member.ischr() or member.isblk() or member.isfifo():
+                raise ValueError(f"Refusing to extract special file type: {member.name}")
+        
+        # If all validations pass, extract the archive
+        tar.extractall(path=path)
 
     def _extract_backup_archive(self, backup_file: Path, temp_dir: Path) -> None:
         """Extract backup archive to temporary directory."""
         logger.debug(f"Extracting backup archive: {backup_file}")
 
         with tarfile.open(backup_file, "r:*") as tar:
-            tar.extractall(path=temp_dir)
+            self._safe_extract(tar, temp_dir)
 
     def _verify_extracted_backup(self, expected_metadata: BackupMetadata, temp_dir: Path) -> None:
         """Verify extracted backup matches expected metadata."""
@@ -1365,21 +1532,39 @@ class IncrementalBackupManager:
                     VALUES ({placeholders})
                 """, row)
 
-            # Copy changed chunks
+            # Copy changed chunks with optimized bulk operations
             cursor = inc_conn.execute("SELECT * FROM chunks")
-            for row in cursor.fetchall():
-                # Delete existing chunks for this document first
-                doc_id = row[1]  # document_id is second column
-                working_conn.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
-
-                # Insert new chunks
-                working_conn.execute("""
+            all_chunk_rows = cursor.fetchall()
+            
+            if all_chunk_rows:
+                # Collect unique document IDs that need chunk replacement
+                affected_doc_ids = set()
+                for row in all_chunk_rows:
+                    doc_id = row[1]  # document_id is second column
+                    affected_doc_ids.add(doc_id)
+                
+                # Bulk delete all chunks for affected documents
+                if affected_doc_ids:
+                    placeholders = ','.join(['?' for _ in affected_doc_ids])
+                    working_conn.execute(
+                        f"DELETE FROM chunks WHERE document_id IN ({placeholders})",
+                        list(affected_doc_ids)
+                    )
+                    logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
+                
+                # Bulk insert all new chunks
+                chunk_insert_data = []
+                for row in all_chunk_rows:
+                    chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
+                
+                working_conn.executemany("""
                     INSERT INTO chunks
                     (document_id, chunk_index, content, content_hash,
                      start_pos, end_pos, start_line, start_col, end_line, end_col,
                      tokens, faiss_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, row[1:])  # Skip the auto-increment ID
+                """, chunk_insert_data)
+                logger.debug(f"Bulk inserted {len(chunk_insert_data)} chunks")
 
             working_conn.commit()
             

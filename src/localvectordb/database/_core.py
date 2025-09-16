@@ -387,15 +387,142 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Method 3: Fallback to individual reconstruct calls
         return self._reconstruct_individual_fallback(faiss_ids)
     
+    def _get_faiss_ids_from_db(self, chunk_ids: List[int]) -> Dict[int, int]:
+        """
+        Get chunk_id -> faiss_id mapping from database efficiently.
+        
+        Parameters
+        ----------
+        chunk_ids : List[int]
+            List of chunk IDs to look up
+            
+        Returns
+        -------
+        Dict[int, int]
+            Mapping from chunk_id to faiss_id
+        """
+        if not chunk_ids:
+            return {}
+        
+        try:
+            with self.connection_pool.get_connection() as conn:
+                # Use parameterized query with IN clause for efficient batch lookup
+                placeholders = ','.join('?' * len(chunk_ids))
+                sql = f"SELECT id, faiss_id FROM chunks WHERE id IN ({placeholders}) AND faiss_id IS NOT NULL"
+                cursor = conn.execute(sql, chunk_ids)
+                
+                # Build mapping dict
+                chunk_to_faiss = {}
+                for row in cursor:
+                    chunk_to_faiss[row['id']] = row['faiss_id']
+                
+                return chunk_to_faiss
+        except Exception as e:
+            logger.warning(f"Failed to get FAISS IDs from database: {e}")
+            return {}
+    
     def _reconstruct_with_id_mapping(self, faiss_ids: List[int]) -> np.ndarray:
-        """Reconstruct embeddings for IndexIDMap2 by mapping to internal indices."""
+        """Reconstruct embeddings for IndexIDMap2 using optimized mapping strategies."""
+        if not faiss_ids:
+            return np.array([]).reshape(0, self.embedding_dimension)
+            
         faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
         
-        # Map external FAISS IDs to internal indices
+        # Strategy 1: Try direct reconstruction on IndexIDMap2 first
+        # For some index types, we can reconstruct directly using external IDs
+        try:
+            if hasattr(self.index, 'reconstruct'):
+                embeddings = []
+                for fid in faiss_ids_array:
+                    try:
+                        embedding = self.index.reconstruct(fid)
+                        embeddings.append(embedding)
+                    except Exception as e:
+                        logger.debug(f"Direct reconstruct failed for FAISS ID {fid}: {e}")
+                        break
+                else:
+                    # All direct reconstructs succeeded
+                    result = np.array(embeddings)
+                    logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using direct IndexIDMap2 reconstruct")
+                    return result
+        except Exception as e:
+            logger.debug(f"Direct IndexIDMap2 reconstruction not available: {e}")
+        
+        # Strategy 2: Efficient mapping using internal FAISS methods (if available)
+        try:
+            # Check if FAISS provides an efficient way to get internal indices
+            if hasattr(self.index, 'get_ids') and hasattr(self.index.index, 'reconstruct_batch'):
+                # Get all current IDs efficiently
+                current_ids = self.index.get_ids()
+                id_to_internal = {ext_id: internal_idx for internal_idx, ext_id in enumerate(current_ids)}
+                
+                internal_indices = []
+                for fid in faiss_ids_array:
+                    if fid in id_to_internal:
+                        internal_indices.append(id_to_internal[fid])
+                    else:
+                        logger.debug(f"FAISS ID {fid} not found in current index")
+                
+                if internal_indices:
+                    internal_indices_array = np.array(internal_indices, dtype=np.int64)
+                    embeddings = self.index.index.reconstruct_batch(internal_indices_array)
+                    logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using efficient ID mapping")
+                    return embeddings
+        except Exception as e:
+            logger.debug(f"Efficient ID mapping strategy failed: {e}")
+        
+        # Strategy 3: Fallback to optimized linear search (improved from O(n²) to O(n*m))
+        # Build a reverse mapping dictionary first for better performance
+        try:
+            # Build id_map lookup once for all IDs
+            id_map_lookup = {}
+            for i in range(self.index.ntotal):
+                external_id = self.index.id_map.at(i)
+                id_map_lookup[external_id] = i
+            
+            internal_indices = []
+            for fid in faiss_ids_array:
+                if fid in id_map_lookup:
+                    internal_indices.append(id_map_lookup[fid])
+                else:
+                    logger.debug(f"FAISS ID {fid} not found in id_map")
+            
+            if not internal_indices:
+                logger.warning(f"No valid internal indices found for FAISS IDs: {faiss_ids}")
+                return np.array([]).reshape(0, self.embedding_dimension)
+            
+            # Use the base index's reconstruct_batch method with internal indices
+            internal_indices_array = np.array(internal_indices, dtype=np.int64)
+            base_index = self.index.index
+            
+            if hasattr(base_index, 'reconstruct_batch'):
+                embeddings = base_index.reconstruct_batch(internal_indices_array)
+                logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using optimized ID mapping")
+                return embeddings
+            else:
+                # Fallback: individual calls on base index
+                embeddings = []
+                for idx in internal_indices:
+                    try:
+                        embedding = base_index.reconstruct(idx)
+                        embeddings.append(embedding)
+                    except Exception as e:
+                        logger.debug(f"Failed to reconstruct internal index {idx}: {e}")
+                        continue
+                
+                return np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
+                
+        except Exception as e:
+            logger.warning(f"Optimized ID mapping failed: {e}")
+            # Final fallback to original O(n²) method if all else fails
+            return self._reconstruct_with_linear_search_fallback(faiss_ids_array)
+    
+    def _reconstruct_with_linear_search_fallback(self, faiss_ids_array: np.ndarray) -> np.ndarray:
+        """Original O(n²) fallback method for critical compatibility."""
         internal_indices = []
         for fid in faiss_ids_array:
             internal_idx = -1
-            # Search through the id_map to find the internal index
+            # Original linear search through the id_map
             for i in range(self.index.ntotal):
                 if self.index.id_map.at(i) == fid:
                     internal_idx = i
@@ -403,10 +530,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             if internal_idx != -1:
                 internal_indices.append(internal_idx)
             else:
-                logger.debug(f"FAISS ID {fid} not found in id_map")
+                logger.debug(f"FAISS ID {fid} not found in id_map (fallback)")
         
         if not internal_indices:
-            logger.warning(f"No valid internal indices found for FAISS IDs: {faiss_ids}")
+            logger.warning(f"No valid internal indices found for FAISS IDs (fallback): {faiss_ids_array.tolist()}")
             return np.array([]).reshape(0, self.embedding_dimension)
         
         # Use the base index's reconstruct_batch method with internal indices
@@ -415,17 +542,17 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         
         if hasattr(base_index, 'reconstruct_batch'):
             embeddings = base_index.reconstruct_batch(internal_indices_array)
-            logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using base index reconstruct_batch")
+            logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using fallback linear search")
             return embeddings
         else:
-            # Fallback: individual calls on base index
+            # Individual calls on base index
             embeddings = []
             for idx in internal_indices:
                 try:
                     embedding = base_index.reconstruct(idx)
                     embeddings.append(embedding)
                 except Exception as e:
-                    logger.debug(f"Failed to reconstruct internal index {idx}: {e}")
+                    logger.debug(f"Failed to reconstruct internal index {idx} (fallback): {e}")
                     continue
             
             return np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)

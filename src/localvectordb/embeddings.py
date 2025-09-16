@@ -403,31 +403,42 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             logger.error(f"Could not connect to Ollama service: {str(e)}")
             raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}")
 
-    def _get_model_dimension_api(self) -> int:
-        # Because we may be calling get_dimension from the sync or async function, we need to handle it properly.
-        client = httpx.AsyncClient()
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we're already in an async context, we need to run in a new thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, self._embed_single_batch(["test"], client=client))
-                    test_embedding = future.result()
-
-            else:
-                test_embedding = loop.run_until_complete(self._embed_single_batch(["test"], client=client))
-
-        except RuntimeError:
-            # No event loop, create one
-            test_embedding = asyncio.run(self._embed_single_batch(["test"], client=client))
-
-        return len(test_embedding[0])
+    def _get_model_dimension_sync(self) -> int:
+        """
+        Get model dimension using synchronous HTTP client to avoid event loop issues.
+        
+        Returns
+        -------
+        int
+            Embedding dimension for the model
+        """
+        with httpx.Client(timeout=self.timeout) as client:
+            try:
+                response = client.post(
+                    f"{self.base_url}/api/embed",
+                    json={
+                        "model": self.model,
+                        "input": ["dimension_test"],
+                        "truncate": True
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if 'embeddings' in data and data['embeddings']:
+                    return len(data['embeddings'][0])
+                else:
+                    raise ValueError("No embeddings returned from Ollama API")
+                    
+            except Exception as e:
+                logger.error(f"Failed to get dimension from Ollama API: {e}")
+                # Fallback to a common default for Ollama models
+                return 4096
 
     def get_dimension(self) -> int:
         """Get embedding dimension by making a test call"""
         if self._dimension is None:
-            dimension = self._get_model_dimension_api()
+            dimension = self._get_model_dimension_sync()
             self._dimension = dimension
         return self._dimension
 
@@ -676,35 +687,54 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
             logger.warning(f"Could not validate Google AI model '{self.model}': {e}")
             return False
 
-    def _get_model_dimension_api(self) -> int:
-        """Determine embedding dimension via a small test call."""
+    def _get_model_dimension_sync(self) -> int:
+        """
+        Determine embedding dimension via synchronous API call.
+        
+        Returns
+        -------
+        int
+            Embedding dimension for the model
+        """
         # If caller provided requested_dimensions, use it.
         if self.requested_dimensions:
             return int(self.requested_dimensions)
 
-        # Otherwise attempt a lightweight embed to discover dimension.
-        client = httpx.AsyncClient()
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, self._embed_single_batch(["dimension_probe"], client=client))
-                    test_embedding = future.result()
-            else:
-                test_embedding = loop.run_until_complete(self._embed_single_batch(["dimension_probe"], client=client))
-        except RuntimeError:
-            test_embedding = asyncio.run(self._embed_single_batch(["dimension_probe"], client=client))
-
-        if not test_embedding or not test_embedding[0]:
-            # Fallback to known defaults if probe fails to return data.
-            return self._default_dimensions_by_model.get(self.model, 3072)
-        return len(test_embedding[0])
+        # Otherwise attempt a lightweight embed to discover dimension using sync client
+        with httpx.Client(timeout=self.timeout) as client:
+            try:
+                url = f"{self.base_url}/models/{self.model}:embedContent"
+                headers = {
+                    "x-goog-api-key": self.api_key,
+                    "Content-Type": "application/json",
+                }
+                
+                # Build minimal request payload
+                payload = {
+                    "content": {"parts": [{"text": "dimension_probe"}]}
+                }
+                
+                if self.requested_dimensions:
+                    payload["outputDimensionality"] = self.requested_dimensions
+                
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                
+                if "embedding" in data and "values" in data["embedding"]:
+                    return len(data["embedding"]["values"])
+                else:
+                    raise ValueError("No embedding values returned from Google API")
+                    
+            except Exception as e:
+                logger.error(f"Failed to get dimension from Google API: {e}")
+                # Fallback to known defaults if probe fails
+                return self._default_dimensions_by_model.get(self.model, 3072)
 
     def get_dimension(self) -> int:
         """Return embedding dimension, using API probe if needed."""
         if self._dimension is None:
-            self._dimension = self._get_model_dimension_api()
+            self._dimension = self._get_model_dimension_sync()
         return self._dimension
 
     async def _embed_single_batch(

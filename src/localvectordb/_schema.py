@@ -210,6 +210,246 @@ class DatabaseSchema:
         self.metadata_fields: Dict[str, MetadataField] = {}
         self._read_write_lock: ReadWriteLock = read_write_lock
 
+    def _check_trigram_tokenizer_availability(self, conn: sqlite3.Connection) -> bool:
+        """
+        Check if SQLite FTS5 trigram tokenizer is available.
+        
+        The trigram tokenizer requires compile-time SQLite extension support
+        and may not be available in all SQLite installations.
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            SQLite database connection
+            
+        Returns
+        -------
+        bool
+            True if trigram tokenizer is available
+        """
+        try:
+            # Test creation of a temporary FTS table with trigram tokenizer
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS temp.trigram_test "
+                "USING fts5(content, tokenize='trigram')"
+            )
+            conn.execute("DROP TABLE temp.trigram_test")
+            return True
+        except sqlite3.OperationalError as e:
+            if "no such tokenizer" in str(e).lower():
+                logger.warning("FTS5 trigram tokenizer not available, falling back to default tokenizer")
+                return False
+            raise  # Re-raise other operational errors
+        except Exception:
+            return False
+
+    def _get_sqlite_version(self, conn: sqlite3.Connection) -> tuple:
+        """
+        Get SQLite version as a tuple for comparison.
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            SQLite database connection
+            
+        Returns
+        -------
+        tuple
+            SQLite version as (major, minor, patch) tuple
+        """
+        version_string = conn.execute("SELECT sqlite_version()").fetchone()[0]
+        return tuple(map(int, version_string.split('.')))
+
+    def _supports_drop_column(self, conn: sqlite3.Connection) -> bool:
+        """
+        Check if SQLite version supports DROP COLUMN (requires 3.35+).
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            SQLite database connection
+            
+        Returns
+        -------
+        bool
+            True if DROP COLUMN is supported
+        """
+        version = self._get_sqlite_version(conn)
+        return version >= (3, 35, 0)
+
+    def _rebuild_table_for_column_drop(self, conn: sqlite3.Connection, field_name: str) -> None:
+        """
+        Rebuild documents table without the specified column using SQLite-compatible operations.
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            SQLite database connection
+        field_name : str
+            Name of the column to drop
+            
+        Raises
+        ------
+        Exception
+            If table rebuild fails
+        """
+        # Get current table schema
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        current_columns = [row[1] for row in cursor.fetchall() if row[1] != field_name]
+        
+        # Build new table SQL
+        column_definitions = []
+        for col_name in current_columns:
+            if col_name == 'id':
+                column_definitions.append('id TEXT PRIMARY KEY')
+            elif col_name == 'content':
+                column_definitions.append('content TEXT NOT NULL')
+            elif col_name == 'content_hash':
+                column_definitions.append('content_hash TEXT NOT NULL')
+            elif col_name in ['created_at', 'updated_at']:
+                column_definitions.append(f'{col_name} TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+            else:
+                # Metadata column - get its type from metadata_schema
+                try:
+                    metadata_cursor = conn.execute(
+                        "SELECT field_type FROM metadata_schema WHERE field_name = ?", 
+                        (col_name,)
+                    )
+                    result = metadata_cursor.fetchone()
+                    if result:
+                        field_type = result[0]
+                        sqlite_type_map = {
+                            'text': 'TEXT',
+                            'integer': 'INTEGER', 
+                            'real': 'REAL',
+                            'boolean': 'BOOLEAN',
+                            'date': 'TEXT',
+                            'json': 'TEXT'
+                        }
+                        sql_type = sqlite_type_map.get(field_type, 'TEXT')
+                        column_definitions.append(f'{col_name} {sql_type}')
+                    else:
+                        # Fallback if metadata not found
+                        column_definitions.append(f'{col_name} TEXT')
+                except Exception:
+                    # Fallback if query fails
+                    column_definitions.append(f'{col_name} TEXT')
+        
+        # Create new table with a temporary name
+        new_table_sql = f"""
+        CREATE TABLE documents_new (
+            {', '.join(column_definitions)}
+        )
+        """
+        
+        conn.execute(new_table_sql)
+        
+        # Copy data from old table to new table
+        columns_str = ', '.join(current_columns)
+        conn.execute(f"""
+        INSERT INTO documents_new ({columns_str})
+        SELECT {columns_str} FROM documents
+        """)
+        
+        # Drop old table and rename new table
+        conn.execute("DROP TABLE documents")
+        conn.execute("ALTER TABLE documents_new RENAME TO documents")
+        
+        # Recreate indexes (excluding the one for the dropped column)
+        for index_sql in self.BASE_INDEXES:
+            if 'documents' in index_sql and field_name not in index_sql:
+                try:
+                    conn.execute(index_sql)
+                except Exception as e:
+                    logger.warning(f"Failed to recreate index: {e}")
+        
+        # Recreate any custom indexes for remaining metadata fields
+        cursor = conn.execute("SELECT field_name FROM metadata_schema WHERE indexed = 1")
+        for (indexed_field,) in cursor.fetchall():
+            if indexed_field in current_columns:
+                try:
+                    index_name = f'idx_documents_{indexed_field}'
+                    conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({indexed_field})')
+                except Exception as e:
+                    logger.warning(f"Failed to recreate index for {indexed_field}: {e}")
+
+    def _rebuild_table_for_column_type_change(self, conn: sqlite3.Connection, field_name: str, new_sqlite_type: str) -> None:
+        """
+        Rebuild documents table with a changed column type using SQLite-compatible operations.
+        
+        Parameters
+        ----------
+        conn : sqlite3.Connection
+            SQLite database connection
+        field_name : str
+            Name of the column to change type for
+        new_sqlite_type : str
+            New SQLite type (e.g., 'TEXT', 'INTEGER', 'REAL')
+            
+        Raises
+        ------
+        Exception
+            If table rebuild fails
+        """
+        # Get current table schema
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        current_columns = [(row[1], row[2]) for row in cursor.fetchall()]
+        
+        # Build new table SQL with updated type
+        column_definitions = []
+        for col_name, col_type in current_columns:
+            if col_name == field_name:
+                # Use the new type
+                column_definitions.append(f'{col_name} {new_sqlite_type}')
+            elif col_name == 'id':
+                column_definitions.append('id TEXT PRIMARY KEY')
+            elif col_name == 'content':
+                column_definitions.append('content TEXT NOT NULL')
+            elif col_name == 'content_hash':
+                column_definitions.append('content_hash TEXT NOT NULL')
+            elif col_name in ['created_at', 'updated_at']:
+                column_definitions.append(f'{col_name} TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+            else:
+                # Keep existing type
+                column_definitions.append(f'{col_name} {col_type}')
+        
+        # Create new table with a temporary name
+        new_table_sql = f"""
+        CREATE TABLE documents_new (
+            {', '.join(column_definitions)}
+        )
+        """
+        
+        conn.execute(new_table_sql)
+        
+        # Copy data from old table to new table with type conversion
+        columns_str = ', '.join([col[0] for col in current_columns])
+        conn.execute(f"""
+        INSERT INTO documents_new ({columns_str})
+        SELECT {columns_str} FROM documents
+        """)
+        
+        # Drop old table and rename new table  
+        conn.execute("DROP TABLE documents")
+        conn.execute("ALTER TABLE documents_new RENAME TO documents")
+        
+        # Recreate all indexes
+        for index_sql in self.BASE_INDEXES:
+            if 'documents' in index_sql:
+                try:
+                    conn.execute(index_sql)
+                except Exception as e:
+                    logger.warning(f"Failed to recreate index: {e}")
+        
+        # Recreate custom indexes for metadata fields
+        cursor = conn.execute("SELECT field_name FROM metadata_schema WHERE indexed = 1")
+        for (indexed_field,) in cursor.fetchall():
+            try:
+                index_name = f'idx_documents_{indexed_field}'
+                conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({indexed_field})')
+            except Exception as e:
+                logger.warning(f"Failed to recreate index for {indexed_field}: {e}")
+
     def initialize(self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection = None):
         """Initialize database schema"""
         with self._read_write_lock.write_lock():
@@ -286,8 +526,7 @@ class DatabaseSchema:
 
         self.metadata_fields = schema
 
-    @staticmethod
-    def _add_metadata_column(conn: sqlite3.Connection, field_name: str, field_def: MetadataField):
+    def _add_metadata_column(self, conn: sqlite3.Connection, field_name: str, field_def: MetadataField):
         """Add a metadata column to the documents table"""
         # Map field types to SQLite types
         sqlite_type_map = {
@@ -328,9 +567,17 @@ class DatabaseSchema:
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
                 fts_table_name = f'fts_{field_name}'
+                # Check if trigram tokenizer is available, fall back to default if not
+                if self._check_trigram_tokenizer_availability(conn):
+                    tokenizer_clause = "tokenize='trigram'"
+                    logger.debug(f"Using trigram tokenizer for FTS table: {fts_table_name}")
+                else:
+                    tokenizer_clause = ""  # Use default tokenizer
+                    logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
+                
                 conn.execute(f'''
                     CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
-                    USING fts5(document_id, content, tokenize='trigram')
+                    USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
                 ''')
                 logger.info(f"Created FTS table: {fts_table_name}")
 
@@ -696,11 +943,10 @@ class DatabaseSchema:
 
                                             new_sqlite_type = sqlite_type_map.get(new_type_str, 'TEXT')
 
-                                            # Perform the type change
-                                            conn.execute(f'ALTER TABLE documents ALTER COLUMN {field_name} '
-                                                         f'SET DATA TYPE {new_sqlite_type}')
+                                            # Perform the type change using table rebuild
+                                            self._rebuild_table_for_column_type_change(conn, field_name, new_sqlite_type)
 
-                                            logger.info(f"Changed column '{field_name}' data  type from {old_type_str} "
+                                            logger.info(f"Changed column '{field_name}' data type from {old_type_str} "
                                                         f"to {new_type_str}")
 
                                         except Exception as e:
@@ -772,10 +1018,15 @@ class DatabaseSchema:
                                             except Exception:
                                                 pass  # Index might not exist, that's okay
 
-                                            # Now drop the column
-                                            conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
+                                            # Now drop the column - use native DROP COLUMN if supported, otherwise rebuild table
+                                            if self._supports_drop_column(conn):
+                                                conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
+                                                logger.info(f"Dropped column '{field_name}' using native DROP COLUMN")
+                                            else:
+                                                self._rebuild_table_for_column_drop(conn, field_name)
+                                                logger.info(f"Dropped column '{field_name}' using table rebuild")
+                                            
                                             changes['dropped_columns'].append(field_name)
-                                            logger.info(f"Dropped column '{field_name}' from documents table")
                                         else:
                                             changes['warnings'].append(
                                                 f"Column '{field_name}' not found in table, skipping drop")

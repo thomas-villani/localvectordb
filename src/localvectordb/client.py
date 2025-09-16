@@ -131,6 +131,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 import httpx
 import numpy as np
 
+from localvectordb import QueryBuilder
 from localvectordb.core import (
     Document,
     DocumentScoringMethod,
@@ -302,6 +303,9 @@ class RemoteVectorDB(BaseVectorDB):
 
     """
 
+    def query_builder(self) -> "QueryBuilder":
+        return QueryBuilder(self)
+
     def __init__(
             self,
             name: str,
@@ -458,16 +462,31 @@ class RemoteVectorDB(BaseVectorDB):
     def _handle_response(self, response: httpx.Response) -> dict:
         """Handle API response and raise appropriate exceptions"""
         if response.status_code == 200:
-            return response.json()
+            try:
+                return response.json()
+            except ValueError as e:
+                logger.warning(f"Failed to parse successful response as JSON: {e}")
+                raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
 
-        error_data = response.json()
-        error_dict = error_data.get("error", {})
-        error_type = error_dict.get("code", "unknown").lower()
-        # error_type = error_data.get("type", "unknown")
-        error_msg = error_dict.get("message", "")
-        # error_msg = error_data.get("error", str(response.status_code))
+        # Try to parse error response as JSON with fallback to text
+        error_data = {}
+        error_dict = {}
+        error_type = "unknown"
+        error_msg = ""
+        
+        try:
+            error_data = response.json()
+            error_dict = error_data.get("error", {})
+            error_type = error_dict.get("code", "unknown").lower()
+            error_msg = error_dict.get("message", "")
+        except ValueError as e:
+            logger.debug(f"Failed to parse error response as JSON: {e}")
+            # Fallback to response text when JSON parsing fails
+            error_msg = response.text or f"HTTP Error: {response.status_code}"
+            error_type = "parse_error"
 
         logger.debug(f"Client error: {error_type} - {error_msg}")
+        
         # Map error type to appropriate exception
         error_map = {
             "database_not_found": DatabaseNotFoundError,
@@ -475,12 +494,10 @@ class RemoteVectorDB(BaseVectorDB):
             "embedding_error": EmbeddingError,
             "document_not_found": DocumentNotFoundError
         }
+        
         # Raise the appropriate exception if we recognize the type
         if error_type in error_map:
             raise error_map[error_type](error_msg)
-        else:
-            # Fallback if we can't parse the response
-            error_msg = response.text or f"HTTP Error: {response.status_code}"
 
         # Generic error mapping based on HTTP status
         if response.status_code == 404:
@@ -526,7 +543,7 @@ class RemoteVectorDB(BaseVectorDB):
         schema_data = config.get("metadata_schema", {})
         self._metadata_schema = {}
         for field_name, field_config in schema_data.items():
-            self.metadata_schema[field_name] = MetadataField(
+            self._metadata_schema[field_name] = MetadataField(
                 type=MetadataFieldType(field_config["type"]),
                 indexed=field_config.get("indexed", False),
                 required=field_config.get("required", False),
@@ -730,9 +747,29 @@ class RemoteVectorDB(BaseVectorDB):
 
         return result.get("ids", [])
 
-    # TODO: Must implement route!
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
-        pass
+        """
+        Count documents matching filters.
+        
+        Parameters
+        ----------
+        filters : Dict[str, Any], optional
+            Metadata filters to apply
+            
+        Returns
+        -------
+        int
+            Number of matching documents
+            
+        Raises
+        ------
+        NotImplementedError
+            Server route not yet implemented
+        """
+        raise NotImplementedError(
+            "count() method requires server route implementation. "
+            "Use filter() with limit to get document counts for now."
+        )
 
     def upsert_from_file(
             self,
@@ -1661,7 +1698,7 @@ class RemoteVectorDB(BaseVectorDB):
         if 'new_schema' in result:
             self._metadata_schema = {}
             for field_name, field_config in result['new_schema'].items():
-                self.metadata_schema[field_name] = MetadataField(
+                self._metadata_schema[field_name] = MetadataField(
                     type=MetadataFieldType(field_config['type']),
                     indexed=field_config.get('indexed', False),
                     required=field_config.get('required', False),
@@ -1705,8 +1742,41 @@ class RemoteVectorDB(BaseVectorDB):
         return result.get('schema_info', {})
 
     @property
-    def closed(self):
-        return self.ping()
+    def healthy(self) -> bool:
+        """
+        Check if the remote database server is healthy and accessible.
+        
+        This property performs a lightweight ping to the server to verify
+        connectivity and server responsiveness. Results are cached for 60 seconds
+        to avoid excessive network requests.
+        
+        Returns
+        -------
+        bool
+            True if server is healthy and accessible, False otherwise
+        """
+        try:
+            return self.ping()
+        except Exception:
+            # If ping fails due to network issues, connection errors, etc.
+            return False
+
+    @property 
+    def closed(self) -> bool:
+        """
+        Check if the connection to the remote database is closed.
+        
+        Note: This is a legacy property name. For checking server health,
+        use the 'healthy' property instead.
+        
+        Returns
+        -------
+        bool
+            False (remote connections don't have a traditional "closed" state)
+        """
+        # Remote HTTP connections don't have a persistent "closed" state
+        # Return False to indicate connection is not closed
+        return False
 
     def ping(self, force=False):
         now = time.time()
@@ -1855,29 +1925,42 @@ class RemoteVectorDB(BaseVectorDB):
     async def _handle_response_async(response: httpx.Response) -> dict:
         """Handle API response and raise appropriate exceptions"""
         if response.status_code == 200:
-            return await response.json()
+            try:
+                return response.json()
+            except ValueError as e:
+                logger.warning(f"Failed to parse successful response as JSON: {e}")
+                raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
 
+        # Try to parse error response as JSON with fallback to text
+        error_data = {}
+        error_dict = {}
+        error_type = "unknown"
+        error_msg = ""
+        
         try:
-            error_data = await response.json()
-            error_type = error_data.get("type", "unknown")
-            error_msg = error_data.get("error", str(response.status_code))
-
-            # TODO: is this error checking working properly? Should test.
-            # Map error type to appropriate exception
-            error_map = {
-                "database_not_found": DatabaseNotFoundError,
-                "duplicate_document_id": DuplicateDocumentIDError,
-                "embedding_error": EmbeddingError,
-                "document_not_found": DocumentNotFoundError
-            }
-
-            # Raise the appropriate exception if we recognize the type
-            if error_type in error_map:
-                raise error_map[error_type](error_msg)
-
-        except (ValueError, KeyError):
-            # Fallback if we can't parse the response
+            error_data = response.json()
+            error_dict = error_data.get("error", {})
+            error_type = error_dict.get("code", "unknown").lower()
+            error_msg = error_dict.get("message", "")
+        except ValueError as e:
+            logger.debug(f"Failed to parse error response as JSON: {e}")
+            # Fallback to response text when JSON parsing fails
             error_msg = response.text or f"HTTP Error: {response.status_code}"
+            error_type = "parse_error"
+
+        logger.debug(f"Client error (async): {error_type} - {error_msg}")
+        
+        # Map error type to appropriate exception
+        error_map = {
+            "database_not_found": DatabaseNotFoundError,
+            "duplicate_document_id": DuplicateDocumentIDError,
+            "embedding_error": EmbeddingError,
+            "document_not_found": DocumentNotFoundError
+        }
+        
+        # Raise the appropriate exception if we recognize the type
+        if error_type in error_map:
+            raise error_map[error_type](error_msg)
 
         # Generic error mapping based on HTTP status
         if response.status_code == 404:
@@ -2443,12 +2526,32 @@ class RemoteVectorDB(BaseVectorDB):
 
         return deleted_count
 
-    # TODO: must implement route!
     async def count_async(
             self,
             filters: Optional[Dict[str, Any]] = None
     ) -> int:
-        pass
+        """
+        Count documents matching filters asynchronously.
+        
+        Parameters
+        ----------
+        filters : Dict[str, Any], optional
+            Metadata filters to apply
+            
+        Returns
+        -------
+        int
+            Number of matching documents
+            
+        Raises
+        ------
+        NotImplementedError
+            Server route not yet implemented
+        """
+        raise NotImplementedError(
+            "count_async() method requires server route implementation. "
+            "Use filter_async() with limit to get document counts for now."
+        )
 
     async def update_async(
             self,
@@ -2802,9 +2905,8 @@ class RemoteVectorDB(BaseVectorDB):
             'column_mapping': column_mapping or {}
         }
 
-        client = await self._ensure_client()
         response = await self._make_request_with_retry_async(
-            "POST", url, json=payload, client=client
+            "POST", url, json=payload
         )
         result = await self._handle_response_async(response)
 
@@ -2812,7 +2914,7 @@ class RemoteVectorDB(BaseVectorDB):
         if 'new_schema' in result:
             self._metadata_schema = {}
             for field_name, field_config in result['new_schema'].items():
-                self.metadata_schema[field_name] = MetadataField(
+                self._metadata_schema[field_name] = MetadataField(
                     type=MetadataFieldType(field_config['type']),
                     indexed=field_config.get('indexed', False),
                     required=field_config.get('required', False),
@@ -2851,7 +2953,6 @@ class RemoteVectorDB(BaseVectorDB):
                       f"(indexed={field_info['indexed']}, required={field_info['required']})")
         """
         url = self._build_url(f"/api/v1/{self.name}/schema")
-        client = await self._ensure_client()
-        response = await self._make_request_with_retry_async("GET", url, client=client)
+        response = await self._make_request_with_retry_async("GET", url)
         result = await self._handle_response_async(response)
         return result.get('schema_info', {})
