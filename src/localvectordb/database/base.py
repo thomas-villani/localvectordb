@@ -6,23 +6,23 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # localvectordb/database/base.py
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Union, Optional, Dict, Any, Literal, List
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import aiosqlite
 import numpy as np
 from faiss import IndexIDMap2
 
-from localvectordb._pools import ReadWriteLock, ConnectionPool, AsyncConnectionPool
+from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema
 from localvectordb.chunking import PositionTrackingChunker
-from localvectordb.core import Chunk, Document, QueryResult, DocumentScoringMethod, MetadataField
+from localvectordb.core import Chunk, Document, DocumentScoringMethod, MetadataField, QueryResult
 from localvectordb.embeddings import EmbeddingProvider
 
 DEFAULT_QUEUE_SIZE = 3
@@ -219,7 +219,6 @@ class BaseVectorDB(ABC):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    @abstractmethod
     def query_builder(self) -> "QueryBuilder":
         """
         Create a new QueryBuilder for this database.
@@ -253,7 +252,8 @@ class BaseVectorDB(ABC):
                 .semantic_filter("category", "research")
                 .execute_async())
         """
-        raise NotImplementedError()
+        from localvectordb.query_builder import QueryBuilder
+        return QueryBuilder(self)
 
     def ping(self) -> bool:
         """Check if the database is accessible. Override in subclasses."""

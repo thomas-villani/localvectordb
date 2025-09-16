@@ -31,10 +31,10 @@ import numpy as np
 
 from localvectordb.core import Chunk, ChunkPosition
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.extractors import ExtractorRegistry
 from localvectordb.exceptions import (
     DuplicateDocumentIDError,
 )
+from localvectordb.extractors import ExtractorRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -548,14 +548,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """
         if len(embeddings) == 0 or self.index.ntotal == 0:
             return chunks, embeddings, doc_chunk_mapping
-        
+
         # Use provided hashes or query from database
         if existing_chunk_hashes is None:
             existing_chunk_hashes = set()
             with self.connection_pool.get_connection() as conn:
                 cursor = conn.execute('SELECT DISTINCT content_hash FROM chunks')
                 existing_chunk_hashes = {row['content_hash'] for row in cursor.fetchall()}
-        
+
         hash_mask = np.array([chunk.content_hash not in existing_chunk_hashes for chunk in chunks])
         if not hash_mask.any():
             logger.debug("All chunks filtered out by content hash")
@@ -565,7 +565,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         filtered_mappings = [doc_chunk_mapping[i] for i in range(len(doc_chunk_mapping)) if hash_mask[i]]
         if self.index.ntotal == 0 or similarity_threshold is None or similarity_threshold <= 0:
             return filtered_chunks, filtered_embeddings, filtered_mappings
-        
+
         # Get the metric type and convert similarity to distance threshold
         metric_type = self._get_faiss_metric_type()
         if metric_type == 'IP':
@@ -1126,7 +1126,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
         extraction_results = await asyncio.gather(*extraction_tasks)
         documents, merged_metadata, final_ids = [], [], []
-        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results)):
+        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results, strict=False)):
             documents.append(extraction_result.text)
             doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
             if metadata is not None and i < len(metadata):
@@ -1376,7 +1376,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
         extraction_results = await asyncio.gather(*extraction_tasks)
         documents, merged_metadata, final_ids = [], [], []
-        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results)):
+        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results, strict=False)):
             documents.append(extraction_result.text)
             doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
             if metadata is not None and i < len(metadata):
@@ -1500,7 +1500,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             return {row['id'] for row in rows}
 
     # -------------------
-    # Pipelines (async)  
+    # Pipelines (async)
     # -------------------
     async def _async_pipeline_process(
         self,
@@ -1732,7 +1732,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             chunks_needing_embedding = chunk_data['chunks_needing_embedding']
             new_embeddings = chunk_data.get('new_embeddings', np.array([]).reshape(0, self.embedding_dimension))
             field_embeddings = chunk_data.get('field_embeddings', {})
-            
+
             if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
                 loop = asyncio.get_event_loop()
                 doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'], chunk_data['content_hash'])
@@ -1749,7 +1749,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 async with self.async_connection_pool.get_connection_context() as conn:
                     try:
                         await conn.execute('BEGIN')
-                        
+
                         # Remove old chunks and metadata embeddings on upsert
                         if mode == "upsert":
                             await self._remove_old_chunks_batch_async(
@@ -1757,17 +1757,17 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             )
                             # Always remove metadata embeddings on upsert to prevent orphaned entries
                             await self._remove_metadata_embeddings_async(conn, doc_id)
-                        
+
                         await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
                         if new_embeddings.size > 0:
                             loop = asyncio.get_event_loop()
                             await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding)
                         await self._insert_chunks_bulk_async(conn, chunks_data)
-                        
+
                         # Store metadata embeddings if present
                         if field_embeddings:
                             await self._store_metadata_embeddings_async(conn, doc_id, field_embeddings)
-                        
+
                         await conn.commit()
                     except Exception:
                         await conn.rollback()

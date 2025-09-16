@@ -343,7 +343,7 @@ def rotate_api_key(ctx, key_id, output):
             click.secho("New Key Details:", fg="cyan")
             click.echo(f"  Key ID: {new_key.id}")
             click.echo(f"  Description: {new_key.description}")
-            
+
             # Permission level with styling
             perm_display = new_key.permission_level.value
             if new_key.permission_level == PermissionLevel.READ_ONLY:
@@ -351,7 +351,7 @@ def rotate_api_key(ctx, key_id, output):
             else:
                 perm_display = click.style(perm_display, fg="green")
             click.echo(f"  Permission Level: {perm_display}")
-            
+
             click.echo(f"  Created: {new_key.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
             if new_key.expires_at:
@@ -482,7 +482,7 @@ def show_key_info(ctx, key_id, output):
             click.secho("Basic Information:", fg="cyan")
             click.echo(f"  ID: {key_record.id}")
             click.echo(f"  Description: {key_record.description or 'None'}")
-            
+
             # Permission level with styling
             perm_display = key_record.permission_level.value
             if key_record.permission_level == PermissionLevel.READ_ONLY:
@@ -490,7 +490,7 @@ def show_key_info(ctx, key_id, output):
             else:
                 perm_display = click.style(perm_display, fg="green")
             click.echo(f"  Permission Level: {perm_display}")
-            
+
             click.echo(f"  Created by: {key_record.created_by or 'Unknown'}")
             click.echo()
 

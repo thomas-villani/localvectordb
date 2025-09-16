@@ -131,7 +131,6 @@ from typing import Any, Dict, List, Literal, Optional, Union
 import httpx
 import numpy as np
 
-from localvectordb import QueryBuilder
 from localvectordb.core import (
     Document,
     DocumentScoringMethod,
@@ -303,8 +302,6 @@ class RemoteVectorDB(BaseVectorDB):
 
     """
 
-    def query_builder(self) -> "QueryBuilder":
-        return QueryBuilder(self)
 
     def __init__(
             self,
@@ -476,7 +473,7 @@ class RemoteVectorDB(BaseVectorDB):
         error_dict = {}
         error_type = "unknown"
         error_msg = ""
-        
+
         try:
             error_data = response.json()
             error_dict = error_data.get("error", {})
@@ -489,7 +486,7 @@ class RemoteVectorDB(BaseVectorDB):
             error_type = "parse_error"
 
         logger.debug(f"Client error: {error_type} - {error_msg}")
-        
+
         # Map error type to appropriate exception
         error_map = {
             "database_not_found": DatabaseNotFoundError,
@@ -497,7 +494,7 @@ class RemoteVectorDB(BaseVectorDB):
             "embedding_error": EmbeddingError,
             "document_not_found": DocumentNotFoundError
         }
-        
+
         # Raise the appropriate exception if we recognize the type
         if error_type in error_map:
             raise error_map[error_type](error_msg)
@@ -840,22 +837,22 @@ class RemoteVectorDB(BaseVectorDB):
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
-        
+
         # Build form data
         form_data = {
             'batch_size': str(batch_size),
             'mode': 'upsert'  # Specify upsert mode
         }
-        
+
         if metadata is not None:
             form_data['metadata'] = json.dumps(metadata)
-        
+
         if ids is not None:
             form_data['ids'] = json.dumps(ids)
-        
+
         if similarity_threshold is not None:
             form_data['similarity_threshold'] = str(similarity_threshold)
-        
+
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
@@ -940,23 +937,23 @@ class RemoteVectorDB(BaseVectorDB):
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
-        
+
         # Build form data
         form_data = {
             'batch_size': str(batch_size),
             'mode': 'insert',  # Specify insert mode
             'errors': errors
         }
-        
+
         if metadata is not None:
             form_data['metadata'] = json.dumps(metadata)
-        
+
         if ids is not None:
             form_data['ids'] = json.dumps(ids)
-        
+
         if similarity_threshold is not None:
             form_data['similarity_threshold'] = str(similarity_threshold)
-        
+
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
@@ -1767,7 +1764,7 @@ class RemoteVectorDB(BaseVectorDB):
             # If ping fails due to network issues, connection errors, etc.
             return False
 
-    @property 
+    @property
     def closed(self) -> bool:
         """
         Check if the connection to the remote database is closed.
@@ -1944,7 +1941,7 @@ class RemoteVectorDB(BaseVectorDB):
         error_dict = {}
         error_type = "unknown"
         error_msg = ""
-        
+
         try:
             error_data = response.json()
             error_dict = error_data.get("error", {})
@@ -1957,7 +1954,7 @@ class RemoteVectorDB(BaseVectorDB):
             error_type = "parse_error"
 
         logger.debug(f"Client error (async): {error_type} - {error_msg}")
-        
+
         # Map error type to appropriate exception
         error_map = {
             "database_not_found": DatabaseNotFoundError,
@@ -1965,7 +1962,7 @@ class RemoteVectorDB(BaseVectorDB):
             "embedding_error": EmbeddingError,
             "document_not_found": DocumentNotFoundError
         }
-        
+
         # Raise the appropriate exception if we recognize the type
         if error_type in error_map:
             raise error_map[error_type](error_msg)
@@ -2177,22 +2174,22 @@ class RemoteVectorDB(BaseVectorDB):
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
-        
+
         # Build form data
         form_data = {
             'batch_size': str(batch_size),
             'mode': 'upsert'  # Specify upsert mode
         }
-        
+
         if metadata is not None:
             form_data['metadata'] = json.dumps(metadata)
-        
+
         if ids is not None:
             form_data['ids'] = json.dumps(ids)
-        
+
         if similarity_threshold is not None:
             form_data['similarity_threshold'] = str(similarity_threshold)
-        
+
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
@@ -2278,23 +2275,23 @@ class RemoteVectorDB(BaseVectorDB):
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
-        
+
         # Build form data
         form_data = {
             'batch_size': str(batch_size),
             'mode': 'insert',  # Specify insert mode
             'errors': errors
         }
-        
+
         if metadata is not None:
             form_data['metadata'] = json.dumps(metadata)
-        
+
         if ids is not None:
             form_data['ids'] = json.dumps(ids)
-        
+
         if similarity_threshold is not None:
             form_data['similarity_threshold'] = str(similarity_threshold)
-        
+
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
@@ -2809,7 +2806,7 @@ class RemoteVectorDB(BaseVectorDB):
         if self._sync_client is not None and not self._sync_client.is_closed:
             self._sync_client.close()
             self._sync_client = None
-        
+
         # Close async client if it exists
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()

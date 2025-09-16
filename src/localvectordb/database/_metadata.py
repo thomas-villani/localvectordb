@@ -24,11 +24,11 @@ from typing import Any, Dict, List, Optional
 import aiosqlite
 import numpy as np
 
-from localvectordb._schema import get_common_metadata_schemas
 from localvectordb._pools import AsyncConnectionPool
+from localvectordb._schema import get_common_metadata_schemas
+from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import DatabaseError
-from localvectordb.core import MetadataField, MetadataFieldType
 
 logger = logging.getLogger(__name__)
 

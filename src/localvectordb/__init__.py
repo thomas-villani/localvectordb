@@ -193,18 +193,17 @@ Not for commercial use without explicit permission.
 Contact: thomas.villani@gmail.com
 """
 
+from localvectordb.backup import BackupManager, IncrementalBackupManager, PointInTimeRecoveryManager
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.client import RemoteVectorDB
 from localvectordb.core import MetadataField
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
+from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
 from localvectordb.factory import VectorDB
+from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.query_builder import QueryBuilder
 from localvectordb.versioning import VersionManager
-from localvectordb.backup import BackupManager, IncrementalBackupManager, PointInTimeRecoveryManager
-from localvectordb.migration import Migration, MigrationEngine
-from localvectordb.extractors import get_extractor_registry, ExtractorRegistry
-
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",

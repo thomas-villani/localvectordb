@@ -156,7 +156,7 @@ class KeyRecord:
             except ValueError:
                 # If invalid permission level in DB, default to read_write
                 permission_level = PermissionLevel.READ_WRITE
-        
+
         return cls(
             id=row['id'],
             key_hash=row['key_hash'],
@@ -252,7 +252,7 @@ class KeyManager:
             # Check current schema version and migrate if needed
             cursor = conn.execute("SELECT version FROM schema_version")
             version_row = cursor.fetchone()
-            
+
             if not version_row:
                 # New database - set current version
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)",
@@ -269,14 +269,14 @@ class KeyManager:
     def _migrate_database(self, conn: Connection, from_version: int) -> None:
         """Migrate database schema from one version to another"""
         logger.info(f"Migrating key database from version {from_version} to {self.SCHEMA_VERSION}")
-        
+
         if from_version < 2:
             # Migration from version 1 to 2: Add permission_level column
             try:
                 # Check if column already exists (in case of interrupted migration)
                 cursor = conn.execute("PRAGMA table_info(api_keys)")
                 columns = [row[1] for row in cursor.fetchall()]
-                
+
                 if 'permission_level' not in columns:
                     logger.info("Adding permission_level column to api_keys table")
                     conn.execute("""
@@ -291,7 +291,7 @@ class KeyManager:
                     logger.info("Successfully added permission_level column and index")
                 else:
                     logger.info("permission_level column already exists")
-                    
+
             except Exception as e:
                 logger.error(f"Error during database migration: {e}")
                 raise
@@ -470,7 +470,7 @@ class KeyManager:
         """
         if not key or not key.startswith(self.KEY_PREFIX):
             return False, None
-            
+
         with self._get_connection() as conn:
             # Get all active keys with permission levels
             cursor = conn.execute("""

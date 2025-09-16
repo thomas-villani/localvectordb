@@ -630,7 +630,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         enriched_results.append(enriched_result)
                     continue
                 doc_embeddings = self._reconstruct_embeddings_batch(doc_faiss_ids)
-                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings)}
+                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings, strict=False)}
                 all_matched_indices = [chunk_index for chunk_index, _ in chunk_requests]
                 all_matched_results = [result for _, result in chunk_requests]
                 relevant_chunks = set()
@@ -737,9 +737,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
     @staticmethod
     def _compute_document_scores(method, method_options, doc_groups, doc_content_map, doc_metadata_batch):
-        import numpy as np
         import math
         import statistics
+
+        import numpy as np
         document_results: List[QueryResult] = []
         for doc_id, chunks in doc_groups.items():
             doc_content = doc_content_map.get(doc_id)
@@ -1554,7 +1555,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     continue
                 loop = asyncio.get_event_loop()
                 doc_embeddings = await loop.run_in_executor(None, self._reconstruct_embeddings_batch, doc_faiss_ids)
-                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings)}
+                faiss_id_to_embedding = {fid: emb for fid, emb in zip(doc_faiss_ids, doc_embeddings, strict=False)}
                 all_matched_indices = [chunk_index for chunk_index, _ in chunk_requests]
                 all_matched_results = [result for _, result in chunk_requests]
                 relevant_chunks = set()

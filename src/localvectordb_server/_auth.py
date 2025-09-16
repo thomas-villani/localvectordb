@@ -202,7 +202,7 @@ def validate_api_key_with_permissions(token: str) -> tuple[bool, PermissionLevel
     is_valid, permission_level = _validate_database_key(token)
     if is_valid:
         return True, permission_level
-        
+
     # Log final failure
     security_logger.log_auth_attempt(
         success=False,

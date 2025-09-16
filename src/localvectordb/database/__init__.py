@@ -10,12 +10,12 @@
 # src/localvectordb/database/__init__.py
 from __future__ import annotations
 
-from localvectordb.database.base import BaseVectorDB
 from localvectordb.database._core import LocalVectorDBCore
-from localvectordb.database._ingest import PipelineMixin
-from localvectordb.database._search import SearchMixin
-from localvectordb.database._metadata import MetadataMixin
 from localvectordb.database._crud import CrudMixin
+from localvectordb.database._ingest import PipelineMixin
+from localvectordb.database._metadata import MetadataMixin
+from localvectordb.database._search import SearchMixin
+from localvectordb.database.base import BaseVectorDB
 
 
 class LocalVectorDB(PipelineMixin, SearchMixin, MetadataMixin, CrudMixin, LocalVectorDBCore):

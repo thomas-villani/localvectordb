@@ -19,7 +19,6 @@ from datetime import datetime
 
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
-from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import handle_errors
 from localvectordb_server._logcfg import log_performance
 from localvectordb_server.keymanager import PermissionLevel
@@ -74,12 +73,12 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                         if not is_valid:
                             flash('Invalid API key', 'error')
                             return redirect(url_for('inspector.login'))
-                        
+
                         # Check if user has required permission
                         if required_permission == PermissionLevel.READ_WRITE and permission_level == PermissionLevel.READ_ONLY:
                             flash('Insufficient permissions. This action requires write access.', 'error')
                             return redirect(url_for('inspector.dashboard'))
-                        
+
                         # Store valid API key in session
                         session['inspector_api_key'] = api_key
                         session['inspector_permission_level'] = permission_level.value

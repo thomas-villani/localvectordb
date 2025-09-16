@@ -186,8 +186,8 @@ def from_uri(db_uri: str) -> Union[LocalVectorDB, RemoteVectorDB]:
             complete = parsed.netloc + parsed.path
             full_path, db_name = complete.rsplit("/", 1)
             if parsed.port:
-                raise ValueError(f"Invalid database URI: port can only be specified with lvdb+http://, http://, "
-                                 f"or https://")
+                raise ValueError("Invalid database URI: port can only be specified with lvdb+http://, http://, "
+                                 "or https://")
 
         if not db_name:
             raise ValueError("Must provide a valid database URI, expected database name specified as path.")

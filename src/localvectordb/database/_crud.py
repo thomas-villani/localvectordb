@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 from abc import ABC
 from datetime import UTC, datetime
@@ -146,7 +145,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     ids,
                 )
                 faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
-                
+
                 # Also collect metadata embedding FAISS IDs
                 # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
                 # when documents are deleted, but we need to collect their FAISS IDs first
@@ -502,7 +501,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 ids,
             )
             faiss_ids = [row['faiss_id'] for row in await cursor.fetchall()]
-            
+
             # Also collect metadata embedding FAISS IDs
             # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
             # when documents are deleted, but we need to collect their FAISS IDs first
@@ -511,7 +510,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 ids,
             )
             faiss_ids.extend([row['faiss_id'] for row in await cursor.fetchall()])
-            
+
             if faiss_ids:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)

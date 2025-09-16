@@ -476,30 +476,30 @@ class BackupManager:
         for member in tar.getmembers():
             if not member.isfile() or member.name == "manifest.json":
                 continue  # Skip non-files and manifest
-                
+
             expected_checksum = metadata.checksums.get(member.name)
             if expected_checksum is None:
                 raise ValueError(f"No expected checksum found for file: {member.name}")
-            
+
             # Stream the file and compute hash without extracting
             file_data = tar.extractfile(member)
             if file_data is None:
                 raise ValueError(f"Could not read file from archive: {member.name}")
-            
+
             sha256_hash = hashlib.sha256()
             while True:
                 chunk = file_data.read(4096)
                 if not chunk:
                     break
                 sha256_hash.update(chunk)
-            
+
             actual_checksum = sha256_hash.hexdigest()
             if actual_checksum != expected_checksum:
                 raise ValueError(
                     f"Checksum mismatch for {member.name}: "
                     f"expected {expected_checksum}, got {actual_checksum}"
                 )
-        
+
         logger.debug("Archive checksum verification passed")
 
     def _verify_backup_integrity(self, backup_path: Path) -> None:
@@ -729,22 +729,22 @@ class BackupManager:
                         manifest_file = tar.extractfile(manifest_info)
                         if manifest_file is None:
                             continue  # Skip if manifest can't be read
-                        
+
                         manifest_data = json.load(manifest_file)
                         file_backup_id = manifest_data.get('backup_id')
-                        
+
                         if file_backup_id == backup_id:
                             return backup_file
-                            
+
                     except (KeyError, json.JSONDecodeError):
                         # Manifest missing or corrupted, skip this file
                         continue
-                        
+
             except Exception as e:
                 # Archive corrupted or unreadable, log warning and continue
                 logger.warning(f"Could not read backup file {backup_file}: {e}")
                 continue
-        
+
         return None
 
     def _find_backup_file(self, backup_id: str) -> Optional[Path]:
@@ -758,14 +758,14 @@ class BackupManager:
         backup_file = self._find_backup_file_by_manifest(backup_id)
         if backup_file is not None:
             return backup_file
-        
+
         # Fallback method: filename substring matching (legacy)
         logger.warning(f"Manifest-based search failed for {backup_id}, falling back to filename matching")
         for backup_file in self.config.backup_location.glob("*.lvdb-backup"):
             if backup_id[:8] in backup_file.name:
                 logger.warning(f"Using potentially unsafe filename match for {backup_id}: {backup_file}")
                 return backup_file
-        
+
         return None
 
     def _is_within_directory(self, directory: Path, target: Path) -> bool:
@@ -809,23 +809,23 @@ class BackupManager:
         """
         for member in tar.getmembers():
             member_path = path / member.name
-            
+
             # Reject symlinks and hard links to prevent link-based attacks
             if member.islnk() or member.issym():
                 raise ValueError(f"Refusing to extract archives with (sym)links: {member.name}")
-            
+
             # Reject absolute paths and path traversal attempts
             if member.name.startswith("/") or ".." in Path(member.name).parts:
                 raise ValueError(f"Unsafe path in tar: {member.name}")
-            
+
             # Verify extracted path stays within destination directory
             if not self._is_within_directory(path, member_path):
                 raise ValueError(f"Path traversal detected: {member.name}")
-            
+
             # Reject device files and other special file types
             if member.ischr() or member.isblk() or member.isfifo():
                 raise ValueError(f"Refusing to extract special file type: {member.name}")
-        
+
         # If all validations pass, extract the archive
         tar.extractall(path=path)
 
@@ -1240,7 +1240,7 @@ class IncrementalBackupManager:
         # Create incremental database with same schema
         inc_conn = sqlite3.connect(inc_db_path)
         orig_conn = sqlite3.connect(self.database_path)
-        
+
         try:
             # Copy schema from original database
             cursor = orig_conn.execute("""
@@ -1295,7 +1295,7 @@ class IncrementalBackupManager:
             """, ('parent_backup_timestamp', changes['parent_timestamp'].isoformat()))
 
             inc_conn.commit()
-            
+
         finally:
             # Explicitly close connections to release file locks on Windows
             orig_conn.close()
@@ -1306,16 +1306,16 @@ class IncrementalBackupManager:
     def _create_compatible_base_index(self, original_index, dimension: int):
         """Create a base FAISS index that matches the original index type and metric."""
         import faiss
-        
+
         # Get the base index from IndexIDMap if wrapped
         if hasattr(original_index, 'index'):
             base_index = original_index.index
         else:
             base_index = original_index
-            
+
         # Detect index type and metric
         index_type = str(type(base_index).__name__)
-        
+
         # Handle different index types and metrics
         if 'IP' in index_type or 'InnerProduct' in index_type:
             # Inner product metric
@@ -1546,7 +1546,7 @@ class IncrementalBackupManager:
 
         inc_conn = sqlite3.connect(inc_db_path)
         working_conn = sqlite3.connect(working_db_path)
-        
+
         try:
             # Get documents table schema to handle all columns dynamically
             cursor = inc_conn.execute("PRAGMA table_info(documents)")
@@ -1554,7 +1554,7 @@ class IncrementalBackupManager:
             column_names = [col[1] for col in column_info]  # col[1] is the column name
             placeholders = ', '.join(['?' for _ in column_names])
             column_names_str = ', '.join(column_names)
-            
+
             # Copy changed documents with all columns
             cursor = inc_conn.execute(f"SELECT {column_names_str} FROM documents")
             for row in cursor.fetchall():
@@ -1567,14 +1567,14 @@ class IncrementalBackupManager:
             # Copy changed chunks with optimized bulk operations
             cursor = inc_conn.execute("SELECT * FROM chunks")
             all_chunk_rows = cursor.fetchall()
-            
+
             if all_chunk_rows:
                 # Collect unique document IDs that need chunk replacement
                 affected_doc_ids = set()
                 for row in all_chunk_rows:
                     doc_id = row[1]  # document_id is second column
                     affected_doc_ids.add(doc_id)
-                
+
                 # Bulk delete all chunks for affected documents
                 if affected_doc_ids:
                     placeholders = ','.join(['?' for _ in affected_doc_ids])
@@ -1583,12 +1583,12 @@ class IncrementalBackupManager:
                         list(affected_doc_ids)
                     )
                     logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
-                
+
                 # Bulk insert all new chunks
                 chunk_insert_data = []
                 for row in all_chunk_rows:
                     chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
-                
+
                 working_conn.executemany("""
                     INSERT INTO chunks
                     (document_id, chunk_index, content, content_hash,
@@ -1599,12 +1599,12 @@ class IncrementalBackupManager:
                 logger.debug(f"Bulk inserted {len(chunk_insert_data)} chunks")
 
             working_conn.commit()
-            
+
         finally:
             # Explicitly close connections to release file locks on Windows
             inc_conn.close()
             working_conn.close()
-            
+
             # Small delay to ensure file locks are released
             time.sleep(0.1)
 

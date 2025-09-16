@@ -7,17 +7,18 @@ with structured logging, error handling, and performance monitoring.
 """
 import logging
 import os
-from typing import Union, Optional
+from typing import Optional, Union
+
+from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from localvectordb.exceptions import ConfigurationError
+from localvectordb_server._cache import cache
 from localvectordb_server._dbmanager import DatabaseManager
 from localvectordb_server._error_handlers import register_error_handlers
 from localvectordb_server._logcfg import configure_logging, setup_request_logging
 from localvectordb_server.config import Config, load_config
 from localvectordb_server.keymanager import KeyManager
-from localvectordb_server._cache import cache
-from flask import Flask
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
     from flask_talisman import Talisman

@@ -19,7 +19,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Type, Literal
+from typing import Any, Callable, Dict, List, Literal, Optional, Type
 
 import httpx
 import numpy as np
@@ -424,12 +424,12 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                 )
                 response.raise_for_status()
                 data = response.json()
-                
+
                 if 'embeddings' in data and data['embeddings']:
                     return len(data['embeddings'][0])
                 else:
                     raise ValueError("No embeddings returned from Ollama API")
-                    
+
             except Exception as e:
                 logger.error(f"Failed to get dimension from Ollama API: {e}")
                 # Fallback to a common default for Ollama models
@@ -708,24 +708,24 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
                     "x-goog-api-key": self.api_key,
                     "Content-Type": "application/json",
                 }
-                
+
                 # Build minimal request payload
                 payload = {
                     "content": {"parts": [{"text": "dimension_probe"}]}
                 }
-                
+
                 if self.requested_dimensions:
                     payload["outputDimensionality"] = self.requested_dimensions
-                
+
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
-                
+
                 if "embedding" in data and "values" in data["embedding"]:
                     return len(data["embedding"]["values"])
                 else:
                     raise ValueError("No embedding values returned from Google API")
-                    
+
             except Exception as e:
                 logger.error(f"Failed to get dimension from Google API: {e}")
                 # Fallback to known defaults if probe fails

@@ -78,8 +78,8 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Union
 import numpy as np
 
 from localvectordb._filters import FILTER_OPERATORS
-from localvectordb.database.base import BaseVectorDB
 from localvectordb.core import Document, DocumentScoringMethod, QueryResult
+from localvectordb.database.base import BaseVectorDB
 
 logger = logging.getLogger(__name__)
 

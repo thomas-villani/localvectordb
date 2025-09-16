@@ -6,19 +6,19 @@
 # For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
 #
 # Contact: thomas.villani@gmail.com
-# 
+#
 # ${DIR_PATH}/${FILE_NAME}
 import json
+import logging
 import sqlite3
 from pathlib import Path
-from typing import Union, Dict, Optional, Any, List
-import logging
+from typing import Any, Dict, List, Optional, Union
+
 import aiosqlite
 
-from localvectordb.core import MetadataFieldType, MetadataField
 from localvectordb._pools import ReadWriteLock
-from localvectordb.versioning import VersionManager, DatabaseVersion
-
+from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.versioning import DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,7 @@ class DatabaseSchema:
         # Get current table schema
         cursor = conn.execute("PRAGMA table_info(documents)")
         current_columns = [row[1] for row in cursor.fetchall() if row[1] != field_name]
-        
+
         # Build new table SQL
         column_definitions = []
         for col_name in current_columns:
@@ -345,7 +345,7 @@ class DatabaseSchema:
                 # Metadata column - get its type from metadata_schema
                 try:
                     metadata_cursor = conn.execute(
-                        "SELECT field_type FROM metadata_schema WHERE field_name = ?", 
+                        "SELECT field_type FROM metadata_schema WHERE field_name = ?",
                         (col_name,)
                     )
                     result = metadata_cursor.fetchone()
@@ -353,7 +353,7 @@ class DatabaseSchema:
                         field_type = result[0]
                         sqlite_type_map = {
                             'text': 'TEXT',
-                            'integer': 'INTEGER', 
+                            'integer': 'INTEGER',
                             'real': 'REAL',
                             'boolean': 'BOOLEAN',
                             'date': 'TEXT',
@@ -367,27 +367,27 @@ class DatabaseSchema:
                 except Exception:
                     # Fallback if query fails
                     column_definitions.append(f'{col_name} TEXT')
-        
+
         # Create new table with a temporary name
         new_table_sql = f"""
         CREATE TABLE documents_new (
             {', '.join(column_definitions)}
         )
         """
-        
+
         conn.execute(new_table_sql)
-        
+
         # Copy data from old table to new table
         columns_str = ', '.join(current_columns)
         conn.execute(f"""
         INSERT INTO documents_new ({columns_str})
         SELECT {columns_str} FROM documents
         """)
-        
+
         # Drop old table and rename new table
         conn.execute("DROP TABLE documents")
         conn.execute("ALTER TABLE documents_new RENAME TO documents")
-        
+
         # Recreate indexes (excluding the one for the dropped column)
         for index_sql in self.BASE_INDEXES:
             if 'documents' in index_sql and field_name not in index_sql:
@@ -395,7 +395,7 @@ class DatabaseSchema:
                     conn.execute(index_sql)
                 except Exception as e:
                     logger.warning(f"Failed to recreate index: {e}")
-        
+
         # Recreate any custom indexes for remaining metadata fields
         cursor = conn.execute("SELECT field_name FROM metadata_schema WHERE indexed = 1")
         for (indexed_field,) in cursor.fetchall():
@@ -427,7 +427,7 @@ class DatabaseSchema:
         # Get current table schema
         cursor = conn.execute("PRAGMA table_info(documents)")
         current_columns = [(row[1], row[2]) for row in cursor.fetchall()]
-        
+
         # Build new table SQL with updated type
         column_definitions = []
         for col_name, col_type in current_columns:
@@ -445,27 +445,27 @@ class DatabaseSchema:
             else:
                 # Keep existing type
                 column_definitions.append(f'{col_name} {col_type}')
-        
+
         # Create new table with a temporary name
         new_table_sql = f"""
         CREATE TABLE documents_new (
             {', '.join(column_definitions)}
         )
         """
-        
+
         conn.execute(new_table_sql)
-        
+
         # Copy data from old table to new table with type conversion
         columns_str = ', '.join([col[0] for col in current_columns])
         conn.execute(f"""
         INSERT INTO documents_new ({columns_str})
         SELECT {columns_str} FROM documents
         """)
-        
-        # Drop old table and rename new table  
+
+        # Drop old table and rename new table
         conn.execute("DROP TABLE documents")
         conn.execute("ALTER TABLE documents_new RENAME TO documents")
-        
+
         # Recreate all indexes
         for index_sql in self.BASE_INDEXES:
             if 'documents' in index_sql:
@@ -473,7 +473,7 @@ class DatabaseSchema:
                     conn.execute(index_sql)
                 except Exception as e:
                     logger.warning(f"Failed to recreate index: {e}")
-        
+
         # Recreate custom indexes for metadata fields
         cursor = conn.execute("SELECT field_name FROM metadata_schema WHERE indexed = 1")
         for (indexed_field,) in cursor.fetchall():
@@ -607,7 +607,7 @@ class DatabaseSchema:
                 else:
                     tokenizer_clause = ""  # Use default tokenizer
                     logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
-                
+
                 conn.execute(f'''
                     CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
                     USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
@@ -1058,7 +1058,7 @@ class DatabaseSchema:
                                             else:
                                                 self._rebuild_table_for_column_drop(conn, field_name)
                                                 logger.info(f"Dropped column '{field_name}' using table rebuild")
-                                            
+
                                             changes['dropped_columns'].append(field_name)
                                         else:
                                             changes['warnings'].append(
@@ -1411,7 +1411,7 @@ class DatabaseSchema:
                 else:
                     tokenizer_clause = ""  # Use default tokenizer
                     logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
-                
+
                 await conn.execute(f'''
                     CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
                     USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})

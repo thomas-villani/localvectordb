@@ -25,8 +25,11 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb._schema import DatabaseSchema
+from localvectordb.core import MetadataField, MetadataFieldType
+
+# Add this import after the existing imports in routes.py
+from localvectordb.extractors import get_extractor_registry, get_supported_formats
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._cache import cache
@@ -43,9 +46,6 @@ from localvectordb_server._error_handlers import (
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
-
-# Add this import after the existing imports in routes.py
-from localvectordb.extractors import get_extractor_registry, get_supported_formats
 
 FILE_EXTRACTION_AVAILABLE = True
 
@@ -508,23 +508,23 @@ def insert_documents(db_name):
 @log_performance("upsert_from_chunks")
 def upsert_from_chunks(db_name):
     """Upsert documents from pre-chunked data"""
-    
+
     with request_context("upsert_from_chunks"):
         if not request.is_json:
             raise ValidationError("Request must contain JSON data")
-        
+
         data = request.get_json()
         if not data:
             raise ValidationError("Request body cannot be empty")
-        
+
         # Validate required fields
         validate_required_fields(data, ['chunks_by_document'])
-        
+
         chunks_by_document = data["chunks_by_document"]
         metadata = data.get("metadata", {})
         batch_size = data.get("batch_size", 100)
         similarity_threshold = data.get("similarity_threshold")
-        
+
         # Convert chunk dicts back to Chunk objects if needed
         from localvectordb.chunking import Chunk
         processed_chunks = {}
@@ -544,27 +544,27 @@ def upsert_from_chunks(db_name):
             else:
                 # Already strings or proper format
                 processed_chunks[doc_id] = chunks
-        
+
         try:
             db = current_app.db_manager.get_db(db_name)
-            
-            db_logger.log_query("upsert_from_chunks", 
+
+            db_logger.log_query("upsert_from_chunks",
                               database_name=db_name,
                               document_count=len(chunks_by_document))
-            
+
             result_ids = db.upsert_from_chunks(
                 chunks_by_document=processed_chunks,
                 metadata=metadata,
                 batch_size=batch_size,
                 similarity_threshold=similarity_threshold
             )
-            
+
             return jsonify({
                 "message": f"Successfully upserted {len(result_ids)} documents from chunks",
                 "ids": result_ids,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("upsert_from_chunks", e, database_name=db_name)
             raise
@@ -576,24 +576,24 @@ def upsert_from_chunks(db_name):
 @log_performance("insert_from_chunks")
 def insert_from_chunks(db_name):
     """Insert documents from pre-chunked data with conflict handling"""
-    
+
     with request_context("insert_from_chunks"):
         if not request.is_json:
             raise ValidationError("Request must contain JSON data")
-        
+
         data = request.get_json()
         if not data:
             raise ValidationError("Request body cannot be empty")
-        
+
         # Validate required fields
         validate_required_fields(data, ['chunks_by_document'])
-        
+
         chunks_by_document = data["chunks_by_document"]
         metadata = data.get("metadata", {})
         batch_size = data.get("batch_size", 100)
         similarity_threshold = data.get("similarity_threshold")
         errors = data.get("errors", "raise")
-        
+
         # Convert chunk dicts back to Chunk objects if needed
         from localvectordb.chunking import Chunk
         processed_chunks = {}
@@ -613,14 +613,14 @@ def insert_from_chunks(db_name):
             else:
                 # Already strings or proper format
                 processed_chunks[doc_id] = chunks
-        
+
         try:
             db = current_app.db_manager.get_db(db_name)
-            
-            db_logger.log_query("insert_from_chunks", 
+
+            db_logger.log_query("insert_from_chunks",
                               database_name=db_name,
                               document_count=len(chunks_by_document))
-            
+
             result_ids = db.insert_from_chunks(
                 chunks_by_document=processed_chunks,
                 metadata=metadata,
@@ -628,13 +628,13 @@ def insert_from_chunks(db_name):
                 similarity_threshold=similarity_threshold,
                 errors=errors
             )
-            
+
             return jsonify({
                 "message": f"Successfully inserted {len(result_ids)} documents from chunks",
                 "ids": result_ids,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("insert_from_chunks", e, database_name=db_name)
             raise

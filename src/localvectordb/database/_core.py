@@ -37,14 +37,14 @@ import faiss
 import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb._pools import ConnectionPool, AsyncConnectionPool, ReadWriteLock
+from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
+from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import Chunk, MetadataField
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
-from localvectordb.utils import get_system_version
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
-from localvectordb.chunking import ChunkerFactory
+from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
 
@@ -365,7 +365,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
-        
+
         # Check if we have an IndexIDMap/IndexIDMap2 wrapper
         if hasattr(self.index, 'id_map') and hasattr(self.index, 'index'):
             try:
@@ -374,7 +374,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.warning(f"IndexIDMap reconstruction failed, falling back to individual calls: {e}")
                 return self._reconstruct_individual_fallback(faiss_ids)
-        
+
         # Method 2: Try reconstruct_batch if available (for non-wrapped indices)
         if hasattr(self.index, 'reconstruct_batch'):
             try:
@@ -383,10 +383,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 return embeddings
             except Exception as e:
                 logger.warning(f"FAISS reconstruct_batch failed, falling back to individual calls: {e}")
-        
+
         # Method 3: Fallback to individual reconstruct calls
         return self._reconstruct_individual_fallback(faiss_ids)
-    
+
     def _get_faiss_ids_from_db(self, chunk_ids: List[int]) -> Dict[int, int]:
         """
         Get chunk_id -> faiss_id mapping from database efficiently.
@@ -403,31 +403,31 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """
         if not chunk_ids:
             return {}
-        
+
         try:
             with self.connection_pool.get_connection() as conn:
                 # Use parameterized query with IN clause for efficient batch lookup
                 placeholders = ','.join('?' * len(chunk_ids))
                 sql = f"SELECT id, faiss_id FROM chunks WHERE id IN ({placeholders}) AND faiss_id IS NOT NULL"
                 cursor = conn.execute(sql, chunk_ids)
-                
+
                 # Build mapping dict
                 chunk_to_faiss = {}
                 for row in cursor:
                     chunk_to_faiss[row['id']] = row['faiss_id']
-                
+
                 return chunk_to_faiss
         except Exception as e:
             logger.warning(f"Failed to get FAISS IDs from database: {e}")
             return {}
-    
+
     def _reconstruct_with_id_mapping(self, faiss_ids: List[int]) -> np.ndarray:
         """Reconstruct embeddings for IndexIDMap2 using optimized mapping strategies."""
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
-            
+
         faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
-        
+
         # Strategy 1: Try direct reconstruction on IndexIDMap2 first
         # For some index types, we can reconstruct directly using external IDs
         try:
@@ -447,7 +447,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     return result
         except Exception as e:
             logger.debug(f"Direct IndexIDMap2 reconstruction not available: {e}")
-        
+
         # Strategy 2: Efficient mapping using internal FAISS methods (if available)
         try:
             # Check if FAISS provides an efficient way to get internal indices
@@ -455,14 +455,14 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 # Get all current IDs efficiently
                 current_ids = self.index.get_ids()
                 id_to_internal = {ext_id: internal_idx for internal_idx, ext_id in enumerate(current_ids)}
-                
+
                 internal_indices = []
                 for fid in faiss_ids_array:
                     if fid in id_to_internal:
                         internal_indices.append(id_to_internal[fid])
                     else:
                         logger.debug(f"FAISS ID {fid} not found in current index")
-                
+
                 if internal_indices:
                     internal_indices_array = np.array(internal_indices, dtype=np.int64)
                     embeddings = self.index.index.reconstruct_batch(internal_indices_array)
@@ -470,7 +470,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     return embeddings
         except Exception as e:
             logger.debug(f"Efficient ID mapping strategy failed: {e}")
-        
+
         # Strategy 3: Fallback to optimized linear search (improved from O(n²) to O(n*m))
         # Build a reverse mapping dictionary first for better performance
         try:
@@ -479,22 +479,22 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             for i in range(self.index.ntotal):
                 external_id = self.index.id_map.at(i)
                 id_map_lookup[external_id] = i
-            
+
             internal_indices = []
             for fid in faiss_ids_array:
                 if fid in id_map_lookup:
                     internal_indices.append(id_map_lookup[fid])
                 else:
                     logger.debug(f"FAISS ID {fid} not found in id_map")
-            
+
             if not internal_indices:
                 logger.warning(f"No valid internal indices found for FAISS IDs: {faiss_ids}")
                 return np.array([]).reshape(0, self.embedding_dimension)
-            
+
             # Use the base index's reconstruct_batch method with internal indices
             internal_indices_array = np.array(internal_indices, dtype=np.int64)
             base_index = self.index.index
-            
+
             if hasattr(base_index, 'reconstruct_batch'):
                 embeddings = base_index.reconstruct_batch(internal_indices_array)
                 logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using optimized ID mapping")
@@ -509,14 +509,14 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     except Exception as e:
                         logger.debug(f"Failed to reconstruct internal index {idx}: {e}")
                         continue
-                
+
                 return np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
-                
+
         except Exception as e:
             logger.warning(f"Optimized ID mapping failed: {e}")
             # Final fallback to original O(n²) method if all else fails
             return self._reconstruct_with_linear_search_fallback(faiss_ids_array)
-    
+
     def _reconstruct_with_linear_search_fallback(self, faiss_ids_array: np.ndarray) -> np.ndarray:
         """Original O(n²) fallback method for critical compatibility."""
         internal_indices = []
@@ -531,15 +531,15 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 internal_indices.append(internal_idx)
             else:
                 logger.debug(f"FAISS ID {fid} not found in id_map (fallback)")
-        
+
         if not internal_indices:
             logger.warning(f"No valid internal indices found for FAISS IDs (fallback): {faiss_ids_array.tolist()}")
             return np.array([]).reshape(0, self.embedding_dimension)
-        
+
         # Use the base index's reconstruct_batch method with internal indices
         internal_indices_array = np.array(internal_indices, dtype=np.int64)
         base_index = self.index.index
-        
+
         if hasattr(base_index, 'reconstruct_batch'):
             embeddings = base_index.reconstruct_batch(internal_indices_array)
             logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using fallback linear search")
@@ -554,9 +554,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 except Exception as e:
                     logger.debug(f"Failed to reconstruct internal index {idx} (fallback): {e}")
                     continue
-            
+
             return np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
-    
+
     def _reconstruct_individual_fallback(self, faiss_ids: List[int]) -> np.ndarray:
         """Fallback method using individual reconstruct calls."""
         embeddings = []
@@ -567,11 +567,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.debug(f"Failed to reconstruct FAISS ID {fid}: {e}")
                 continue
-        
+
         result = np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
         if len(embeddings) != len(faiss_ids):
             logger.warning(f"Only reconstructed {len(embeddings)}/{len(faiss_ids)} embeddings in fallback mode")
-        
+
         return result
 
     # Config/state helpers
@@ -612,13 +612,13 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """
         if not hasattr(self, 'index') or self.index is None:
             return 'L2'  # Default
-        
+
         # Check if it's an IndexIDMap wrapper
         if hasattr(self.index, 'index'):
             base_index = self.index.index
         else:
             base_index = self.index
-        
+
         # Check the index type name
         index_type = str(type(base_index).__name__)
         if 'IP' in index_type or 'InnerProduct' in index_type:
@@ -634,7 +634,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         else:
             # LSH and others default to L2-like behavior
             return 'L2'
-    
+
     def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float:
         """Convert FAISS distance to similarity score based on metric type.
 
@@ -652,7 +652,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """
         if metric_type is None:
             metric_type = self._get_faiss_metric_type()
-        
+
         if metric_type == 'IP':
             # For inner product, the distance IS the similarity (if normalized)
             # Assuming normalized embeddings, IP ranges from -1 to 1
@@ -661,7 +661,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         else:
             # L2 distance: convert using 1/(1+distance)
             return 1.0 / (1.0 + distance)
-    
+
     def _similarity_to_distance(self, similarity: float, metric_type: str = None) -> float:
         """Convert similarity threshold to FAISS distance threshold.
         
@@ -674,9 +674,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """
         if metric_type is None:
             metric_type = self._get_faiss_metric_type()
-        
+
         similarity = max(0.001, min(1.0, similarity))  # Clamp to valid range
-        
+
         if metric_type == 'IP':
             # Convert from 0-1 to -1 to 1 range
             # Higher similarity means higher inner product
@@ -694,7 +694,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """Async-safe version of _generate_doc_id with proper locking."""
         if self._async_id_lock is None:
             self._async_id_lock = asyncio.Lock()
-        
+
         async with self._async_id_lock:
             doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)
             self._next_doc_id += 1
