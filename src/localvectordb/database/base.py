@@ -502,6 +502,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             chunking_method: Union[str, Any] = "sentences",
             chunk_size: int = 500,
             chunk_overlap: int = 1,
+            batch_size: int = 100,
             # Index type
             faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
             faiss_index_hnsw_flat_neighbors: Optional[int] = None,

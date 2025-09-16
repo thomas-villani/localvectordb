@@ -49,7 +49,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
@@ -93,6 +93,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 raise ValueError("Number of IDs must match number of documents")
             ids = [(self._generate_doc_id() if i is None else i) for i in ids]
             self._validate_metadata_batch(metadata)
+            batch_size = batch_size or self.batch_size
             result_ids = self._process_with_pipeline(
                 documents, metadata, ids, batch_size, similarity_threshold, mode="upsert"
             )
@@ -105,7 +106,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             file_paths: Union[str, Path, List[Union[str, Path]]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
@@ -175,6 +176,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             else:
                 doc_id = file_path.stem
             final_ids.append(doc_id)
+        batch_size = batch_size or self.batch_size
         return self.upsert(
             documents=documents,
             metadata=merged_metadata,
@@ -187,7 +189,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self,
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
             metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = 100,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
@@ -234,6 +236,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     normalized_chunks_by_document[doc_id] = normalized_chunks
             if not normalized_chunks_by_document:
                 return []
+            batch_size = batch_size or self.batch_size
             result_ids = self._process_from_chunks_pipeline(
                 normalized_chunks_by_document,
                 metadata_batch,
@@ -250,7 +253,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
@@ -313,6 +316,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             docs_to_process = [d[0] for d in docs_to_insert]
             meta_to_process = [d[1] for d in docs_to_insert]
             ids_to_process = [d[2] for d in docs_to_insert]
+            batch_size = batch_size or self.batch_size
             result_ids = self._process_with_pipeline(
                 docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, mode="insert"
             )
@@ -325,7 +329,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             file_paths: Union[str, Path, List[Union[str, Path]]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
             extractor_kwargs: Optional[Dict[str, Any]] = None,
@@ -398,6 +402,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             else:
                 doc_id = file_path.stem
             final_ids.append(doc_id)
+        batch_size = batch_size or self.batch_size
         return self.insert(
             documents=documents,
             metadata=merged_metadata,
@@ -411,7 +416,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self,
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
             metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = 100,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
@@ -576,14 +581,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             # For inner product, higher values mean more similar
             # We want to filter out chunks that are TOO similar (above threshold)
             distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
-            distances, indices = self.index.search(filtered_embeddings, k=1)
+            with self._faiss_lock.read_lock():
+                distances, indices = self.index.search(filtered_embeddings, k=1)
             valid_matches = (indices[:, 0] != -1)
             too_similar = (distances[:, 0] > distance_threshold) & valid_matches
         else:
             # For L2, lower distances mean more similar
             # We want to filter out chunks that are TOO similar (below threshold)
             distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
-            distances, indices = self.index.search(filtered_embeddings, k=1)
+            with self._faiss_lock.read_lock():
+                distances, indices = self.index.search(filtered_embeddings, k=1)
             valid_matches = (indices[:, 0] != -1)
             too_similar = (distances[:, 0] < distance_threshold) & valid_matches
         keep_mask = ~too_similar
@@ -1016,7 +1023,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = None,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             max_concurrent_chunks: int = 3,
             max_concurrent_embeddings: int = 2,
@@ -1086,7 +1093,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             file_paths: Union[str, Path, List[Union[str, Path]]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = None,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             max_concurrent_chunks: int = 3,
             max_concurrent_embeddings: int = 2,
@@ -1169,6 +1176,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             else:
                 doc_id = file_path.stem
             final_ids.append(doc_id)
+        batch_size = batch_size or self.batch_size
         return await self.upsert_async(
             documents=documents,
             metadata=merged_metadata,
@@ -1183,7 +1191,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self,
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
             metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = None,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             max_concurrent_chunks: int = 3,
             max_concurrent_embeddings: int = 2,
@@ -1256,7 +1264,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             documents: Union[str, List[str]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = None,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
             max_concurrent_chunks: int = 3,
@@ -1334,7 +1342,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             file_paths: Union[str, Path, List[Union[str, Path]]],
             metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
             ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = None,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
             max_concurrent_chunks: int = 3,
@@ -1437,7 +1445,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self,
             chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
             metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = None,
+            batch_size: Optional[int] = None,
             similarity_threshold: Optional[float] = None,
             errors: Literal["ignore", "raise"] = "raise",
             max_concurrent_chunks: int = 3,

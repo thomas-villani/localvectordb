@@ -128,12 +128,6 @@ class EmbeddingProvider(ABC):
         total_batches = (len(texts) + batch_size - 1) // batch_size
         completed_batches = 0
 
-        # Pre-allocate final embeddings array
-        final_embeddings = np.empty(
-            (len(texts), self.get_dimension()),
-            dtype=np.float32
-        )
-
         # Semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.max_concurrent_requests)
 
@@ -171,10 +165,16 @@ class EmbeddingProvider(ABC):
         # Execute all batches concurrently
         batch_results = await asyncio.gather(*tasks)
 
-        # Assemble final results
-        for start_index, embeddings in batch_results:
-            batch_size_actual = len(embeddings)
-            final_embeddings[start_index:start_index + batch_size_actual] = embeddings
+        # Sort results by start index to ensure correct ordering
+        batch_results.sort(key=lambda x: x[0])
+
+        # Build final array from sorted results - memory efficient approach
+        embeddings_list = []
+        for _, embeddings in batch_results:
+            embeddings_list.extend(embeddings)
+
+        # Convert to numpy array only at the end
+        final_embeddings = np.array(embeddings_list, dtype=np.float32)
 
         return final_embeddings
 
@@ -210,19 +210,18 @@ class EmbeddingProvider(ABC):
         pass
 
     def embed_sync(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-        """Synchronous wrapper for embed_batch"""
+        """Synchronous wrapper for embed_batch with proper event loop handling."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we're already in an async context, we need to run in a new thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, self.embed_batch(texts, batch_size))
-                    return future.result()
-            else:
-                return loop.run_until_complete(self.embed_batch(texts, batch_size))
+            # Try to get the current event loop without creating one
+            asyncio.get_running_loop()
+            # If we reach here, we're in an async context - delegate to sync implementation
+            # Rather than creating complex threading, recommend using embed_batch directly
+            raise RuntimeError(
+                "embed_sync() cannot be called from within an async context. "
+                "Use 'await provider.embed_batch(texts, batch_size)' instead."
+            )
         except RuntimeError:
-            # No event loop, create one
+            # No running event loop - safe to create one
             return asyncio.run(self.embed_batch(texts, batch_size))
 
 
@@ -267,12 +266,6 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         total_batches = (len(texts) + batch_size - 1) // batch_size
         completed_batches = 0
 
-        # Pre-allocate final embeddings array
-        final_embeddings = np.empty(
-            (len(texts), self.get_dimension()),
-            dtype=np.float32
-        )
-
         # Semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.max_concurrent_requests)
 
@@ -312,10 +305,16 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
             # Execute all batches concurrently
             batch_results = await asyncio.gather(*tasks)
 
-            # Assemble final results
-            for start_index, embeddings in batch_results:
-                batch_size_actual = len(embeddings)
-                final_embeddings[start_index:start_index + batch_size_actual] = embeddings
+            # Sort results by start index to ensure correct ordering
+            batch_results.sort(key=lambda x: x[0])
+
+            # Build final array from sorted results - memory efficient approach
+            embeddings_list = []
+            for _, embeddings in batch_results:
+                embeddings_list.extend(embeddings)
+
+            # Convert to numpy array only at the end
+            final_embeddings = np.array(embeddings_list, dtype=np.float32)
 
         return final_embeddings
 
@@ -445,28 +444,50 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
         if client is None:
-            client = httpx.AsyncClient()
+            # Use context manager to ensure proper AsyncClient cleanup
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.base_url}/api/embed",
+                    json={
+                        "model": self.model,
+                        "input": texts,
+                        "truncate": True
+                    },
+                    timeout=self.timeout
+                )
+                response.raise_for_status()
 
-        response = await client.post(
-            f"{self.base_url}/api/embed",
-            json={
-                "model": self.model,
-                "input": texts,
-                "truncate": True
-            },
-            timeout=self.timeout
-        )
-        response.raise_for_status()
+                data = response.json()
+                if "error" in data:
+                    raise RuntimeError(f"Ollama error: {data['error']}")
 
-        data = response.json()
-        if "error" in data:
-            raise RuntimeError(f"Ollama error: {data['error']}")
+                embeddings = data.get("embeddings", [])
+                if not embeddings:
+                    raise RuntimeError("No embeddings returned from Ollama")
 
-        embeddings = data.get("embeddings", [])
-        if not embeddings:
-            raise RuntimeError("No embeddings returned from Ollama")
+                return embeddings  # type: ignore[no-any-return]
+        else:
+            # Use provided client
+            response = await client.post(
+                f"{self.base_url}/api/embed",
+                json={
+                    "model": self.model,
+                    "input": texts,
+                    "truncate": True
+                },
+                timeout=self.timeout
+            )
+            response.raise_for_status()
 
-        return embeddings  # type: ignore[no-any-return]
+            data = response.json()
+            if "error" in data:
+                raise RuntimeError(f"Ollama error: {data['error']}")
+
+            embeddings = data.get("embeddings", [])
+            if not embeddings:
+                raise RuntimeError("No embeddings returned from Ollama")
+
+            return embeddings  # type: ignore[no-any-return]
 
 
 class OpenAIEmbeddings(HTTPEmbeddingProvider):
@@ -547,31 +568,52 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             raise ValueError("Unknown model.")
 
     async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
-        if client is None:
-            client = httpx.AsyncClient()
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        response = await client.post(
-            "https://api.openai.com/v1/embeddings",
-            headers=headers,
-            json={
-                "model": self.model,
-                "input": texts
-            },
-            timeout=self.timeout
-        )
-        response.raise_for_status()
 
-        data = response.json()
+        if client is None:
+            # Use context manager to ensure proper AsyncClient cleanup
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers=headers,
+                    json={
+                        "model": self.model,
+                        "input": texts
+                    },
+                    timeout=self.timeout
+                )
+                response.raise_for_status()
 
-        if "error" in data:
-            raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+                data = response.json()
 
-        embeddings = [item["embedding"] for item in data["data"]]
-        return embeddings
+                if "error" in data:
+                    raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+
+                embeddings = [item["embedding"] for item in data["data"]]
+                return embeddings
+        else:
+            # Use provided client
+            response = await client.post(
+                "https://api.openai.com/v1/embeddings",
+                headers=headers,
+                json={
+                    "model": self.model,
+                    "input": texts
+                },
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+
+            data = response.json()
+
+            if "error" in data:
+                raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+
+            embeddings = [item["embedding"] for item in data["data"]]
+            return embeddings
 
 
 class GoogleEmbeddings(HTTPEmbeddingProvider):
@@ -715,7 +757,7 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
                 }
 
                 if self.requested_dimensions:
-                    payload["outputDimensionality"] = self.requested_dimensions
+                    payload["embedding_config"] = {"output_dimensionality": self.requested_dimensions}
 
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
@@ -743,9 +785,6 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         client: Optional[httpx.AsyncClient] = None,
         **kwargs: Any
     ) -> List[List[float]]:
-        if client is None:
-            client = httpx.AsyncClient()
-
         url = f"{self.base_url}/models/{self.model}:embedContent"
         headers = {
             "x-goog-api-key": self.api_key,
@@ -767,10 +806,22 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         if emb_cfg:
             payload["embedding_config"] = emb_cfg
 
-        response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        data = response.json()
+        if client is None:
+            # Use context manager to ensure proper AsyncClient cleanup
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+                data = response.json()
+                return self._process_google_response(data)
+        else:
+            # Use provided client
+            response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            return self._process_google_response(data)
 
+    def _process_google_response(self, data: Dict[str, Any]) -> List[List[float]]:
+        """Process Google AI API response and extract embeddings."""
         # Possible shapes from API:
         # - {"embeddings": [ {"values": [...]}, {"values": [...]} ]}
         # - Rare: Single embedding forms (handle defensively)
@@ -1016,9 +1067,6 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
             **kwargs: Any
     ) -> List[List[float]]:
         """Embed a single batch using Jina API."""
-        if client is None:
-            client = httpx.AsyncClient()
-
         if not texts:
             return [[]]
 
@@ -1044,15 +1092,32 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         if self.late_chunking:
             payload["late_chunking"] = True
 
-        response = await client.post(
-            "https://api.jina.ai/v1/embeddings",
-            headers=headers,
-            json=payload,
-            timeout=self.timeout
-        )
-        response.raise_for_status()
-        data = response.json()
+        if client is None:
+            # Use context manager to ensure proper AsyncClient cleanup
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.jina.ai/v1/embeddings",
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout
+                )
+                response.raise_for_status()
+                data = response.json()
+                return self._process_jina_response(data)
+        else:
+            # Use provided client
+            response = await client.post(
+                "https://api.jina.ai/v1/embeddings",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            return self._process_jina_response(data)
 
+    def _process_jina_response(self, data: Dict[str, Any]) -> List[List[float]]:
+        """Process Jina API response and extract embeddings."""
         if "error" in data:
             # Jina returns {"error": {"message": "..."}}
             err = data["error"]

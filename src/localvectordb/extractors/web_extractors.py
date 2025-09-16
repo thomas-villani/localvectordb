@@ -13,6 +13,7 @@ HTML and XML file extractors using BeautifulSoup4.
 """
 
 import logging
+from copy import copy
 from typing import List, Optional
 
 from localvectordb import MetadataField
@@ -214,7 +215,8 @@ class HTMLExtractor(BaseExtractor):
                     text_parts.append(direct_text)
                     text_parts.append("")
 
-    def _extract_table_content(self, table, text_parts: List[str]):
+    @staticmethod
+    def _extract_table_content(table, text_parts: List[str]):
         """Extract content from HTML tables."""
         rows = table.find_all('tr')
         if not rows:
@@ -235,10 +237,11 @@ class HTMLExtractor(BaseExtractor):
 
         text_parts.append("")
 
-    def _get_direct_text(self, element):
+    @staticmethod
+    def _get_direct_text(element):
         """Get text that's directly in the element, not in nested handled elements."""
         # Remove nested elements that we handle separately
-        temp_element = element.__copy__()
+        temp_element = copy(element)
         for nested in temp_element.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'table']):
             nested.extract()
 

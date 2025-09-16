@@ -263,13 +263,12 @@ class XlsxExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.xlsx', '.xls']
+        return ['.xlsx']
 
     @property
     def supported_mimetypes(self) -> List[str]:
         return [
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-excel'
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         ]
 
     @property

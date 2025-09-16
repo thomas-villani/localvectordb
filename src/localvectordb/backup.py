@@ -1625,16 +1625,31 @@ class IncrementalBackupManager:
             working_index = faiss.read_index(str(working_faiss_path))
             inc_index = faiss.read_index(str(inc_faiss_path))
 
-            # Extract vectors and IDs from incremental index
+            # Extract vectors and IDs from incremental index using standardized approach
             inc_ids = faiss.vector_to_array(inc_index.id_map.id_map).astype(np.int64)
-            # Fix: reconstruct by external ID, not by position index
-            inc_vectors = np.array([inc_index.reconstruct(int(fid)) for fid in inc_ids], dtype=np.float32)
+
+            # Reconstruct vectors using external IDs (preferred method for IndexIDMap2)
+            inc_vectors = []
+            for fid in inc_ids:
+                try:
+                    # Try direct reconstruction with external ID first
+                    vector = inc_index.reconstruct(int(fid))
+                    inc_vectors.append(vector)
+                except Exception as e:
+                    logger.debug(f"Failed to reconstruct vector for external ID {fid}: {e}")
+                    continue
+
+            if not inc_vectors:
+                logger.warning("No vectors could be reconstructed from incremental index")
+                return
+
+            inc_vectors = np.array(inc_vectors, dtype=np.float32)
 
             # Remove old vectors with same IDs and add new ones
             for inc_id in inc_ids:
                 try:
                     working_index.remove_ids(np.array([inc_id], dtype=np.int64))
-                except:
+                except Exception:
                     pass  # ID not found, which is fine
 
             # Add updated vectors

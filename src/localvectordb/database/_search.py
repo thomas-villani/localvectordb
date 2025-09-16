@@ -162,7 +162,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_embeddings = self.embedding_provider.embed_sync([query])
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == 'documents' else k * 2)
-        distances, indices = self.index.search(query_embedding, initial_k)
+
+        with self._faiss_lock.read_lock():
+            distances, indices = self.index.search(query_embedding, initial_k)
         valid_results, valid_faiss_ids = [], []
         for dist, idx in zip(distances[0], indices[0], strict=False):
             if idx == -1:
@@ -1178,8 +1180,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         loop = asyncio.get_event_loop()
         search_k = min(k * 2, 100)
-        distances, indices = await loop.run_in_executor(None, lambda: self.index.search(query_embedding.reshape(1, -1),
-                                                                                        search_k))
+
+        def protected_search():
+            with self._faiss_lock.read_lock():
+                return self.index.search(query_embedding.reshape(1, -1), search_k)
+
+        distances, indices = await loop.run_in_executor(None, protected_search)
         distances = distances[0].tolist()
         indices = indices[0].tolist()
         valid_results = [(dist, idx) for dist, idx in zip(distances, indices, strict=False) if idx != -1]

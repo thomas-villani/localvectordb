@@ -222,8 +222,6 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
         return self._dimension
 
     async def _embed_single_batch(self, texts, client: Optional[httpx.AsyncClient] = None, **kwargs):
-        if client is None:
-            client = httpx.AsyncClient()
         headers = {
             "Content-Type": "application/json"
         }
@@ -237,20 +235,37 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
             "texts": texts
         }
 
-        response = await client.post(url,
-            headers=headers,
-            json=payload,
-            timeout=self.timeout
-        )
-        response.raise_for_status()
+        if client is None:
+            # Use context manager to ensure proper AsyncClient cleanup
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout
+                )
+                response.raise_for_status()
+                data = response.json()
 
-        data = response.json()
+                if "error" in data:
+                    raise RuntimeError(f"OpenAI error: {data['error']['message']}")
 
-        if "error" in data:
-            raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+                embeddings = [item["embedding"] for item in data["data"]]
+                return embeddings
+        else:
+            # Use provided client
+            response = await client.post(url,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
 
-        embeddings = [item["embedding"] for item in data["data"]]
-        return embeddings
+            if "error" in data:
+                raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+
+            embeddings = [item["embedding"] for item in data["data"]]
+            return embeddings
 
 
 class RemoteVectorDB(BaseVectorDB):
@@ -1006,7 +1021,7 @@ class RemoteVectorDB(BaseVectorDB):
                 serializable_chunks[doc_id] = [
                     {
                         'text': chunk.content,
-                        'position': chunk.position,
+                        'position': chunk.position.to_dict(),
                         'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
                         'metadata': getattr(chunk, 'metadata', {})
                     } if hasattr(chunk, 'content') else str(chunk)
@@ -1076,7 +1091,7 @@ class RemoteVectorDB(BaseVectorDB):
                 serializable_chunks[doc_id] = [
                     {
                         'text': chunk.content,
-                        'position': chunk.position,
+                        'position': chunk.position.to_dict(),
                         'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
                         'metadata': getattr(chunk, 'metadata', {})
                     } if hasattr(chunk, 'content') else str(chunk)
@@ -1801,11 +1816,37 @@ class RemoteVectorDB(BaseVectorDB):
             self._sync_client.close()
             self._sync_client = None
 
+        # Close async client if it exists (requires running from async context or event loop)
+        if self._client is not None and not self._client.is_closed:
+            try:
+                # Try to get current event loop to close async client properly
+                import asyncio
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, schedule the close
+                loop.create_task(self._client.aclose())
+                self._client = None
+            except RuntimeError:
+                # No event loop running - create one briefly to close the client
+                try:
+                    asyncio.run(self._client.aclose())
+                    self._client = None
+                except Exception:
+                    # If closing fails, at least clear the reference to prevent further use
+                    self._client = None
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    async def __aenter__(self):
+        """Async context manager entry"""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        await self.close_async()
 
     def hybrid_query(
             self,
@@ -2345,7 +2386,7 @@ class RemoteVectorDB(BaseVectorDB):
                 serializable_chunks[doc_id] = [
                     {
                         'text': chunk.content,
-                        'position': chunk.position,
+                        'position': chunk.position.to_dict(),
                         'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
                         'metadata': getattr(chunk, 'metadata', {})
                     } if hasattr(chunk, 'content') else str(chunk)
@@ -2416,7 +2457,7 @@ class RemoteVectorDB(BaseVectorDB):
                 serializable_chunks[doc_id] = [
                     {
                         'text': chunk.content,
-                        'position': chunk.position,
+                        'position': chunk.position.to_dict(),
                         'total_chunks': getattr(chunk, 'total_chunks', len(chunks)),
                         'metadata': getattr(chunk, 'metadata', {})
                     } if hasattr(chunk, 'content') else str(chunk)

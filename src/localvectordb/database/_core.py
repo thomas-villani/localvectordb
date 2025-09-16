@@ -62,6 +62,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             doc_id_pattern: str = "doc_{idx}", embedding_provider: str = "ollama",
             embedding_model: str = "nomic-embed-text", embedding_config: Optional[Dict[str, Any]] = None,
             chunking_method: Union[str, Any] = "sentences", chunk_size: int = 500, chunk_overlap: int = 1,
+            batch_size: int = 100,
             faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
             faiss_index_hnsw_flat_neighbors: Optional[int] = None, faiss_index_lsh_bits: Optional[int] = None,
             enable_gpu: bool = False, enable_fts: bool = True, connection_pool_size: int = 10,
@@ -71,7 +72,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         super().__init__(name, base_path, metadata_schema=metadata_schema, doc_id_pattern=doc_id_pattern,
                          embedding_provider=embedding_provider, embedding_model=embedding_model,
                          embedding_config=embedding_config, chunking_method=chunking_method, chunk_size=chunk_size,
-                         chunk_overlap=chunk_overlap, faiss_index_type=faiss_index_type,
+                         chunk_overlap=chunk_overlap, batch_size=batch_size, faiss_index_type=faiss_index_type,
                          faiss_index_hnsw_flat_neighbors=faiss_index_hnsw_flat_neighbors,
                          faiss_index_lsh_bits=faiss_index_lsh_bits, enable_gpu=enable_gpu, enable_fts=enable_fts,
                          connection_pool_size=connection_pool_size, create_if_not_exists=create_if_not_exists)
@@ -92,20 +93,23 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             if not create_if_not_exists and not Path(self.db_path).exists():
                 raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
 
+        # Set initial values from constructor
+        self._chunking_method = chunking_method
+        self._chunk_size = chunk_size
+        self._chunk_overlap = chunk_overlap
+        self._batch_size = batch_size
+        self.doc_id_pattern = doc_id_pattern
+
         # Metadata schema
         if isinstance(metadata_schema, str):
             self._metadata_schema = get_common_metadata_schemas(metadata_schema)
         else:
             self._metadata_schema = metadata_schema or {}
-        self.doc_id_pattern = doc_id_pattern
 
-        # Chunker
-        self._chunking_method = chunking_method
-        self._chunk_size = chunk_size
-        self._chunk_overlap = chunk_overlap
-        self.chunker = ChunkerFactory.create_chunker(chunking_method, chunk_size, chunk_overlap)
+        # Chunker - create with initial values (might be overridden later)
+        self.chunker = ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size, self._chunk_overlap)
 
-        # Embedding provider
+        # Embedding provider - create with initial values (might be overridden later)
         embedding_config = embedding_config or {}
         self._embedding_provider = EmbeddingRegistry.create_provider(
             embedding_provider, embedding_model, **embedding_config
@@ -116,7 +120,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Threading
         self._read_write_lock = ReadWriteLock()
-        self._faiss_lock = threading.Lock()  # Lock for FAISS operations to prevent race conditions
+        self._faiss_lock = ReadWriteLock()  # ReadWrite lock for FAISS operations to allow concurrent reads
 
         # Database schema + pools
         self.schema = DatabaseSchema(self.db_path, self._read_write_lock)
@@ -127,9 +131,36 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         with self.connection_pool.get_connection() as conn:
             self.schema.initialize(self._metadata_schema, db_connection=conn)
-            if not self.is_memory_only and Path(self.db_path).exists():
+
+            # Load configuration from existing database
+            is_existing_db = not self.is_memory_only and Path(self.db_path).exists()
+            if is_existing_db:
                 existing_schema = self.schema.load_metadata_schema(db_connection=conn)
                 self._metadata_schema.update(existing_schema)
+
+                # Load and apply saved configuration
+                loaded_config = self._load_config(conn)
+                if loaded_config:
+                    # Override constructor values with saved configuration
+                    embedding_provider = loaded_config.get('embedding_provider', embedding_provider)
+                    embedding_model = loaded_config.get('embedding_model', embedding_model)
+                    self._chunking_method = loaded_config.get('chunking_method', self._chunking_method)
+                    self._chunk_size = int(loaded_config.get('chunk_size', self._chunk_size))
+                    self._chunk_overlap = int(loaded_config.get('chunk_overlap', self._chunk_overlap))
+                    self._batch_size = int(loaded_config.get('batch_size', self._batch_size))
+                    self.doc_id_pattern = loaded_config.get('doc_id_pattern', self.doc_id_pattern)
+
+                    # Re-create chunker with loaded configuration
+                    self.chunker = ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size, self._chunk_overlap)
+
+                    # Re-create embedding provider with loaded configuration
+                    embedding_config = embedding_config or {}
+                    self._embedding_provider = EmbeddingRegistry.create_provider(
+                        embedding_provider, embedding_model, **embedding_config
+                    )
+                    if not self._embedding_provider.validate_model():
+                        raise ValueError(f"Embedding model '{embedding_model}' is not available")
+                    self._embedding_dimension = self._embedding_provider.get_dimension()
 
         # FTS
         self._fts_enabled = False
@@ -173,6 +204,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     @property
     def chunk_overlap(self) -> int:
         return self._chunk_overlap
+
+    @property
+    def batch_size(self) -> int:
+        return self._batch_size
 
     @property
     def chunking_method(self) -> str:
@@ -341,7 +376,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
             return
-        with self._faiss_lock:
+        with self._faiss_lock.write_lock():
             start_faiss_id = self.index.ntotal
             new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
             self.index.add_with_ids(embeddings, new_faiss_ids)
@@ -352,7 +387,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not faiss_ids or not hasattr(self.index, 'remove_ids'):
             return
         try:
-            with self._faiss_lock:
+            with self._faiss_lock.write_lock():
                 ids_array = np.array(faiss_ids, dtype=np.int64)
                 self.index.remove_ids(ids_array)
                 logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
@@ -369,26 +404,27 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
 
-        # Method 1: Try reconstruct_batch if available (for non-wrapped indices)
-        if hasattr(self.index, 'reconstruct_batch'):
-            try:
-                faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
-                embeddings = self.index.reconstruct_batch(faiss_ids_array)
-                return embeddings
-            except Exception as e:
-                logger.warning(f"FAISS reconstruct_batch failed, falling back to individual calls: {e}")
+        with self._faiss_lock.read_lock():
+            # Method 1: Try reconstruct_batch if available (for non-wrapped indices)
+            if hasattr(self.index, 'reconstruct_batch'):
+                try:
+                    faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
+                    embeddings = self.index.reconstruct_batch(faiss_ids_array)
+                    return embeddings
+                except Exception as e:
+                    logger.warning(f"FAISS reconstruct_batch failed, falling back to individual calls: {e}")
 
-        # Check if we have an IndexIDMap/IndexIDMap2 wrapper
-        if hasattr(self.index, 'id_map') and hasattr(self.index, 'index'):
-            try:
-                # Method 2: Use proper ID mapping for IndexIDMap2 (safest approach)
-                return self._reconstruct_with_id_mapping(faiss_ids)
-            except Exception as e:
-                logger.warning(f"IndexIDMap reconstruction failed, falling back to individual calls: {e}")
-                return self._reconstruct_individual_fallback(faiss_ids)
+            # Check if we have an IndexIDMap/IndexIDMap2 wrapper
+            if hasattr(self.index, 'id_map') and hasattr(self.index, 'index'):
+                try:
+                    # Method 2: Use proper ID mapping for IndexIDMap2 (safest approach)
+                    return self._reconstruct_with_id_mapping(faiss_ids)
+                except Exception as e:
+                    logger.warning(f"IndexIDMap reconstruction failed, falling back to individual calls: {e}")
+                    return self._reconstruct_individual_fallback(faiss_ids)
 
-        # Method 3: Fallback to individual reconstruct calls
-        return self._reconstruct_individual_fallback(faiss_ids)
+            # Method 3: Fallback to individual reconstruct calls
+            return self._reconstruct_individual_fallback(faiss_ids)
 
 
     def _reconstruct_with_id_mapping(self, faiss_ids: List[int]) -> np.ndarray:
@@ -442,14 +478,23 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         except Exception as e:
             logger.debug(f"Efficient ID mapping strategy failed: {e}")
 
-        # Strategy 3: Fallback to optimized linear search (improved from O(n²) to O(n*m))
+        # Strategy 3: Fallback to standardized ID mapping using faiss.vector_to_array
         # Build a reverse mapping dictionary first for better performance
 
-        # Build id_map lookup once for all IDs
-        id_map_lookup = {}
-        for i in range(self.index.ntotal):
-            external_id = self.index.id_map.at(i)
-            id_map_lookup[external_id] = i
+        # Build id_map lookup once for all IDs using standardized access
+        try:
+            external_ids = faiss.vector_to_array(self.index.id_map.id_map).astype(np.int64)
+            id_map_lookup = {external_id: internal_idx for internal_idx, external_id in enumerate(external_ids)}
+        except Exception as e:
+            logger.debug(f"Failed to get ID mapping via faiss.vector_to_array: {e}")
+            # Fallback to individual access if vector_to_array fails
+            id_map_lookup = {}
+            for i in range(self.index.ntotal):
+                try:
+                    external_id = self.index.id_map.at(i)
+                    id_map_lookup[external_id] = i
+                except Exception:
+                    continue
 
         internal_indices = []
         for fid in faiss_ids_array:
@@ -521,6 +566,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             'chunking_method': self.chunking_method,
             'chunk_size': self.chunk_size,
             'chunk_overlap': self.chunk_overlap,
+            'batch_size': self.batch_size,
             'doc_id_pattern': self.doc_id_pattern,
             'fts_enabled': str(self.fts_enabled),
             'version': get_system_version(),
@@ -529,6 +575,24 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             for key, value in config.items():
                 conn.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', (key, str(value)))
             conn.commit()
+
+    def _load_config(self, conn: sqlite3.Connection) -> Dict[str, str]:
+        """
+        Load configuration from the config table.
+        
+        Returns
+        -------
+        Dict[str, str]
+            Dictionary of configuration key-value pairs
+        """
+        try:
+            cursor = conn.execute("SELECT key, value FROM config")
+            config = {row[0]: row[1] for row in cursor.fetchall()}
+            return config
+        except sqlite3.OperationalError:
+            # Config table doesn't exist (shouldn't happen for properly initialized DB)
+            logger.warning("Config table not found in existing database")
+            return {}
 
     def _get_faiss_metric_type(self) -> str:
         """Detect the metric type of the FAISS index.

@@ -312,9 +312,9 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Validate return_type (UPDATED)
     return_type = data.get("return_type", "documents")
-    if return_type not in ["documents", "chunks", "context"]:
+    if return_type not in ["documents", "chunks", "context", "enriched"]:
         raise ValidationError(
-            "return_type must be one of: documents, chunks, context",
+            "return_type must be one of: documents, chunks, context, enriched",
             field="return_type",
             value=return_type
         )

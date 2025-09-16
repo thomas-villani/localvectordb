@@ -27,6 +27,7 @@ from werkzeug.utils import secure_filename
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
 from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.exceptions import DocumentNotFoundError
 
 # Add this import after the existing imports in routes.py
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
@@ -525,19 +526,14 @@ def upsert_from_chunks(db_name):
         batch_size = data.get("batch_size", 100)
         similarity_threshold = data.get("similarity_threshold")
 
-        # Convert chunk dicts back to Chunk objects if needed
-        from localvectordb.chunking import Chunk
+        # Let LocalVectorDB normalize chunks - prefer strings over forcing object construction
         processed_chunks = {}
         for doc_id, chunks in chunks_by_document.items():
             if chunks and isinstance(chunks[0], dict):
-                # Convert dicts to Chunk objects
+                # Convert dicts to strings (preferred: let LocalVectorDB normalize)
                 processed_chunks[doc_id] = [
-                    Chunk(
-                        text=chunk['text'],
-                        position=chunk['position'],
-                        total_chunks=chunk['total_chunks'],
-                        metadata=chunk.get('metadata', {})
-                    ) if isinstance(chunk, dict) and 'text' in chunk
+                    chunk.get('content') or chunk.get('text', str(chunk))
+                    if isinstance(chunk, dict)
                     else chunk
                     for chunk in chunks
                 ]
@@ -594,19 +590,14 @@ def insert_from_chunks(db_name):
         similarity_threshold = data.get("similarity_threshold")
         errors = data.get("errors", "raise")
 
-        # Convert chunk dicts back to Chunk objects if needed
-        from localvectordb.chunking import Chunk
+        # Let LocalVectorDB normalize chunks - prefer strings over forcing object construction
         processed_chunks = {}
         for doc_id, chunks in chunks_by_document.items():
             if chunks and isinstance(chunks[0], dict):
-                # Convert dicts to Chunk objects
+                # Convert dicts to strings (preferred: let LocalVectorDB normalize)
                 processed_chunks[doc_id] = [
-                    Chunk(
-                        text=chunk['text'],
-                        position=chunk['position'],
-                        total_chunks=chunk['total_chunks'],
-                        metadata=chunk.get('metadata', {})
-                    ) if isinstance(chunk, dict) and 'text' in chunk
+                    chunk.get('content') or chunk.get('text', str(chunk))
+                    if isinstance(chunk, dict)
                     else chunk
                     for chunk in chunks
                 ]
@@ -663,6 +654,13 @@ def get_document(db_name, doc_id):
 
             return jsonify(serialize_document(doc))
 
+        except DocumentNotFoundError:
+            raise APIError(
+                message=f"Document '{doc_id}' not found in database '{db_name}'",
+                error_code="DOCUMENT_NOT_FOUND",
+                status_code=404,
+                recoverable=True
+            )
         except Exception as e:
             db_logger.log_error("get_document", e, database_name=db_name, document_id=doc_id)
             raise
@@ -816,7 +814,7 @@ def list_documents(db_name):
                 ids = [i.strip() for i in ids.split(",") if i.strip()]
                 documents = db.get(ids)
                 serialized_docs = [serialize_document(doc) for doc in documents]
-                returned_ids = [doc.document_id for doc in documents]
+                returned_ids = [doc.id for doc in documents]
                 missing_ids = [i for i in ids if i not in returned_ids]
 
                 return jsonify({
