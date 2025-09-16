@@ -2,18 +2,27 @@
 Tests for localvectordb.embeddings module.
 """
 
-import pytest
 import asyncio
-import numpy as np
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
+
 import httpx
+import numpy as np
+import pytest
 
 from localvectordb.embeddings import (
-    EmbeddingProvider, OllamaEmbeddings, OpenAIEmbeddings, MockEmbeddings,
-    JinaEmbeddings, GoogleEmbeddings, EmbeddingRegistry, create_embedding_provider, list_providers,
-    embed_texts, embed_texts_sync
+    EmbeddingProvider,
+    EmbeddingRegistry,
+    GoogleEmbeddings,
+    JinaEmbeddings,
+    MockEmbeddings,
+    OllamaEmbeddings,
+    OpenAIEmbeddings,
+    create_embedding_provider,
+    embed_texts,
+    embed_texts_sync,
+    list_providers,
 )
-from localvectordb.exceptions import OllamaNotFoundError, EmbeddingError
+from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
 
 
 @pytest.mark.unit

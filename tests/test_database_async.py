@@ -2,22 +2,14 @@
 Tests for async functionality in localvectordb.database module.
 """
 
+import asyncio
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
 import pytest_asyncio
-import asyncio
-import sqlite3
-import numpy as np
-from unittest.mock import Mock, patch, AsyncMock
-from pathlib import Path
 
 from localvectordb.database import LocalVectorDB
-from localvectordb.core import Document, QueryResult, MetadataField, MetadataFieldType
-from localvectordb.embeddings import MockEmbeddings
-from localvectordb.exceptions import (
-    DatabaseNotFoundError,
-    DuplicateDocumentIDError,
-    DocumentNotFoundError
-)
+from localvectordb.exceptions import DocumentNotFoundError
 
 
 def create_mock_async_connection():

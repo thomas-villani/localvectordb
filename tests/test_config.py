@@ -24,17 +24,18 @@ Tests for localvectordb_server.config module.
 
 import json
 import os
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import ConfigurationError
 from localvectordb_server.config import (
-    BaseSettings, EmbeddingSettings, DatabaseSettings, ServerSettings,
-    Config, load_config
+    Config,
+    DatabaseSettings,
+    EmbeddingSettings,
+    ServerSettings,
+    load_config,
 )
 
 

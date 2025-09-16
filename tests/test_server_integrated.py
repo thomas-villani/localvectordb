@@ -17,20 +17,19 @@ database operations, and multi-component interactions.
 
 import json
 import os
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, Mock
-
 from flask import Flask
+
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb_server import Config
-from localvectordb_server.routes import api
-from localvectordb_server.keymanager import KeyManager
 from localvectordb_server._cache import cache
-
+from localvectordb_server.keymanager import KeyManager
+from localvectordb_server.routes import api
 
 # EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 

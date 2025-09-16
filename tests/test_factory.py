@@ -2,12 +2,12 @@
 Tests for localvectordb.factory module.
 """
 
-import pytest
-from pathlib import Path
 from unittest.mock import Mock, patch
 
-from localvectordb.factory import VectorDB
+import pytest
+
 from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.factory import VectorDB
 
 
 @pytest.mark.unit

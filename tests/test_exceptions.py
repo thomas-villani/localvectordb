@@ -6,11 +6,11 @@ import pytest
 
 from localvectordb.exceptions import (
     BaseLocalVectorDBException,
+    ConfigurationError,
     DatabaseNotFoundError,
     DuplicateDocumentIDError,
-    OllamaNotFoundError,
     EmbeddingError,
-    ConfigurationError
+    OllamaNotFoundError,
 )
 
 
@@ -403,11 +403,11 @@ class TestExceptionDocumentation:
         """Test that all expected exceptions are defined and importable."""
         from localvectordb.exceptions import (
             BaseLocalVectorDBException,
+            ConfigurationError,
             DatabaseNotFoundError,
             DuplicateDocumentIDError,
-            OllamaNotFoundError,
             EmbeddingError,
-            ConfigurationError
+            OllamaNotFoundError,
         )
 
         # All should be classes

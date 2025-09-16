@@ -12,14 +12,18 @@
 Tests for localvectordb.query_builder module.
 """
 
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
 
+from localvectordb.core import Document, QueryResult
 from localvectordb.query_builder import (
-    QueryBuilder, SearchClause, SemanticFilter, AggregationClause, SimilarityMetric, QueryExecutor
+    AggregationClause,
+    QueryBuilder,
+    SearchClause,
+    SemanticFilter,
+    SimilarityMetric,
 )
-from localvectordb.core import QueryResult, Document
-
 
 # EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 

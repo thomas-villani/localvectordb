@@ -5,19 +5,19 @@ These tests verify that different components work together correctly.
 They may be slower than unit tests and require more dependencies.
 """
 import sqlite3
-
-import pytest
-import numpy as np
 from unittest.mock import Mock, patch
 
-from localvectordb.database import LocalVectorDB
-from localvectordb.client import RemoteVectorDB
-from localvectordb.factory import VectorDB
-from localvectordb.core import MetadataField, MetadataFieldType, Document
-from localvectordb.chunking import ChunkerFactory
-from localvectordb.embeddings import MockEmbeddings
+import numpy as np
+import pytest
 
 from localvectordb import factory
+from localvectordb.chunking import ChunkerFactory
+from localvectordb.client import RemoteVectorDB
+from localvectordb.core import Document, MetadataField, MetadataFieldType
+from localvectordb.database import LocalVectorDB
+from localvectordb.embeddings import MockEmbeddings
+from localvectordb.factory import VectorDB
+
 
 def create_mock_connection():
     """Create a properly mocked SQLite connection."""

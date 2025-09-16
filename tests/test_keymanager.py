@@ -12,12 +12,13 @@
 Tests for localvectordb_server.keymanager module.
 """
 
-import pytest
 import sqlite3
-from datetime import datetime, timedelta, UTC
-from unittest.mock import Mock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
-from localvectordb_server.keymanager import KeyManager, KeyRecord, get_key_manager
+import pytest
+
+from localvectordb_server.keymanager import KeyManager, KeyRecord
 
 
 @pytest.fixture

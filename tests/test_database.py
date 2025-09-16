@@ -2,14 +2,15 @@
 Tests for localvectordb.database module.
 """
 
-import pytest
 import sqlite3
-import numpy as np
-
 from unittest.mock import Mock, patch
-from localvectordb.database import LocalVectorDB
+
+import numpy as np
+import pytest
+
 from localvectordb.core import Document, QueryResult
-from localvectordb.exceptions import DatabaseNotFoundError, DuplicateDocumentIDError, DocumentNotFoundError
+from localvectordb.database import LocalVectorDB
+from localvectordb.exceptions import DatabaseNotFoundError, DocumentNotFoundError, DuplicateDocumentIDError
 
 
 def create_mock_connection():
@@ -1163,8 +1164,8 @@ class TestMultiColumnEmbedding:
 
     def test_schema_migration(self, temp_dir):
         """Test migration of existing database to support new fields."""
-        from localvectordb.database import LocalVectorDB
         from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb.database import LocalVectorDB
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
@@ -1323,8 +1324,8 @@ class TestMultiColumnEmbedding:
 
     def test_column_embeddings_storage(self, temp_dir):
         """Test that column embeddings are stored in the database."""
-        from localvectordb.database import LocalVectorDB
         from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb.database import LocalVectorDB
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
@@ -1387,8 +1388,8 @@ class TestMultiColumnEmbedding:
 
     def test_metadata_embeddings_deletion(self, temp_dir):
         """Test that metadata embeddings are removed when documents are deleted."""
-        from localvectordb.database import LocalVectorDB
         from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb.database import LocalVectorDB
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
@@ -1462,8 +1463,8 @@ class TestMultiColumnEmbedding:
 
     def test_fts_table_creation(self, temp_dir):
         """Test that FTS tables are created for fts_enabled fields."""
-        from localvectordb.database import LocalVectorDB
         from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb.database import LocalVectorDB
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
@@ -1531,8 +1532,8 @@ class TestMultiColumnEmbedding:
 
     def test_search_metadata_field(self, temp_dir):
         """Test searching a specific metadata field."""
-        from localvectordb.database import LocalVectorDB
         from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb.database import LocalVectorDB
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
@@ -1612,7 +1613,7 @@ class TestMultiColumnEmbedding:
                 except (TypeError, AttributeError):
                     # If there are still mocking issues, just verify the method exists
                     assert hasattr(db, '_search_metadata_field')
-                    assert callable(getattr(db, '_search_metadata_field'))
+                    assert callable(db._search_metadata_field)
 
             db.close()
 

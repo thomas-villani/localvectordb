@@ -2,18 +2,15 @@
 Tests for localvectordb.core module.
 """
 
-import sqlite3
 import threading
 from datetime import datetime
 from unittest.mock import Mock, patch
+
 import pytest
 
-from localvectordb.core import (
-    MetadataField, MetadataFieldType, ChunkPosition, Chunk, Document,
-    QueryResult
-)
 from localvectordb._pools import ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema
+from localvectordb.core import Chunk, ChunkPosition, Document, MetadataField, MetadataFieldType, QueryResult
 
 
 @pytest.mark.unit

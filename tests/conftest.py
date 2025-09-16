@@ -12,19 +12,19 @@
 """
 Enhanced pytest fixtures with better test isolation for LocalVectorDB.
 """
-import pytest
-import sys
-import tempfile
-import numpy as np
 import asyncio
-import threading
 import os
 import shutil
+import sys
+import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
-from contextlib import contextmanager
 
-from localvectordb.core import MetadataField, MetadataFieldType, Document, Chunk, ChunkPosition
+import numpy as np
+import pytest
+
+from localvectordb.core import Chunk, ChunkPosition, Document, MetadataField, MetadataFieldType
 from localvectordb.embeddings import MockEmbeddings
 
 

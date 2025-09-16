@@ -2,10 +2,9 @@
 Tests for localvectordb.utils module.
 """
 
+from unittest.mock import patch
+
 import pytest
-import os
-import platform
-from unittest.mock import patch, Mock
 
 from localvectordb.utils import get_system_version, make_filename_safe
 

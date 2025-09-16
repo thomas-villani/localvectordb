@@ -191,7 +191,6 @@ class TestImportPerformance:
         import time
 
         start_time = time.time()
-        import localvectordb
         end_time = time.time()
 
         import_time = end_time - start_time
@@ -289,7 +288,7 @@ class TestDocumentation:
 
     def test_class_docstrings(self):
         """Test that main classes have docstrings."""
-        from localvectordb import LocalVectorDB, RemoteVectorDB, MetadataField
+        from localvectordb import LocalVectorDB, MetadataField, RemoteVectorDB
 
         classes_to_check = [LocalVectorDB, RemoteVectorDB, MetadataField]
 
@@ -344,8 +343,12 @@ class TestPackageStructure:
         # Import everything to check for circular dependencies
         try:
             from localvectordb import (
-                LocalVectorDB, RemoteVectorDB, VectorDB,
-                MetadataField, ChunkerFactory, EmbeddingRegistry
+                ChunkerFactory,
+                EmbeddingRegistry,
+                LocalVectorDB,
+                MetadataField,
+                RemoteVectorDB,
+                VectorDB,
             )
 
             # If we get here without ImportError, no circular dependencies
@@ -387,8 +390,8 @@ class TestModuleInitialization:
 
     def test_module_initialization_side_effects(self):
         """Test that importing the module doesn't have unwanted side effects."""
-        import sys
         import os
+        import sys
 
         # Save the current state of localvectordb modules
         saved_modules = {}
@@ -403,7 +406,6 @@ class TestModuleInitialization:
             initial_modules = set(sys.modules.keys())
 
             # Import the package
-            import localvectordb
 
             # Check for unwanted side effects
             final_env = dict(os.environ)
@@ -467,6 +469,6 @@ class TestModuleInitialization:
         assert class_instance.db_class is not None
 
         # Should be the same class
-        from localvectordb import VectorDB, LocalVectorDB
+        from localvectordb import LocalVectorDB, VectorDB
         assert func_import is VectorDB
         assert class_instance.db_class is LocalVectorDB

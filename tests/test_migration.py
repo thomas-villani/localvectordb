@@ -11,21 +11,18 @@
 
 """Tests for metadata schema migration system."""
 
-import json
 import sqlite3
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
 import pytest
 
-from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb._pools import ReadWriteLock
 from localvectordb._schema import DatabaseSchema
-from localvectordb.migration import Migration, MigrationEngine, MigrationScript
-from localvectordb.versioning import DatabaseVersion, VersionManager
-
+from localvectordb.core import MetadataField, MetadataFieldType
+from localvectordb.migration import Migration, MigrationEngine
+from localvectordb.versioning import VersionManager
 
 # IMPORTANT: Sample migration classes are now created dynamically in fixtures to avoid
 # module loading conflicts when tests run in the full suite. Previously, these were
@@ -259,7 +256,7 @@ def migration_engine(initialized_db, temp_migrations_dir):
     # Write test migration files
     migration_1_1_0 = temp_migrations_dir / "migration_1_1_0_add_user_fields.py"
     with open(migration_1_1_0, 'w') as f:
-        f.write(f"""
+        f.write("""
 from typing import Dict, Any
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
@@ -270,8 +267,8 @@ class MigrationDiscovery_1_1_0(Migration):
     dependencies = []
 
     def get_schema_changes(self) -> Dict[str, Any]:
-        return {{
-            'new_schema': {{
+        return {
+            'new_schema': {
                 'user_id': MetadataField(
                     type=MetadataFieldType.TEXT,
                     indexed=True,
@@ -284,22 +281,22 @@ class MigrationDiscovery_1_1_0(Migration):
                     required=False,
                     default_value=0
                 )
-            }},
-            'column_mapping': {{}},
+            },
+            'column_mapping': {},
             'drop_columns': False
-        }}
+        }
 
     def get_rollback_changes(self) -> Dict[str, Any]:
-        return {{
-            'new_schema': {{}},
-            'column_mapping': {{}},
+        return {
+            'new_schema': {},
+            'column_mapping': {},
             'drop_columns': True
-        }}
+        }
 """)
 
     migration_1_2_0 = temp_migrations_dir / "migration_1_2_0_rename_fields.py"
     with open(migration_1_2_0, 'w') as f:
-        f.write(f"""
+        f.write("""
 from typing import Dict, Any
 from localvectordb.migration import Migration
 from localvectordb.core import MetadataField, MetadataFieldType
@@ -310,8 +307,8 @@ class MigrationDiscovery_1_2_0(Migration):
     dependencies = ["1.1.0"]
 
     def get_schema_changes(self) -> Dict[str, Any]:
-        return {{
-            'new_schema': {{
+        return {
+            'new_schema': {
                 'author_id': MetadataField(
                     type=MetadataFieldType.TEXT,
                     indexed=True,
@@ -330,16 +327,16 @@ class MigrationDiscovery_1_2_0(Migration):
                     required=False,
                     default_value=1
                 )
-            }},
-            'column_mapping': {{
+            },
+            'column_mapping': {
                 'user_id': 'author_id'
-            }},
+            },
             'drop_columns': False
-        }}
+        }
 
     def get_rollback_changes(self) -> Dict[str, Any]:
-        return {{
-            'new_schema': {{
+        return {
+            'new_schema': {
                 'user_id': MetadataField(
                     type=MetadataFieldType.TEXT,
                     indexed=True,
@@ -352,12 +349,12 @@ class MigrationDiscovery_1_2_0(Migration):
                     required=False,
                     default_value=0
                 )
-            }},
-            'column_mapping': {{
+            },
+            'column_mapping': {
                 'author_id': 'user_id'
-            }},
+            },
             'drop_columns': True
-        }}
+        }
 """)
 
     yield engine

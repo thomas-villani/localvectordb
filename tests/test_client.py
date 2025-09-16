@@ -2,16 +2,21 @@
 Tests for localvectordb.client module.
 """
 
-import pytest
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
-from localvectordb.client import RemoteVectorDB, Document, QueryResult
+import pytest
+
+from localvectordb.client import Document, QueryResult, RemoteVectorDB
 from localvectordb.core import ChunkPosition
 from localvectordb.exceptions import (
-    DatabaseNotFoundError, DuplicateDocumentIDError,
-    EmbeddingError, BaseLocalVectorDBException, DocumentNotFoundError
+    BaseLocalVectorDBException,
+    DatabaseNotFoundError,
+    DocumentNotFoundError,
+    DuplicateDocumentIDError,
+    EmbeddingError,
 )
+
 
 @pytest.fixture(autouse=True)
 def mock_httpx_client():
@@ -1070,7 +1075,7 @@ class TestRemoteVectorDBAsyncFileOperations:
 
     async def test_upsert_from_file_async(self, tmp_path):
         """Test async file upsert."""
-        from unittest.mock import AsyncMock, patch, Mock
+        from unittest.mock import AsyncMock, Mock, patch
 
         # Create test file
         test_file = tmp_path / "async_test.txt"
@@ -1114,7 +1119,7 @@ class TestRemoteVectorDBAsyncFileOperations:
 
     async def test_insert_from_file_async(self, tmp_path):
         """Test async file insert."""
-        from unittest.mock import AsyncMock, patch, Mock
+        from unittest.mock import AsyncMock, Mock, patch
 
         # Create test file
         test_file = tmp_path / "async_test.txt"
@@ -1168,8 +1173,9 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
     async def test_upsert_from_chunks_async(self):
         """Test async chunk upsert."""
-        from localvectordb.core import Chunk, ChunkPosition
         from unittest.mock import AsyncMock, Mock
+
+        from localvectordb.core import Chunk, ChunkPosition
 
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()

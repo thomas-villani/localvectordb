@@ -21,23 +21,25 @@ Tests cover:
 """
 
 import json
-import pytest
-import tempfile
 import shutil
-from datetime import datetime, UTC, timedelta
+import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-import numpy as np
-import faiss
+import pytest
 
 from localvectordb.backup import (
-    BackupManager, BackupConfig, BackupType, CompressionAlgorithm,
-    IncrementalBackupManager, PointInTimeRecoveryManager, BackupMetadata
+    BackupConfig,
+    BackupManager,
+    BackupMetadata,
+    BackupType,
+    CompressionAlgorithm,
+    IncrementalBackupManager,
+    PointInTimeRecoveryManager,
 )
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database import LocalVectorDB
-from localvectordb.versioning import DatabaseVersion, VersionManager
 
 
 @pytest.fixture

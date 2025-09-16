@@ -5,20 +5,18 @@ These tests measure performance characteristics and ensure the system
 scales appropriately with different workloads.
 """
 
-import pytest
 import sqlite3
 import time
-import threading
-import numpy as np
-from pathlib import Path
-from unittest.mock import Mock, patch
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from unittest.mock import Mock, patch
 
-from localvectordb.database import LocalVectorDB
-from localvectordb.client import RemoteVectorDB
+import numpy as np
+import pytest
+
 from localvectordb.chunking import ChunkerFactory
+from localvectordb.core import Document
+from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import MockEmbeddings
-from localvectordb.core import MetadataField, MetadataFieldType, Document
 
 
 def create_mock_connection():
@@ -157,7 +155,7 @@ class TestDatabasePerformance:
 
             # Perform multiple queries
             for _ in range(20):
-                results = perf_db.query(f"test query", k=k)
+                results = perf_db.query("test query", k=k)
 
             end_time = time.time()
             avg_query_time = (end_time - start_time) / 20
@@ -172,8 +170,9 @@ class TestDatabasePerformance:
     def test_memory_usage_scaling(self, perf_db):
         """Test that memory usage scales reasonably."""
         try:
-            import psutil
             import os
+
+            import psutil
         except ImportError:
             pytest.skip("psutil not available for memory testing")
 
@@ -396,7 +395,7 @@ class TestEmbeddingPerformance:
 
         # Should be relatively consistent
         time_variance = max_time - min_time
-        assert time_variance < avg_time * 5, f"Too much variance in embedding times"
+        assert time_variance < avg_time * 5, "Too much variance in embedding times"
 
 
 @pytest.mark.performance
@@ -408,8 +407,9 @@ class TestMemoryPerformance:
     def test_large_document_memory_usage(self, temp_dir):
         """Test memory usage with large documents."""
         try:
-            import psutil
             import os
+
+            import psutil
         except ImportError:
             pytest.skip("psutil not available for memory testing")
 
@@ -464,9 +464,10 @@ class TestMemoryPerformance:
     def test_memory_cleanup_after_operations(self, temp_dir):
         """Test that memory is cleaned up after operations."""
         try:
-            import psutil
-            import os
             import gc
+            import os
+
+            import psutil
         except ImportError:
             pytest.skip("psutil not available for memory testing")
 

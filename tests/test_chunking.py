@@ -2,13 +2,21 @@
 Tests for localvectordb.chunking module.
 """
 
+
 import pytest
-from unittest.mock import Mock, patch
 
 from localvectordb.chunking import (
-    PositionTrackingChunker, SentenceChunker, TokenChunker, WordChunker,
-    LineChunker, CharChunker, ParagraphChunker, SectionChunker,
-    CodeBlockChunker, ChunkerFactory, reconstruct_document,
+    CharChunker,
+    ChunkerFactory,
+    CodeBlockChunker,
+    LineChunker,
+    ParagraphChunker,
+    PositionTrackingChunker,
+    SectionChunker,
+    SentenceChunker,
+    TokenChunker,
+    WordChunker,
+    reconstruct_document,
 )
 from localvectordb.core import Chunk, ChunkPosition
 
