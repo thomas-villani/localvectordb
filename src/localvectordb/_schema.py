@@ -243,6 +243,39 @@ class DatabaseSchema:
         except Exception:
             return False
 
+    async def _check_trigram_tokenizer_availability_async(self, conn) -> bool:
+        """
+        Check if SQLite FTS5 trigram tokenizer is available (async version).
+        
+        The trigram tokenizer requires compile-time SQLite extension support
+        and may not be available in all SQLite installations.
+        
+        Parameters
+        ----------
+        conn : aiosqlite.Connection
+            Async SQLite database connection
+            
+        Returns
+        -------
+        bool
+            True if trigram tokenizer is available
+        """
+        try:
+            # Test creation of a temporary FTS table with trigram tokenizer
+            await conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS temp.trigram_test "
+                "USING fts5(content, tokenize='trigram')"
+            )
+            await conn.execute("DROP TABLE temp.trigram_test")
+            return True
+        except Exception as e:
+            # aiosqlite wraps exceptions differently, check string representation
+            if "no such tokenizer" in str(e).lower():
+                logger.warning("FTS5 trigram tokenizer not available, falling back to default tokenizer")
+                return False
+            # For other errors, also return False to fall back gracefully
+            return False
+
     def _get_sqlite_version(self, conn: sqlite3.Connection) -> tuple:
         """
         Get SQLite version as a tuple for comparison.
@@ -1330,8 +1363,7 @@ class DatabaseSchema:
 
         self.metadata_fields = schema
 
-    @staticmethod
-    async def _add_metadata_column_async(conn, field_name: str, field_def: MetadataField) -> None:
+    async def _add_metadata_column_async(self, conn, field_name: str, field_def: MetadataField) -> None:
         """Add a metadata column to the documents table asynchronously"""
         # Map field types to SQLite types
         sqlite_type_map = {
@@ -1368,6 +1400,53 @@ class DatabaseSchema:
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
                 await conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+
+            # Create FTS table if requested
+            if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
+                fts_table_name = f'fts_{field_name}'
+                # Check if trigram tokenizer is available, fall back to default if not
+                if await self._check_trigram_tokenizer_availability_async(conn):
+                    tokenizer_clause = "tokenize='trigram'"
+                    logger.debug(f"Using trigram tokenizer for FTS table: {fts_table_name}")
+                else:
+                    tokenizer_clause = ""  # Use default tokenizer
+                    logger.debug(f"Using default tokenizer for FTS table: {fts_table_name}")
+                
+                await conn.execute(f'''
+                    CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                    USING fts5(document_id, content{', ' + tokenizer_clause if tokenizer_clause else ''})
+                ''')
+                logger.info(f"Created FTS table: {fts_table_name}")
+
+                # Create triggers to keep FTS in sync
+                await conn.execute(f'''
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_insert 
+                    AFTER INSERT ON documents
+                    WHEN NEW.{field_name} IS NOT NULL
+                    BEGIN
+                        INSERT INTO {fts_table_name}(document_id, content) 
+                        VALUES (NEW.id, NEW.{field_name});
+                    END
+                ''')
+
+                await conn.execute(f'''
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_update 
+                    AFTER UPDATE OF {field_name} ON documents
+                    WHEN NEW.{field_name} IS NOT NULL
+                    BEGIN
+                        DELETE FROM {fts_table_name} WHERE document_id = NEW.id;
+                        INSERT INTO {fts_table_name}(document_id, content) 
+                        VALUES (NEW.id, NEW.{field_name});
+                    END
+                ''')
+
+                await conn.execute(f'''
+                    CREATE TRIGGER IF NOT EXISTS fts_{field_name}_delete 
+                    AFTER DELETE ON documents
+                    BEGIN
+                        DELETE FROM {fts_table_name} WHERE document_id = OLD.id;
+                    END
+                ''')
 
     async def load_metadata_schema_async(self, db_connection: Optional[aiosqlite.Connection] = None) -> Dict[str, MetadataField]:
         """Load metadata schema from database asynchronously"""

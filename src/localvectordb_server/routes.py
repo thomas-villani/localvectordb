@@ -930,7 +930,7 @@ def search_handler(db_name, search_params):
             "total_results": len(serialized_results),
             # Include processing info in response
             "processing_info": {
-                "context_window": context_window if return_type == 'context' else None,
+                "context_window": context_window if return_type in ('context', 'enriched') else None,
                 "semantic_dedup_applied": semantic_dedup_threshold is not None,
                 "document_scoring_method": document_scoring_method if return_type == 'documents' else None
             }

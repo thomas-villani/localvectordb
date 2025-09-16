@@ -384,9 +384,19 @@ class RemoteVectorDB(BaseVectorDB):
             authorization_header=self._authorization_header
         )
 
-        # Async
+        # HTTP clients for connection pooling
+        self._sync_client = None
         self._client = None
 
+    def _ensure_sync_client(self) -> httpx.Client:
+        """Ensure sync HTTP client is available for connection pooling"""
+        if self._sync_client is None or self._sync_client.is_closed:
+            self._sync_client = httpx.Client(
+                timeout=httpx.Timeout(self.request_timeout or 30.0),
+                limits=self._connection_pool_limits,
+                headers=self._get_headers()
+            )
+        return self._sync_client
 
     def _make_request_with_retry(
             self,
@@ -398,37 +408,30 @@ class RemoteVectorDB(BaseVectorDB):
 
         last_exception = None
 
-        # Configure httpx client with connection pooling
-        client_kwargs = {
-            'timeout': httpx.Timeout(self.request_timeout or 30.0),
-            'limits': self._connection_pool_limits,
-            'headers': self._get_headers()
-        }
-
         for attempt in range(self.max_retries + 1):
             try:
-                with httpx.Client(**client_kwargs) as client:
-                    response = client.request(method, url, **kwargs)
+                client = self._ensure_sync_client()
+                response = client.request(method, url, **kwargs)
 
-                    # Don't retry on 4xx errors (client errors)
-                    if 400 <= response.status_code < 500:
-                        return response
+                # Don't retry on 4xx errors (client errors)
+                if 400 <= response.status_code < 500:
+                    return response
 
-                    # Success or 5xx error that we might retry
-                    if response.status_code < 500:
-                        return response
+                # Success or 5xx error that we might retry
+                if response.status_code < 500:
+                    return response
 
-                    # 5xx error - might retry
-                    if attempt == self.max_retries:
-                        return response  # Last attempt, return even if error
+                # 5xx error - might retry
+                if attempt == self.max_retries:
+                    return response  # Last attempt, return even if error
 
-                    # Wait before retry with exponential backoff
-                    delay = self.retry_delay * (2 ** attempt)
-                    logger.warning(
-                        f"Request failed with {response.status_code}, retrying in {delay}s "
-                        f"(attempt {attempt + 1}/{self.max_retries + 1})"
-                    )
-                    time.sleep(delay)
+                # Wait before retry with exponential backoff
+                delay = self.retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"Request failed with {response.status_code}, retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{self.max_retries + 1})"
+                )
+                time.sleep(delay)
 
             except (httpx.RequestError, httpx.TimeoutException) as e:
                 last_exception = e
@@ -678,6 +681,9 @@ class RemoteVectorDB(BaseVectorDB):
 
         if ids is not None:
             payload["ids"] = ids
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/documents")
         response = self._make_request_with_retry("POST", url, json=payload)
@@ -1269,7 +1275,7 @@ class RemoteVectorDB(BaseVectorDB):
             query: str,
             *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks', 'context'] = 'documents',  # Add 'context'
+            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
             k: int = 10,
             score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
@@ -1289,7 +1295,7 @@ class RemoteVectorDB(BaseVectorDB):
             Query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
-        return_type : Literal['documents', 'chunks', 'context']
+        return_type : Literal['documents', 'chunks', 'context', 'enriched']
             Whether to return full documents, individual chunks, or chunks with context
         k : int
             Maximum number of results to return
@@ -1792,9 +1798,11 @@ class RemoteVectorDB(BaseVectorDB):
         return self._last_ping_status
 
     def close(self):
-        """Close the database connection"""
-        # Doesn't do anything since it's remote!
-        pass
+        """Close the database connection and HTTP clients"""
+        # Close sync client if it exists
+        if self._sync_client is not None and not self._sync_client.is_closed:
+            self._sync_client.close()
+            self._sync_client = None
 
     def __enter__(self):
         return self
@@ -2031,6 +2039,9 @@ class RemoteVectorDB(BaseVectorDB):
 
         if ids is not None:
             payload["ids"] = ids
+
+        if similarity_threshold is not None:
+            payload["similarity_threshold"] = similarity_threshold
 
         url = self._build_url(f"/api/v1/{self.name}/documents")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
@@ -2793,8 +2804,16 @@ class RemoteVectorDB(BaseVectorDB):
         pass
 
     async def close_async(self):
-        """No-op for remote databases"""
-        pass
+        """Close HTTP clients"""
+        # Close sync client if it exists
+        if self._sync_client is not None and not self._sync_client.is_closed:
+            self._sync_client.close()
+            self._sync_client = None
+        
+        # Close async client if it exists
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def update_metadata_schema_async(
             self,

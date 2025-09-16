@@ -1303,6 +1303,37 @@ class IncrementalBackupManager:
 
         logger.debug(f"Created incremental database: {inc_db_path}")
 
+    def _create_compatible_base_index(self, original_index, dimension: int):
+        """Create a base FAISS index that matches the original index type and metric."""
+        import faiss
+        
+        # Get the base index from IndexIDMap if wrapped
+        if hasattr(original_index, 'index'):
+            base_index = original_index.index
+        else:
+            base_index = original_index
+            
+        # Detect index type and metric
+        index_type = str(type(base_index).__name__)
+        
+        # Handle different index types and metrics
+        if 'IP' in index_type or 'InnerProduct' in index_type:
+            # Inner product metric
+            return faiss.IndexFlatIP(dimension)
+        elif 'L2' in index_type:
+            # L2 metric (default)
+            return faiss.IndexFlatL2(dimension)
+        elif 'HNSW' in index_type:
+            # For HNSW, try to preserve the metric but use flat for incremental
+            if 'IP' in index_type:
+                return faiss.IndexFlatIP(dimension)
+            else:
+                return faiss.IndexFlatL2(dimension)
+        else:
+            # Default fallback to L2
+            logger.warning(f"Unknown index type {index_type}, defaulting to IndexFlatL2")
+            return faiss.IndexFlatL2(dimension)
+
     def _create_incremental_faiss_index(self, changes: Dict[str, Any], temp_dir: Path) -> None:
         """Create incremental FAISS index containing only changed vectors."""
 
@@ -1335,7 +1366,8 @@ class IncrementalBackupManager:
                 vectors_array = np.array(changed_vectors)
 
                 # Create new index with same configuration as original
-                inc_index = faiss.IndexIDMap2(faiss.IndexFlatL2(vectors_array.shape[1]))
+                base_index = self._create_compatible_base_index(original_index, vectors_array.shape[1])
+                inc_index = faiss.IndexIDMap2(base_index)
 
                 # Add vectors with their original IDs
                 inc_index.add_with_ids(vectors_array, np.array(faiss_ids, dtype=np.int64))
@@ -1593,7 +1625,8 @@ class IncrementalBackupManager:
 
             # Extract vectors and IDs from incremental index
             inc_ids = faiss.vector_to_array(inc_index.id_map.id_map).astype(np.int64)
-            inc_vectors = np.array([inc_index.reconstruct(i) for i in range(inc_index.ntotal)])
+            # Fix: reconstruct by external ID, not by position index
+            inc_vectors = np.array([inc_index.reconstruct(int(fid)) for fid in inc_ids], dtype=np.float32)
 
             # Remove old vectors with same IDs and add new ones
             for inc_id in inc_ids:
