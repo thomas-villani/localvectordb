@@ -7,7 +7,7 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb_server/extractors/__init__.py
+# src/localvectordb/extractors/__init__.py
 """
 File content extraction plugin system for LocalVectorDB Server.
 

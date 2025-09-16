@@ -7,7 +7,7 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb_server/extractors/other_extractors.py
+# src/localvectordb/extractors/other_extractors.py
 """
 Extractors for miscellaneous file formats.
 """

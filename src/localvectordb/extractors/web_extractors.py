@@ -7,7 +7,7 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb_server/extractors/web_extractors.py
+# src/localvectordb/extractors/web_extractors.py
 """
 HTML and XML file extractors using BeautifulSoup4.
 """

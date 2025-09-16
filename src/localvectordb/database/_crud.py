@@ -83,19 +83,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                         raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
                 documents = []
                 for row in rows:
-                    metadata = {}
-                    for col_name in metadata_columns:
-                        if col_name in row.keys():
-                            value = row[col_name]
-                            # Parse JSON fields if needed
-                            if value is not None and col_name in self.metadata_schema:
-                                field_def = self.metadata_schema[col_name]
-                                if field_def.type.name == 'JSON' and isinstance(value, str):
-                                    try:
-                                        value = json.loads(value)
-                                    except (json.JSONDecodeError, TypeError):
-                                        pass
-                            metadata[col_name] = value
+                    metadata = {col_name: row[col_name] for col_name in metadata_columns if col_name in row.keys()}
                     doc = Document(
                         id=row['id'],
                         content=row['content'],
@@ -158,6 +146,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     ids,
                 )
                 faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                
+                # Also collect metadata embedding FAISS IDs
+                # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
+                # when documents are deleted, but we need to collect their FAISS IDs first
                 cursor = conn.execute(
                     f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
                     ids,
@@ -198,12 +190,17 @@ class CrudMixin(LocalVectorDBBase, ABC):
         Returns
         -------
         bool
-            True if document was updated, False if not found
+            True if document was updated, False if no updates needed (`content` and `metadata` already match database)
+
+        Raises
+        ------
+        DocumentNotFoundError
+            Raised if `doc_id` does not exist.
         """
         with self._read_write_lock.write_lock():
-            existing_doc = self.get(doc_id)
+            existing_doc: Document = self.get(doc_id)
             if not existing_doc:
-                return False
+                raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found")
             if content is not None:
                 new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
                 if new_hash != existing_doc.content_hash:
@@ -391,18 +388,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             rows = cursor.fetchall()
             documents: List[Document] = []
             for row in rows:
-                metadata = {}
-                for col_name in metadata_columns:
-                    value = row[col_name]
-                    # Parse JSON fields if needed
-                    if value is not None and col_name in self.metadata_schema:
-                        field_def = self.metadata_schema[col_name]
-                        if field_def.type.name == 'JSON' and isinstance(value, str):
-                            try:
-                                value = json.loads(value)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                    metadata[col_name] = value
+                metadata = {col_name: row[col_name] for col_name in metadata_columns if col_name in row.keys()}
                 doc = Document(
                     id=row['id'],
                     content=row['content'],
@@ -428,8 +414,8 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
         Returns
         -------
-        Union[Document, List[Document], None]
-            Document(s) if found, None if single ID not found, empty list if no IDs found
+        Union[Document, List[Document]]
+            The requested document(s)
 
         Raises
         ------
@@ -472,14 +458,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             else:
                 row_items = [(key, row[key]) for key in row.keys()]
             for key, value in row_items:
-                if key not in base_columns and value is not None:
-                    if key in self.metadata_schema:
-                        field_def = self.metadata_schema[key]
-                        if field_def.type.name == 'JSON' and isinstance(value, str):
-                            try:
-                                value = json.loads(value)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
+                if key not in base_columns:
                     metadata[key] = value
             document = Document(
                 id=row['id'],
@@ -525,6 +504,8 @@ class CrudMixin(LocalVectorDBBase, ABC):
             faiss_ids = [row['faiss_id'] for row in await cursor.fetchall()]
             
             # Also collect metadata embedding FAISS IDs
+            # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
+            # when documents are deleted, but we need to collect their FAISS IDs first
             cursor = await conn.execute(
                 f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
                 ids,
@@ -675,14 +656,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             else:
                 row_items = [(key, row[key]) for key in row.keys()]
             for key, value in row_items:
-                if key not in base_columns and value is not None:
-                    if key in self.metadata_schema:
-                        field_def = self.metadata_schema[key]
-                        if field_def.type.name == 'JSON' and isinstance(value, str):
-                            try:
-                                value = json.loads(value)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
+                if key not in base_columns:
                     metadata[key] = value
             document = Document(
                 id=row['id'],
@@ -713,6 +687,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
         bool
             True if document was updated, False if not found
 
+        Raises
+        ------
+        DocumentNotFoundError
+            Raised if `doc_id` does not exist.
+
         Examples
         --------
         Update content only::
@@ -739,12 +718,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
         - Uses async database operations for better performance
         """
         self._ensure_async_pool()
-        existing_doc = await self.get_async(doc_id)
+        existing_doc: Document = await self.get_async(doc_id)
         if not existing_doc:
-            logger.debug(f"Document {doc_id} not found for update")
-            return False
+            raise DocumentNotFoundError(f"Document {doc_id} not found for update")
         changes_made = False
-        if content is not None:
+        if isinstance(content, str):
             new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
             if new_hash != existing_doc.content_hash:
                 updated_metadata = existing_doc.metadata.copy()

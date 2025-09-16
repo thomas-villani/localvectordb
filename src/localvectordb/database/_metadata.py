@@ -439,11 +439,15 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             if hasattr(self.index, 'add_with_ids'):
                 ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
                 self.index.add_with_ids(embeddings, ids)
+                # Use the exact IDs we passed to add_with_ids
+                actual_ids = ids
             else:
                 self.index.add(embeddings)
-            # Track
-            for chunk_index, faiss_id in enumerate(range(start_id, self.index.ntotal)):
-                self._track_column_embedding(conn, document_id, field_name, chunk_index, faiss_id)
+                # Fall back to range calculation for basic add
+                actual_ids = np.arange(start_id, self.index.ntotal, dtype=np.int64)
+            # Track using actual IDs
+            for chunk_index, faiss_id in enumerate(actual_ids):
+                self._track_column_embedding(conn, document_id, field_name, chunk_index, int(faiss_id))
 
     async def _store_metadata_embeddings_async(self,
                                                conn: aiosqlite.Connection,
@@ -460,20 +464,19 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 if hasattr(self.index, 'add_with_ids'):
                     ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
                     self.index.add_with_ids(embeddings, ids)
-                    return start_id
+                    return ids  # Return actual IDs used
                 else:
                     self.index.add(embeddings)
-                    return start_id
-            start_id = await loop.run_in_executor(None, _add)
-            for chunk_index in range(len(embeddings)):
-                faiss_id = start_id + chunk_index
+                    return np.arange(start_id, self.index.ntotal, dtype=np.int64)  # Fall back to range
+            actual_ids = await loop.run_in_executor(None, _add)
+            for chunk_index, faiss_id in enumerate(actual_ids):
                 await conn.execute(
                     """
                     INSERT OR REPLACE INTO column_embeddings 
                     (document_id, field_name, chunk_index, faiss_id)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (document_id, field_name, chunk_index, faiss_id),
+                    (document_id, field_name, chunk_index, int(faiss_id)),
                 )
 
     def _remove_metadata_embeddings(self, conn, document_id: str) -> None:

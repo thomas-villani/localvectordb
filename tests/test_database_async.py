@@ -45,7 +45,7 @@ class TestAsyncInitialization:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             # Setup mocks
             mock_provider = Mock()
@@ -82,7 +82,7 @@ class TestAsyncInitialization:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             # Setup mocks
             mock_provider = Mock()
@@ -592,7 +592,7 @@ class TestAsyncErrorHandling:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.AsyncConnectionPool') as mock_pool:
             
             # Setup mocks

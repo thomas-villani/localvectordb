@@ -17,13 +17,16 @@ from typing import Union, Optional, Dict, Any, Literal, List
 
 import aiosqlite
 import numpy as np
-from faiss import IndexIDMap
+from faiss import IndexIDMap2
 
 from localvectordb._pools import ReadWriteLock, ConnectionPool, AsyncConnectionPool
 from localvectordb._schema import DatabaseSchema
 from localvectordb.chunking import PositionTrackingChunker
 from localvectordb.core import Chunk, Document, QueryResult, DocumentScoringMethod, MetadataField
 from localvectordb.embeddings import EmbeddingProvider
+
+DEFAULT_QUEUE_SIZE = 3
+DEFAULT_BATCH_SIZE = 100
 
 
 class BaseVectorDB(ABC):
@@ -519,10 +522,10 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self.async_connection_pool: AsyncConnectionPool = None
         self._metadata_schema: Dict[str, MetadataField] = None
         self._embedding_provider: EmbeddingProvider = None
-        self.index: IndexIDMap = None
+        self.index: IndexIDMap2 = None
         self.db_path: Path = None
         self.async_max_connections: int = None
-        self.pipeline_queue_size: int = 3
+        self.pipeline_queue_size: int = DEFAULT_QUEUE_SIZE
 
     @abstractmethod
     def _generate_doc_id(self) -> str:

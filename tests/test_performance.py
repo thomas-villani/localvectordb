@@ -62,7 +62,7 @@ class TestDatabasePerformance:
         """Create a database optimized for performance testing."""
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
              patch('faiss.IndexFlatL2') as mock_faiss, \
-             patch('faiss.IndexIDMap') as mock_faiss_idmap:
+             patch('faiss.IndexIDMap2') as mock_faiss_idmap:
 
             mock_provider = MockEmbeddings("test-model", dimension=128)  # Smaller for speed
             mock_embedding.return_value = mock_provider
@@ -418,7 +418,7 @@ class TestMemoryPerformance:
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
              patch('faiss.IndexFlatL2') as mock_faiss, \
-             patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+             patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
              patch('localvectordb.core.ConnectionPool.get_connection') as mock_get_conn:
 
             mock_provider = MockEmbeddings("test-model", dimension=128)
@@ -522,7 +522,7 @@ class TestScalabilityBenchmarks:
         """Test how performance scales with document count."""
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
              patch('faiss.IndexFlatL2') as mock_faiss, \
-             patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+             patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
              patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
 
             mock_provider = MockEmbeddings("test-model", dimension=128)
@@ -590,7 +590,7 @@ class TestScalabilityBenchmarks:
         """Simulate multiple concurrent users."""
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
              patch('faiss.IndexFlatL2') as mock_faiss, \
-             patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+             patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
              patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
 
             mock_provider = MockEmbeddings("test-model", dimension=128)

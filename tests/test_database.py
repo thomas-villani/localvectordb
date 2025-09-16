@@ -42,7 +42,7 @@ class TestLocalVectorDBInitialization:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -78,7 +78,7 @@ class TestLocalVectorDBInitialization:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -141,7 +141,7 @@ class TestLocalVectorDBInitialization:
 
             mock_index = Mock()
             mock_faiss.IndexFlatL2.return_value = mock_index
-            mock_faiss.IndexIDMap.return_value = mock_index
+            mock_faiss.IndexIDMap2.return_value = mock_index
 
             db = LocalVectorDB(name="test", base_path=temp_dir)
 
@@ -181,7 +181,7 @@ class TestLocalVectorDBUpsert:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -301,7 +301,7 @@ class TestLocalVectorDBInsert:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -411,7 +411,7 @@ class TestLocalVectorDBRetrieval:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -554,7 +554,7 @@ class TestLocalVectorDBDeletion:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -632,7 +632,7 @@ class TestLocalVectorDBUpdate:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -777,7 +777,7 @@ class TestLocalVectorDBQuery:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -901,7 +901,7 @@ class TestLocalVectorDBFilter:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -1014,7 +1014,7 @@ class TestLocalVectorDBProperties:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool:
             # Setup mocks
@@ -1169,7 +1169,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             # Setup mocks
             mock_provider = Mock()
@@ -1216,7 +1216,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             # Setup mocks
             mock_provider = Mock()
@@ -1268,7 +1268,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
             
             # Setup mocks
@@ -1329,7 +1329,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
             
             # Setup mocks
@@ -1393,7 +1393,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
             
             # Setup mocks
@@ -1468,7 +1468,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             # Setup mocks
             mock_provider = Mock()
@@ -1537,7 +1537,7 @@ class TestMultiColumnEmbedding:
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
             
             # Setup mocks

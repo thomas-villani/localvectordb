@@ -59,7 +59,7 @@ class TestLocalVectorDBIntegration:
 
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch('localvectordb.database.ConnectionPool') as mock_pool, \
                 patch('localvectordb.database.DatabaseSchema') as mock_schema:
             # Use mock embeddings for predictable testing
@@ -316,7 +316,7 @@ class TestLocalVectorDBIntegration:
             """Test factory creates working local database."""
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                     patch('localvectordb.database.ConnectionPool') as mock_pool, \
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -439,7 +439,7 @@ class TestLocalVectorDBIntegration:
             """Test chunking integration with database operations."""
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                     patch('localvectordb.database.ConnectionPool') as mock_pool, \
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -546,7 +546,7 @@ class TestLocalVectorDBIntegration:
             # Use context manager for proper cleanup
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                     patch('localvectordb.database.ConnectionPool') as mock_pool, \
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
 
@@ -641,7 +641,7 @@ class TestLocalVectorDBIntegration:
             """Test batch processing of multiple documents."""
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                     patch('localvectordb.database.ConnectionPool') as mock_pool, \
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -744,7 +744,7 @@ class TestLocalVectorDBIntegration:
             """Test a realistic document management workflow."""
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                     patch('localvectordb.database.ConnectionPool') as mock_pool, \
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -889,7 +889,7 @@ class TestLocalVectorDBIntegration:
             """Test handling of mixed content types and sizes."""
             with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                     patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap') as mock_faiss_idmap, \
+                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                     patch('localvectordb.database.ConnectionPool') as mock_pool, \
                     patch('localvectordb.database.DatabaseSchema') as mock_schema:
                 mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -983,7 +983,7 @@ class TestMultiColumnIntegration:
         
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -1161,7 +1161,7 @@ class TestMultiColumnIntegration:
         
         with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap') as mock_faiss_idmap:
+                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider

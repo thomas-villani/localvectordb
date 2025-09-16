@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import threading
 import uuid
 from abc import ABC
 from pathlib import Path
@@ -115,6 +116,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Threading
         self._read_write_lock = ReadWriteLock()
+        self._faiss_lock = threading.Lock()  # Lock for FAISS operations to prevent race conditions
 
         # Database schema + pools
         self.schema = DatabaseSchema(self.db_path, self._read_write_lock)
@@ -142,6 +144,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # State
         self._next_doc_id = self._load_next_doc_id()
+        self._async_id_lock: Optional[asyncio.Lock] = None
 
         # Save config
         self._save_config()
@@ -307,7 +310,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 raise DatabaseError(f"Error loading faiss index: {str(e)}")
             if hasattr(loaded_index, 'id_map'):
                 self.index = loaded_index
-                logger.info(f"Loaded existing FAISS IndexIDMap with {self.index.ntotal} vectors")
+                logger.info(f"Loaded existing FAISS IndexIDMap2 with {self.index.ntotal} vectors")
             else:
                 raise DatabaseError("Expected FAISS index to have `id_map` attribute. Invalid faiss index!")
         else:
@@ -321,54 +324,128 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 base_index = faiss.IndexLSH(self.embedding_dimension, faiss_index_lsh_bits or self.embedding_dimension * 2)
             else:
                 raise ValueError("Invalid faiss index for LocalVectorDB. Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
-            self.index = faiss.IndexIDMap(base_index)
-            logger.info(f"Created new FAISS IndexIDMap with dimension {self.embedding_dimension}")
+            self.index = faiss.IndexIDMap2(base_index)
+            logger.info(f"Created new FAISS IndexIDMap2 with dimension {self.embedding_dimension}")
         if enable_gpu and faiss.get_num_gpus() > 0:
             try:
                 self.index = faiss.index_cpu_to_all_gpus(self.index)
                 logger.info("Moved FAISS index to GPU")
             except Exception as e:
-                logger.warning(f"Could not move IndexIDMap to GPU: {e}")
+                logger.warning(f"Could not move IndexIDMap2 to GPU: {e}")
         elif enable_gpu:
             logger.warning("GPU requested but no GPUs available")
 
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
             return
-        start_faiss_id = self.index.ntotal
-        new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
-        self.index.add_with_ids(embeddings, new_faiss_ids)
-        for i, chunk in enumerate(chunks):
-            chunk.faiss_id = int(new_faiss_ids[i])
+        with self._faiss_lock:
+            start_faiss_id = self.index.ntotal
+            new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
+            self.index.add_with_ids(embeddings, new_faiss_ids)
+            for i, chunk in enumerate(chunks):
+                chunk.faiss_id = int(new_faiss_ids[i])
 
     def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
         if not faiss_ids or not hasattr(self.index, 'remove_ids'):
             return
         try:
-            ids_array = np.array(faiss_ids, dtype=np.int64)
-            self.index.remove_ids(ids_array)
-            logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
+            with self._faiss_lock:
+                ids_array = np.array(faiss_ids, dtype=np.int64)
+                self.index.remove_ids(ids_array)
+                logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
         except Exception as e:
             logger.warning(f"Failed to remove vectors from FAISS: {e}")
 
     def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
+        """
+        Batch reconstruct embeddings with proper IndexIDMap2 handling and fallback strategies.
+        
+        For IndexIDMap/IndexIDMap2 indices, we need to map external FAISS IDs to internal 
+        indices before calling reconstruct_batch on the base index.
+        """
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
+        
+        # Check if we have an IndexIDMap/IndexIDMap2 wrapper
+        if hasattr(self.index, 'id_map') and hasattr(self.index, 'index'):
+            try:
+                # Method 1: Use proper ID mapping for IndexIDMap2 (safest approach)
+                return self._reconstruct_with_id_mapping(faiss_ids)
+            except Exception as e:
+                logger.warning(f"IndexIDMap reconstruction failed, falling back to individual calls: {e}")
+                return self._reconstruct_individual_fallback(faiss_ids)
+        
+        # Method 2: Try reconstruct_batch if available (for non-wrapped indices)
+        if hasattr(self.index, 'reconstruct_batch'):
+            try:
+                faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
+                embeddings = self.index.reconstruct_batch(faiss_ids_array)
+                return embeddings
+            except Exception as e:
+                logger.warning(f"FAISS reconstruct_batch failed, falling back to individual calls: {e}")
+        
+        # Method 3: Fallback to individual reconstruct calls
+        return self._reconstruct_individual_fallback(faiss_ids)
+    
+    def _reconstruct_with_id_mapping(self, faiss_ids: List[int]) -> np.ndarray:
+        """Reconstruct embeddings for IndexIDMap2 by mapping to internal indices."""
         faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
+        
+        # Map external FAISS IDs to internal indices
         internal_indices = []
         for fid in faiss_ids_array:
             internal_idx = -1
+            # Search through the id_map to find the internal index
             for i in range(self.index.ntotal):
                 if self.index.id_map.at(i) == fid:
                     internal_idx = i
                     break
             if internal_idx != -1:
                 internal_indices.append(internal_idx)
+            else:
+                logger.debug(f"FAISS ID {fid} not found in id_map")
+        
         if not internal_indices:
+            logger.warning(f"No valid internal indices found for FAISS IDs: {faiss_ids}")
             return np.array([]).reshape(0, self.embedding_dimension)
+        
+        # Use the base index's reconstruct_batch method with internal indices
         internal_indices_array = np.array(internal_indices, dtype=np.int64)
-        embeddings = self.index.index.reconstruct_batch(internal_indices_array)
-        return embeddings
+        base_index = self.index.index
+        
+        if hasattr(base_index, 'reconstruct_batch'):
+            embeddings = base_index.reconstruct_batch(internal_indices_array)
+            logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using base index reconstruct_batch")
+            return embeddings
+        else:
+            # Fallback: individual calls on base index
+            embeddings = []
+            for idx in internal_indices:
+                try:
+                    embedding = base_index.reconstruct(idx)
+                    embeddings.append(embedding)
+                except Exception as e:
+                    logger.debug(f"Failed to reconstruct internal index {idx}: {e}")
+                    continue
+            
+            return np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
+    
+    def _reconstruct_individual_fallback(self, faiss_ids: List[int]) -> np.ndarray:
+        """Fallback method using individual reconstruct calls."""
+        embeddings = []
+        for fid in faiss_ids:
+            try:
+                embedding = self.index.reconstruct(fid)
+                embeddings.append(embedding)
+            except Exception as e:
+                logger.debug(f"Failed to reconstruct FAISS ID {fid}: {e}")
+                continue
+        
+        result = np.array(embeddings) if embeddings else np.array([]).reshape(0, self.embedding_dimension)
+        if len(embeddings) != len(faiss_ids):
+            logger.warning(f"Only reconstructed {len(embeddings)}/{len(faiss_ids)} embeddings in fallback mode")
+        
+        return result
 
     # Config/state helpers
     def _load_next_doc_id(self) -> int:
@@ -485,6 +562,16 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)
         self._next_doc_id += 1
         return doc_id
+
+    async def _generate_doc_id_async(self) -> str:
+        """Async-safe version of _generate_doc_id with proper locking."""
+        if self._async_id_lock is None:
+            self._async_id_lock = asyncio.Lock()
+        
+        async with self._async_id_lock:
+            doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)
+            self._next_doc_id += 1
+            return doc_id
 
     # Persistence
     def _save_internal(self):

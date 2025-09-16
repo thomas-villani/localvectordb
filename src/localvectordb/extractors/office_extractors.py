@@ -7,8 +7,8 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb_server/extractors/office_extractors.py
-# src/localvectordb_server/extractors/office_extractors.py
+# src/localvectordb/extractors/office_extractors.py
+# src/localvectordb/extractors/office_extractors.py
 """
 Microsoft Office document extractors.
 """
@@ -110,7 +110,7 @@ class DocxExtractor(BaseExtractor):
                 full_text = '\n\n'.join(text_parts)
 
                 metadata = {
-                    'filename': 'filename',
+                    'filename': filename,
                     'paragraph_count': paragraph_count,
                     'table_count': table_count,
                     'file_size_bytes': len(file_content),

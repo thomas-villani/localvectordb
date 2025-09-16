@@ -7,7 +7,7 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb_server/extractors/pdf_extractors.py
+# src/localvectordb/extractors/pdf_extractors.py
 """
 PDF file extractors using different libraries.
 """

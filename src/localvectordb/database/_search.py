@@ -34,6 +34,25 @@ logger = logging.getLogger(__name__)
 
 class SearchMixin(LocalVectorDBBase, ABC):
     # -----------------
+    # Helper methods
+    # -----------------
+    def _fts_rank_to_similarity(self, rank: float) -> float:
+        """
+        Convert FTS5 rank to similarity score with consistent formula.
+        
+        Parameters
+        ----------
+        rank : float
+            The FTS5 rank value (lower/more negative values are better matches)
+            
+        Returns
+        -------
+        float
+            Similarity score between 0.0 and 1.0 (higher is better)
+        """
+        return 1.0 - min(1.0, math.exp(float(rank)))
+
+    # -----------------
     # Public search API
     # -----------------
     def query(self, query: str, *,
@@ -257,7 +276,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             ''', (sanitized_query, initial_k))
             valid_chunk_data, valid_chunk_ids = [], []
             for row in cursor.fetchall():
-                score = 1.0 - min(1.0, math.exp(float(row['rank'])))
+                score = self._fts_rank_to_similarity(row['rank'])
                 if score < score_threshold:
                     continue
                 chunk_id = row['rowid']
@@ -1130,7 +1149,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not self.fts_enabled:
             logger.warning("FTS not enabled, returning empty results")
             return []
-        fts_query = query.replace("'", "''").replace('"', '""')
+        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized_query:
+            return []
         filter_clause = ""
         filter_params: List[Any] = []
         if filters:
@@ -1153,15 +1174,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 ORDER BY fts.rank
                 LIMIT ?
             """
-            params = [fts_query] + filter_params + [k * 2]
+            params = [sanitized_query] + filter_params + [k * 2]
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
         query_results: List[QueryResult] = []
         for row in rows:
             fts_rank = row['rank']
-            # FTS rank is not a distance, so we use a different formula
-            # Lower rank (negative) is better, convert to similarity
-            similarity = 1.0 / (1.0 + abs(fts_rank))
+            # Convert FTS rank to similarity using consistent formula
+            similarity = self._fts_rank_to_similarity(fts_rank)
             if similarity >= score_threshold:
                 position = ChunkPosition(
                     start=row['start_pos'],
@@ -1175,14 +1195,6 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 for field_name in metadata_columns:
                     value = row[field_name]
                     if value is not None:
-                        if field_name in self.metadata_schema:
-                            field_def = self.metadata_schema[field_name]
-                            if field_def.type.name == 'JSON' and isinstance(value, str):
-                                try:
-                                    import json
-                                    value = json.loads(value)
-                                except (json.JSONDecodeError, TypeError):
-                                    pass
                         metadata[field_name] = value
                 query_results.append(QueryResult(
                     id=f"{row['document_id']}:{row['chunk_index']}",
@@ -1216,15 +1228,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
     async def _get_chunks_by_faiss_ids_async(self, faiss_ids: List[int]) -> List[Dict[str, Any]]:
         if not faiss_ids:
             return []
-        base_columns = self.schema.BASE_COLUMNS.copy()
         metadata_columns = list(self.metadata_schema.keys())
-        all_columns = base_columns + metadata_columns
         chunk_columns = [
             'c.document_id', 'c.chunk_index', 'c.content', 'c.faiss_id',
             'c.start_pos', 'c.end_pos', 'c.start_line', 'c.start_col', 'c.end_line', 'c.end_col',
             'd.content as doc_content'
         ]
-        for col in all_columns:
+        # Only add metadata columns, not base document columns
+        for col in metadata_columns:
             chunk_columns.append(f'd.{col}')
         placeholders = ','.join(['?' for _ in faiss_ids])
         sql = f"""

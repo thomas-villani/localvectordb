@@ -37,7 +37,6 @@ from localvectordb.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
-DEFAULT_QUEUE_SIZE = 3
 
 class PipelineMixin(LocalVectorDBBase, ABC):
 
@@ -539,13 +538,24 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # --------------------
     # Similarity filtering
     # --------------------
-    def _filter_similar_chunks_vectorized(self, embeddings: np.ndarray, chunks: List[Chunk], doc_chunk_mapping: List[Tuple], similarity_threshold: float):
+    def _filter_similar_chunks_vectorized(self, embeddings: np.ndarray, chunks: List[Chunk], doc_chunk_mapping: List[Tuple], similarity_threshold: float, existing_chunk_hashes: Optional[set] = None):
+        """
+        Filter similar chunks based on content hash and vector similarity.
+        
+        Parameters:
+            existing_chunk_hashes: Optional pre-computed set of chunk hashes to avoid repeated DB queries.
+                                  If None, will query from database (expensive on large datasets).
+        """
         if len(embeddings) == 0 or self.index.ntotal == 0:
             return chunks, embeddings, doc_chunk_mapping
-        existing_chunk_hashes = set()
-        with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute('SELECT DISTINCT content_hash FROM chunks')
-            existing_chunk_hashes = {row['content_hash'] for row in cursor.fetchall()}
+        
+        # Use provided hashes or query from database
+        if existing_chunk_hashes is None:
+            existing_chunk_hashes = set()
+            with self.connection_pool.get_connection() as conn:
+                cursor = conn.execute('SELECT DISTINCT content_hash FROM chunks')
+                existing_chunk_hashes = {row['content_hash'] for row in cursor.fetchall()}
+        
         hash_mask = np.array([chunk.content_hash not in existing_chunk_hashes for chunk in chunks])
         if not hash_mask.any():
             logger.debug("All chunks filtered out by content hash")
@@ -646,7 +656,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                # queue_size: int = 3,
                                mode: Literal["upsert", "insert"] = "upsert"
                                ) -> List[str]:
-        queue_size = self.pipeline_queue_size or DEFAULT_QUEUE_SIZE
+        queue_size = self.pipeline_queue_size
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(ids)
         chunk_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -751,7 +761,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data['doc_id'])
                                     self._remove_old_chunks_batch(
-                                        chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
+                                        conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
                                     )
                                 self._insert_documents_bulk(conn, documents_data, mode=mode)
                                 if new_embeddings.size > 0:
@@ -798,7 +808,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                       mode: Literal["upsert", "insert"] = "upsert"
                                       ) -> List[str]:
 
-        queue_size = self.pipeline_queue_size or DEFAULT_QUEUE_SIZE
+        queue_size = self.pipeline_queue_size
         doc_ids = list(chunks_by_document.keys())
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(doc_ids)
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -906,7 +916,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data['doc_id'])
                                     self._remove_old_chunks_batch(
-                                        chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
+                                        conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
                                     )
                                 self._insert_documents_bulk(conn, documents_data, mode=mode)
                                 if new_embeddings.size > 0:
@@ -957,15 +967,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         logger.debug(f"Fetched existing chunks for {len(existing)} documents")
         return existing
 
-    def _remove_old_chunks_batch(self, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]) -> None:
+    def _remove_old_chunks_batch(self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]) -> None:
         if chunk_indices_to_remove:
-            with self.connection_pool.get_connection() as conn:
-                placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
-                conn.execute(
-                    f'DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})',
-                    [doc_id] + chunk_indices_to_remove,
-                )
-                conn.commit()
+            placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
+            conn.execute(
+                f'DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})',
+                [doc_id] + chunk_indices_to_remove,
+            )
         if faiss_ids_to_remove:
             self._remove_old_vectors_bulk(faiss_ids_to_remove)
             logger.debug(
@@ -1025,10 +1033,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         elif len(metadata) != len(documents):
             raise ValueError("Number of metadata entries must match number of documents")
         if ids is None:
-            ids = [self._generate_doc_id() for _ in documents]
+            ids = [await self._generate_doc_id_async() for _ in documents]
         elif len(ids) != len(documents):
             raise ValueError("Number of IDs must match number of documents")
-        ids = [(self._generate_doc_id() if i is None else i) for i in ids]
+        new_ids = []
+        for i in ids:
+            if i is None:
+                new_ids.append(await self._generate_doc_id_async())
+            else:
+                new_ids.append(i)
+        ids = new_ids
         self._validate_metadata_batch(metadata)
         result_ids = await self._async_pipeline_process(
             documents, metadata, ids, batch_size, similarity_threshold, max_concurrent_chunks, max_concurrent_embeddings, mode="upsert"
@@ -1255,7 +1269,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         elif len(metadata) != len(documents):
             raise ValueError("Number of metadata entries must match number of documents")
         if ids is None:
-            ids = [self._generate_doc_id() for _ in documents]
+            ids = [await self._generate_doc_id_async() for _ in documents]
         elif len(ids) != len(documents):
             raise ValueError("Number of IDs must match number of documents")
         self._validate_metadata_batch(metadata)
@@ -1732,14 +1746,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if len(all_chunks) > 0 or mode == "upsert":
                 documents_data = [(chunk_data['doc_id'], chunk_data['doc_text'], chunk_data['content_hash'], chunk_data['metadata'])]
                 chunks_data = [(chunk_data['doc_id'], chunk) for chunk in all_chunks]
-                if mode == "upsert":
-                    await self._remove_old_chunks_batch_async(chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove'])
                 async with self.async_connection_pool.get_connection_context() as conn:
                     try:
                         await conn.execute('BEGIN')
                         
-                        # Remove old metadata embeddings on upsert
-                        if mode == "upsert" and field_embeddings:
+                        # Remove old chunks and metadata embeddings on upsert
+                        if mode == "upsert":
+                            await self._remove_old_chunks_batch_async(
+                                conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'], chunk_data['faiss_ids_to_remove']
+                            )
+                            # Always remove metadata embeddings on upsert to prevent orphaned entries
                             await self._remove_metadata_embeddings_async(conn, doc_id)
                         
                         await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
@@ -1761,17 +1777,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             logger.error(f"Error processing document data for {doc_id}: {e}")
             return None
 
-    async def _remove_old_chunks_batch_async(self, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]) -> None:
+    async def _remove_old_chunks_batch_async(self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]) -> None:
         if faiss_ids_to_remove:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
         if chunk_indices_to_remove:
-            async with self.async_connection_pool.get_connection_context() as conn:
-                placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
-                await conn.execute(
-                    f'DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})',
-                    [doc_id] + chunk_indices_to_remove,
-                )
+            placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
+            await conn.execute(
+                f'DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})',
+                [doc_id] + chunk_indices_to_remove,
+            )
         logger.debug(
             f"Removed {len(chunk_indices_to_remove)} old chunks and {len(faiss_ids_to_remove)} FAISS vectors for document {doc_id}"
         )

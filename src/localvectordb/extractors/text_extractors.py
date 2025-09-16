@@ -7,7 +7,7 @@
 #
 # Contact: thomas.villani@gmail.com
 #
-# src/localvectordb_server/extractors/text_extractors.py
+# src/localvectordb/extractors/text_extractors.py
 """
 Text file extractors for plain text and fallback handling.
 """

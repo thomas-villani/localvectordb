@@ -1168,7 +1168,7 @@ class IncrementalBackupManager:
                 vectors_array = np.array(changed_vectors)
 
                 # Create new index with same configuration as original
-                inc_index = faiss.IndexIDMap(faiss.IndexFlatL2(vectors_array.shape[1]))
+                inc_index = faiss.IndexIDMap2(faiss.IndexFlatL2(vectors_array.shape[1]))
 
                 # Add vectors with their original IDs
                 inc_index.add_with_ids(vectors_array, np.array(faiss_ids, dtype=np.int64))
