@@ -19,6 +19,7 @@ from datetime import datetime
 
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
+from localvectordb_server._auth import validate_api_key
 from localvectordb_server._error_handlers import handle_errors
 from localvectordb_server._logcfg import log_performance
 from localvectordb_server.keymanager import PermissionLevel
@@ -84,7 +85,7 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                         session['inspector_permission_level'] = permission_level.value
                     else:
                         # Fall back to simple validation if new method not available
-                        if not key_manager.validate_key(api_key):
+                        if not validate_api_key(api_key):
                             flash('Invalid API key', 'error')
                             return redirect(url_for('inspector.login'))
                         session['inspector_api_key'] = api_key
@@ -375,7 +376,7 @@ def api_upload_document(db_name):
             return jsonify({'error': f'Database {db_name} not found'}), 404
 
         # Get the database instance
-        db = db_manager.get_database(db_name)
+        db = db_manager.get_db(db_name)
 
         # Check for file in request
         if 'file' not in request.files:

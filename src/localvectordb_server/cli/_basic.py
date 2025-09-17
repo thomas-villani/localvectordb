@@ -244,7 +244,7 @@ def create_vector_database(
 @click.argument('name')
 @click.option('--confirm', '-y', flag_value=True, default=False, help='Pre-confirm deletion (danger!)')
 @click.pass_context
-def delete_database(ctx, name, db_folder, confirm):
+def delete_database(ctx, name, confirm):
     """
     Delete a database
 

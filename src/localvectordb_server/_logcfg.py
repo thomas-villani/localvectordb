@@ -17,7 +17,7 @@ from functools import wraps
 from typing import Optional
 
 import flask
-from flask import current_app, g, request
+from flask import current_app, g, has_app_context, has_request_context, request
 
 
 def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:
@@ -225,24 +225,25 @@ class StructuredFormatter(logging.Formatter):
         }
 
         # Add request context if available
-        if current_app and hasattr(g, 'request_id'):
-            log_entry['request_id'] = g.request_id
-
-        if current_app and hasattr(g, 'api_key_hash'):
-            log_entry['api_key_hash'] = g.api_key_hash
+        if has_app_context():
+            if hasattr(g, 'request_id'):
+                log_entry['request_id'] = g.request_id
+            
+            if hasattr(g, 'api_key_hash'):
+                log_entry['api_key_hash'] = g.api_key_hash
 
         # Add Flask request context
-        try:
-            if request:
+        if has_request_context():
+            try:
                 log_entry.update({
                     'method': request.method,
                     'path': request.path,
                     'remote_addr': request.remote_addr,
                     'user_agent': request.headers.get('User-Agent', '')[:100],
                 })
-        except RuntimeError:
-            # Outside request context
-            pass
+            except Exception:
+                # Handle any potential errors when accessing request
+                pass
 
         # Add extra fields from record
         if hasattr(record, 'extra_fields'):

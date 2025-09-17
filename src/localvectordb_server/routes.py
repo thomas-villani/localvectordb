@@ -769,6 +769,67 @@ def delete_document(db_name, doc_id):
             raise
 
 
+@api.route("/api/v1/<db_name>/documents/count", methods=["POST"])
+@require_read_permission
+@handle_errors
+@log_performance("count_documents")
+def count_documents(db_name):
+    """Count documents matching filter criteria
+    
+    Request body supports:
+    {
+        "filters": {
+            // Optional MongoDB-style filters
+            "author": "John Doe",
+            "year": {"$gte": 2020},
+            // ... any filter expression
+        }
+    }
+    
+    Returns:
+    {
+        "count": 42
+    }
+    """
+    
+    with request_context("count_documents"):
+        # Allow both JSON body with filters or empty body/GET-like request
+        filters = None
+        
+        if request.is_json:
+            data = request.get_json()
+            if data:
+                filters = data.get("filters")
+                
+                # Validate filters if provided
+                if filters is not None:
+                    validate_field_type(data, "filters", dict)
+        
+        try:
+            db = current_app.db_manager.get_db(db_name)
+            
+            db_logger.log_query("count_documents",
+                                database_name=db_name,
+                                has_filters=filters is not None,
+                                filter_complexity=len(str(filters)) if filters else 0)
+            
+            count = db.count(filters)
+            
+            db_logger.log_query("count_documents_success",
+                                database_name=db_name,
+                                result_count=count)
+            
+            return jsonify({
+                "count": count
+            })
+        
+        except Exception as e:
+            db_logger.log_query("count_documents_error",
+                                database_name=db_name,
+                                error=str(e))
+            raise
+
+
 @api.route("/api/v1/<db_name>/documents/exists", methods=["POST"])
 @require_read_permission
 @handle_errors
@@ -855,7 +916,7 @@ def list_documents(db_name):
             )
 
             # Get total count (this is inefficient, but works for now)
-            total_count = len(db.filter(where=filters if filters else None))
+            total_count = db.count(where=filters if filters else None)
             total_pages = ceil(total_count / limit)
 
             # Serialize documents

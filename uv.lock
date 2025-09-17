@@ -744,6 +744,7 @@ all = [
     { name = "python-docx" },
     { name = "python-pptx" },
     { name = "striprtf" },
+    { name = "tomli-w" },
 ]
 dev = [
     { name = "bcrypt" },
@@ -773,6 +774,7 @@ dev = [
     { name = "sphinx-copybutton" },
     { name = "sphinx-rtd-theme" },
     { name = "striprtf" },
+    { name = "tomli-w" },
 ]
 file-extraction = [
     { name = "beautifulsoup4" },
@@ -813,6 +815,7 @@ server = [
     { name = "flask-cors" },
     { name = "flask-limiter" },
     { name = "flask-talisman" },
+    { name = "tomli-w" },
 ]
 
 [package.metadata]
@@ -864,6 +867,7 @@ requires-dist = [
     { name = "striprtf", marker = "extra == 'file-extraction'", specifier = ">=0.0.29" },
     { name = "striprtf", marker = "extra == 'file-extraction-rtf-epub'", specifier = ">=0.0.29" },
     { name = "tiktoken", specifier = ">=0.9.0" },
+    { name = "tomli-w", marker = "extra == 'server'", specifier = ">=1.2.0" },
 ]
 
 [[package]]
@@ -1996,6 +2000,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/bb/4513da71cac187383541facd0291c4572b03ec23c561de5811781bbd988f/tiktoken-0.9.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cc156cb314119a8bb9748257a2eaebd5cc0753b6cb491d26694ed42fc7cb3139", size = 1195649 },
     { url = "https://files.pythonhosted.org/packages/fa/5c/74e4c137530dd8504e97e3a41729b1103a4ac29036cbfd3250b11fd29451/tiktoken-0.9.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:cd69372e8c9dd761f0ab873112aba55a0e3e506332dd9f7522ca466e817b1b7a", size = 1258465 },
     { url = "https://files.pythonhosted.org/packages/de/a8/8f499c179ec900783ffe133e9aab10044481679bb9aad78436d239eee716/tiktoken-0.9.0-cp313-cp313-win_amd64.whl", hash = "sha256:5ea0edb6f83dc56d794723286215918c1cde03712cbbafa0348b33448faf5b95", size = 894669 },
+]
+
+[[package]]
+name = "tomli-w"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/75/241269d1da26b624c0d5e110e8149093c759b7a286138f4efd61a60e75fe/tomli_w-1.2.0.tar.gz", hash = "sha256:2dd14fac5a47c27be9cd4c976af5a12d87fb1f0b4512f81d69cce3b35ae25021", size = 7184 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/18/c86eb8e0202e32dd3df50d43d7ff9854f8e0603945ff398974c1d91ac1ef/tomli_w-1.2.0-py3-none-any.whl", hash = "sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90", size = 6675 },
 ]
 
 [[package]]

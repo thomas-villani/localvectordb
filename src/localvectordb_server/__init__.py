@@ -5,11 +5,11 @@ localvectordb_server/__init__.py
 Enhanced server for interacting with `localvectordb.LocalVectorDB` via http
 with structured logging, error handling, and performance monitoring.
 """
-import logging
 import os
-from typing import Optional, Union
+from typing import Union
+import logging
 
-from flask import Flask
+from flask import Flask, request, abort
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from localvectordb.exceptions import ConfigurationError
@@ -97,10 +97,31 @@ def create_app(
     # Set up request-level logging middleware
     setup_request_logging(app)
 
+    # Setup Host header validation if trusted_hosts is configured
+    if _config.server.trusted_hosts:
+        @app.before_request
+        def validate_host_header():
+            """Validate the Host header against trusted hosts"""
+            
+            # Skip validation if running behind a trusted proxy
+            if _config.server.proxy_enabled:
+                return
+            
+            # Get the host from the request
+            host = request.host
+            
+            # Check if the host is in the trusted hosts list
+            if host not in _config.server.trusted_hosts:
+                app.logger.warning(f"Rejected request with untrusted Host header: {host}")
+                abort(400, description=f"Invalid Host header: {host}")
+
     # Register enhanced error handlers
     register_error_handlers(app)
 
     logger = logging.getLogger('localvectordb_server')
+    
+    if _config.server.trusted_hosts:
+        logger.info(f"Host header validation enabled for: {_config.server.trusted_hosts}")
     logger.info("Starting LocalVectorDB Server initialization")
 
     # Make sure DB directory exists
@@ -226,7 +247,7 @@ def create_app(
     logger.info("API routes registered")
 
     # Register inspector blueprint if enabled
-    inspector_enabled = getattr(_config.server, 'inspector_enabled', True)
+    inspector_enabled = getattr(_config.server, 'inspector_enabled', False)
     if inspector_enabled:
         try:
             from localvectordb_server.inspector import inspector_bp

@@ -263,8 +263,15 @@ def validate_field_type(data: Dict[str, Any], field: str, expected_type: type, r
 
     value = data[field]
     if value is not None and not isinstance(value, expected_type):
+        # Build a friendly type name string for tuples and typing objects
+        if isinstance(expected_type, tuple):
+            type_names = [t.__name__ for t in expected_type]
+            type_str = " or ".join(type_names)
+        else:
+            type_str = expected_type.__name__ if hasattr(expected_type, '__name__') else str(expected_type)
+        
         raise ValidationError(
-            f"Field '{field}' must be of type {expected_type.__name__}",
+            f"Field '{field}' must be of type {type_str}",
             field=field,
             value=value
         )

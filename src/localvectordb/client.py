@@ -812,16 +812,18 @@ class RemoteVectorDB(BaseVectorDB):
         -------
         int
             Number of matching documents
-
-        Raises
-        ------
-        NotImplementedError
-            Server route not yet implemented
         """
-        raise NotImplementedError(
-            "count() method requires server route implementation. "
-            "Use filter() with limit to get document counts for now."
-        )
+        url = self._build_url(f"/api/v1/{self.name}/documents/count")
+        
+        # Prepare payload
+        payload = {}
+        if filters is not None:
+            payload["filters"] = filters
+        
+        response = self._make_request_with_retry("POST", url, json=payload)
+        result = self._handle_response(response)
+        
+        return result.get("count", 0)
 
     def upsert_from_file(
             self,
@@ -2646,16 +2648,18 @@ class RemoteVectorDB(BaseVectorDB):
         -------
         int
             Number of matching documents
-
-        Raises
-        ------
-        NotImplementedError
-            Server route not yet implemented
         """
-        raise NotImplementedError(
-            "count_async() method requires server route implementation. "
-            "Use filter_async() with limit to get document counts for now."
-        )
+        url = self._build_url(f"/api/v1/{self.name}/documents/count")
+        
+        # Prepare payload
+        payload = {}
+        if filters is not None:
+            payload["filters"] = filters
+        
+        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        result = await self._handle_response_async(response)
+        
+        return result.get("count", 0)
 
     async def update_async(
             self,

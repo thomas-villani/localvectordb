@@ -379,9 +379,10 @@ class ServerSettings(BaseSettings):
                                          "one or more of the following keys: x_for, x_proto, x_host, x_prefix")
 
         if self.cache_enabled:
-            if self.cache_type not in ("SimpleCache", "RedisCache", "FileSystemCache","MemcachedCache",
-                                       "UWSGICache", "DynamoDbCache", "MongoDbCache"):
-                raise ConfigurationError("cache_type must be ")
+            valid_cache_types = ("SimpleCache", "RedisCache", "FileSystemCache", "MemcachedCache",
+                                "UWSGICache", "DynamoDbCache", "MongoDbCache", "NullCache")
+            if self.cache_type not in valid_cache_types:
+                raise ConfigurationError(f"cache_type must be one of: {', '.join(valid_cache_types)}")
 
 
         return True
@@ -714,9 +715,9 @@ class Config:
         cache_options = None
         if self.server.cache_settings:
             cache_options = {}
-            for k, v in self.server.cache_settings:
+            for k, v in self.server.cache_settings.items():
                 # Handle signal to load from environment variable (e.g. for redis password)
-                if v[0] == "$":
+                if isinstance(v, str) and v.startswith("$"):
                     cache_options[k] = os.getenv(v[1:])
                 else:
                     cache_options[k] = v
