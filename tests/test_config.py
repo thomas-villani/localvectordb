@@ -34,6 +34,7 @@ from localvectordb_server.config import (
     Config,
     DatabaseSettings,
     EmbeddingSettings,
+    SecuritySettings,
     ServerSettings,
     load_config,
 )
@@ -221,6 +222,46 @@ class TestDatabaseSettings:
 
 
 @pytest.mark.unit
+class TestSecuritySettings:
+    """Test SecuritySettings configuration."""
+
+    def test_default_values(self):
+        """Test default security settings."""
+        settings = SecuritySettings()
+
+        assert settings.require_api_key is False
+        assert settings.api_key_header == "Authorization"
+        assert settings.trusted_hosts is None
+        assert settings.cors_enabled is True
+        assert settings.cors_allowed_origins == "*"
+        assert settings.security_headers_enabled is True
+
+    def test_validation_success(self):
+        """Test successful validation."""
+        settings = SecuritySettings()
+        assert settings.validate() is True
+
+    def test_validation_cors_allowed_origins_list(self):
+        """Test validation with CORS origins as list."""
+        settings = SecuritySettings(cors_allowed_origins=["http://localhost", "https://example.com"])
+        assert settings.validate() is True
+
+    def test_validation_cors_allowed_origins_empty_list(self):
+        """Test validation with empty CORS origins list."""
+        settings = SecuritySettings(cors_allowed_origins=[])
+
+        with pytest.raises(ConfigurationError, match="cors_allowed_origins list cannot be empty"):
+            settings.validate()
+
+    def test_validation_cors_allowed_origins_invalid_type(self):
+        """Test validation with invalid CORS origins type."""
+        settings = SecuritySettings(cors_allowed_origins=123)
+
+        with pytest.raises(ConfigurationError, match="cors_allowed_origins must be either a string or a list"):
+            settings.validate()
+
+
+@pytest.mark.unit
 class TestServerSettings:
     """Test ServerSettings configuration."""
 
@@ -231,14 +272,28 @@ class TestServerSettings:
         assert settings.host == "127.0.0.1"
         assert settings.port == 5000
         assert settings.log_level == "INFO"
-        assert settings.require_api_key is False
-        assert settings.cors_enabled is True
-        assert settings.cors_allowed_origins == "*"
+        assert settings.security.require_api_key is False
+        assert settings.security.cors_enabled is True
+        assert settings.security.cors_allowed_origins == "*"
 
     def test_validation_success(self):
         """Test successful validation."""
         settings = ServerSettings()
         assert settings.validate() is True
+
+    def test_enable_structured_logging_computation(self):
+        """Test that enable_structured_logging is computed based on debug mode."""
+        # Default case: debug=False, so enable_structured_logging should be True
+        settings = ServerSettings()
+        assert settings.enable_structured_logging is True
+        
+        # Debug mode: enable_structured_logging should be False
+        settings_debug = ServerSettings(debug=True)
+        assert settings_debug.enable_structured_logging is False
+        
+        # Explicit setting should override computation
+        settings_explicit = ServerSettings(debug=True, enable_structured_logging=True)
+        assert settings_explicit.enable_structured_logging is True
 
     def test_validation_empty_host(self):
         """Test validation with empty host."""
@@ -282,24 +337,6 @@ class TestServerSettings:
         with pytest.raises(ConfigurationError, match="max_request_size must be a positive integer"):
             settings.validate()
 
-    def test_validation_cors_allowed_origins_list(self):
-        """Test validation with CORS origins as list."""
-        settings = ServerSettings(cors_allowed_origins=["http://localhost", "https://example.com"])
-        assert settings.validate() is True
-
-    def test_validation_cors_allowed_origins_empty_list(self):
-        """Test validation with empty CORS origins list."""
-        settings = ServerSettings(cors_allowed_origins=[])
-
-        with pytest.raises(ConfigurationError, match="cors_allowed_origins list cannot be empty"):
-            settings.validate()
-
-    def test_validation_cors_allowed_origins_invalid_type(self):
-        """Test validation with invalid CORS origins type."""
-        settings = ServerSettings(cors_allowed_origins=123)
-
-        with pytest.raises(ConfigurationError, match="cors_allowed_origins must be either a string or a list"):
-            settings.validate()
 
 
 @pytest.mark.unit
@@ -464,19 +501,19 @@ port = 9000
         config = Config.from_env()
         assert config.database.enable_gpu is True
 
-    @patch.dict(os.environ, {"LVDB_SERVER_CORS_ALLOWED_ORIGINS": '["http://localhost", "https://example.com"]'},
+    @patch.dict(os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["http://localhost", "https://example.com"]'},
                 clear=True)
     def test_from_env_list_conversion(self):
         """Test environment variable list conversion."""
         config = Config.from_env()
-        assert config.server.cors_allowed_origins == ["http://localhost", "https://example.com"]
+        assert config.server.security.cors_allowed_origins == ["http://localhost", "https://example.com"]
 
     def test_to_flask_config(self):
         """Test conversion to Flask configuration format."""
         config = Config()
         config.database.root_dir = "/test/path"
         config.embedding.provider = "openai"
-        config.server.require_api_key = True
+        config.server.security.require_api_key = True
 
         flask_config = config.to_flask_config()
 

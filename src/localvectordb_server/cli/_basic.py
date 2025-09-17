@@ -28,14 +28,19 @@ from localvectordb_server.cli._utils import EXIT_CODE_CONFIGURATION_ERROR, EXIT_
 
 
 @click.command()
-@click.option('--host', '-h', default=None, help='The interface to bind to (e.g. 127.0.0.1 for local serving).')
-@click.option('--port', '-p', default=None, type=int, help='The port to bind to (default = 5000).')
-@click.option('--debug', is_flag=True, help='Enable Flask debug mode.')
+@click.option('--host', '-h', default=None, help='The interface to bind to (e.g. 127.0.0.1 for local serving).',
+              envvar="LVDB_HOST")
+@click.option('--port', '-p', default=None, type=int, help='The port to bind to (default = 5000).',
+              envvar="LVDB_PORT")
+@click.option('--debug', is_flag=True, help='Enable Flask debug mode.',
+              envvar="LVDB_DEBUG")
 @click.option(
     '--log-level', '-l', default=None, type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-    help='Set the logging level. Must be one of "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"'
+    help='Set the logging level. Must be one of "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"',
+    envvar="LVDB_LOG_LEVEL"
 )
-@click.option('--disable-ollama-check', '-x', is_flag=True, help='Disable checking for ollama on startup')
+@click.option('--disable-ollama-check', '-x', is_flag=True, help='Disable checking for ollama on startup',
+              envvar="LVDB_DISABLE_OLLAMA_CHECK")
 @click.pass_context
 def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     """
@@ -73,14 +78,32 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
 
         if not disable_ollama_check:
             from localvectordb_server._checkdeps import check_ollama_installation, check_ollama_service
+            from localvectordb.exceptions import OllamaNotFoundError
+            
             try:
+                # Check Ollama installation
                 version = check_ollama_installation()
-                click.echo(f"Found Ollama version: {version}")
+                click.secho(f"✓ Found Ollama {version}", fg="green")
 
+                # Check Ollama service
                 if check_ollama_service():
-                    click.echo("Ollama service is running")
+                    click.secho("✓ Ollama service is running", fg="green")
+                else:
+                    click.secho("⚠ Ollama is installed but the service is not running", fg="yellow")
+                    click.secho("  To start Ollama service, run: ollama serve", fg="blue")
+                    click.secho("  Or disable this check with --disable-ollama-check", fg="blue")
+                    raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
+                    
+            except OllamaNotFoundError as e:
+                click.secho(f"✗ Ollama installation check failed: {e}", fg="red")
+                click.secho("  Install Ollama from: https://ollama.ai/download", fg="blue")
+                click.secho("  Or disable this check with --disable-ollama-check", fg="blue")
+                click.secho("  Or set environment variable: LVDB_DISABLE_OLLAMA_CHECK=true", fg="blue")
+                raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
             except Exception as e:
-                click.echo(f"Ollama check failed: {e}")
+                click.secho(f"✗ Ollama check failed with unexpected error: {e}", fg="red")
+                click.secho("  You can disable this check with --disable-ollama-check", fg="blue")
+                click.secho("  Or set environment variable: LVDB_DISABLE_OLLAMA_CHECK=true", fg="blue")
                 raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
 
         # Run the Flask app with final config values

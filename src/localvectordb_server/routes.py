@@ -25,9 +25,10 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb._schema import DatabaseSchema, validate_sql_identifier
+from localvectordb._schema import DatabaseSchema
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DocumentNotFoundError
+from localvectordb_server.utils.schema import parse_metadata_schema
 
 # Add this import after the existing imports in routes.py
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
@@ -88,58 +89,6 @@ def serialize_query_result(result) -> Dict[str, Any]:
 
     return data
 
-
-def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataField]:
-    """Parse metadata schema from request data with validation"""
-    if not schema_data:
-        return {}
-
-    if not isinstance(schema_data, dict):
-        raise ValidationError("Metadata schema must be an object", field="metadata_schema")
-
-    parsed_schema = {}
-    for field_name, field_config in schema_data.items():
-        if not isinstance(field_name, str) or not field_name.strip():
-            raise ValidationError(
-                "Metadata field names must be non-empty strings",
-                field=f"metadata_schema.{field_name}"
-            )
-        
-        # Validate SQL identifier safety
-        try:
-            validate_sql_identifier(field_name)
-        except ValueError as e:
-            raise ValidationError(
-                f"Invalid metadata field name '{field_name}': {str(e)}",
-                field=f"metadata_schema.{field_name}"
-            )
-
-        try:
-            if isinstance(field_config, str):
-                # Simple string type
-                field_type = MetadataFieldType(field_config)
-                parsed_schema[field_name] = MetadataField(type=field_type)
-            elif isinstance(field_config, dict):
-                # Full field configuration
-                field_type = MetadataFieldType(field_config.get('type', 'text'))
-                parsed_schema[field_name] = MetadataField(
-                    type=field_type,
-                    indexed=field_config.get('indexed', False),
-                    required=field_config.get('required', False),
-                    default_value=field_config.get('default_value')
-                )
-            else:
-                raise ValidationError(
-                    f"Invalid metadata field configuration for '{field_name}'. Must be string or object.",
-                    field=f"metadata_schema.{field_name}"
-                )
-        except ValueError as e:
-            raise ValidationError(
-                f"Invalid metadata field type for '{field_name}': {str(e)}",
-                field=f"metadata_schema.{field_name}"
-            )
-
-    return parsed_schema
 
 
 # Database Management Routes

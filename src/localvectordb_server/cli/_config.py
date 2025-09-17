@@ -52,7 +52,7 @@ def config_group(ctx):
               help='Output format (defaults to format of config file)')
 @click.option('--toml', 'format', flag_value='toml', help="Output in `toml` format")
 @click.option('--json', 'format', flag_value='json', help="Output in `json` format")
-@click.option('--section', '-s', type=click.Choice(['database', 'embedding', 'server']), default=None,
+@click.option('--section', '-s', type=click.Choice(['database', 'embedding', 'server', 'backup', 'migration']), default=None,
               help='Only show specific section')
 @click.pass_context
 def show_config(ctx, format, section):
@@ -91,6 +91,8 @@ def show_config(ctx, format, section):
             'database': asdict(cfg.database),
             'embedding': asdict(cfg.embedding),
             'server': asdict(cfg.server),
+            'backup': asdict(cfg.backup),
+            'migration': asdict(cfg.migration),
         }
 
         if format == 'json':
@@ -714,8 +716,10 @@ def _save_config(config, output, format):
     elif format == "json":
         config_text = json.dumps({
             "database": asdict(config.database),
+            "embedding": asdict(config.embedding),
             "server": asdict(config.server),
-            "embedding": asdict(config.embedding)
+            "backup": asdict(config.backup),
+            "migration": asdict(config.migration)
         }, indent=2)
 
     with open(output, "w", encoding="utf-8") as f:

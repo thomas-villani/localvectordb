@@ -30,6 +30,7 @@ from localvectordb.exceptions import (
     DatabaseNotFoundError,
     DocumentNotFoundError,
 )
+from localvectordb_server.utils.schema import parse_metadata_schema
 from localvectordb.utils import get_system_version
 from localvectordb_server.mcp.config import MCPConfig
 
@@ -108,21 +109,7 @@ class MCPManager:
         # Parse metadata schema if provided
         parsed_schema = None
         if metadata_schema:
-            parsed_schema = {}
-            for field_name, field_config in metadata_schema.items():
-                if isinstance(field_config, str):
-                    # Simple type string
-                    parsed_schema[field_name] = MetadataField(
-                        type=MetadataFieldType(field_config)
-                    )
-                elif isinstance(field_config, dict):
-                    # Full field configuration
-                    field_type = MetadataFieldType(field_config["type"])
-                    parsed_schema[field_name] = MetadataField(
-                        type=field_type,
-                        indexed=field_config.get("indexed", False),
-                        required=field_config.get("required", False)
-                    )
+            parsed_schema = parse_metadata_schema(metadata_schema)
 
         # Merge defaults with provided kwargs
         db_kwargs = self.config.db_defaults.copy()
@@ -908,19 +895,7 @@ async def update_metadata_schema(
         db = await mcp_manager.get_database(database_name)
 
         # Parse metadata schema
-        parsed_schema = {}
-        for field_name, field_config in metadata_schema.items():
-            if isinstance(field_config, str):
-                parsed_schema[field_name] = MetadataField(
-                    type=MetadataFieldType(field_config)
-                )
-            elif isinstance(field_config, dict):
-                field_type = MetadataFieldType(field_config["type"])
-                parsed_schema[field_name] = MetadataField(
-                    type=field_type,
-                    indexed=field_config.get("indexed", False),
-                    required=field_config.get("required", False)
-                )
+        parsed_schema = parse_metadata_schema(metadata_schema)
 
         # Update schema
         if hasattr(db, 'update_metadata_schema_async'):

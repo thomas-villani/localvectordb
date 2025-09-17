@@ -809,30 +809,15 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
                 click.echo("Parsing column mapping from command line")
             column_mapping = json.loads(mapping)
 
-        # Convert schema data to MetadataField objects
-        from localvectordb.core import MetadataField, MetadataFieldType
+        # Convert schema data to MetadataField objects using shared utility
+        from localvectordb_server.utils.schema import parse_metadata_schema
+        from localvectordb.exceptions import ValidationError
 
-        new_schema = {}
-        for field_name, field_config in schema_data.items():
-            if isinstance(field_config, str):
-                # Simple string type
-                new_schema[field_name] = MetadataField(type=MetadataFieldType(field_config))
-            elif isinstance(field_config, dict):
-                # Full configuration
-                field_type = MetadataFieldType(field_config['type'])
-                indexed = field_config.get('indexed', False)
-                required = field_config.get('required', False)
-                default_value = field_config.get('default_value', None)
-
-                new_schema[field_name] = MetadataField(
-                    type=field_type,
-                    indexed=indexed,
-                    required=required,
-                    default_value=default_value
-                )
-            else:
-                click.secho(f"Error: Invalid field configuration for '{field_name}'", fg='bright_red')
-                raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        try:
+            new_schema = parse_metadata_schema(schema_data)
+        except ValidationError as e:
+            click.secho(f"Error: {e}", fg='bright_red')
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         # Show current schema for comparison
         if verbose:

@@ -9,38 +9,37 @@
 #
 # src/localvectordb_server/config.py
 """
-LocalVectorDB Server Configuration Management v1.0
+LocalVectorDB Server Configuration
 
-Enhanced configuration module supporting LocalVectorDB v1.0 features including:
-- Document-first architecture configuration
-- Structured metadata schema defaults
-- Embedding provider configurations
-- Migration settings for v1.x to v1.0
-- Performance tuning options
-- Connection pooling settings
+This module provides the configuration model and helpers used by the
+LocalVectorDB server (v1.0). Configuration objects are represented as
+dataclasses (DatabaseSettings, EmbeddingSettings, ServerSettings,
+BackupSettings, MigrationSettings, SecuritySettings) and composed by the
+Config container class. The module supports loading configuration from
+multiple sources and formats, merging overrides intelligently, and
+validating the resulting configuration.
 
-Main Components:
-    - DatabaseSettings: Enhanced database configuration with v1.0 features
-    - EmbeddingSettings: Dedicated embedding provider configuration
-    - ServerSettings: Server-specific configuration including security settings
-    - Config: Main configuration container with methods for loading and saving
+Features:
+- Typed dataclass settings with validate() methods
+- Load from TOML, JSON, and legacy INI files
+- Load and override from environment variables (LVDB_ prefixed)
+- Generate TOML output and export Flask-compatible config
+- Intelligent merging that preserves non-default base values
 
-Environment Variables:
-    - LVDB_DATABASE_DEFAULT_METADATA_SCHEMA
-    - LVDB_DATABASE_CONNECTION_POOL_SIZE
-    - LVDB_DATABASE_ENABLE_GPU
-    - LVDB_DATABASE_ENABLE_FTS
-    - LVDB_EMBEDDING_PROVIDER
-    - LVDB_EMBEDDING_BASE_URL
-    - LVDB_EMBEDDING_API_KEY
-    - LVDB_MIGRATION_AUTO_DETECT
-    - LVDB_MIGRATION_BACKUP_ON_MIGRATE
+Supported environment variables (prefix LVDB_):
+- Sectioned variables like LVDB_DATABASE_* LVDB_SERVER_* LVDB_EMBEDDING_*
+- Nested server security variables like LVDB_SERVER_SECURITY_* and a set of
+  legacy mappings for backward compatibility
 
+See class docstrings for detailed field descriptions and validation rules.
 """
 import copy
 import json
 import os
 import tomllib
+from io import BytesIO
+
+import tomli_w
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -230,67 +229,15 @@ class MigrationSettings(BaseSettings):
 
         return True
 
-# TODO: split security settings into their own subclass
 @dataclass
-class ServerSettings(BaseSettings):
-    """Settings related to the flask API server"""
-    debug: bool = False
-    environment: str = "development"
-
-    host: str = "127.0.0.1"
-    port: int = 5000
-    log_level: str = "INFO"
-    log_format: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-
-    # Turn on to accept various file formats with upload route
-    file_upload_enabled: bool = False
-    max_request_size: int = 10 * 1024 * 1024  # 10MB default
-
-    # Feature flags
-    # enable_async_processing: bool = True   - not yet implemented
-    enable_structured_logging: bool = not debug
-    enable_performance_logging: bool = False
-    enable_rate_limiting: bool = False
-    # Settings for Flask-Limiter
-    rate_limit: str = "100 per minute"
-    # Can also provide a redis url
-    rate_limit_storage_uri: str = "memory://"
-
-    # Cache settings
-    cache_enabled: bool = False
-    cache_ignore_errors: bool = True
-    cache_timeout: int = 300   # 5 min
-    cache_key_prefix: str = "lvdb_cache_"
-    # Which cachelib cache to use: https://cachelib.readthedocs.io/en/stable/
-    cache_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
-                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
-                        "MongoDbCache", "NullCache"] = "SimpleCache"
-    # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
-    cache_settings: dict = None
-
-    # Database registry settings for multi-worker coordination
-    db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
-                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
-                        "MongoDbCache", "NullCache"] = "SimpleCache"
-
-    # Will try to use the cache_settings if not set and cache_types match.
-    db_registry_settings: dict = None
-
-    # Set to True to use the same cache for db_registry as general cache.
-    use_single_cache: bool = False
-
-
-    proxy_enabled: bool = False
-    # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
-    # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
-    proxy_settings: dict = None
-
-    # Security settings
+class SecuritySettings(BaseSettings):
+    """Security-related settings for the server."""
+    # API Key authentication
     require_api_key: bool = False
     api_key_header: str = "Authorization"  # Header name for API key
-
     trusted_hosts: List[str] = None
-
+    
+    # Key management
     key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
     default_key_expiry_days: Optional[int] = None  # None = no default expiration
     auto_prune_expired_keys: bool = False  # Automatically remove expired keys
@@ -324,6 +271,100 @@ class ServerSettings(BaseSettings):
     referrer_policy: str = 'strict-origin-when-cross-origin'
 
     def validate(self):
+        # Validate API key settings if required
+        if self.require_api_key:
+            if self.default_key_expiry_days is not None and self.default_key_expiry_days <= 0:
+                raise ConfigurationError("default_key_expiry_days must be a positive integer or None")
+
+            if self.warn_expiring_days <= 0:
+                raise ConfigurationError("warn_expiring_days must be a positive integer")
+
+        # Validate key database path if specified
+        if self.key_database_path:
+            try:
+                Path(self.key_database_path).parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                raise ConfigurationError(f"Invalid key_database_path: {e}")
+
+        # Validate CORS allowed origins
+        if isinstance(self.cors_allowed_origins, str):
+            if self.cors_allowed_origins != "*" and not self.cors_allowed_origins:
+                raise ConfigurationError("cors_allowed_origins string must be '*' or a non-empty string")
+        elif isinstance(self.cors_allowed_origins, list):
+            if len(self.cors_allowed_origins) == 0:
+                raise ConfigurationError("cors_allowed_origins list cannot be empty")
+            for origin in self.cors_allowed_origins:
+                if not isinstance(origin, str) or not origin:
+                    raise ConfigurationError("Each origin in cors_allowed_origins must be a non-empty string")
+        else:
+            raise ConfigurationError("cors_allowed_origins must be either a string or a list of strings")
+
+        return True
+
+
+@dataclass
+class ServerSettings(BaseSettings):
+    """Settings related to the flask API server"""
+    debug: bool = False
+    environment: str = "development"
+
+    host: str = "127.0.0.1"
+    port: int = 5000
+    log_level: str = "INFO"
+    log_format: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+    # Turn on to accept various file formats with upload route
+    file_upload_enabled: bool = False
+    max_request_size: int = 10 * 1024 * 1024  # 10MB default
+
+    # Feature flags
+    # enable_async_processing: bool = True   - not yet implemented
+    enable_structured_logging: Optional[bool] = None  # Computed in __post_init__ based on debug
+    enable_performance_logging: bool = False
+    enable_rate_limiting: bool = False
+    # Settings for Flask-Limiter
+    rate_limit: str = "100 per minute"
+    # Can also provide a redis url
+    rate_limit_storage_uri: str = "memory://"
+
+    # Cache settings
+    cache_enabled: bool = False
+    cache_ignore_errors: bool = True
+    cache_timeout: int = 300   # 5 min
+    cache_key_prefix: str = "lvdb_cache_"
+    # Which cachelib cache to use: https://cachelib.readthedocs.io/en/stable/
+    cache_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
+                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
+                        "MongoDbCache", "NullCache"] = "SimpleCache"
+    # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
+    cache_settings: dict = None
+
+    # Database registry settings for multi-worker coordination
+    db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
+                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
+                        "MongoDbCache", "NullCache"] = "SimpleCache"
+
+    # Will try to use the cache_settings if not set and cache_types match.
+    db_registry_settings: dict = None
+
+    # Set to True to use the same cache for db_registry as general cache.
+    use_single_cache: bool = False
+
+    proxy_enabled: bool = False
+    # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
+    # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
+    proxy_settings: dict = None
+
+    # Security settings
+    security: SecuritySettings = field(default_factory=SecuritySettings)
+
+    def __post_init__(self):
+        """Compute fields that depend on other instance fields."""
+        # Set enable_structured_logging based on debug mode if not explicitly set
+        if self.enable_structured_logging is None:
+            self.enable_structured_logging = not self.debug
+
+    def validate(self):
         # Validate host
         if not isinstance(self.host, str) or not self.host:
             raise ConfigurationError("host must be a non-empty string")
@@ -345,34 +386,6 @@ class ServerSettings(BaseSettings):
         if self.max_request_size <= 0:
             raise ConfigurationError("max_request_size must be a positive integer")
 
-        # Validate API key settings if required
-        if self.require_api_key:
-            if self.default_key_expiry_days is not None and self.default_key_expiry_days <= 0:
-                raise ConfigurationError("default_key_expiry_days must be a positive integer or None")
-
-            if self.warn_expiring_days <= 0:
-                raise ConfigurationError("warn_expiring_days must be a positive integer")
-
-            # Validate key database path if specified
-        if self.key_database_path:
-            try:
-                Path(self.key_database_path).parent.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                raise ConfigurationError(f"Invalid key_database_path: {e}")
-
-        # Validate CORS allowed origins
-        if isinstance(self.cors_allowed_origins, str):
-            if self.cors_allowed_origins != "*" and not self.cors_allowed_origins:
-                raise ConfigurationError("cors_allowed_origins string must be '*' or a non-empty string")
-        elif isinstance(self.cors_allowed_origins, list):
-            if len(self.cors_allowed_origins) == 0:
-                raise ConfigurationError("cors_allowed_origins list cannot be empty")
-            for origin in self.cors_allowed_origins:
-                if not isinstance(origin, str) or not origin:
-                    raise ConfigurationError("Each origin in cors_allowed_origins must be a non-empty string")
-        else:
-            raise ConfigurationError("cors_allowed_origins must be either a string or a list of strings")
-
         if self.proxy_enabled:
             if not isinstance(self.proxy_settings, dict):
                 raise ConfigurationError("If `proxy_enabled` is True, `proxy_settings` must be a dict containing "
@@ -384,6 +397,8 @@ class ServerSettings(BaseSettings):
             if self.cache_type not in valid_cache_types:
                 raise ConfigurationError(f"cache_type must be one of: {', '.join(valid_cache_types)}")
 
+        # Validate security settings
+        self.security.validate()
 
         return True
 
@@ -460,10 +475,24 @@ class Config:
                 if key == 'security' and isinstance(value, dict):
                     # Handle nested security settings
                     for sec_key, sec_value in value.items():
-                        if hasattr(config.server, sec_key):
-                            setattr(config.server, sec_key, sec_value)
+                        if hasattr(config.server.security, sec_key):
+                            setattr(config.server.security, sec_key, sec_value)
                 elif hasattr(config.server, key):
                     setattr(config.server, key, value)
+            
+            # Also handle legacy security fields directly in server section for backward compatibility
+            legacy_security_fields = {
+                'require_api_key', 'api_key_header', 'trusted_hosts', 'key_database_path',
+                'default_key_expiry_days', 'auto_prune_expired_keys', 'key_audit_logging',
+                'auth_log_level', 'warn_expiring_days', 'cors_enabled', 'cors_allowed_origins',
+                'cors_allowed_methods', 'cors_allowed_headers', 'cors_max_age',
+                'security_headers_enabled', 'force_https', 'strict_transport_security',
+                'strict_transport_security_max_age', 'content_security_policy',
+                'content_type_nosniff', 'x_frame_options', 'x_xss_protection', 'referrer_policy'
+            }
+            for key, value in server_data.items():
+                if key in legacy_security_fields and hasattr(config.server.security, key):
+                    setattr(config.server.security, key, value)
 
         # Process backup settings
         if 'backup' in data and isinstance(data['backup'], dict):
@@ -563,11 +592,24 @@ class Config:
                 key = '_'.join(parts[1:])
                 section_obj = getattr(config, section_name)
 
+                # Handle nested server.security settings
+                if section_name == 'server' and len(parts) >= 3 and parts[1] == 'security':
+                    security_key = '_'.join(parts[2:])
+                    security_obj = section_obj.security
+                    if hasattr(security_obj, security_key):
+                        value = cls._convert_env_value(env_value, security_obj, security_key)
+                        setattr(security_obj, security_key, value)
+                    continue
+
                 # Convert environment variable value to the appropriate type
                 value = cls._convert_env_value(env_value, section_obj, key)
 
                 if hasattr(section_obj, key):
                     setattr(section_obj, key, value)
+                # Handle legacy security settings mapped to server.security
+                elif section_name == 'server' and hasattr(section_obj.security, key):
+                    value = cls._convert_env_value(env_value, section_obj.security, key)
+                    setattr(section_obj.security, key, value)
 
             # Handle legacy environment variables
             elif name in ['host', 'port', 'log_level', 'root_dir']:
@@ -729,12 +771,12 @@ class Config:
             "DB_ROOT_DIR": self.database.root_dir,
             "LOG_LEVEL": self.server.log_level,
             "LOG_FORMAT": self.server.log_format,
-            "REQUIRE_API_KEY": self.server.require_api_key,
-            "CORS_ENABLED": self.server.cors_enabled,
-            "CORS_ALLOWED_ORIGINS": self.server.cors_allowed_origins,
+            "REQUIRE_API_KEY": self.server.security.require_api_key,
+            "CORS_ENABLED": self.server.security.cors_enabled,
+            "CORS_ALLOWED_ORIGINS": self.server.security.cors_allowed_origins,
             "MAX_CONTENT_LENGTH": self.server.max_request_size,
-            "AUTH_LOG_LEVEL": self.server.auth_log_level,
-            "TRUSTED_HOSTS": self.server.trusted_hosts,
+            "AUTH_LOG_LEVEL": self.server.security.auth_log_level,
+            "TRUSTED_HOSTS": self.server.security.trusted_hosts,
             "CACHE_TYPE": "NullCache" if not self.server.cache_enabled else self.server.cache_type,
             "CACHE_DEFAULT_TIMEOUT": self.server.cache_timeout,
             "CACHE_OPTIONS": cache_options,
@@ -746,148 +788,73 @@ class Config:
         return result
 
     def generate_toml(self) -> str:
-        """Generate enhanced TOML configuration for v1.0."""
-        lines = ["# LocalVectorDB Server Configuration v1.0\n"]
-
-        # Database section
-        lines.append("[database]\n")
-        db_dict = asdict(self.database)
-
-        # Handle metadata schema separately
-        metadata_schema = db_dict.pop('default_metadata_schema', {})
-
-        for key, value in db_dict.items():
-            if isinstance(value, str):
-                lines.append(f'{key} = "{value}"\n')
-            elif isinstance(value, bool):
-                lines.append(f'{key} = {str(value).lower()}\n')
-            elif value is not None:
-                lines.append(f'{key} = {value}\n')
-
-        # Add metadata schema subsection
-        if metadata_schema:
-            lines.append("\n[database.metadata_schema]\n")
+        """Generate enhanced TOML configuration for v1.0 using tomli-w."""
+        from io import StringIO
+        
+        def clean_none_values(obj):
+            """Recursively remove None values and empty containers from nested dicts/lists."""
+            if isinstance(obj, dict):
+                cleaned = {}
+                for key, value in obj.items():
+                    if value is not None:
+                        cleaned_value = clean_none_values(value)
+                        # Only include non-empty containers and non-None values
+                        if cleaned_value is not None and (not isinstance(cleaned_value, (dict, list)) or cleaned_value):
+                            cleaned[key] = cleaned_value
+                return cleaned
+            elif isinstance(obj, list):
+                cleaned = []
+                for item in obj:
+                    cleaned_item = clean_none_values(item)
+                    if cleaned_item is not None:
+                        cleaned.append(cleaned_item)
+                return cleaned
+            else:
+                return obj
+        
+        # Convert config to dict
+        config_dict = clean_none_values(self.to_dict())
+        
+        # Process metadata schema for proper TOML serialization
+        if config_dict.get('database', {}).get('default_metadata_schema'):
+            metadata_schema = config_dict['database']['default_metadata_schema']
+            processed_schema = {}
             for field_name, field_config in metadata_schema.items():
-                if isinstance(field_config, dict):
-                    # Format as inline table
-                    props = []
-                    for prop_key, prop_value in field_config.items():
-                        if prop_key == 'type' and hasattr(prop_value, 'value'):
-                            prop_value = prop_value.value
-
-                        if isinstance(prop_value, str):
-                            props.append(f'{prop_key} = "{prop_value}"')
-                        elif isinstance(prop_value, bool):
-                            props.append(f'{prop_key} = {str(prop_value).lower()}')
-                        elif prop_value is not None:
-                            props.append(f'{prop_key} = {prop_value}')
-                    lines.append(f'{field_name} = {{ {", ".join(props)} }}\n')
-
-        lines.append("\n")
-
-        # Embedding section
-        lines.append("[embedding]\n")
-
-
-        for key, value in asdict(self.embedding).items():
-            if value is None:
-                continue
-            elif isinstance(value, str):
-                lines.append(f'{key} = "{value}"\n')
-            elif isinstance(value, bool):
-                lines.append(f'{key} = {str(value).lower()}\n')
-            elif isinstance(value, dict):
-                # Handle config dict
-                if value:  # Only include if not empty
-                    lines.append(f'{key} = {value}\n')
-            else:
-                lines.append(f'{key} = {value}\n')
-        lines.append("\n")
-
-        # Server section
-        lines.append("[server]\n")
-        server_dict = asdict(self.server)
-
-        # Security fields to handle separately
-        security_fields = {
-            'require_api_key', 'authorized_api_keys', 'api_key_header',
-            'cors_enabled', 'cors_allowed_origins', 'cors_allowed_methods',
-            'cors_allowed_headers', 'cors_max_age', 'key_database_path',
-            'default_key_expiry_days', 'auto_prune_expired_keys',
-            'key_audit_logging', 'auth_log_level', 'warn_expiring_days', 'trusted_hosts',
-            'force_https',
-            'strict_transport_security',
-            'strict_transport_security_max_age',
-            'content_security_policy',
-            'content_type_nosniff',
-            'x_frame_options',
-            'x_xss_protection',
-            'referrer_policy',
-        }
-
-        security_config = {}
-        for key, value in list(server_dict.items()):
-            if key in security_fields:
-                security_config[key] = server_dict.pop(key)
-
-        # Regular server settings
-        for key, value in server_dict.items():
-            if isinstance(value, str):
-                lines.append(f'{key} = "{value}"\n')
-            elif isinstance(value, bool):
-                lines.append(f'{key} = {str(value).lower()}\n')
-            elif isinstance(value, list):
-                if value:  # Only include if not empty
-                    items_str = ", ".join([f'"{item}"' if isinstance(item, str) else str(item) for item in value])
-                    lines.append(f'{key} = [{items_str}]\n')
-            elif value is not None:
-                lines.append(f'{key} = {value}\n')
-
-        lines.append("\n")
-
-        # Backup section
-        lines.append("[backup]\n")
-        for key, value in asdict(self.backup).items():
-            if isinstance(value, str):
-                lines.append(f'{key} = "{value}"\n')
-            elif isinstance(value, bool):
-                lines.append(f'{key} = {str(value).lower()}\n')
-            elif value is not None:
-                lines.append(f'{key} = {value}\n')
-        lines.append("\n")
-
-        # Migration section
-        lines.append("[migration]\n")
-        for key, value in asdict(self.migration).items():
-            if value is None:
-                continue
-            elif isinstance(value, str):
-                lines.append(f'{key} = "{value}"\n')
-            elif isinstance(value, bool):
-                lines.append(f'{key} = {str(value).lower()}\n')
-            else:
-                lines.append(f'{key} = {value}\n')
-        lines.append("\n")
-
-        # Security subsection
-        if security_config:
-            lines.append("[server.security]\n")
-            for key, value in security_config.items():
-                if isinstance(value, str):
-                    lines.append(f'{key} = "{value}"\n')
-                elif isinstance(value, bool):
-                    lines.append(f'{key} = {str(value).lower()}\n')
-                elif isinstance(value, list):
-                    if value:
-                        items_str = ", ".join([f'"{item}"' if isinstance(item, str) else str(item) for item in value])
-                        lines.append(f'{key} = [{items_str}]\n')
-                    else:
-                        lines.append(f'{key} = []\n')
-                elif value is not None:
-                    lines.append(f'{key} = {value}\n')
-            lines.append("\n")
-
-        return "".join(lines)
+                if hasattr(field_config, '__dict__'):
+                    # Convert MetadataField object to dict
+                    field_dict = clean_none_values(asdict(field_config))
+                    # Convert enum to string if needed
+                    if hasattr(field_dict.get('type'), 'value'):
+                        field_dict['type'] = field_dict['type'].value
+                    elif hasattr(field_dict.get('type'), '__str__'):
+                        field_dict['type'] = str(field_dict['type'])
+                    processed_schema[field_name] = field_dict
+                elif isinstance(field_config, dict):
+                    # Handle already converted dict
+                    processed_field = clean_none_values(field_config.copy())
+                    if hasattr(processed_field.get('type'), 'value'):
+                        processed_field['type'] = processed_field['type'].value
+                    elif hasattr(processed_field.get('type'), '__str__'):
+                        processed_field['type'] = str(processed_field['type'])
+                    processed_schema[field_name] = processed_field
+            
+            # Update the config dict
+            config_dict['database']['default_metadata_schema'] = processed_schema
+        
+        # Handle security nested structure - flatten for TOML
+        if 'server' in config_dict and 'security' in config_dict['server']:
+            # Create server.security section
+            security_config = config_dict['server'].pop('security')
+            config_dict.setdefault('server', {})['security'] = security_config
+        
+        # Generate TOML with header comment
+        output = BytesIO()
+        output.write("# LocalVectorDB Server Configuration v1.0\n\n".encode("utf-8"))
+        
+        # Use tomli_w to dump the config
+        tomli_w.dump(config_dict, output)
+        
+        return output.getvalue().decode("utf-8")
 
     def to_dict(self):
         return {
@@ -977,19 +944,57 @@ def load_config(
         verbose: bool = False,
         apply_schema: Optional[str] = None
 ) -> Config:
-    """Smart
+    """Load and construct a Config object from various sources.
+
+    This function provides a flexible interface for creating a Config instance
+    using one or more of the supported input mechanisms (explicit Config
+    instance, dict, configuration file path, environment variables, and
+    predefined metadata schemas). The resulting Config will start from the
+    library defaults, optionally have a common metadata schema applied, be
+    merged with the provided configuration source, have environment variables
+    applied, and can be validated before being returned.
 
     Parameters
     ----------
-    configuration
-    validate
-    verbose
-    apply_schema
+    configuration : Union[str, Config, None], optional
+        Source of configuration to load. May be:
+        - a path to a configuration file (TOML, JSON, or INI), in which case the
+          file will be loaded if it exists;
+        - a Config instance, which will be merged into defaults;
+        - a dict mapping section names ("database", "embedding", "server",
+          "backup", "migration") to dicts of values for those sections;
+        - None, in which case defaults are used and the LVDB_SERVER_CONFIG
+          environment variable is consulted for a file path.
+    validate : bool, optional
+        If True (default), call Config.validate() on the resulting configuration
+        and raise ConfigurationError on validation failures.
+    verbose : bool, optional
+        If True, print progress/debug messages to stderr using click.secho.
+        Defaults to False.
+    apply_schema : Optional[str], optional
+        If provided, the named common metadata schema (from
+        get_common_metadata_schemas()) will be applied to
+        database.default_metadata_schema before other configuration sources
+        are merged.
 
     Returns
     -------
+    Config
+        The constructed (and optionally validated) configuration object.
 
+    Raises
+    ------
+    ConfigurationError
+        If loading or validation fails.
+    FileNotFoundError
+        If attempting to load from a configuration file path that does not
+        exist.
+    ValueError
+        If a provided configuration file has an unsupported suffix/format.
+    TypeError
+        If `configuration` is not a supported type.
     """
+
     # Start with default config
     config = Config()
 
