@@ -40,8 +40,8 @@ class TestLocalVectorDBInitialization:
 
     def test_create_new_database(self, temp_dir, sample_metadata_schema):
         """Test creating a new database."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             # Setup mocks
@@ -76,8 +76,8 @@ class TestLocalVectorDBInitialization:
 
     def test_create_memory_database(self, sample_metadata_schema):
         """Test creating in-memory database."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
             # Setup mocks
@@ -103,7 +103,7 @@ class TestLocalVectorDBInitialization:
 
     def test_database_not_found_error(self, temp_dir):
         """Test error when database doesn't exist and create_if_not_exists=False."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding:
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding:
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
             mock_provider.get_dimension.return_value = 384
@@ -118,7 +118,7 @@ class TestLocalVectorDBInitialization:
 
     def test_invalid_embedding_model(self, temp_dir):
         """Test error with invalid embedding model."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding:
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding:
             mock_provider = Mock()
             mock_provider.validate_model.return_value = False
             mock_embedding.return_value = mock_provider
@@ -130,11 +130,11 @@ class TestLocalVectorDBInitialization:
                     embedding_model="invalid-model"
                 )
 
-    @patch('localvectordb.database.faiss')
+    @patch('localvectordb.database._core.faiss')
     def test_faiss_index_initialization(self, mock_faiss, temp_dir):
         """Test FAISS index initialization."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker'):
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker'):
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
             mock_provider.get_dimension.return_value = 384
@@ -149,11 +149,11 @@ class TestLocalVectorDBInitialization:
             mock_faiss.IndexFlatL2.assert_called_once_with(384)
             assert db.index == mock_index
 
-    @patch('localvectordb.database.faiss')
+    @patch('localvectordb.database._core.faiss')
     def test_load_existing_faiss_index(self, mock_faiss, temp_dir):
         """Test loading existing FAISS index."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker'):
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker'):
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
             mock_provider.get_dimension.return_value = 384
@@ -179,12 +179,12 @@ class TestLocalVectorDBUpsert:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -299,12 +299,12 @@ class TestLocalVectorDBInsert:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -409,12 +409,12 @@ class TestLocalVectorDBRetrieval:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -552,12 +552,12 @@ class TestLocalVectorDBDeletion:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -630,12 +630,12 @@ class TestLocalVectorDBUpdate:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -746,9 +746,8 @@ class TestLocalVectorDBUpdate:
     def test_update_nonexistent_document(self, mock_db):
         """Test updating nonexistent document."""
         with patch.object(mock_db, 'get', return_value=None):
-            result = mock_db.update("nonexistent", content="New content")
-
-            assert result is False
+            with pytest.raises(DocumentNotFoundError):
+                mock_db.update("nonexistent", content="New content")
 
     def test_update_same_content(self, mock_db):
         """Test updating with same content (no change needed)."""
@@ -775,12 +774,12 @@ class TestLocalVectorDBQuery:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -899,12 +898,12 @@ class TestLocalVectorDBFilter:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1012,12 +1011,12 @@ class TestLocalVectorDBProperties:
     @pytest.fixture
     def mock_db(self):
         """Create a mock database for testing."""
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb.database.DatabaseSchema') as mock_schema, \
-                patch('localvectordb.database.ConnectionPool') as mock_pool:
+                patch('localvectordb._schema.DatabaseSchema') as mock_schema, \
+                patch('localvectordb._pools.ConnectionPool') as mock_pool:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1167,8 +1166,8 @@ class TestMultiColumnEmbedding:
         from localvectordb.core import MetadataField, MetadataFieldType
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
 
@@ -1214,8 +1213,8 @@ class TestMultiColumnEmbedding:
         """Test that metadata field embeddings are generated during upsert."""
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
 
@@ -1266,8 +1265,8 @@ class TestMultiColumnEmbedding:
         """Test multi-column query functionality."""
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
@@ -1327,8 +1326,8 @@ class TestMultiColumnEmbedding:
         from localvectordb.core import MetadataField, MetadataFieldType
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
@@ -1391,8 +1390,8 @@ class TestMultiColumnEmbedding:
         from localvectordb.core import MetadataField, MetadataFieldType
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
@@ -1466,8 +1465,8 @@ class TestMultiColumnEmbedding:
         from localvectordb.core import MetadataField, MetadataFieldType
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
 
@@ -1535,8 +1534,8 @@ class TestMultiColumnEmbedding:
         from localvectordb.core import MetadataField, MetadataFieldType
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.database.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.database.ChunkerFactory.create_chunker') as mock_chunker, \
+        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:

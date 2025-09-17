@@ -286,10 +286,10 @@ class TestOllamaEmbeddings:
         # Should make multiple API calls
         assert mock_client.post.call_count == 2
 
-    @patch.object(OllamaEmbeddings, '_embed_single_batch')
-    def test_get_dimension_calls_embed_batch(self, mock_embed):
+    @patch.object(OllamaEmbeddings, '_get_model_dimension_sync')
+    def test_get_dimension_calls_embed_batch(self, mock_get_dimension):
         """Test get_dimension makes test call to determine dimension."""
-        mock_embed.return_value = [[0.1, 0.2, 0.3, 0.4]]
+        mock_get_dimension.return_value = 4
 
         provider = OllamaEmbeddings("test-model")
         dimension = provider.get_dimension()
@@ -297,8 +297,8 @@ class TestOllamaEmbeddings:
         assert dimension == 4
         assert provider._dimension == 4
 
-        # Should use asyncio.run
-        mock_embed.assert_called_once()
+        # Should call sync method
+        mock_get_dimension.assert_called_once()
 
 
 @pytest.mark.unit
@@ -943,43 +943,39 @@ class TestEmbeddingSyncWrapper:
         # Ensure no event loop exists
         try:
             asyncio.get_event_loop().close()
-        except:
+        except Exception:
             pass
 
         embeddings = provider.embed_sync(["hello", "world"])
         assert embeddings.shape == (2, 384)
 
-    @patch('asyncio.get_event_loop')
-    def test_embed_sync_with_running_loop(self, mock_get_loop):
-        """Test sync wrapper with running event loop."""
-        mock_loop = Mock()
-        mock_loop.is_running.return_value = True
-        mock_get_loop.return_value = mock_loop
-
+    def test_embed_sync_with_running_loop(self):
+        """Test sync wrapper with running event loop raises RuntimeError."""
         provider = MockEmbeddings("test-model", dimension=384)
 
-        with patch('concurrent.futures.ThreadPoolExecutor') as mock_executor_class:
-            mock_executor = Mock()
-            mock_future = Mock()
-            mock_future.result.return_value = np.array([[0.1, 0.2, 0.3]])
-            mock_executor.submit.return_value = mock_future
-            mock_executor_class.return_value.__enter__.return_value = mock_executor
+        # Create a running event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-            result = provider.embed_sync(["hello"])
+        async def test_within_loop():
+            # This should raise a RuntimeError - either because it detects the async context
+            # or because asyncio.run() cannot be called from a running loop
+            with pytest.raises(RuntimeError):
+                provider.embed_sync(["hello"])
 
-            assert mock_executor.submit.called
-            assert np.array_equal(result, np.array([[0.1, 0.2, 0.3]]))
+        try:
+            loop.run_until_complete(test_within_loop())
+        finally:
+            loop.close()
 
-    @patch('asyncio.get_event_loop')
-    def test_embed_sync_with_stopped_loop(self, mock_get_loop):
-        """Test sync wrapper with stopped event loop."""
-        mock_loop = Mock()
-        mock_loop.is_running.return_value = False
-        mock_loop.run_until_complete.return_value = np.array([[0.1, 0.2, 0.3]])
-        mock_get_loop.return_value = mock_loop
-
+    @patch('asyncio.run')
+    def test_embed_sync_with_stopped_loop(self, mock_asyncio_run):
+        """Test sync wrapper with no running event loop uses asyncio.run."""
         provider = MockEmbeddings("test-model", dimension=384)
-        result = provider.embed_sync(["hello"])
+        expected_result = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+        mock_asyncio_run.return_value = expected_result
 
-        assert mock_loop.run_until_complete.called
-        assert np.array_equal(result, np.array([[0.1, 0.2, 0.3]]))
+        result = provider.embed_sync(["hello", "world"])
+
+        assert mock_asyncio_run.called
+        assert np.array_equal(result, expected_result)

@@ -1083,7 +1083,7 @@ class TestRemoteVectorDBAsyncFileOperations:
 
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
-            mock_response = Mock()
+            mock_response = AsyncMock()
             mock_response.status_code = 200
             mock_response.json = AsyncMock(return_value={
                 "document_ids": ["async_doc"],
@@ -1091,7 +1091,7 @@ class TestRemoteVectorDBAsyncFileOperations:
             })
 
             mock_client.request.return_value = mock_response
-            mock_get_response = Mock()
+            mock_get_response = AsyncMock()
             mock_get_response.json = AsyncMock(return_value={
                 "config": {
                     "embedding_provider": "ollama",
@@ -1127,7 +1127,7 @@ class TestRemoteVectorDBAsyncFileOperations:
 
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
-            mock_response = Mock()
+            mock_response = AsyncMock()
             mock_response.status_code = 200
             mock_response.json = AsyncMock(return_value={
                 "document_ids": ["new_async_doc"],
@@ -1135,7 +1135,7 @@ class TestRemoteVectorDBAsyncFileOperations:
             })
 
             mock_client.request.return_value = mock_response
-            mock_get_response = Mock()
+            mock_get_response = AsyncMock()
             mock_get_response.json = AsyncMock(return_value={
                 "config": {
                     "embedding_provider": "ollama",
@@ -1181,7 +1181,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
             mock_client = AsyncMock()
 
             # Create a proper mock response that won't interfere with status_code checks
-            mock_response = Mock()
+            mock_response = AsyncMock()
             mock_response.status_code = 200  # This needs to be a plain int
             mock_response.json = AsyncMock(return_value={
                 "ids": ["async_chunk_doc"],
@@ -1190,7 +1190,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
-            mock_get_response = Mock()
+            mock_get_response = AsyncMock()
             mock_get_response.json = AsyncMock(return_value={
                 "config": {
                     "embedding_provider": "ollama",
@@ -1235,7 +1235,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
             mock_client = AsyncMock()
 
             # Create a proper mock response
-            mock_response = Mock()
+            mock_response = AsyncMock()
             mock_response.status_code = 200
             mock_response.json = AsyncMock(return_value={
                 "ids": ["new_async_chunk"],
@@ -1244,7 +1244,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
-            mock_get_response = Mock()
+            mock_get_response = AsyncMock()
             mock_get_response.json = AsyncMock(return_value={
                 "config": {
                     "embedding_provider": "ollama",

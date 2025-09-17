@@ -406,6 +406,7 @@ class TestModuleInitialization:
             initial_modules = set(sys.modules.keys())
 
             # Import the package
+            import localvectordb  # noqa: F401
 
             # Check for unwanted side effects
             final_env = dict(os.environ)

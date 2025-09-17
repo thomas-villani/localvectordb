@@ -230,7 +230,7 @@ class MigrationSettings(BaseSettings):
 
         return True
 
-
+# TODO: split security settings into their own subclass
 @dataclass
 class ServerSettings(BaseSettings):
     """Settings related to the flask API server"""
@@ -786,6 +786,8 @@ class Config:
 
         # Embedding section
         lines.append("[embedding]\n")
+
+
         for key, value in asdict(self.embedding).items():
             if value is None:
                 continue

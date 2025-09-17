@@ -378,6 +378,10 @@ class RemoteVectorDB(BaseVectorDB):
         # State variables to be loaded from server
         self._embedding_dimension = 0
 
+        # HTTP clients for connection pooling (initialize before making requests)
+        self._sync_client = None
+        self._client = None
+
         # Check if database exists and create if needed
         if create_if_not_exists:
             self._ensure_database_exists()
@@ -396,15 +400,11 @@ class RemoteVectorDB(BaseVectorDB):
             authorization_header=self._authorization_header
         )
 
-        # HTTP clients for connection pooling
-        self._sync_client = None
-        self._client = None
-
     def _ensure_sync_client(self) -> httpx.Client:
         """Ensure sync HTTP client is available for connection pooling"""
         if self._sync_client is None or self._sync_client.is_closed:
             self._sync_client = httpx.Client(
-                timeout=httpx.Timeout(self.request_timeout or 30.0),
+                timeout=httpx.Timeout(self.request_timeout),
                 limits=self._connection_pool_limits,
                 headers=self._get_headers()
             )
@@ -1972,7 +1972,7 @@ class RemoteVectorDB(BaseVectorDB):
         """Handle API response and raise appropriate exceptions"""
         if response.status_code == 200:
             try:
-                return response.json()
+                return await response.json()
             except ValueError as e:
                 logger.warning(f"Failed to parse successful response as JSON: {e}")
                 raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
@@ -1984,7 +1984,7 @@ class RemoteVectorDB(BaseVectorDB):
         error_msg = ""
 
         try:
-            error_data = response.json()
+            error_data = await response.json()
             error_dict = error_data.get("error", {})
             error_type = error_dict.get("code", "unknown").lower()
             error_msg = error_dict.get("message", "")

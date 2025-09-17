@@ -526,6 +526,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self.db_path: Path = None
         self.async_max_connections: int = None
         self.pipeline_queue_size: int = DEFAULT_QUEUE_SIZE
+        self._batch_size: int = DEFAULT_BATCH_SIZE
 
     @abstractmethod
     def _generate_doc_id(self) -> str:
