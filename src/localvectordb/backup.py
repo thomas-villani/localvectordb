@@ -327,13 +327,16 @@ class BackupManager:
         manifest_json = json.dumps(temp_manifest_data, sort_keys=True, separators=(',', ':'))
         manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
         
-        # Update metadata with manifest checksum
+        # Update metadata with manifest checksum (but NOT archive_checksum to avoid circularity)
         metadata.manifest_checksum = manifest_checksum
 
-        # Write final manifest to temp directory
+        # Write final manifest to temp directory (without archive_checksum)
         manifest_path = temp_dir / "manifest.json"
         with open(manifest_path, 'w') as f:
-            json.dump(metadata.to_dict(), f, indent=2)
+            # Create manifest data without archive_checksum to avoid circular dependency
+            manifest_data_for_archive = metadata.to_dict()
+            manifest_data_for_archive['archive_checksum'] = None
+            json.dump(manifest_data_for_archive, f, indent=2)
 
         # Create compressed archive
         if self.config.compression_algorithm == CompressionAlgorithm.GZIP:
@@ -358,7 +361,13 @@ class BackupManager:
         archive_checksum = self._calculate_file_checksum(backup_path)
         metadata.archive_checksum = archive_checksum
         
+        # Write sidecar checksum file for verification
+        sidecar_path = backup_path.with_suffix(backup_path.suffix + '.sha256')
+        with open(sidecar_path, 'w') as f:
+            f.write(f"{archive_checksum}  {backup_path.name}\n")
+        
         logger.info(f"Created backup archive: {backup_path}")
+        logger.info(f"Created sidecar checksum: {sidecar_path}")
         logger.debug(f"Archive checksum: {archive_checksum}")
         return backup_path
 
@@ -536,7 +545,34 @@ class BackupManager:
         logger.debug(f"Verifying backup integrity: {backup_path}")
 
         try:
-            # 1. Verify archive checksum first (if available)
+            # 1. Verify archive checksum from sidecar file first
+            sidecar_path = backup_path.with_suffix(backup_path.suffix + '.sha256')
+            archive_checksum_from_sidecar = None
+            
+            if sidecar_path.exists():
+                with open(sidecar_path, 'r') as f:
+                    line = f.readline().strip()
+                    if line:
+                        parts = line.split('  ', 1)
+                        if len(parts) == 2:
+                            archive_checksum_from_sidecar = parts[0]
+                            expected_filename = parts[1]
+                            if expected_filename != backup_path.name:
+                                logger.warning(f"Sidecar filename mismatch: expected {expected_filename}, got {backup_path.name}")
+                        else:
+                            archive_checksum_from_sidecar = parts[0]
+                
+                if archive_checksum_from_sidecar:
+                    actual_archive_checksum = self._calculate_file_checksum(backup_path)
+                    if actual_archive_checksum != archive_checksum_from_sidecar:
+                        raise ValueError(
+                            f"Archive checksum mismatch (from sidecar): expected {archive_checksum_from_sidecar}, "
+                            f"got {actual_archive_checksum}"
+                        )
+                    logger.debug("Archive checksum verification passed (from sidecar)")
+            else:
+                logger.debug(f"No sidecar checksum file found at {sidecar_path}, skipping archive checksum verification")
+
             with tarfile.open(backup_path, "r:*") as tar:
                 # Check that manifest exists
                 manifest_info = tar.getmember("manifest.json")
@@ -547,17 +583,7 @@ class BackupManager:
 
                 metadata = BackupMetadata.from_dict(manifest_data)
                 
-                # 2. Verify archive-level checksum (if available)
-                if metadata.archive_checksum:
-                    actual_archive_checksum = self._calculate_file_checksum(backup_path)
-                    if actual_archive_checksum != metadata.archive_checksum:
-                        raise ValueError(
-                            f"Archive checksum mismatch: expected {metadata.archive_checksum}, "
-                            f"got {actual_archive_checksum}"
-                        )
-                    logger.debug("Archive checksum verification passed")
-                
-                # 3. Verify manifest integrity (if available)
+                # 2. Verify manifest integrity (if available)
                 if metadata.manifest_checksum:
                     # Reconstruct manifest data without checksum fields for verification
                     manifest_for_verification = manifest_data.copy()
@@ -965,6 +991,12 @@ class BackupManager:
         if backup_file and backup_file.exists():
             backup_file.unlink()
             logger.debug(f"Deleted backup file: {backup_file}")
+            
+            # Also delete sidecar checksum file if it exists
+            sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
+            if sidecar_path.exists():
+                sidecar_path.unlink()
+                logger.debug(f"Deleted sidecar checksum file: {sidecar_path}")
 
         # Remove from database log
         try:
@@ -1047,6 +1079,34 @@ class BackupManager:
             return False
 
         try:
+            # Verify archive checksum from sidecar file first
+            sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
+            archive_checksum_from_sidecar = None
+            
+            if sidecar_path.exists():
+                with open(sidecar_path, 'r') as f:
+                    line = f.readline().strip()
+                    if line:
+                        parts = line.split('  ', 1)
+                        if len(parts) == 2:
+                            archive_checksum_from_sidecar = parts[0]
+                            expected_filename = parts[1]
+                            if expected_filename != backup_file.name:
+                                logger.warning(f"Sidecar filename mismatch: expected {expected_filename}, got {backup_file.name}")
+                        else:
+                            archive_checksum_from_sidecar = parts[0]
+                
+                if archive_checksum_from_sidecar:
+                    actual_archive_checksum = self._calculate_file_checksum(backup_file)
+                    if actual_archive_checksum != archive_checksum_from_sidecar:
+                        raise ValueError(
+                            f"Archive checksum mismatch (from sidecar): expected {archive_checksum_from_sidecar}, "
+                            f"got {actual_archive_checksum}"
+                        )
+                    logger.debug("Archive checksum verification passed (from sidecar)")
+            else:
+                logger.debug(f"No sidecar checksum file found at {sidecar_path}, skipping archive checksum verification")
+
             with tarfile.open(backup_file, "r:*") as tar:
                 # Extract and parse manifest
                 manifest_info = tar.getmember("manifest.json")
@@ -1055,16 +1115,6 @@ class BackupManager:
                     raise ValueError("Could not extract manifest file from backup")
                 manifest_data = json.load(manifest_file)
                 metadata = BackupMetadata.from_dict(manifest_data)
-                
-                # Verify archive checksum (if available)
-                if metadata.archive_checksum:
-                    actual_archive_checksum = self._calculate_file_checksum(backup_file)
-                    if actual_archive_checksum != metadata.archive_checksum:
-                        raise ValueError(
-                            f"Archive checksum mismatch: expected {metadata.archive_checksum}, "
-                            f"got {actual_archive_checksum}"
-                        )
-                    logger.debug("Archive checksum verification passed")
                 
                 # Verify manifest integrity (if available)
                 if metadata.manifest_checksum:

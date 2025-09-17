@@ -16,6 +16,7 @@ through a registry pattern.
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -1163,11 +1164,11 @@ class MockEmbeddings(EmbeddingProvider):
     async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
         if not texts:
             return [[]]
-
         embeddings = []
         for text in texts:
             # Simple hash-based embedding
-            np.random.seed(hash(text) % (2 ** 31))
+            seed = int(hashlib.sha256(text.encode('utf-8')).hexdigest()[:8], 16)
+            np.random.seed(seed)
             embedding_array = np.random.normal(0, 1, self._dimension)
             # Normalize
             embedding_array = embedding_array / np.linalg.norm(embedding_array)

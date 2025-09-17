@@ -364,14 +364,25 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     "Invalid faiss index for LocalVectorDB. Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
             self.index = faiss.IndexIDMap2(base_index)
             logger.info(f"Created new FAISS IndexIDMap2 with dimension {self.embedding_dimension}")
-        if enable_gpu and faiss.get_num_gpus() > 0:
+        if enable_gpu:
             try:
-                self.index = faiss.index_cpu_to_all_gpus(self.index)
-                logger.info("Moved FAISS index to GPU")
+                # Check if GPU methods are available (guards against faiss-cpu builds)
+                num_gpus = faiss.get_num_gpus()
+                if num_gpus > 0:
+                    try:
+                        self.index = faiss.index_cpu_to_all_gpus(self.index)
+                        logger.info("Moved FAISS index to GPU")
+                    except Exception as e:
+                        logger.warning(f"Could not move IndexIDMap2 to GPU: {e}")
+                else:
+                    logger.warning("GPU requested but no GPUs available")
+            except AttributeError:
+                logger.warning(
+                    "GPU requested but FAISS was compiled without GPU support (faiss-cpu). "
+                    "Install faiss-gpu for GPU acceleration or set enable_gpu=False."
+                )
             except Exception as e:
-                logger.warning(f"Could not move IndexIDMap2 to GPU: {e}")
-        elif enable_gpu:
-            logger.warning("GPU requested but no GPUs available")
+                logger.warning(f"Failed to check GPU availability: {e}. Falling back to CPU.")
 
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
@@ -693,8 +704,15 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _save_internal(self):
         if not self.is_memory_only and hasattr(self.index, 'ntotal') and self.index.ntotal > 0:
             if hasattr(self.index, 'index') and hasattr(self.index.index, 'device'):
-                cpu_index = faiss.index_gpu_to_cpu(self.index)
-                faiss.write_index(cpu_index, str(self.index_path))
+                try:
+                    cpu_index = faiss.index_gpu_to_cpu(self.index)
+                    faiss.write_index(cpu_index, str(self.index_path))
+                except AttributeError:
+                    logger.warning("GPU-to-CPU conversion failed - FAISS may not have GPU support")
+                    faiss.write_index(self.index, str(self.index_path))
+                except Exception as e:
+                    logger.warning(f"Failed to convert GPU index to CPU for saving: {e}")
+                    faiss.write_index(self.index, str(self.index_path))
             else:
                 faiss.write_index(self.index, str(self.index_path))
 

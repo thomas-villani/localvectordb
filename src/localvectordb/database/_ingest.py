@@ -52,8 +52,25 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         sql = f"{sql_verb} INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
         return sql, all_columns
     
-    def _prepare_documents_bulk_data(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]]) -> List[tuple]:
-        """Prepare document data for bulk insertion (pure business logic)"""
+    def _prepare_documents_bulk_data(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]], 
+                                   conn=None, preserve_created_at: bool = True) -> List[tuple]:
+        """
+        Prepare document data for bulk insertion (pure business logic).
+        
+        Parameters
+        ----------
+        documents_data : List[Tuple[str, str, str, Dict[str, Any]]]
+            List of (doc_id, content, content_hash, metadata) tuples
+        conn : sqlite3.Connection or aiosqlite.Connection, optional
+            Database connection for fetching existing created_at values
+        preserve_created_at : bool, default True
+            If True, preserve existing created_at values for upserts
+        
+        Returns
+        -------
+        List[tuple]
+            Bulk data ready for INSERT OR REPLACE
+        """
         if not documents_data:
             return []
         
@@ -62,8 +79,105 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         bulk_data = []
         current_time = datetime.now(UTC)
         
+        # Fetch existing created_at values if connection provided and preservation enabled
+        existing_created_at = {}
+        if conn and preserve_created_at:
+            doc_ids = [doc_id for doc_id, _, _, _ in documents_data]
+            if doc_ids:
+                placeholders = ','.join(['?' for _ in doc_ids])
+                try:
+                    cursor = conn.execute(f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})", doc_ids)
+                    for doc_id, created_at_str in cursor.fetchall():
+                        if created_at_str:
+                            # Parse the ISO format timestamp back to datetime
+                            try:
+                                if isinstance(created_at_str, str):
+                                    existing_created_at[doc_id] = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                                else:
+                                    # Already a datetime object
+                                    existing_created_at[doc_id] = created_at_str
+                            except (ValueError, AttributeError):
+                                # Fallback to current time if parsing fails
+                                existing_created_at[doc_id] = current_time
+                except Exception as e:
+                    # Log warning but continue - fallback to current time for all
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Failed to fetch existing created_at values: {e}")
+        
         for doc_id, content, content_hash, metadata in documents_data:
-            row_data = [doc_id, content, content_hash, current_time, current_time]
+            # Use existing created_at if available, otherwise use current time
+            created_at_value = existing_created_at.get(doc_id, current_time)
+            updated_at_value = current_time
+            
+            row_data = [doc_id, content, content_hash, created_at_value, updated_at_value]
+            for field_name in metadata_columns:
+                value = metadata.get(field_name)
+                row_data.append(value)
+            bulk_data.append(tuple(row_data))
+        
+        return bulk_data
+
+    async def _prepare_documents_bulk_data_async(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]], 
+                                               conn=None, preserve_created_at: bool = True) -> List[tuple]:
+        """
+        Prepare document data for bulk insertion (async version).
+        
+        Parameters
+        ----------
+        documents_data : List[Tuple[str, str, str, Dict[str, Any]]]
+            List of (doc_id, content, content_hash, metadata) tuples
+        conn : aiosqlite.Connection, optional
+            Database connection for fetching existing created_at values
+        preserve_created_at : bool, default True
+            If True, preserve existing created_at values for upserts
+        
+        Returns
+        -------
+        List[tuple]
+            Bulk data ready for INSERT OR REPLACE
+        """
+        if not documents_data:
+            return []
+        
+        _, all_columns = self._build_documents_bulk_insert_sql()
+        metadata_columns = list(self.metadata_schema.keys())
+        bulk_data = []
+        current_time = datetime.now(UTC)
+        
+        # Fetch existing created_at values if connection provided and preservation enabled
+        existing_created_at = {}
+        if conn and preserve_created_at:
+            doc_ids = [doc_id for doc_id, _, _, _ in documents_data]
+            if doc_ids:
+                placeholders = ','.join(['?' for _ in doc_ids])
+                try:
+                    cursor = await conn.execute(f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})", doc_ids)
+                    rows = await cursor.fetchall()
+                    for doc_id, created_at_str in rows:
+                        if created_at_str:
+                            # Parse the ISO format timestamp back to datetime
+                            try:
+                                if isinstance(created_at_str, str):
+                                    existing_created_at[doc_id] = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                                else:
+                                    # Already a datetime object
+                                    existing_created_at[doc_id] = created_at_str
+                            except (ValueError, AttributeError):
+                                # Fallback to current time if parsing fails
+                                existing_created_at[doc_id] = current_time
+                except Exception as e:
+                    # Log warning but continue - fallback to current time for all
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Failed to fetch existing created_at values: {e}")
+        
+        for doc_id, content, content_hash, metadata in documents_data:
+            # Use existing created_at if available, otherwise use current time
+            created_at_value = existing_created_at.get(doc_id, current_time)
+            updated_at_value = current_time
+            
+            row_data = [doc_id, content, content_hash, created_at_value, updated_at_value]
             for field_name in metadata_columns:
                 value = metadata.get(field_name)
                 row_data.append(value)
@@ -644,7 +758,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         
         # Use shared business logic for SQL and data preparation
         sql, _ = self._build_documents_bulk_insert_sql(mode)
-        bulk_data = self._prepare_documents_bulk_data(documents_data)
+        # Pass connection to preserve created_at timestamps for upserts
+        bulk_data = self._prepare_documents_bulk_data(documents_data, conn=conn, preserve_created_at=(mode == "replace"))
         conn.executemany(sql, bulk_data)
 
     @staticmethod
@@ -1898,7 +2013,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         
         # Use shared business logic for SQL and data preparation
         sql, _ = self._build_documents_bulk_insert_sql(mode)
-        bulk_data = self._prepare_documents_bulk_data(documents_data)
+        # Use async version to properly preserve created_at timestamps for upserts
+        bulk_data = await self._prepare_documents_bulk_data_async(documents_data, conn=conn, preserve_created_at=(mode == "replace"))
         await conn.executemany(sql, bulk_data)
 
     @staticmethod

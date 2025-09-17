@@ -585,15 +585,25 @@ class DatabaseSchema:
         return sqlite_type_map[field_def.type]
 
     def _build_default_clause(self, field_def: MetadataField) -> str:
-        """Build DEFAULT clause for column (pure business logic)"""
+        """
+        Build DEFAULT clause for column (pure business logic).
+        
+        For security, TEXT/DATE/JSON types avoid DEFAULT in DDL entirely.
+        Instead, defaults are populated via immediate UPDATE after column creation.
+        This prevents SQL injection from unescaped default values.
+        """
         if field_def.default_value is None:
             return ""
         
-        if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE):
-            return f" DEFAULT '{field_def.default_value}'"
-        elif field_def.type == MetadataFieldType.JSON:
-            return f" DEFAULT '{json.dumps(field_def.default_value)}'"
+        if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE, MetadataFieldType.JSON):
+            # Skip DEFAULT in DDL for TEXT/DATE/JSON types to avoid SQL injection
+            # These will be populated via _populate_field_defaults() instead
+            return ""
+        elif field_def.type == MetadataFieldType.BOOLEAN:
+            # Boolean: convert to 0/1 for SQLite
+            return f" DEFAULT {1 if field_def.default_value else 0}"
         else:
+            # INTEGER, REAL: safe for direct interpolation
             return f" DEFAULT {field_def.default_value}"
 
     def _build_fts_triggers(self, field_name: str, fts_table_name: str) -> List[str]:
@@ -864,6 +874,12 @@ class DatabaseSchema:
             conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
+            
+            # Populate default values if specified (especially for TEXT/DATE/JSON types that skip DDL defaults)
+            if field_def.default_value is not None:
+                populated_info = self._populate_field_defaults(conn, field_name, field_def)
+                if populated_info['rows_updated'] > 0:
+                    logger.info(f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
             
             # Create index if requested
             if field_def.indexed:
@@ -1550,6 +1566,12 @@ class DatabaseSchema:
             await conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
+            
+            # Populate default values if specified (especially for TEXT/DATE/JSON types that skip DDL defaults)
+            if field_def.default_value is not None:
+                populated_info = await self._populate_field_defaults_async(conn, field_name, field_def)
+                if populated_info and populated_info['rows_updated'] > 0:
+                    logger.info(f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
             
             # Create index if requested
             if field_def.indexed:

@@ -473,6 +473,55 @@ class RemoteVectorDB(BaseVectorDB):
     def _build_url(self, endpoint: str) -> str:
         """Build a full URL for the given endpoint"""
         return f"{self.base_url}{endpoint}"
+    
+    def _normalize_error_response(self, response: httpx.Response) -> tuple[str, str]:
+        """Normalize error response to consistent format"""
+        try:
+            error_data = response.json()
+            if isinstance(error_data, dict) and "error" in error_data:
+                error_dict = error_data["error"]
+                error_type = error_dict.get("code", "unknown").lower()
+                error_msg = error_dict.get("message", "")
+            else:
+                # Handle cases where error response is not in expected format
+                error_type = "malformed_response"
+                error_msg = str(error_data) if error_data else f"HTTP {response.status_code}"
+        except ValueError as e:
+            logger.debug(f"Failed to parse error response as JSON: {e}")
+            # Fallback to response text when JSON parsing fails
+            error_msg = response.text or f"HTTP Error: {response.status_code}"
+            error_type = "parse_error"
+        
+        # Ensure we have some error message
+        if not error_msg:
+            error_msg = f"HTTP {response.status_code}: {response.reason_phrase or 'Unknown error'}"
+            
+        return error_type, error_msg
+    
+    @staticmethod
+    async def _normalize_error_response_async(response: httpx.Response) -> tuple[str, str]:
+        """Normalize error response to consistent format (async version)"""
+        try:
+            error_data = await response.json()
+            if isinstance(error_data, dict) and "error" in error_data:
+                error_dict = error_data["error"]
+                error_type = error_dict.get("code", "unknown").lower()
+                error_msg = error_dict.get("message", "")
+            else:
+                # Handle cases where error response is not in expected format
+                error_type = "malformed_response"
+                error_msg = str(error_data) if error_data else f"HTTP {response.status_code}"
+        except ValueError as e:
+            logger.debug(f"Failed to parse error response as JSON: {e}")
+            # Fallback to response text when JSON parsing fails
+            error_msg = response.text or f"HTTP Error: {response.status_code}"
+            error_type = "parse_error"
+        
+        # Ensure we have some error message
+        if not error_msg:
+            error_msg = f"HTTP {response.status_code}: {response.reason_phrase or 'Unknown error'}"
+            
+        return error_type, error_msg
 
     def _handle_response(self, response: httpx.Response) -> dict:
         """Handle API response and raise appropriate exceptions"""
@@ -484,22 +533,7 @@ class RemoteVectorDB(BaseVectorDB):
                 raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
 
         # Try to parse error response as JSON with fallback to text
-        error_data = {}
-        error_dict = {}
-        error_type = "unknown"
-        error_msg = ""
-
-        try:
-            error_data = response.json()
-            error_dict = error_data.get("error", {})
-            error_type = error_dict.get("code", "unknown").lower()
-            error_msg = error_dict.get("message", "")
-        except ValueError as e:
-            logger.debug(f"Failed to parse error response as JSON: {e}")
-            # Fallback to response text when JSON parsing fails
-            error_msg = response.text or f"HTTP Error: {response.status_code}"
-            error_type = "parse_error"
-
+        error_type, error_msg = self._normalize_error_response(response)
         logger.debug(f"Client error: {error_type} - {error_msg}")
 
         # Map error type to appropriate exception
@@ -871,16 +905,25 @@ class RemoteVectorDB(BaseVectorDB):
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
-        # Prepare files for upload
+        # Prepare files for streaming upload
         files = []
-        for file_path in file_paths:
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-                files.append(('files', (file_path.name, file_content)))
+        file_handles = []
+        try:
+            for file_path in file_paths:
+                file_handle = open(file_path, 'rb')
+                file_handles.append(file_handle)
+                files.append(('files', (file_path.name, file_handle, 'application/octet-stream')))
 
-        # Make request with files
-        response = self._make_request_with_retry("POST", url, data=form_data, files=files)
-        result = self._handle_response(response)
+            # Make request with streaming files
+            response = self._make_request_with_retry("POST", url, data=form_data, files=files)
+            result = self._handle_response(response)
+        finally:
+            # Ensure all file handles are closed
+            for file_handle in file_handles:
+                try:
+                    file_handle.close()
+                except Exception:
+                    pass  # Ignore close errors
 
         return result.get("document_ids", [])
 
@@ -972,16 +1015,25 @@ class RemoteVectorDB(BaseVectorDB):
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
-        # Prepare files for upload
+        # Prepare files for streaming upload
         files = []
-        for file_path in file_paths:
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-                files.append(('files', (file_path.name, file_content)))
+        file_handles = []
+        try:
+            for file_path in file_paths:
+                file_handle = open(file_path, 'rb')
+                file_handles.append(file_handle)
+                files.append(('files', (file_path.name, file_handle, 'application/octet-stream')))
 
-        # Make request with files
-        response = self._make_request_with_retry("POST", url, data=form_data, files=files)
-        result = self._handle_response(response)
+            # Make request with streaming files
+            response = self._make_request_with_retry("POST", url, data=form_data, files=files)
+            result = self._handle_response(response)
+        finally:
+            # Ensure all file handles are closed
+            for file_handle in file_handles:
+                try:
+                    file_handle.close()
+                except Exception:
+                    pass  # Ignore close errors
 
         return result.get("document_ids", [])
 
@@ -1978,22 +2030,7 @@ class RemoteVectorDB(BaseVectorDB):
                 raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
 
         # Try to parse error response as JSON with fallback to text
-        error_data = {}
-        error_dict = {}
-        error_type = "unknown"
-        error_msg = ""
-
-        try:
-            error_data = await response.json()
-            error_dict = error_data.get("error", {})
-            error_type = error_dict.get("code", "unknown").lower()
-            error_msg = error_dict.get("message", "")
-        except ValueError as e:
-            logger.debug(f"Failed to parse error response as JSON: {e}")
-            # Fallback to response text when JSON parsing fails
-            error_msg = response.text or f"HTTP Error: {response.status_code}"
-            error_type = "parse_error"
-
+        error_type, error_msg = await RemoteVectorDB._normalize_error_response_async(response)
         logger.debug(f"Client error (async): {error_type} - {error_msg}")
 
         # Map error type to appropriate exception
@@ -2234,16 +2271,25 @@ class RemoteVectorDB(BaseVectorDB):
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
-        # Prepare files for upload - read files synchronously (file I/O is typically fast)
+        # Prepare files for streaming upload
         files = []
-        for file_path in file_paths:
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-                files.append(('files', (file_path.name, file_content)))
+        file_handles = []
+        try:
+            for file_path in file_paths:
+                file_handle = open(file_path, 'rb')
+                file_handles.append(file_handle)
+                files.append(('files', (file_path.name, file_handle, 'application/octet-stream')))
 
-        # Make request with files
-        response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
-        result = await self._handle_response_async(response)
+            # Make request with streaming files
+            response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
+            result = await self._handle_response_async(response)
+        finally:
+            # Ensure all file handles are closed
+            for file_handle in file_handles:
+                try:
+                    file_handle.close()
+                except Exception:
+                    pass  # Ignore close errors
 
         return result.get("document_ids", [])
 
@@ -2336,16 +2382,25 @@ class RemoteVectorDB(BaseVectorDB):
         if extractor_kwargs:
             form_data['extractor_kwargs'] = json.dumps(extractor_kwargs)
 
-        # Prepare files for upload - read files synchronously (file I/O is typically fast)
+        # Prepare files for streaming upload
         files = []
-        for file_path in file_paths:
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-                files.append(('files', (file_path.name, file_content)))
+        file_handles = []
+        try:
+            for file_path in file_paths:
+                file_handle = open(file_path, 'rb')
+                file_handles.append(file_handle)
+                files.append(('files', (file_path.name, file_handle, 'application/octet-stream')))
 
-        # Make request with files
-        response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
-        result = await self._handle_response_async(response)
+            # Make request with streaming files
+            response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
+            result = await self._handle_response_async(response)
+        finally:
+            # Ensure all file handles are closed
+            for file_handle in file_handles:
+                try:
+                    file_handle.close()
+                except Exception:
+                    pass  # Ignore close errors
 
         return result.get("document_ids", [])
 

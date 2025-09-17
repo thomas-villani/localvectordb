@@ -163,14 +163,17 @@ class AsyncConnectionPool:
     Async connection pool for SQLite using aiosqlite
 
     This provides async database operations while maintaining the same interface
-    patterns as the sync ConnectionPool.
+    patterns as the sync ConnectionPool. Uses condition variables for proper
+    waiting when pool is exhausted instead of immediately failing.
     """
 
-    def __init__(self, db_path: Union[str, Path], max_connections: int = 10):
+    def __init__(self, db_path: Union[str, Path], max_connections: int = 10, wait_timeout: float = 30.0):
         self.db_path = Path(db_path)
         self.max_connections = max_connections
+        self.wait_timeout = wait_timeout
         self._pool: List[aiosqlite.Connection] = []
         self._lock = asyncio.Lock()
+        self._condition = asyncio.Condition(self._lock)
         self._created_connections = 0
 
     async def _create_connection(self) -> aiosqlite.Connection:
@@ -195,8 +198,23 @@ class AsyncConnectionPool:
         return self._created_connections == 0
 
     async def get_connection(self) -> aiosqlite.Connection:
-        """Get a connection from the pool"""
-        async with self._lock:
+        """
+        Get a connection from the pool, waiting if necessary.
+        
+        Returns
+        -------
+        aiosqlite.Connection
+            A database connection
+            
+        Raises
+        ------
+        asyncio.TimeoutError
+            If no connection becomes available within wait_timeout
+        """
+        async with self._condition:
+            # Wait until a connection is available
+            await asyncio.wait_for(self._wait_for_connection(), timeout=self.wait_timeout)
+            
             if self._pool:
                 # Reuse existing connection from pool
                 conn = self._pool.pop()
@@ -213,26 +231,36 @@ class AsyncConnectionPool:
             if self._created_connections < self.max_connections:
                 return await self._create_connection()
             else:
-                # Pool exhausted - wait for a connection to be returned
-                # In practice, this is rare with proper maxsize on queues
-                raise RuntimeError("Async connection pool exhausted")
+                # This should not happen after waiting, but handle gracefully
+                raise RuntimeError("Async connection pool exhausted after waiting")
+    
+    async def _wait_for_connection(self) -> None:
+        """Wait until a connection is available (either pooled or can be created)."""
+        while not self._pool and self._created_connections >= self.max_connections:
+            await self._condition.wait()
 
     async def return_connection(self, conn: aiosqlite.Connection) -> None:
-        """Return a connection to the pool"""
-        async with self._lock:
+        """Return a connection to the pool and notify waiting tasks"""
+        async with self._condition:
             if len(self._pool) < self.max_connections:
                 # Check if connection is still valid before returning to pool
                 try:
                     await conn.execute("SELECT 1")
                     self._pool.append(conn)
+                    # Notify one waiting task that a connection is available
+                    self._condition.notify()
                 except Exception:
                     # Connection is invalid, close it
                     await conn.close()
                     self._created_connections -= 1
+                    # Still notify in case we can create a new connection
+                    self._condition.notify()
             else:
                 # Pool is full, close the connection
                 await conn.close()
                 self._created_connections -= 1
+                # Notify in case we can create a new connection now
+                self._condition.notify()
 
     @asynccontextmanager
     async def get_connection_context(self) -> AsyncGenerator[Connection, None]:
@@ -244,12 +272,14 @@ class AsyncConnectionPool:
             await self.return_connection(conn)
 
     async def close_all(self) -> None:
-        """Close all connections in the pool"""
-        async with self._lock:
+        """Close all connections in the pool and notify all waiting tasks"""
+        async with self._condition:
             for conn in self._pool:
                 await conn.close()
             self._pool.clear()
             self._created_connections = 0
+            # Notify all waiting tasks that pool is closed
+            self._condition.notify_all()
 
     @property
     def stats(self) -> dict:
