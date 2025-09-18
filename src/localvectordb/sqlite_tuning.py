@@ -39,6 +39,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -400,7 +401,7 @@ class AutoTuner:
     def _detect_disk_type() -> str:
         """
         Detect if the current disk is SSD or HDD.
-        
+
         Returns
         -------
         str
@@ -408,22 +409,20 @@ class AutoTuner:
         """
         try:
             # Simple heuristic: measure sequential write speed
-            test_file = Path.cwd() / ".disk_test_temp"
             test_size = 10 * 1024 * 1024  # 10MB test file
-            
-            start = time.time()
-            with open(test_file, 'wb') as f:
-                f.write(b'0' * test_size)
-                f.flush()
-                os.fsync(f.fileno())
-            elapsed = time.time() - start
-            
-            test_file.unlink()
-            
+
+            # Use temporary file to avoid CWD permissions and ensure cleanup
+            with tempfile.NamedTemporaryFile(delete=True, dir=tempfile.gettempdir()) as temp_file:
+                start = time.time()
+                temp_file.write(b'0' * test_size)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+                elapsed = time.time() - start
+
             # If write speed > 50MB/s, likely SSD
             speed_mbps = (test_size / (1024 * 1024)) / elapsed
             return "SSD" if speed_mbps > 50 else "HDD"
-            
+
         except Exception as e:
             logger.debug(f"Could not detect disk type: {e}")
             return "Unknown"

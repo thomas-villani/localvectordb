@@ -26,9 +26,7 @@ from werkzeug.utils import secure_filename
 
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
-from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DocumentNotFoundError
-from localvectordb_server.utils.schema import parse_metadata_schema
 
 # Add this import after the existing imports in routes.py
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
@@ -48,6 +46,7 @@ from localvectordb_server._error_handlers import (
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
+from localvectordb_server.utils.schema import parse_metadata_schema
 
 FILE_EXTRACTION_AVAILABLE = True
 
@@ -484,7 +483,7 @@ def upsert_from_chunks(db_name):
         batch_size = data.get("batch_size", 100)
         similarity_threshold = data.get("similarity_threshold")
 
-        # Let LocalVectorDB normalize chunks - prefer strings over forcing object construction
+        # Convert incoming dict chunks to simple strings and let LocalVectorDB normalize to Chunk objects
         processed_chunks = {}
         for doc_id, chunks in chunks_by_document.items():
             if chunks and isinstance(chunks[0], dict):
@@ -548,7 +547,7 @@ def insert_from_chunks(db_name):
         similarity_threshold = data.get("similarity_threshold")
         errors = data.get("errors", "raise")
 
-        # Let LocalVectorDB normalize chunks - prefer strings over forcing object construction
+        # Convert incoming dict chunks to simple strings and let LocalVectorDB normalize to Chunk objects
         processed_chunks = {}
         for doc_id, chunks in chunks_by_document.items():
             if chunks and isinstance(chunks[0], dict):
@@ -601,15 +600,6 @@ def get_document(db_name, doc_id):
         try:
             db = current_app.db_manager.get_db(db_name)
             doc = db.get(doc_id)
-
-            if doc is None:
-                raise APIError(
-                    message=f"Document '{doc_id}' not found in database '{db_name}'",
-                    error_code="DOCUMENT_NOT_FOUND",
-                    status_code=404,
-                    recoverable=True
-                )
-
             return jsonify(serialize_document(doc))
 
         except DocumentNotFoundError:
@@ -740,38 +730,38 @@ def count_documents(db_name):
         "count": 42
     }
     """
-    
+
     with request_context("count_documents"):
         # Allow both JSON body with filters or empty body/GET-like request
         filters = None
-        
+
         if request.is_json:
             data = request.get_json()
             if data:
                 filters = data.get("filters")
-                
+
                 # Validate filters if provided
                 if filters is not None:
                     validate_field_type(data, "filters", dict)
-        
+
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             db_logger.log_query("count_documents",
                                 database_name=db_name,
                                 has_filters=filters is not None,
                                 filter_complexity=len(str(filters)) if filters else 0)
-            
+
             count = db.count(filters)
-            
+
             db_logger.log_query("count_documents_success",
                                 database_name=db_name,
                                 result_count=count)
-            
+
             return jsonify({
                 "count": count
             })
-        
+
         except Exception as e:
             db_logger.log_query("count_documents_error",
                                 database_name=db_name,
@@ -1080,10 +1070,12 @@ def query_multi_column(db_name):
         if search_type not in ["vector", "keyword", "hybrid"]:
             raise ValidationError("Search type must be 'vector', 'keyword', or 'hybrid'", field="search_type")
 
-        if return_type not in ["documents", "chunks"]:
-            raise ValidationError("Return type must be 'documents' or 'chunks'", field="return_type")
+        if return_type not in ["documents", "chunks", "context", "enriched"]:
+            raise ValidationError("Return type must be 'documents', 'chunks', 'context', or 'enriched'",
+                                  field="return_type")
 
         validate_field_type(data, "k", int)
+        # TODO: Make this a configuration param maximum instead.
         if k < 1 or k > 1000:
             raise ValidationError("k must be between 1 and 1000", field="k", value=k)
 
@@ -2021,22 +2013,22 @@ def get_metadata_schema_info(db_name):
 @log_performance("get_sqlite_tuning")
 def get_sqlite_tuning(db_name):
     """Get current SQLite tuning configuration"""
-    
+
     with request_context("get_sqlite_tuning"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
             db_logger.log_query("get_sqlite_tuning", database_name=db_name)
-            
+
             tuning_config = db.get_sqlite_tuning()
-            
+
             return jsonify({
                 "database": db_name,
                 "tuning": tuning_config,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("get_sqlite_tuning", e, database_name=db_name)
             raise
@@ -2048,47 +2040,47 @@ def get_sqlite_tuning(db_name):
 @log_performance("set_sqlite_tuning")
 def set_sqlite_tuning(db_name):
     """Apply SQLite tuning profile with optional overrides"""
-    
+
     with request_context("set_sqlite_tuning"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             # Parse request data
             data = request.get_json()
             if not data:
                 raise ValidationError("Request body must contain JSON data")
-            
+
             profile = data.get("profile")
             if not profile:
                 raise ValidationError("Profile name is required")
-            
+
             overrides = data.get("overrides", {})
             persist = data.get("persist", True)
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
-            db_logger.log_query("set_sqlite_tuning", 
+            db_logger.log_query("set_sqlite_tuning",
                                 database_name=db_name,
                                 profile=profile,
                                 override_count=len(overrides),
                                 persist=persist)
-            
+
             # Apply tuning
             db.set_sqlite_tuning(profile, overrides, persist)
-            
+
             # Get updated configuration
             new_config = db.get_sqlite_tuning()
-            
+
             db_logger.log_query("set_sqlite_tuning_success",
                                 database_name=db_name,
                                 profile=profile)
-            
+
             return jsonify({
                 "database": db_name,
                 "message": f"Applied SQLite tuning profile '{profile}'",
                 "tuning": new_config,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("set_sqlite_tuning", e, database_name=db_name)
             raise
@@ -2100,39 +2092,39 @@ def set_sqlite_tuning(db_name):
 @log_performance("sqlite_checkpoint")
 def sqlite_checkpoint(db_name):
     """Run SQLite WAL checkpoint operation"""
-    
+
     with request_context("sqlite_checkpoint"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             # Parse request data
             data = request.get_json() or {}
             mode = data.get("mode", "PASSIVE")
-            
+
             # Validate mode
             valid_modes = ["PASSIVE", "FULL", "RESTART", "TRUNCATE"]
             if mode.upper() not in valid_modes:
                 raise ValidationError(f"Invalid checkpoint mode '{mode}'. Valid modes: {valid_modes}")
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
-            db_logger.log_query("sqlite_checkpoint", 
+            db_logger.log_query("sqlite_checkpoint",
                                 database_name=db_name,
                                 mode=mode)
-            
+
             # Run checkpoint
             db.sqlite_checkpoint(mode)
-            
+
             db_logger.log_query("sqlite_checkpoint_success",
                                 database_name=db_name,
                                 mode=mode)
-            
+
             return jsonify({
                 "database": db_name,
                 "message": f"SQLite WAL checkpoint completed with mode '{mode}'",
                 "mode": mode,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("sqlite_checkpoint", e, database_name=db_name)
             raise
@@ -2144,25 +2136,25 @@ def sqlite_checkpoint(db_name):
 @log_performance("sqlite_optimize")
 def sqlite_optimize(db_name):
     """Run SQLite PRAGMA optimize"""
-    
+
     with request_context("sqlite_optimize"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
             db_logger.log_query("sqlite_optimize", database_name=db_name)
-            
+
             # Run optimize
             db.sqlite_optimize()
-            
+
             db_logger.log_query("sqlite_optimize_success", database_name=db_name)
-            
+
             return jsonify({
                 "database": db_name,
                 "message": "SQLite PRAGMA optimize completed",
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("sqlite_optimize", e, database_name=db_name)
             raise
@@ -2174,26 +2166,26 @@ def sqlite_optimize(db_name):
 @log_performance("sqlite_vacuum")
 def sqlite_vacuum(db_name):
     """Run SQLite VACUUM operation"""
-    
+
     with request_context("sqlite_vacuum"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
             db_logger.log_query("sqlite_vacuum", database_name=db_name)
-            
+
             # Run vacuum
             db.sqlite_vacuum()
-            
+
             db_logger.log_query("sqlite_vacuum_success", database_name=db_name)
-            
+
             return jsonify({
                 "database": db_name,
                 "message": "SQLite VACUUM completed",
                 "warning": "This operation requires exclusive database access and may take significant time",
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("sqlite_vacuum", e, database_name=db_name)
             raise
@@ -2205,38 +2197,38 @@ def sqlite_vacuum(db_name):
 @log_performance("sqlite_incremental_vacuum")
 def sqlite_incremental_vacuum(db_name):
     """Run incremental VACUUM operation"""
-    
+
     with request_context("sqlite_incremental_vacuum"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             # Parse request data
             data = request.get_json() or {}
             pages = data.get("pages", 2000)
-            
+
             # Validate pages parameter
             if not isinstance(pages, int) or pages <= 0:
                 raise ValidationError("Pages parameter must be a positive integer")
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
-            db_logger.log_query("sqlite_incremental_vacuum", 
+            db_logger.log_query("sqlite_incremental_vacuum",
                                 database_name=db_name,
                                 pages=pages)
-            
+
             # Run incremental vacuum
             db.sqlite_incremental_vacuum(pages)
-            
+
             db_logger.log_query("sqlite_incremental_vacuum_success",
                                 database_name=db_name,
                                 pages=pages)
-            
+
             return jsonify({
                 "database": db_name,
                 "message": f"SQLite incremental vacuum completed for {pages} pages",
                 "pages": pages,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("sqlite_incremental_vacuum", e, database_name=db_name)
             raise
@@ -2248,17 +2240,17 @@ def sqlite_incremental_vacuum(db_name):
 @log_performance("analyze_system_resources")
 def analyze_system_resources():
     """Analyze system resources for tuning recommendations"""
-    
+
     with request_context("analyze_system_resources"):
         try:
             from localvectordb.sqlite_tuning import AutoTuner
-            
+
             db_logger = DatabaseLogger.get_logger()
             db_logger.log_query("analyze_system_resources")
-            
+
             # Analyze system resources
             system_info = AutoTuner.analyze_system()
-            
+
             resources = {
                 "total_ram_mb": system_info.total_ram_mb,
                 "available_ram_mb": system_info.available_ram_mb,
@@ -2267,16 +2259,16 @@ def analyze_system_resources():
                 "disk_free_gb": system_info.disk_free_gb,
                 "os_type": system_info.os_type
             }
-            
+
             db_logger.log_query("analyze_system_resources_success",
                                 total_ram_mb=system_info.total_ram_mb,
                                 disk_type=system_info.disk_type)
-            
+
             return jsonify({
                 "system_resources": resources,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("analyze_system_resources", e)
             raise
@@ -2288,41 +2280,41 @@ def analyze_system_resources():
 @log_performance("auto_tune_database")
 def auto_tune_database(db_name):
     """Get auto-tuning recommendations for database"""
-    
+
     with request_context("auto_tune_database"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             # Parse request data
             data = request.get_json() or {}
             workload = data.get("workload")
             apply_settings = data.get("apply", False)
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
-            db_logger.log_query("auto_tune_database", 
+            db_logger.log_query("auto_tune_database",
                                 database_name=db_name,
                                 apply_settings=apply_settings,
                                 has_workload=workload is not None)
-            
+
             # Get auto-tuning recommendations
             recommendation = db.auto_tune(
                 workload=workload,
                 interactive=False,
                 apply=apply_settings
             )
-            
+
             db_logger.log_query("auto_tune_database_success",
                                 database_name=db_name,
                                 recommended_profile=recommendation["profile_name"],
                                 override_count=len(recommendation["pragma_overrides"]),
                                 applied=recommendation["applied"])
-            
+
             return jsonify({
                 "database": db_name,
                 "recommendation": recommendation,
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("auto_tune_database", e, database_name=db_name)
             raise
@@ -2334,31 +2326,31 @@ def auto_tune_database(db_name):
 @log_performance("checkpoint_if_wal_large")
 def checkpoint_if_wal_large(db_name):
     """Check if WAL is large and checkpoint if needed"""
-    
+
     with request_context("checkpoint_if_wal_large"):
         try:
             db = current_app.db_manager.get_db(db_name)
-            
+
             # Parse request data
             data = request.get_json() or {}
             threshold_mb = data.get("threshold_mb", 128)
-            
+
             # Validate threshold
             if not isinstance(threshold_mb, (int, float)) or threshold_mb <= 0:
                 raise ValidationError("Threshold must be a positive number")
-            
+
             db_logger = DatabaseLogger.get_logger(db_name)
-            db_logger.log_query("checkpoint_if_wal_large", 
+            db_logger.log_query("checkpoint_if_wal_large",
                                 database_name=db_name,
                                 threshold_mb=threshold_mb)
-            
+
             # Check and checkpoint if needed
             checkpointed = db.checkpoint_if_wal_large(threshold_mb)
-            
+
             db_logger.log_query("checkpoint_if_wal_large_success",
                                 database_name=db_name,
                                 checkpointed=checkpointed)
-            
+
             return jsonify({
                 "database": db_name,
                 "checkpointed": checkpointed,
@@ -2366,7 +2358,7 @@ def checkpoint_if_wal_large(db_name):
                 "message": "Checkpointed large WAL file" if checkpointed else "WAL file below threshold",
                 "status": "success"
             })
-            
+
         except Exception as e:
             db_logger.log_error("checkpoint_if_wal_large", e, database_name=db_name)
             raise

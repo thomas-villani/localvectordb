@@ -510,8 +510,10 @@ class TestDocumentManagementRoutes:
     @patch('localvectordb_server._auth.require_read_permission', lambda f: f)
     def test_get_document_not_found(self, client, app, mock_db):
         """Test getting non-existent document."""
+        from localvectordb.exceptions import DocumentNotFoundError
+
         app.db_manager.get_db.return_value = mock_db
-        mock_db.get.return_value = None
+        mock_db.get.side_effect = DocumentNotFoundError("Document not found")
 
         response = client.get('/api/v1/test_db/documents/nonexistent')
 
