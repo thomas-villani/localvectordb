@@ -43,7 +43,7 @@ import tomli_w
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union, get_type_hints
+from typing import Any, Dict, List, Literal, Optional, Union, get_type_hints, get_origin, get_args
 
 import click
 
@@ -117,8 +117,8 @@ class DatabaseSettings(BaseSettings):
     enable_fts: bool = True
 
     faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2"
-    faiss_index_hnsw_flat_neighbors: int = None  # Only used for IndexHNSWFlat
-    faiss_index_lsh_bits: int = None  # Only used for IndexLSH, number of bits for the index.
+    faiss_index_hnsw_flat_neighbors: Optional[int] = None  # Only used for IndexHNSWFlat
+    faiss_index_lsh_bits: Optional[int] = None  # Only used for IndexLSH, number of bits for the index.
 
     # Default database parameters when creating new ones
     chunk_size: int = 500  # Renamed from chunk_tokens for v1.0
@@ -235,7 +235,7 @@ class SecuritySettings(BaseSettings):
     # API Key authentication
     require_api_key: bool = False
     api_key_header: str = "Authorization"  # Header name for API key
-    trusted_hosts: List[str] = None
+    trusted_hosts: Optional[List[str]] = None
     
     # Key management
     key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
@@ -337,7 +337,7 @@ class ServerSettings(BaseSettings):
                         "MemcachedCache", "UWSGICache", "DynamoDbCache",
                         "MongoDbCache", "NullCache"] = "SimpleCache"
     # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
-    cache_settings: dict = None
+    cache_settings: Optional[dict] = None
 
     # Database registry settings for multi-worker coordination
     db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
@@ -345,7 +345,7 @@ class ServerSettings(BaseSettings):
                         "MongoDbCache", "NullCache"] = "SimpleCache"
 
     # Will try to use the cache_settings if not set and cache_types match.
-    db_registry_settings: dict = None
+    db_registry_settings: Optional[dict] = None
 
     # Set to True to use the same cache for db_registry as general cache.
     use_single_cache: bool = False
@@ -353,7 +353,7 @@ class ServerSettings(BaseSettings):
     proxy_enabled: bool = False
     # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
     # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
-    proxy_settings: dict = None
+    proxy_settings: Optional[dict] = None
 
     # Security settings
     security: SecuritySettings = field(default_factory=SecuritySettings)
@@ -630,7 +630,22 @@ class Config:
 
     @staticmethod
     def _convert_env_value(value: str, obj: Any, key: str) -> Any:
-        """Enhanced environment variable conversion with v1.0 support."""
+        """Convert environment variable string to appropriate type based on type hints.
+        
+        Parameters
+        ----------
+        value : str
+            The environment variable value as a string.
+        obj : Any
+            The object containing the attribute to set.
+        key : str
+            The attribute name.
+            
+        Returns
+        -------
+        Any
+            The converted value in the appropriate type.
+        """
         if not hasattr(obj, key):
             return value
 
@@ -640,8 +655,10 @@ class Config:
             return value
 
         target_type = hints[key]
+        origin = get_origin(target_type)
+        args = get_args(target_type)
 
-        # Handle simple types
+        # Handle basic types first (these have no origin)
         if target_type == bool:
             return value.lower() in ['true', 'yes', '1', 'on']
         elif target_type == int:
@@ -650,39 +667,76 @@ class Config:
             return float(value)
         elif target_type == str:
             return value
-        # Handle Optional types
-        elif hasattr(target_type, '__origin__') and target_type.__origin__ is Union:
-            # This is likely Optional[SomeType]
-            non_none_types = [arg for arg in target_type.__args__ if arg != type(None)]
-            if non_none_types:
-                # Use the first non-None type for conversion
-                first_type = non_none_types[0]
-                second_type = non_none_types[1] if len(non_none_types) > 1 else None
-
-                if first_type == bool:
-                    return value.lower() in ['true', 'yes', '1', 'on']
-                elif first_type == int:
-                    return int(value)
-                elif first_type == float:
-                    return float(value)
-                elif first_type == str and second_type == List[str]:
+        
+        # Handle Union types (including Optional which is Union[T, None])
+        elif origin is Union:
+            # Filter out NoneType to get actual types
+            non_none_types = [arg for arg in args if arg != type(None)]
+            
+            # Special case: Union[str, List[str]] for cors_allowed_origins
+            if len(non_none_types) == 2 and str in non_none_types and List[str] in non_none_types:
+                # Try to parse as JSON array first
+                if value.startswith('[') and value.endswith(']'):
                     try:
                         return json.loads(value)
                     except json.JSONDecodeError:
-                        if "," in value:
-                            value = list(map(lambda s: s.strip(' "\''), value.split(",")))
-                        return value
-                elif hasattr(first_type, '__origin__') and first_type.__origin__ == List[str]:
-                    try:
-                        return json.loads(value)
-                    except json.JSONDecodeError:
-                        return value
+                        # Fallback to comma-separated list
+                        items = value[1:-1].split(',')
+                        return [item.strip(' "\'') for item in items if item.strip()]
+                # If it contains commas, treat as list
+                elif ',' in value:
+                    return [item.strip(' "\'') for item in value.split(',') if item.strip()]
+                # Otherwise, return as string
                 else:
                     return value
-        # Handle List[str]
-        elif hasattr(target_type, '__origin__') and target_type.__origin__ == list:
+            
+            # Handle Optional[T] (Union[T, None])
+            elif len(non_none_types) == 1:
+                inner_type = non_none_types[0]
+                # Check if the value represents None
+                if value.lower() in ['none', 'null', '']:
+                    return None
+                
+                # Convert using the inner type
+                inner_origin = get_origin(inner_type)
+                
+                if inner_type == bool:
+                    return value.lower() in ['true', 'yes', '1', 'on']
+                elif inner_type == int:
+                    return int(value)
+                elif inner_type == float:
+                    return float(value)
+                elif inner_type == str:
+                    return value
+                elif inner_origin is list:
+                    # Handle Optional[List[str]]
+                    if value.startswith('[') and value.endswith(']'):
+                        try:
+                            return json.loads(value)
+                        except json.JSONDecodeError:
+                            items = value[1:-1].split(',')
+                            return [item.strip(' "\'') for item in items if item.strip()]
+                    else:
+                        return [item.strip(' "\'') for item in value.split(',') if item.strip()]
+                elif inner_origin is dict:
+                    # Handle Optional[dict]
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return {}
+                else:
+                    # For other types, just return the value
+                    return value
+            
+            # Other Union types - not expected in our config
+            else:
+                # Default to string
+                return value
+        
+        # Handle List types
+        elif origin is list:
             if value.startswith('[') and value.endswith(']'):
-                # Handle JSON-like format
+                # Handle JSON array format
                 try:
                     return json.loads(value)
                 except json.JSONDecodeError:
@@ -691,14 +745,23 @@ class Config:
                     return [item.strip(' "\'') for item in items if item.strip()]
             else:
                 # Handle comma-separated format
-                return [item.strip() for item in value.split(',') if item.strip()]
+                return [item.strip(' "\'') for item in value.split(',') if item.strip()]
+        
         # Handle Dict types
-        elif hasattr(target_type, '__origin__') and target_type.__origin__ == dict:
+        elif origin is dict or target_type == dict:
             try:
                 return json.loads(value)
             except json.JSONDecodeError:
+                # Return empty dict if parsing fails
                 return {}
-
+        
+        # Handle Literal types (e.g., Literal["gzip", "lzma", "none"])
+        elif origin is Literal:
+            # Literal values are strings in our config, just return the value
+            # Validation will happen elsewhere
+            return value
+        
+        # Default: return as-is
         return value
 
     @classmethod
