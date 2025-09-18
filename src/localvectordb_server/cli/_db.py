@@ -810,8 +810,8 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
             column_mapping = json.loads(mapping)
 
         # Convert schema data to MetadataField objects using shared utility
-        from localvectordb_server.utils.schema import parse_metadata_schema
         from localvectordb.exceptions import ValidationError
+        from localvectordb_server.utils.schema import parse_metadata_schema
 
         try:
             new_schema = parse_metadata_schema(schema_data)

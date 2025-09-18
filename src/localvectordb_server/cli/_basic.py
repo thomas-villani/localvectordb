@@ -77,9 +77,9 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
         config = app.config_obj
 
         if not disable_ollama_check:
-            from localvectordb_server._checkdeps import check_ollama_installation, check_ollama_service
             from localvectordb.exceptions import OllamaNotFoundError
-            
+            from localvectordb_server._checkdeps import check_ollama_installation, check_ollama_service
+
             try:
                 # Check Ollama installation
                 version = check_ollama_installation()
@@ -93,7 +93,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
                     click.secho("  To start Ollama service, run: ollama serve", fg="blue")
                     click.secho("  Or disable this check with --disable-ollama-check", fg="blue")
                     raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
-                    
+
             except OllamaNotFoundError as e:
                 click.secho(f"✗ Ollama installation check failed: {e}", fg="red")
                 click.secho("  Install Ollama from: https://ollama.ai/download", fg="blue")

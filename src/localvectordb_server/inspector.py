@@ -42,7 +42,7 @@ def inspector_enabled():
     if config and hasattr(config.server, 'inspector_enabled'):
         return config.server.inspector_enabled
     # Default to enabled if not configured
-    return True
+    return False
 
 
 def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
@@ -60,7 +60,7 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
 
             # Check if API key authentication is required
             config = getattr(current_app, 'config_obj', None)
-            if config and config.server.require_api_key:
+            if config and config.server.security.require_api_key:
                 # For web interface, check session or require API key parameter
                 api_key = session.get('inspector_api_key') or request.args.get('api_key')
                 if not api_key:
@@ -459,7 +459,7 @@ def inject_inspector_context():
     config = getattr(current_app, 'config_obj', None)
     return {
         'inspector_enabled': inspector_enabled(),
-        'require_api_key': config.server.require_api_key if config else False,
+        'require_api_key': config.server.security.require_api_key if config else False,
         'logged_in': 'inspector_api_key' in session,
         'current_user': session.get('inspector_api_key', '')[:8] + '...' if 'inspector_api_key' in session else None,
         'permission_level': session.get('inspector_permission_level', 'unknown')

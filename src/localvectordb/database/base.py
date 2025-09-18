@@ -24,6 +24,7 @@ from localvectordb._schema import DatabaseSchema
 from localvectordb.chunking import PositionTrackingChunker
 from localvectordb.core import Chunk, Document, DocumentScoringMethod, MetadataField, QueryResult
 from localvectordb.embeddings import EmbeddingProvider
+from localvectordb.sqlite_tuning import SqliteProfile
 
 DEFAULT_QUEUE_SIZE = 3
 DEFAULT_BATCH_SIZE = 100
@@ -512,7 +513,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             enable_fts: bool = True,
             connection_pool_size: int = 10,
             # SQLite tuning settings
-            sqlite_profile: str = "balanced",
+            sqlite_profile: SqliteProfile = "balanced",
             sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
             # Other
             create_if_not_exists: bool = True,
@@ -530,6 +531,9 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self.async_max_connections: int = None
         self.pipeline_queue_size: int = DEFAULT_QUEUE_SIZE
         self._batch_size: int = DEFAULT_BATCH_SIZE
+        self._sqlite_profile: SqliteProfile = sqlite_profile
+        self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
+        self._sqlite_pragmas: dict = {}
 
     @abstractmethod
     def _generate_doc_id(self) -> str:
@@ -620,4 +624,9 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
 
     @abstractmethod
     def _save_next_doc_id(self) -> None:
+        pass
+
+    @abstractmethod
+    @property
+    def is_memory_only(self) -> bool:
         pass

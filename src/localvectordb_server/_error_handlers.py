@@ -269,7 +269,7 @@ def validate_field_type(data: Dict[str, Any], field: str, expected_type: type, r
             type_str = " or ".join(type_names)
         else:
             type_str = expected_type.__name__ if hasattr(expected_type, '__name__') else str(expected_type)
-        
+
         raise ValidationError(
             f"Field '{field}' must be of type {type_str}",
             field=field,

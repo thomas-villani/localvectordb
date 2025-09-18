@@ -560,7 +560,7 @@ def auth_status(ctx, output):
         api_key_db_path = ctx.obj.get('api_key_db_path')
 
         # Get basic auth status
-        auth_enabled = cfg.server.require_api_key
+        auth_enabled = cfg.server.security.require_api_key
         # config_api_keys = cfg.server.authorized_api_keys
 
         # Get database key status

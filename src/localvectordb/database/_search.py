@@ -54,7 +54,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # Convert to similarity where higher values are better
         # Use exponential mapping: for negative ranks, exp(rank) < 1, so 1-exp(rank) > 0
         return 1.0 - min(1.0, math.exp(float(rank)))
-    
+
     # Pure business logic helpers for DRY elimination
     def _build_metadata_field_search_sql(self, field_name: str) -> tuple[str, tuple[str]]:
         """Build SQL for searching metadata field embeddings (pure business logic)"""
@@ -65,15 +65,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
             WHERE ce.field_name = ?
         """
         return sql, (field_name,)
-    
-    def _calculate_embedding_similarities(self, query_embedding: np.ndarray, 
+
+    def _calculate_embedding_similarities(self, query_embedding: np.ndarray,
                                         field_embeddings: np.ndarray) -> np.ndarray:
         """Calculate similarities between query and field embeddings (pure business logic)"""
         query_embedding_2d = query_embedding.reshape(1, -1)
         similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
         scores = (similarities + 1) / 2  # Normalize to [0, 1]
         return scores
-    
+
     def _filter_and_sort_by_scores(self, scores: np.ndarray, score_threshold: float, k: int) -> np.ndarray:
         """Filter scores by threshold and return sorted indices (pure business logic)"""
         valid_indices = np.where(scores >= score_threshold)[0]
@@ -82,8 +82,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # Sort by score descending and limit
         sorted_indices = valid_indices[np.argsort(scores[valid_indices])[::-1]][:k]
         return sorted_indices
-    
-    def _create_metadata_search_result(self, row_data: Dict, field_name: str, score: float, 
+
+    def _create_metadata_search_result(self, row_data: Dict, field_name: str, score: float,
                                      doc_metadata: Dict[str, Any]) -> QueryResult:
         """Create QueryResult for metadata field search (pure business logic)"""
         return QueryResult(
@@ -473,7 +473,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 faiss_ids = [row["faiss_id"] for row in rows]
             return self._reconstruct_embeddings_batch(faiss_ids)
 
-    def _apply_semantic_deduplication(self, results: List[QueryResult], threshold: float, 
+    def _apply_semantic_deduplication(self, results: List[QueryResult], threshold: float,
                                       max_candidates: int = 1000) -> List[QueryResult]:
         """
         Apply semantic deduplication to search results using FAISS index embeddings.
@@ -501,13 +501,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         chunk_results = [r for r in results if r.type == 'chunk']
         if len(chunk_results) <= 1:
             return results
-            
+
         # Apply scaling limit to prevent O(n²) behavior
         if len(chunk_results) > max_candidates:
             logger.info(f"Limiting semantic deduplication to top {max_candidates} chunks "
                        f"(from {len(chunk_results)} total) to prevent performance issues")
             chunk_results = chunk_results[:max_candidates]
-            
+
         chunk_identifiers = [(r.document_id, self._extract_chunk_index_from_id(r.id)) for r in chunk_results]
         with self.connection_pool.get_connection() as conn:
             placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
@@ -527,10 +527,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
             if faiss_id is not None:
                 faiss_ids.append(faiss_id)
                 result_mapping[faiss_id] = result
-                
+
         if not faiss_ids:
             return results
-            
+
         embeddings_matrix = self._reconstruct_embeddings_batch(faiss_ids)
         norms = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
         normalized_embeddings = embeddings_matrix / np.maximum(norms, 1e-8)
@@ -541,13 +541,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         should_remove = np.any(upper_tri, axis=0)
         keep_mask = ~should_remove
         final_chunk_results = [result_mapping[faiss_ids[i]] for i in range(len(faiss_ids)) if keep_mask[i]]
-        
+
         # Log deduplication statistics
         removed_count = len(chunk_results) - len(final_chunk_results)
         if removed_count > 0:
             logger.debug(f"Semantic deduplication removed {removed_count} similar chunks "
                         f"({removed_count/len(chunk_results)*100:.1f}% deduplication rate)")
-        
+
         return final_chunk_results
 
     @staticmethod
@@ -1075,34 +1075,34 @@ class SearchMixin(LocalVectorDBBase, ABC):
             query_embedding = self.embedding_provider.embed_query(query)
         else:
             query_embedding = self.embedding_provider.embed_sync([query])[0]
-        
+
         # Use shared business logic for SQL construction
         sql, params = self._build_metadata_field_search_sql(field_name)
-        
+
         with self.connection_pool.get_connection() as conn:
             cursor = conn.execute(sql, params)
             field_embedding_data = cursor.fetchall()
-            
+
             if not field_embedding_data:
                 return []
-            
+
             # Extract FAISS IDs and get embeddings
             faiss_ids = [row['faiss_id'] for row in field_embedding_data]
             if not faiss_ids:
                 return []
-                
+
             field_embeddings = self._reconstruct_embeddings_batch(faiss_ids)
             if field_embeddings.size == 0:
                 return []
-            
+
             # Use shared business logic for similarity calculation
             scores = self._calculate_embedding_similarities(query_embedding, field_embeddings)
-            
+
             # Use shared business logic for filtering and sorting
             sorted_indices = self._filter_and_sort_by_scores(scores, score_threshold, k)
             if len(sorted_indices) == 0:
                 return []
-            
+
             # Build results using shared business logic
             results: List[QueryResult] = []
             for idx in sorted_indices:
@@ -1110,11 +1110,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 doc_metadata = self._get_document_metadata(conn, row_data['document_id'])
                 result = self._create_metadata_search_result(row_data, field_name, scores[idx], doc_metadata)
                 results.append(result)
-            
+
             # Apply filters if provided
             if filters:
                 results = [r for r in results if matches_metadata_filter(r.metadata, filters)]
-            
+
             return results
 
     def _get_document_metadata(self, conn, document_id: str) -> Dict[str, Any]:
@@ -1521,13 +1521,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         chunk_results = [r for r in results if r.type == 'chunk']
         if len(chunk_results) <= 1:
             return results
-            
+
         # Apply scaling limit to prevent O(n²) behavior
         if len(chunk_results) > max_candidates:
             logger.info(f"Limiting semantic deduplication to top {max_candidates} chunks "
                        f"(from {len(chunk_results)} total) to prevent performance issues")
             chunk_results = chunk_results[:max_candidates]
-            
+
         chunk_identifiers = [(r.document_id, self._extract_chunk_index_from_id(r.id)) for r in chunk_results]
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ','.join(['(?,?)'] * len(chunk_identifiers))
@@ -1566,13 +1566,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         keep_mask = await loop.run_in_executor(None, compute_keep_mask)
         final_chunk_results = [result_mapping[faiss_ids[i]] for i in range(len(faiss_ids)) if keep_mask[i]]
-        
+
         # Log deduplication statistics
         removed_count = len(chunk_results) - len(final_chunk_results)
         if removed_count > 0:
             logger.debug(f"Semantic deduplication removed {removed_count} similar chunks "
                         f"({removed_count/len(chunk_results)*100:.1f}% deduplication rate)")
-        
+
         return final_chunk_results
 
     async def _aggregate_document_scores_with_method_async(

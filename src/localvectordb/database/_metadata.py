@@ -38,7 +38,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     #############################
     # Metadata Validation/Info  #
     #############################
-    
+
     # Pure business logic helpers for DRY elimination
     def _build_metadata_schema_info(self) -> Dict[str, Any]:
         """Build metadata schema information dictionary (pure business logic)"""
@@ -63,7 +63,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             field_type = field_def.type.value
             info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
         return info
-    
+
     def _calculate_faiss_ids_for_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
         """Calculate FAISS IDs for embeddings using index state (pure business logic)"""
         start_id = self.index.ntotal
@@ -72,7 +72,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         else:
             # For basic add, we'll need to calculate after adding
             return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
-    
+
     def _add_embeddings_to_faiss(self, embeddings: np.ndarray) -> np.ndarray:
         """Add embeddings to FAISS index and return actual IDs (pure business logic for FAISS operations)"""
         start_id = self.index.ntotal
@@ -83,7 +83,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         else:
             self.index.add(embeddings)
             return np.arange(start_id, self.index.ntotal, dtype=np.int64)  # Fall back to range
-    
+
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
         for metadata in metadata_batch:
             for field_name, value in metadata.items():
@@ -463,7 +463,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             # Use shared business logic for FAISS operations (run in executor)
             loop = asyncio.get_event_loop()
             actual_ids = await loop.run_in_executor(None, self._add_embeddings_to_faiss, embeddings)
-            
+
             for chunk_index, faiss_id in enumerate(actual_ids):
                 await conn.execute(
                     """

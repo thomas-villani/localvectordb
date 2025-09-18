@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineMixin(LocalVectorDBBase, ABC):
-    
+
     # Pure business logic helpers for DRY elimination
     def _build_documents_bulk_insert_sql(self, mode: Literal["insert", "replace"] = "replace") -> tuple[str, List[str]]:
         """Build SQL for bulk document insertion (pure business logic)"""
@@ -51,8 +51,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         sql_verb = "INSERT OR REPLACE" if mode == "replace" else "INSERT"
         sql = f"{sql_verb} INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
         return sql, all_columns
-    
-    def _prepare_documents_bulk_data(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]], 
+
+    def _prepare_documents_bulk_data(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
                                    conn=None, preserve_created_at: bool = True) -> List[tuple]:
         """
         Prepare document data for bulk insertion (pure business logic).
@@ -73,12 +73,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """
         if not documents_data:
             return []
-        
+
         _, all_columns = self._build_documents_bulk_insert_sql()
         metadata_columns = list(self.metadata_schema.keys())
         bulk_data = []
         current_time = datetime.now(UTC)
-        
+
         # Fetch existing created_at values if connection provided and preservation enabled
         existing_created_at = {}
         if conn and preserve_created_at:
@@ -104,21 +104,21 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     import logging
                     logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to fetch existing created_at values: {e}")
-        
+
         for doc_id, content, content_hash, metadata in documents_data:
             # Use existing created_at if available, otherwise use current time
             created_at_value = existing_created_at.get(doc_id, current_time)
             updated_at_value = current_time
-            
+
             row_data = [doc_id, content, content_hash, created_at_value, updated_at_value]
             for field_name in metadata_columns:
                 value = metadata.get(field_name)
                 row_data.append(value)
             bulk_data.append(tuple(row_data))
-        
+
         return bulk_data
 
-    async def _prepare_documents_bulk_data_async(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]], 
+    async def _prepare_documents_bulk_data_async(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
                                                conn=None, preserve_created_at: bool = True) -> List[tuple]:
         """
         Prepare document data for bulk insertion (async version).
@@ -139,12 +139,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """
         if not documents_data:
             return []
-        
+
         _, all_columns = self._build_documents_bulk_insert_sql()
         metadata_columns = list(self.metadata_schema.keys())
         bulk_data = []
         current_time = datetime.now(UTC)
-        
+
         # Fetch existing created_at values if connection provided and preservation enabled
         existing_created_at = {}
         if conn and preserve_created_at:
@@ -171,18 +171,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     import logging
                     logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to fetch existing created_at values: {e}")
-        
+
         for doc_id, content, content_hash, metadata in documents_data:
             # Use existing created_at if available, otherwise use current time
             created_at_value = existing_created_at.get(doc_id, current_time)
             updated_at_value = current_time
-            
+
             row_data = [doc_id, content, content_hash, created_at_value, updated_at_value]
             for field_name in metadata_columns:
                 value = metadata.get(field_name)
                 row_data.append(value)
             bulk_data.append(tuple(row_data))
-        
+
         return bulk_data
 
     # -----------------
@@ -755,7 +755,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ) -> None:
         if not documents_data:
             return
-        
+
         # Use shared business logic for SQL and data preparation
         sql, _ = self._build_documents_bulk_insert_sql(mode)
         # Pass connection to preserve created_at timestamps for upserts
@@ -953,10 +953,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     break
                 processed_ids.append(result)
         finally:
+            # Join workers without timeout to allow completion of heavy ingestion
             for w in workers:
-                w.join(timeout=30)
+                w.join()
                 if w.is_alive():
-                    logger.warning(f"Worker {w.name} did not complete in time")
+                    logger.warning(f"Worker {w.name} is still alive after join()")
         return processed_ids
 
     def _process_from_chunks_pipeline(
@@ -1109,10 +1110,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         try:
             processed_ids = database_worker()
         finally:
+            # Join workers without timeout to allow completion of heavy ingestion
             for w in workers:
-                w.join(timeout=30)
+                w.join()
                 if w.is_alive():
-                    logger.warning(f"Worker {w.name} did not complete in time")
+                    logger.warning(f"Worker {w.name} is still alive after join()")
         return processed_ids
 
     def _fetch_existing_chunks_batch(self, doc_ids: List[str]):
@@ -2010,7 +2012,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ) -> None:
         if not documents_data:
             return
-        
+
         # Use shared business logic for SQL and data preparation
         sql, _ = self._build_documents_bulk_insert_sql(mode)
         # Use async version to properly preserve created_at timestamps for upserts

@@ -26,8 +26,8 @@ import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Document
+from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.database._utils import SyncDatabaseExecutor, AsyncDatabaseExecutor
 from localvectordb.exceptions import DocumentNotFoundError, MetadataFilterError
 from localvectordb.query_builder import QueryBuilder
 
@@ -39,14 +39,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
         super().__init__(*args, **kwargs)
         self._sync_executor = SyncDatabaseExecutor()
         self._async_executor = AsyncDatabaseExecutor()
-    
+
     # -------------
     # Query builder
     # -------------
     def query_builder(self) -> QueryBuilder:
         """Returns a QueryBuilder for the database."""
         return QueryBuilder(self)
-    
+
     # Pure business logic helpers
     def _build_document_columns_list(self) -> List[str]:
         """Build list of columns for document retrieval (pure business logic)"""
@@ -55,14 +55,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
             return ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
         else:
             return ['id', 'content', 'content_hash', 'created_at', 'updated_at']
-    
+
     def _build_get_documents_sql(self, requested_ids: List[str]) -> tuple[str, List[str]]:
         """Build SQL for retrieving documents by ID (pure business logic)"""
         columns = self._build_document_columns_list()
         placeholders = ','.join(['?'] * len(requested_ids))
         sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
         return sql, requested_ids
-    
+
     def _validate_missing_documents(self, requested_ids: List[str], found_ids: set) -> None:
         """Validate that all requested documents were found (pure business logic)"""
         missing_ids = [doc_id for doc_id in requested_ids if doc_id not in found_ids]
@@ -71,22 +71,22 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 raise DocumentNotFoundError(f"Document not found: {missing_ids[0]}", missing_ids[0])
             else:
                 raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
-    
+
     def _construct_document_from_row(self, row) -> Document:
         """Construct Document object from database row (pure business logic)"""
         # Extract metadata (columns that are not base columns)
         metadata = {}
         base_columns = {'id', 'content', 'content_hash', 'created_at', 'updated_at'}
-        
+
         if hasattr(row, 'items'):
             row_items = row.items()
         else:
             row_items = [(key, row[key]) for key in row.keys()]
-        
+
         for key, value in row_items:
             if key not in base_columns:
                 metadata[key] = value
-        
+
         return Document(
             id=row['id'],
             content=row['content'],
@@ -95,25 +95,25 @@ class CrudMixin(LocalVectorDBBase, ABC):
             updated_at=row['updated_at'],
             content_hash=row['content_hash'],
         )
-    
+
     def _build_exists_sql(self, ids_list: List[str]) -> tuple[str, List[str]]:
         """Build SQL for checking document existence (pure business logic)"""
         placeholders = ','.join(['?'] * len(ids_list))
         sql = f'SELECT id FROM documents WHERE id IN ({placeholders})'
         return sql, ids_list
-    
+
     def _process_exists_results(self, rows, ids_list: List[str]) -> List[bool]:
         """Process exists query results into boolean list (pure business logic)"""
         existing_ids = {row['id'] for row in rows}
         return [doc_id in existing_ids for doc_id in ids_list]
-    
-    def _build_filter_sql(self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, 
+
+    def _build_filter_sql(self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None,
                           limit: Optional[int] = None, offset: int = 0) -> tuple[str, List[Any]]:
         """Build SQL for filtering documents (pure business logic)"""
         columns = self._build_document_columns_list()
         query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
         params: List[Any] = []
-        
+
         filter_builder = None
         if where:
             try:
@@ -124,7 +124,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     params.extend(filter_params)
             except Exception as e:
                 raise MetadataFilterError(f"Error building filter query: {str(e)}")
-        
+
         if order_by:
             try:
                 if filter_builder is None:
@@ -134,19 +134,19 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 query_parts.append(order_by_clause)
             except Exception as e:
                 raise MetadataFilterError(f"Error building ORDER BY clause: {str(e)}")
-        
+
         if limit:
             if not isinstance(limit, int) or limit <= 0:
                 raise MetadataFilterError("Limit must be a positive integer")
             query_parts.append(f"LIMIT {limit}")
-        
+
         if offset:
             if not isinstance(offset, int) or offset < 0:
                 raise MetadataFilterError("Offset must be a non-negative integer")
             query_parts.append(f"OFFSET {offset}")
-        
+
         return ' '.join(query_parts), params
-    
+
     def _construct_documents_from_rows(self, rows) -> List[Document]:
         """Construct Document objects from database rows (pure business logic)"""
         documents: List[Document] = []
@@ -161,11 +161,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
         sql, params = self._build_get_documents_sql(requested_ids)
         cursor = self._sync_executor.execute(conn, sql, params)
         rows = self._sync_executor.fetchall(cursor)
-        
+
         # Validate all documents were found using shared logic
         found_ids = {row['id'] for row in rows}
         self._validate_missing_documents(requested_ids, found_ids)
-        
+
         # Construct documents using shared logic
         documents = []
         for row in rows:
@@ -183,7 +183,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
         # Validate all documents were found using shared logic
         found_ids = {row['id'] for row in rows}
         self._validate_missing_documents(requested_ids, found_ids)
-        
+
         # Construct documents using shared logic
         documents = []
         for row in rows:
@@ -488,7 +488,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """
         # Use shared business logic for SQL construction
         sql, params = self._build_filter_sql(where, order_by, limit, offset)
-        
+
         with self.connection_pool.get_connection() as conn:
             cursor = conn.execute(sql, params)
             rows = cursor.fetchall()
@@ -664,10 +664,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
-        
+
         # Use shared business logic for SQL construction
         sql, params = self._build_filter_sql(where, order_by, limit, offset)
-        
+
         async with self.async_connection_pool.get_connection_context() as conn:
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()

@@ -73,7 +73,7 @@ class ConnectionPool:
             conn.execute("PRAGMA foreign_keys = ON")
 
         conn.row_factory = sqlite3.Row
-        
+
         # Apply tuning pragmas if provided
         if self._pragmas:
             try:
@@ -81,7 +81,7 @@ class ConnectionPool:
                 apply_pragmas(conn, self._pragmas)
             except Exception:
                 pass  # Best-effort pragma application
-        
+
         self._created_connections += 1
         return conn
 
@@ -201,7 +201,7 @@ class AsyncConnectionPool:
 
         # Enable row factory for dict-like access
         conn.row_factory = aiosqlite.Row
-        
+
         # Apply tuning pragmas if provided
         if self._pragmas:
             try:
@@ -209,7 +209,7 @@ class AsyncConnectionPool:
                 await apply_pragmas_async(conn, self._pragmas)
             except Exception:
                 pass  # Best-effort pragma application
-        
+
         self._created_connections += 1
         return conn
 
@@ -234,7 +234,7 @@ class AsyncConnectionPool:
         async with self._condition:
             # Wait until a connection is available
             await asyncio.wait_for(self._wait_for_connection(), timeout=self.wait_timeout)
-            
+
             if self._pool:
                 # Reuse existing connection from pool
                 conn = self._pool.pop()
@@ -253,7 +253,7 @@ class AsyncConnectionPool:
             else:
                 # This should not happen after waiting, but handle gracefully
                 raise RuntimeError("Async connection pool exhausted after waiting")
-    
+
     async def _wait_for_connection(self) -> None:
         """Wait until a connection is available (either pooled or can be created)."""
         while not self._pool and self._created_connections >= self.max_connections:

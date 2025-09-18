@@ -15,7 +15,7 @@ from localvectordb.database._crud import CrudMixin
 from localvectordb.database._ingest import PipelineMixin
 from localvectordb.database._metadata import MetadataMixin
 from localvectordb.database._search import SearchMixin
-from localvectordb.database._tuning import LocalTuningMixin
+from localvectordb.database._tuning import LocalTuningMixin, TuningMixin
 from localvectordb.database.base import BaseVectorDB
 
 
@@ -58,4 +58,4 @@ class LocalVectorDB(LocalTuningMixin, PipelineMixin, SearchMixin, MetadataMixin,
     pass
 
 
-__all__ = ["LocalVectorDB", "BaseVectorDB"]
+__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin"]

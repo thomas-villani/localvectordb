@@ -24,15 +24,14 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from fastmcp import FastMCP
 
 from localvectordb import VectorDB
-from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import (
     DatabaseNotFoundError,
     DocumentNotFoundError,
 )
-from localvectordb_server.utils.schema import parse_metadata_schema
 from localvectordb.utils import get_system_version
 from localvectordb_server.mcp.config import MCPConfig
+from localvectordb_server.utils.schema import parse_metadata_schema
 
 logger = logging.getLogger(__name__)
 

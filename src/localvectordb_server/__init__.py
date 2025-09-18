@@ -5,11 +5,11 @@ localvectordb_server/__init__.py
 Enhanced server for interacting with `localvectordb.LocalVectorDB` via http
 with structured logging, error handling, and performance monitoring.
 """
+import logging
 import os
 from typing import Union
-import logging
 
-from flask import Flask, request, abort
+from flask import Flask, abort, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from localvectordb.exceptions import ConfigurationError
@@ -98,20 +98,20 @@ def create_app(
     setup_request_logging(app)
 
     # Setup Host header validation if trusted_hosts is configured
-    if _config.server.trusted_hosts:
+    if _config.server.security.trusted_hosts:
         @app.before_request
         def validate_host_header():
             """Validate the Host header against trusted hosts"""
-            
+
             # Skip validation if running behind a trusted proxy
             if _config.server.proxy_enabled:
                 return
-            
+
             # Get the host from the request
             host = request.host
-            
+
             # Check if the host is in the trusted hosts list
-            if host not in _config.server.trusted_hosts:
+            if host not in _config.server.security.trusted_hosts:
                 app.logger.warning(f"Rejected request with untrusted Host header: {host}")
                 abort(400, description=f"Invalid Host header: {host}")
 
@@ -119,9 +119,9 @@ def create_app(
     register_error_handlers(app)
 
     logger = logging.getLogger('localvectordb_server')
-    
-    if _config.server.trusted_hosts:
-        logger.info(f"Host header validation enabled for: {_config.server.trusted_hosts}")
+
+    if _config.server.security.trusted_hosts:
+        logger.info(f"Host header validation enabled for: {_config.server.security.trusted_hosts}")
     logger.info("Starting LocalVectorDB Server initialization")
 
     # Make sure DB directory exists
@@ -132,11 +132,11 @@ def create_app(
     logger.info(f"Database Root Path: {os.path.abspath(_config.database.root_dir)}")
 
     # Configure CORS if enabled
-    if _config.server.cors_enabled:
+    if _config.server.security.cors_enabled:
         if not _FLASK_CORS_AVAILABLE:
             raise RuntimeError("CORS requires installation of `flask_cors`. Run `pip install flask_cors`")
 
-        origins = _config.server.cors_allowed_origins
+        origins = _config.server.security.cors_allowed_origins
         if origins == "*":
             logger.warning("CORS enabled for all origins. This may be insecure in production.")
             CORS(
@@ -144,9 +144,9 @@ def create_app(
                 resources={
                     r"/api/*": {
                         "origins": "*",
-                        "methods": _config.server.cors_allowed_methods,
-                        "allow_headers": _config.server.cors_allowed_headers,
-                        "max_age": _config.server.cors_max_age
+                        "methods": _config.server.security.cors_allowed_methods,
+                        "allow_headers": _config.server.security.cors_allowed_headers,
+                        "max_age": _config.server.security.cors_max_age
                     }
                 }
             )
@@ -157,9 +157,9 @@ def create_app(
                 resources={
                     r"/api/*": {
                         "origins": origins,
-                        "methods": _config.server.cors_allowed_methods,
-                        "allow_headers": _config.server.cors_allowed_headers,
-                        "max_age": _config.server.cors_max_age
+                        "methods": _config.server.security.cors_allowed_methods,
+                        "allow_headers": _config.server.security.cors_allowed_headers,
+                        "max_age": _config.server.security.cors_max_age
                     }
                 }
             )
@@ -170,9 +170,9 @@ def create_app(
                 resources={
                     r"/api/*": {
                         "origins": [origins],
-                        "methods": _config.server.cors_allowed_methods,
-                        "allow_headers": _config.server.cors_allowed_headers,
-                        "max_age": _config.server.cors_max_age
+                        "methods": _config.server.security.cors_allowed_methods,
+                        "allow_headers": _config.server.security.cors_allowed_headers,
+                        "max_age": _config.server.security.cors_max_age
                     }
                 }
             )
@@ -191,16 +191,16 @@ def create_app(
                 x_for=1,  # Number of proxies setting X-Forwarded-For, one for single proxy
             )
 
-    if _config.server.security_headers_enabled:
+    if _config.server.security.security_headers_enabled:
         security_config = {
-            'force_https': _config.server.force_https,
-            'strict_transport_security': _config.server.strict_transport_security,
-            'strict_transport_security_max_age': _config.server.strict_transport_security_max_age,
-            'content_security_policy': _config.server.content_security_policy,
-            'content_type_nosniff': _config.server.content_type_nosniff,
-            'x_frame_options': _config.server.x_frame_options,
-            'x_xss_protection': _config.server.x_xss_protection,
-            'referrer_policy': _config.server.referrer_policy
+            'force_https': _config.server.security.force_https,
+            'strict_transport_security': _config.server.security.strict_transport_security,
+            'strict_transport_security_max_age': _config.server.security.strict_transport_security_max_age,
+            'content_security_policy': _config.server.security.content_security_policy,
+            'content_type_nosniff': _config.server.security.content_type_nosniff,
+            'x_frame_options': _config.server.security.x_frame_options,
+            'x_xss_protection': _config.server.security.x_xss_protection,
+            'referrer_policy': _config.server.security.referrer_policy
         }
         if not _FLASK_TALISMAN_AVAILABLE:
             raise RuntimeError("server.securty_headers_enabled = true, but `flask-talisman` not installed. "
@@ -239,7 +239,7 @@ def create_app(
         logger.error(f"Failed to initialize database manager: {e}", exc_info=True)
         raise ConfigurationError(f"Database manager initialization failed: {e}")
 
-    app.key_manager = KeyManager(_config.server.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db"))
+    app.key_manager = KeyManager(_config.server.security.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db"))
 
     # Register blueprints
     from localvectordb_server.routes import api
@@ -256,7 +256,7 @@ def create_app(
                 app.config["SECRET_KEY"] = os.urandom(32)
             logger.info("Inspector UI registered at /inspector")
 
-            if not app.config_obj.server.require_api_key:
+            if not app.config_obj.server.security.require_api_key:
                 logger.warning("Inspector enabled without api-key protection.")
                 logger.warning("**The inspector is available and allows full database access to anyone with "
                                "the url where the app is exposed.**")
@@ -277,8 +277,8 @@ def create_app(
     logger.info(f"  - Debug mode: {app.debug}")
     logger.info(f"  - Log level: {_config.server.log_level}")
     logger.info(f"  - Database path: {_config.database.root_dir}")
-    logger.info(f"  - API authentication: {'enabled' if _config.server.require_api_key else 'disabled'}")
-    logger.info(f"  - CORS: {'enabled' if _config.server.cors_enabled else 'disabled'}")
+    logger.info(f"  - API authentication: {'enabled' if _config.server.security.require_api_key else 'disabled'}")
+    logger.info(f"  - CORS: {'enabled' if _config.server.security.cors_enabled else 'disabled'}")
     logger.info(f"  - Rate limiting: {'enabled' if _config.server.enable_rate_limiting else 'disabled'}")
 
     return app

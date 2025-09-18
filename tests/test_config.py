@@ -286,11 +286,11 @@ class TestServerSettings:
         # Default case: debug=False, so enable_structured_logging should be True
         settings = ServerSettings()
         assert settings.enable_structured_logging is True
-        
+
         # Debug mode: enable_structured_logging should be False
         settings_debug = ServerSettings(debug=True)
         assert settings_debug.enable_structured_logging is False
-        
+
         # Explicit setting should override computation
         settings_explicit = ServerSettings(debug=True, enable_structured_logging=True)
         assert settings_explicit.enable_structured_logging is True

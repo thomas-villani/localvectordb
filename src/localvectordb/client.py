@@ -138,7 +138,8 @@ from localvectordb.core import (
     MetadataFieldType,
     QueryResult,
 )
-from localvectordb.database import BaseVectorDB
+
+from localvectordb.database import BaseVectorDB, TuningMixin
 from localvectordb.embeddings import EmbeddingProvider, HTTPEmbeddingProvider
 from localvectordb.exceptions import (
     BaseLocalVectorDBException,
@@ -148,6 +149,7 @@ from localvectordb.exceptions import (
     DuplicateDocumentIDError,
     EmbeddingError,
 )
+from localvectordb.sqlite_tuning import SqliteProfile
 
 logger = logging.getLogger(__name__)
 
@@ -268,10 +270,7 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
             return embeddings
 
 
-from localvectordb.database._tuning import RemoteTuningMixin
-
-
-class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
+class RemoteVectorDB(TuningMixin, BaseVectorDB):
     """Client for interacting with a LocalVectorDB server.
 
     This client provides the same interface as LocalVectorDB but connects to a remote server via HTTP.
@@ -337,7 +336,7 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
             chunk_overlap: int = 1,
             enable_gpu: bool = False,
             enable_fts: bool = True,
-            sqlite_profile: str = "balanced",
+            sqlite_profile: SqliteProfile = "balanced",
             sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
             request_timeout: int = None,
             authorization_header: str = "Authorization",
@@ -480,8 +479,9 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
     def _build_url(self, endpoint: str) -> str:
         """Build a full URL for the given endpoint"""
         return f"{self.base_url}{endpoint}"
-    
-    def _normalize_error_response(self, response: httpx.Response) -> tuple[str, str]:
+
+    @staticmethod
+    def _normalize_error_response(response: httpx.Response) -> tuple[str, str]:
         """Normalize error response to consistent format"""
         try:
             error_data = response.json()
@@ -498,36 +498,11 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
             # Fallback to response text when JSON parsing fails
             error_msg = response.text or f"HTTP Error: {response.status_code}"
             error_type = "parse_error"
-        
+
         # Ensure we have some error message
         if not error_msg:
             error_msg = f"HTTP {response.status_code}: {response.reason_phrase or 'Unknown error'}"
-            
-        return error_type, error_msg
-    
-    @staticmethod
-    async def _normalize_error_response_async(response: httpx.Response) -> tuple[str, str]:
-        """Normalize error response to consistent format (async version)"""
-        try:
-            error_data = await response.json()
-            if isinstance(error_data, dict) and "error" in error_data:
-                error_dict = error_data["error"]
-                error_type = error_dict.get("code", "unknown").lower()
-                error_msg = error_dict.get("message", "")
-            else:
-                # Handle cases where error response is not in expected format
-                error_type = "malformed_response"
-                error_msg = str(error_data) if error_data else f"HTTP {response.status_code}"
-        except ValueError as e:
-            logger.debug(f"Failed to parse error response as JSON: {e}")
-            # Fallback to response text when JSON parsing fails
-            error_msg = response.text or f"HTTP Error: {response.status_code}"
-            error_type = "parse_error"
-        
-        # Ensure we have some error message
-        if not error_msg:
-            error_msg = f"HTTP {response.status_code}: {response.reason_phrase or 'Unknown error'}"
-            
+
         return error_type, error_msg
 
     def _handle_response(self, response: httpx.Response) -> dict:
@@ -823,15 +798,15 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
             Number of matching documents
         """
         url = self._build_url(f"/api/v1/{self.name}/documents/count")
-        
+
         # Prepare payload
         payload = {}
         if filters is not None:
             payload["filters"] = filters
-        
+
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
-        
+
         return result.get("count", 0)
 
     def upsert_from_file(
@@ -919,6 +894,7 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
         # Prepare files for streaming upload
         files = []
         file_handles = []
+        result = {}
         try:
             for file_path in file_paths:
                 file_handle = open(file_path, 'rb')
@@ -1029,6 +1005,7 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
         # Prepare files for streaming upload
         files = []
         file_handles = []
+        result = {}
         try:
             for file_path in file_paths:
                 file_handle = open(file_path, 'rb')
@@ -2041,7 +2018,7 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
                 raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
 
         # Try to parse error response as JSON with fallback to text
-        error_type, error_msg = await RemoteVectorDB._normalize_error_response_async(response)
+        error_type, error_msg = RemoteVectorDB._normalize_error_response(response)
         logger.debug(f"Client error (async): {error_type} - {error_msg}")
 
         # Map error type to appropriate exception
@@ -2659,15 +2636,15 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
             Number of matching documents
         """
         url = self._build_url(f"/api/v1/{self.name}/documents/count")
-        
+
         # Prepare payload
         payload = {}
         if filters is not None:
             payload["filters"] = filters
-        
+
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = await self._handle_response_async(response)
-        
+
         return result.get("count", 0)
 
     async def update_async(
@@ -3081,3 +3058,54 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("GET", url)
         result = await self._handle_response_async(response)
         return result.get('schema_info', {})
+
+
+    ## Tuning
+    def get_sqlite_tuning(self) -> Dict[str, Any]:
+        """Get current SQLite tuning configuration from remote server."""
+        response = self._make_request("GET", f"/api/database/{self.name}/tuning")
+        return response
+
+    def set_sqlite_tuning(
+        self,
+        profile: str,
+        overrides: Optional[Dict[str, Any]] = None,
+        persist: bool = True
+    ) -> None:
+        """Apply SQLite tuning profile via remote server."""
+        payload = {
+            "profile": profile,
+            "overrides": overrides or {},
+            "persist": persist
+        }
+
+        self._make_request("PUT", f"/api/database/{self.name}/tuning", json=payload)
+
+    def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
+        """Run SQLite WAL checkpoint via remote server."""
+        payload = {"mode": mode}
+        self._make_request("POST", f"/api/database/{self.name}/maintenance/checkpoint", json=payload)
+
+    def sqlite_optimize(self) -> None:
+        """Run SQLite PRAGMA optimize via remote server."""
+        self._make_request("POST", f"/api/database/{self.name}/maintenance/optimize")
+
+    def sqlite_vacuum(self) -> None:
+        """Run SQLite VACUUM via remote server."""
+        self._make_request("POST", f"/api/database/{self.name}/maintenance/vacuum")
+
+    def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
+        """Run incremental VACUUM via remote server."""
+        payload = {"pages": pages}
+        self._make_request("POST", f"/api/database/{self.name}/maintenance/incremental_vacuum", json=payload)
+
+    def analyze_system_resources(self) -> Dict[str, Any]:
+        """Analyze remote server system resources."""
+        response = self._make_request("GET", "/api/system/resources")
+        return response
+
+    def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
+        """Check if remote WAL is large and checkpoint if needed."""
+        payload = {"threshold_mb": wal_mb_threshold}
+        response = self._make_request("POST", f"/api/database/{self.name}/maintenance/checkpoint_if_large", json=payload)
+        return response.get("checkpointed", False)

@@ -21,7 +21,7 @@ validating the resulting configuration.
 
 Features:
 - Typed dataclass settings with validate() methods
-- Load from TOML, JSON, and legacy INI files
+- Load from TOML, JSON
 - Load and override from environment variables (LVDB_ prefixed)
 - Generate TOML output and export Flask-compatible config
 - Intelligent merging that preserves non-default base values
@@ -37,15 +37,14 @@ import copy
 import json
 import os
 import tomllib
-from io import BytesIO
-
-import tomli_w
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union, get_type_hints, get_origin, get_args
+from typing import Any, Dict, List, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 import click
+import tomli_w
 
 from localvectordb._schema import get_common_metadata_schemas
 from localvectordb.core import MetadataField
@@ -236,7 +235,7 @@ class SecuritySettings(BaseSettings):
     require_api_key: bool = False
     api_key_header: str = "Authorization"  # Header name for API key
     trusted_hosts: Optional[List[str]] = None
-    
+
     # Key management
     key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
     default_key_expiry_days: Optional[int] = None  # None = no default expiration
@@ -479,7 +478,7 @@ class Config:
                             setattr(config.server.security, sec_key, sec_value)
                 elif hasattr(config.server, key):
                     setattr(config.server, key, value)
-            
+
             # Also handle legacy security fields directly in server section for backward compatibility
             legacy_security_fields = {
                 'require_api_key', 'api_key_header', 'trusted_hosts', 'key_database_path',
@@ -522,56 +521,6 @@ class Config:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return cls.from_dict(data)
-
-    @classmethod
-    def _from_ini(cls, path: Path) -> "Config":
-        """Load configuration from INI file with v1.0 support."""
-        import configparser
-        parser = configparser.ConfigParser()
-        parser.read(path)
-
-        config = cls()
-
-        # Helper function to convert string values to appropriate types
-        def convert_value(value: str, target_type):
-            if target_type == bool:
-                return value.lower() in ['true', 'yes', '1', 'on']
-            elif target_type == int:
-                return int(value)
-            elif target_type == float:
-                return float(value)
-            elif target_type == list:
-                return [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                return value
-
-        # Process all sections
-        sections = {
-            'database': config.database,
-            'embedding': config.embedding,
-            'server': config.server,
-            'backup': config.backup,
-            'migration': config.migration,
-        }
-
-        for section_name, section_obj in sections.items():
-            if section_name in parser:
-                for key, value in parser[section_name].items():
-                    if hasattr(section_obj, key):
-                        attr_type = type(getattr(section_obj, key))
-                        parsed_value = convert_value(value, attr_type)
-                        setattr(section_obj, key, parsed_value)
-
-        # Handle nested sections like server.security
-        if 'server.security' in parser:
-            for key, value in parser['server.security'].items():
-                if hasattr(config.server, key):
-                    attr_type = type(getattr(config.server, key))
-                    parsed_value = convert_value(value, attr_type)
-                    setattr(config.server, key, parsed_value)
-
-        return config
-
 
     @classmethod
     def from_env(cls, base=None, prefix: str = "LVDB_") -> "Config":
@@ -667,12 +616,12 @@ class Config:
             return float(value)
         elif target_type == str:
             return value
-        
+
         # Handle Union types (including Optional which is Union[T, None])
         elif origin is Union:
             # Filter out NoneType to get actual types
             non_none_types = [arg for arg in args if arg != type(None)]
-            
+
             # Special case: Union[str, List[str]] for cors_allowed_origins
             if len(non_none_types) == 2 and str in non_none_types and List[str] in non_none_types:
                 # Try to parse as JSON array first
@@ -689,17 +638,17 @@ class Config:
                 # Otherwise, return as string
                 else:
                     return value
-            
+
             # Handle Optional[T] (Union[T, None])
             elif len(non_none_types) == 1:
                 inner_type = non_none_types[0]
                 # Check if the value represents None
                 if value.lower() in ['none', 'null', '']:
                     return None
-                
+
                 # Convert using the inner type
                 inner_origin = get_origin(inner_type)
-                
+
                 if inner_type == bool:
                     return value.lower() in ['true', 'yes', '1', 'on']
                 elif inner_type == int:
@@ -727,12 +676,12 @@ class Config:
                 else:
                     # For other types, just return the value
                     return value
-            
+
             # Other Union types - not expected in our config
             else:
                 # Default to string
                 return value
-        
+
         # Handle List types
         elif origin is list:
             if value.startswith('[') and value.endswith(']'):
@@ -746,7 +695,7 @@ class Config:
             else:
                 # Handle comma-separated format
                 return [item.strip(' "\'') for item in value.split(',') if item.strip()]
-        
+
         # Handle Dict types
         elif origin is dict or target_type == dict:
             try:
@@ -754,13 +703,13 @@ class Config:
             except json.JSONDecodeError:
                 # Return empty dict if parsing fails
                 return {}
-        
+
         # Handle Literal types (e.g., Literal["gzip", "lzma", "none"])
         elif origin is Literal:
             # Literal values are strings in our config, just return the value
             # Validation will happen elsewhere
             return value
-        
+
         # Default: return as-is
         return value
 
@@ -852,8 +801,6 @@ class Config:
 
     def generate_toml(self) -> str:
         """Generate enhanced TOML configuration for v1.0 using tomli-w."""
-        from io import StringIO
-        
         def clean_none_values(obj):
             """Recursively remove None values and empty containers from nested dicts/lists."""
             if isinstance(obj, dict):
@@ -874,10 +821,10 @@ class Config:
                 return cleaned
             else:
                 return obj
-        
+
         # Convert config to dict
         config_dict = clean_none_values(self.to_dict())
-        
+
         # Process metadata schema for proper TOML serialization
         if config_dict.get('database', {}).get('default_metadata_schema'):
             metadata_schema = config_dict['database']['default_metadata_schema']
@@ -900,23 +847,23 @@ class Config:
                     elif hasattr(processed_field.get('type'), '__str__'):
                         processed_field['type'] = str(processed_field['type'])
                     processed_schema[field_name] = processed_field
-            
+
             # Update the config dict
             config_dict['database']['default_metadata_schema'] = processed_schema
-        
+
         # Handle security nested structure - flatten for TOML
         if 'server' in config_dict and 'security' in config_dict['server']:
             # Create server.security section
             security_config = config_dict['server'].pop('security')
             config_dict.setdefault('server', {})['security'] = security_config
-        
+
         # Generate TOML with header comment
         output = BytesIO()
         output.write("# LocalVectorDB Server Configuration v1.0\n\n".encode("utf-8"))
-        
+
         # Use tomli_w to dump the config
         tomli_w.dump(config_dict, output)
-        
+
         return output.getvalue().decode("utf-8")
 
     def to_dict(self):

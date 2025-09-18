@@ -1075,7 +1075,7 @@ class TestRemoteVectorDBAsyncFileOperations:
 
     async def test_upsert_from_file_async(self, tmp_path):
         """Test async file upsert."""
-        from unittest.mock import AsyncMock, Mock, patch
+        from unittest.mock import AsyncMock, patch
 
         # Create test file
         test_file = tmp_path / "async_test.txt"
@@ -1119,7 +1119,7 @@ class TestRemoteVectorDBAsyncFileOperations:
 
     async def test_insert_from_file_async(self, tmp_path):
         """Test async file insert."""
-        from unittest.mock import AsyncMock, Mock, patch
+        from unittest.mock import AsyncMock, patch
 
         # Create test file
         test_file = tmp_path / "async_test.txt"
@@ -1173,7 +1173,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
     async def test_upsert_from_chunks_async(self):
         """Test async chunk upsert."""
-        from unittest.mock import AsyncMock, Mock
+        from unittest.mock import AsyncMock
 
         from localvectordb.core import Chunk, ChunkPosition
 
@@ -1229,7 +1229,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
     async def test_insert_from_chunks_async(self):
         """Test async chunk insert."""
-        from unittest.mock import AsyncMock, Mock
+        from unittest.mock import AsyncMock
 
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()

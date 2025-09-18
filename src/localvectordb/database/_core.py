@@ -67,7 +67,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
             faiss_index_hnsw_flat_neighbors: Optional[int] = None, faiss_index_lsh_bits: Optional[int] = None,
             enable_gpu: bool = False, enable_fts: bool = True, connection_pool_size: int = 10,
-            create_if_not_exists: bool = True, sqlite_profile: str = "balanced",
+            create_if_not_exists: bool = True,
+            sqlite_profile: str = "balanced",
             sqlite_pragma_overrides: Optional[Dict[str, Any]] = None
     ):
 
@@ -133,8 +134,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             pragmas.update(sqlite_pragma_overrides)
 
         self._sqlite_profile = sqlite_profile
-        self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
-        self._sqlite_pragmas = pragmas
+        self._sqlite_pragma_overrides: dict = sqlite_pragma_overrides or {}
+        self._sqlite_pragmas: dict = pragmas
 
         # Database schema + pools (with tuning pragmas)
         self.schema = DatabaseSchema(self.db_path, self._read_write_lock)
@@ -822,7 +823,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _ensure_async_pool(self) -> None:
         if self.async_connection_pool is None:
             self.async_connection_pool = AsyncConnectionPool(
-                self.db_path, 
+                self.db_path,
                 max_connections=self.async_max_connections,
                 pragmas=self._sqlite_pragmas
             )
@@ -872,11 +873,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """Save SQLite tuning configuration to database."""
         with self.connection_pool.get_connection() as conn:
             conn.execute(
-                'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', 
+                'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
                 ('sqlite_profile', self._sqlite_profile)
             )
             conn.execute(
-                'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', 
+                'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
                 ('sqlite_pragma_overrides', json.dumps(self._sqlite_pragma_overrides))
             )
             conn.commit()
@@ -886,21 +887,21 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         import json
         profile = config.get('sqlite_profile', 'balanced')
         overrides_json = config.get('sqlite_pragma_overrides', '{}')
-        
+
         try:
             overrides = json.loads(overrides_json) if overrides_json else {}
         except (json.JSONDecodeError, TypeError):
             overrides = {}
-        
+
         from localvectordb.sqlite_tuning import PROFILES
         if profile in PROFILES:
             pragmas = dict(PROFILES[profile].pragmas)
             pragmas.update(overrides)
-            
+
             self._sqlite_profile = profile
             self._sqlite_pragma_overrides = overrides
             self._sqlite_pragmas = pragmas
-            
+
             logger.debug(f"Loaded SQLite tuning profile '{profile}' with {len(overrides)} overrides")
         else:
             logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")

@@ -323,11 +323,11 @@ class BackupManager:
         temp_manifest_data = metadata.to_dict()
         temp_manifest_data['archive_checksum'] = None  # Will be calculated after archive creation
         temp_manifest_data['manifest_checksum'] = None  # Will be calculated now
-        
+
         # Calculate manifest checksum from the normalized JSON
         manifest_json = json.dumps(temp_manifest_data, sort_keys=True, separators=(',', ':'))
         manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
-        
+
         # Update metadata with manifest checksum (but NOT archive_checksum to avoid circularity)
         metadata.manifest_checksum = manifest_checksum
 
@@ -361,12 +361,12 @@ class BackupManager:
         # Calculate archive checksum for integrity verification
         archive_checksum = self._calculate_file_checksum(backup_path)
         metadata.archive_checksum = archive_checksum
-        
+
         # Write sidecar checksum file for verification
         sidecar_path = backup_path.with_suffix(backup_path.suffix + '.sha256')
         with open(sidecar_path, 'w') as f:
             f.write(f"{archive_checksum}  {backup_path.name}\n")
-        
+
         logger.info(f"Created backup archive: {backup_path}")
         logger.info(f"Created sidecar checksum: {sidecar_path}")
         logger.debug(f"Archive checksum: {archive_checksum}")
@@ -462,7 +462,7 @@ class BackupManager:
                 "PRAGMA synchronous", "PRAGMA journal_mode", "PRAGMA cache_size",
                 "PRAGMA wal_autocheckpoint", "PRAGMA mmap_size"
             ]
-            
+
             for pragma_query in pragma_queries:
                 try:
                     result = source_conn.execute(pragma_query).fetchone()
@@ -471,32 +471,32 @@ class BackupManager:
                         original_pragmas[key] = result[0]
                 except sqlite3.Error:
                     pass  # Ignore if pragma not supported
-            
+
             # Before backup, ensure WAL is checkpointed
             try:
                 source_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 logger.debug("WAL checkpointed before backup")
             except sqlite3.Error as e:
                 logger.debug(f"WAL checkpoint failed: {e}")
-            
+
             # Apply backup-optimized pragmas temporarily
             backup_pragmas = {
                 "synchronous": "OFF",        # Faster backup (temporary)
                 "cache_size": -131072,       # 128MB cache for backup
             }
-            
+
             for key, value in backup_pragmas.items():
                 try:
                     source_conn.execute(f"PRAGMA {key} = {value}")
                 except sqlite3.Error:
                     pass  # Best effort
-            
+
             # Perform the backup
             with source_conn:
                 source_conn.backup(backup_conn)
-                
+
             logger.debug(f"SQLite database backed up to: {backup_db_path}")
-            
+
             # Restore original pragmas
             for key, value in original_pragmas.items():
                 try:
@@ -514,10 +514,10 @@ class BackupManager:
     def _get_current_pragma_settings(self) -> Dict[str, Any]:
         """Get current pragma settings from the database for backup metadata."""
         pragma_settings = {}
-        
+
         try:
             conn = sqlite3.connect(self.database_path)
-            
+
             # Query common pragma settings
             pragma_queries = [
                 ("synchronous", "PRAGMA synchronous"),
@@ -529,7 +529,7 @@ class BackupManager:
                 ("foreign_keys", "PRAGMA foreign_keys"),
                 ("busy_timeout", "PRAGMA busy_timeout")
             ]
-            
+
             for pragma_name, pragma_query in pragma_queries:
                 try:
                     result = conn.execute(pragma_query).fetchone()
@@ -537,13 +537,13 @@ class BackupManager:
                         pragma_settings[pragma_name] = result[0]
                 except sqlite3.Error:
                     pass  # Skip unsupported pragmas
-            
+
             # Also try to get profile and overrides from config table if it exists
             try:
                 config_result = conn.execute(
                     "SELECT key, value FROM config WHERE key IN ('sqlite_profile', 'sqlite_pragma_overrides')"
                 ).fetchall()
-                
+
                 for key, value in config_result:
                     if key == 'sqlite_profile':
                         pragma_settings['profile'] = value
@@ -554,12 +554,12 @@ class BackupManager:
                             pass
             except sqlite3.Error:
                 pass  # Config table may not exist
-            
+
             conn.close()
-            
+
         except Exception as e:
             logger.debug(f"Failed to get pragma settings: {e}")
-        
+
         return pragma_settings
 
     def _backup_faiss_index(self, temp_dir: Path) -> None:
@@ -647,7 +647,7 @@ class BackupManager:
             # 1. Verify archive checksum from sidecar file first
             sidecar_path = backup_path.with_suffix(backup_path.suffix + '.sha256')
             archive_checksum_from_sidecar = None
-            
+
             if sidecar_path.exists():
                 with open(sidecar_path, 'r') as f:
                     line = f.readline().strip()
@@ -660,7 +660,7 @@ class BackupManager:
                                 logger.warning(f"Sidecar filename mismatch: expected {expected_filename}, got {backup_path.name}")
                         else:
                             archive_checksum_from_sidecar = parts[0]
-                
+
                 if archive_checksum_from_sidecar:
                     actual_archive_checksum = self._calculate_file_checksum(backup_path)
                     if actual_archive_checksum != archive_checksum_from_sidecar:
@@ -681,18 +681,18 @@ class BackupManager:
                 manifest_data = json.load(manifest_file)
 
                 metadata = BackupMetadata.from_dict(manifest_data)
-                
+
                 # 2. Verify manifest integrity (if available)
                 if metadata.manifest_checksum:
                     # Reconstruct manifest data without checksum fields for verification
                     manifest_for_verification = manifest_data.copy()
                     manifest_for_verification['archive_checksum'] = None
                     manifest_for_verification['manifest_checksum'] = None
-                    
+
                     # Calculate checksum of normalized manifest
                     manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(',', ':'))
                     actual_manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
-                    
+
                     if actual_manifest_checksum != metadata.manifest_checksum:
                         raise ValueError(
                             f"Manifest integrity check failed: expected {metadata.manifest_checksum}, "
@@ -1090,7 +1090,7 @@ class BackupManager:
         if backup_file and backup_file.exists():
             backup_file.unlink()
             logger.debug(f"Deleted backup file: {backup_file}")
-            
+
             # Also delete sidecar checksum file if it exists
             sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
             if sidecar_path.exists():
@@ -1171,7 +1171,7 @@ class BackupManager:
         space is limited.
         """
         logger.info(f"Streaming verification of backup: {backup_id}")
-        
+
         backup_file = self._find_backup_file(backup_id)
         if not backup_file:
             logger.error(f"Backup file not found: {backup_id}")
@@ -1181,7 +1181,7 @@ class BackupManager:
             # Verify archive checksum from sidecar file first
             sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
             archive_checksum_from_sidecar = None
-            
+
             if sidecar_path.exists():
                 with open(sidecar_path, 'r') as f:
                     line = f.readline().strip()
@@ -1194,7 +1194,7 @@ class BackupManager:
                                 logger.warning(f"Sidecar filename mismatch: expected {expected_filename}, got {backup_file.name}")
                         else:
                             archive_checksum_from_sidecar = parts[0]
-                
+
                 if archive_checksum_from_sidecar:
                     actual_archive_checksum = self._calculate_file_checksum(backup_file)
                     if actual_archive_checksum != archive_checksum_from_sidecar:
@@ -1214,40 +1214,40 @@ class BackupManager:
                     raise ValueError("Could not extract manifest file from backup")
                 manifest_data = json.load(manifest_file)
                 metadata = BackupMetadata.from_dict(manifest_data)
-                
+
                 # Verify manifest integrity (if available)
                 if metadata.manifest_checksum:
                     manifest_for_verification = manifest_data.copy()
                     manifest_for_verification['archive_checksum'] = None
                     manifest_for_verification['manifest_checksum'] = None
-                    
+
                     manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(',', ':'))
                     actual_manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
-                    
+
                     if actual_manifest_checksum != metadata.manifest_checksum:
                         raise ValueError(
                             f"Manifest integrity check failed: expected {metadata.manifest_checksum}, "
                             f"got {actual_manifest_checksum}"
                         )
                     logger.debug("Manifest integrity verification passed")
-                
+
                 # Verify file structure
                 tar_members = {member.name for member in tar.getmembers() if member.isfile()}
                 expected_files = set(metadata.file_paths.keys()) | {"manifest.json"}
-                
+
                 if tar_members != expected_files:
                     missing = expected_files - tar_members
                     extra = tar_members - expected_files
                     raise ValueError(f"Backup structure check failed. Missing: {missing}, Extra: {extra}")
-                
+
                 # Optionally verify individual archive member checksums via streaming
                 if verify_archive_members:
                     self._verify_archive_checksums(tar, metadata)
                     logger.debug("Archive member checksum verification passed")
-            
+
             logger.info(f"Streaming backup verification passed: {backup_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Streaming backup verification failed: {e}")
             return False

@@ -24,15 +24,15 @@ class DatabaseExecutor:
     This class provides a common interface for database operations, allowing the same
     business logic to be used for both synchronous and asynchronous database connections.
     """
-    
+
     def execute(self, conn, sql: str, params=None):
         """Execute a SQL statement."""
         raise NotImplementedError
-    
+
     def fetchall(self, cursor):
         """Fetch all results from a cursor."""
         raise NotImplementedError
-    
+
     def fetchone(self, cursor):
         """Fetch one result from a cursor."""
         raise NotImplementedError
@@ -45,17 +45,17 @@ class SyncDatabaseExecutor(DatabaseExecutor):
     Provides synchronous implementations of database operations for use with
     sqlite3.Connection objects.
     """
-    
+
     def execute(self, conn, sql: str, params=None):
         """Execute a SQL statement synchronously."""
         if params is None:
             return conn.execute(sql)
         return conn.execute(sql, params)
-    
+
     def fetchall(self, cursor):
         """Fetch all results synchronously."""
         return cursor.fetchall()
-    
+
     def fetchone(self, cursor):
         """Fetch one result synchronously."""
         return cursor.fetchone()
@@ -68,17 +68,17 @@ class AsyncDatabaseExecutor(DatabaseExecutor):
     Provides asynchronous implementations of database operations for use with
     aiosqlite.Connection objects.
     """
-    
+
     async def execute(self, conn, sql: str, params=None):
         """Execute a SQL statement asynchronously."""
         if params is None:
             return await conn.execute(sql)
         return await conn.execute(sql, params)
-    
+
     async def fetchall(self, cursor):
         """Fetch all results asynchronously."""
         return await cursor.fetchall()
-    
+
     async def fetchone(self, cursor):
         """Fetch one result asynchronously."""
         return await cursor.fetchone()

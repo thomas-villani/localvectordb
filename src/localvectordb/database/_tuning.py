@@ -26,13 +26,12 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.sqlite_tuning import (
     PROFILES,
     AutoTuner,
-    SystemInfo,
-    TuningRecommendation,
     WorkloadProfile,
-    list_profiles
+    list_profiles,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ class TuningMixin(ABC):
     This mixin defines the common interface for SQLite performance tuning
     that is implemented by both LocalVectorDB and RemoteVectorDB classes.
     """
-    
+
     @abstractmethod
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """
@@ -60,12 +59,12 @@ class TuningMixin(ABC):
             - overrides: Profile overrides
         """
         pass
-    
+
     @abstractmethod
     def set_sqlite_tuning(
-        self, 
-        profile: str, 
-        overrides: Optional[Dict[str, Any]] = None, 
+        self,
+        profile: str,
+        overrides: Optional[Dict[str, Any]] = None,
         persist: bool = True
     ) -> None:
         """
@@ -86,7 +85,7 @@ class TuningMixin(ABC):
             If profile name is not recognized
         """
         pass
-    
+
     @abstractmethod
     def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
         """
@@ -98,12 +97,12 @@ class TuningMixin(ABC):
             Checkpoint mode (PASSIVE, FULL, RESTART, TRUNCATE), by default "PASSIVE"
         """
         pass
-    
+
     @abstractmethod
     def sqlite_optimize(self) -> None:
         """Run SQLite PRAGMA optimize to update query planner statistics."""
         pass
-    
+
     @abstractmethod
     def sqlite_vacuum(self) -> None:
         """
@@ -114,7 +113,7 @@ class TuningMixin(ABC):
         This operation requires exclusive database access and may take significant time.
         """
         pass
-    
+
     @abstractmethod
     def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
         """
@@ -126,7 +125,7 @@ class TuningMixin(ABC):
             Number of pages to reclaim, by default 2000
         """
         pass
-    
+
     def list_sqlite_profiles(self) -> Dict[str, str]:
         """
         List available SQLite tuning profiles.
@@ -137,7 +136,7 @@ class TuningMixin(ABC):
             Dictionary mapping profile names to descriptions
         """
         return {name: desc for name, desc in list_profiles()}
-    
+
     def analyze_system_resources(self) -> Dict[str, Any]:
         """
         Analyze system resources for tuning recommendations.
@@ -156,10 +155,10 @@ class TuningMixin(ABC):
             "disk_free_gb": system_info.disk_free_gb,
             "os_type": system_info.os_type
         }
-    
+
     def auto_tune(
-        self, 
-        workload: Optional[Dict[str, Any]] = None, 
+        self,
+        workload: Optional[Dict[str, Any]] = None,
         interactive: bool = False,
         apply: bool = False
     ) -> Dict[str, Any]:
@@ -185,12 +184,12 @@ class TuningMixin(ABC):
             - estimated_memory_mb: Estimated memory usage
         """
         system_info = AutoTuner.analyze_system()
-        
+
         if interactive:
             workload_profile = AutoTuner.interview_user_cli()
         elif workload:
             # Convert dict to WorkloadProfile
-            from localvectordb.sqlite_tuning import WorkloadType, DurabilityLevel
+            from localvectordb.sqlite_tuning import DurabilityLevel, WorkloadType
             workload_profile = WorkloadProfile(
                 workload_type=WorkloadType(workload.get("workload_type", "balanced")),
                 document_size=workload.get("document_size", "medium"),
@@ -200,7 +199,7 @@ class TuningMixin(ABC):
             )
         else:
             # Use balanced defaults
-            from localvectordb.sqlite_tuning import WorkloadType, DurabilityLevel
+            from localvectordb.sqlite_tuning import DurabilityLevel, WorkloadType
             workload_profile = WorkloadProfile(
                 workload_type=WorkloadType.BALANCED,
                 document_size="medium",
@@ -208,9 +207,9 @@ class TuningMixin(ABC):
                 durability_level=DurabilityLevel.NORMAL,
                 memory_constraint="moderate"
             )
-        
+
         recommendation = AutoTuner.recommend_profile(system_info, workload_profile)
-        
+
         result = {
             "profile_name": recommendation.profile_name,
             "pragma_overrides": recommendation.pragma_overrides,
@@ -218,7 +217,7 @@ class TuningMixin(ABC):
             "estimated_memory_mb": recommendation.estimated_memory_mb,
             "current_settings": self.get_sqlite_tuning()
         }
-        
+
         if apply:
             self.set_sqlite_tuning(
                 recommendation.profile_name,
@@ -228,9 +227,9 @@ class TuningMixin(ABC):
             result["applied"] = True
         else:
             result["applied"] = False
-        
+
         return result
-    
+
     def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
         """
         Check if WAL file is large and checkpoint if needed.
@@ -252,14 +251,14 @@ class TuningMixin(ABC):
         return False
 
 
-class LocalTuningMixin(TuningMixin):
+class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
     """
     Local implementation of tuning mixin for LocalVectorDB.
     
     This class provides the concrete implementation of tuning operations
     for local SQLite databases.
     """
-    
+
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """Get current SQLite tuning configuration from local database."""
         # Access stored configuration
@@ -269,83 +268,82 @@ class LocalTuningMixin(TuningMixin):
             "pragmas": getattr(self, '_sqlite_pragmas', {})
         }
         return config
-    
+
     def set_sqlite_tuning(
-        self, 
-        profile: str, 
-        overrides: Optional[Dict[str, Any]] = None, 
+        self,
+        profile: str,
+        overrides: Optional[Dict[str, Any]] = None,
         persist: bool = True
     ) -> None:
         """Apply SQLite tuning profile to local database."""
         if profile not in PROFILES:
             raise ValueError(f"Unknown SQLite profile '{profile}'. Available: {list(PROFILES.keys())}")
-        
+
         # Get base profile pragmas
         base_pragmas = dict(PROFILES[profile].pragmas)
-        
+
         # Apply overrides
         if overrides:
             base_pragmas.update(overrides)
-        
+
         # Store configuration
         self._sqlite_profile = profile
         self._sqlite_pragma_overrides = overrides or {}
         self._sqlite_pragmas = base_pragmas
-        
+
         # Apply to existing connection pools
         if hasattr(self, 'connection_pool'):
             self.connection_pool._pragmas = self._sqlite_pragmas
-            
+
         if hasattr(self, 'async_connection_pool') and self.async_connection_pool:
             self.async_connection_pool._pragmas = self._sqlite_pragmas
-        
+
         # Persist to database config if requested
         if persist:
             self._save_sqlite_tuning()
-        
+
         logger.info(f"Applied SQLite profile '{profile}' with {len(overrides or {})} overrides")
-    
+
     def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
         """Run SQLite WAL checkpoint operation."""
         valid_modes = ["PASSIVE", "FULL", "RESTART", "TRUNCATE"]
         if mode.upper() not in valid_modes:
             raise ValueError(f"Invalid checkpoint mode '{mode}'. Valid modes: {valid_modes}")
-        
+
         with self.connection_pool.get_connection() as conn:
             conn.execute(f"PRAGMA wal_checkpoint({mode.upper()})")
             conn.commit()
-        
+
         logger.debug(f"SQLite WAL checkpoint completed with mode '{mode}'")
-    
+
     def sqlite_optimize(self) -> None:
         """Run SQLite PRAGMA optimize."""
         with self.connection_pool.get_connection() as conn:
             conn.execute("PRAGMA optimize")
             conn.commit()
-        
+
         logger.debug("SQLite PRAGMA optimize completed")
-    
+
     def sqlite_vacuum(self) -> None:
         """Run SQLite VACUUM operation."""
         with self.connection_pool.get_connection() as conn:
             conn.execute("VACUUM")
             conn.commit()
-        
+
         logger.info("SQLite VACUUM completed")
-    
+
     def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
         """Run incremental VACUUM operation."""
         with self.connection_pool.get_connection() as conn:
             conn.execute(f"PRAGMA incremental_vacuum({pages})")
             conn.commit()
-        
+
         logger.debug(f"SQLite incremental vacuum completed for {pages} pages")
-    
+
     def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
         """Check if WAL file is large and checkpoint if needed."""
-        import os
         from pathlib import Path
-        
+
         if hasattr(self, 'db_path') and not self.is_memory_only:
             wal_path = Path(str(self.db_path) + "-wal")
             try:
@@ -357,41 +355,41 @@ class LocalTuningMixin(TuningMixin):
                         return True
             except Exception as e:
                 logger.debug(f"Failed to check WAL size: {e}")
-        
+
         return False
-    
+
     def _save_sqlite_tuning(self) -> None:
         """Save SQLite tuning configuration to database."""
         if hasattr(self, 'connection_pool'):
             with self.connection_pool.get_connection() as conn:
                 conn.execute(
-                    'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', 
+                    'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
                     ('sqlite_profile', self._sqlite_profile)
                 )
                 conn.execute(
-                    'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', 
+                    'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
                     ('sqlite_pragma_overrides', json.dumps(self._sqlite_pragma_overrides))
                 )
                 conn.commit()
-    
+
     def _load_sqlite_tuning(self, config: Dict[str, str]) -> None:
         """Load SQLite tuning configuration from database config."""
         profile = config.get('sqlite_profile', 'balanced')
         overrides_json = config.get('sqlite_pragma_overrides', '{}')
-        
+
         try:
             overrides = json.loads(overrides_json) if overrides_json else {}
         except (json.JSONDecodeError, TypeError):
             overrides = {}
-        
+
         if profile in PROFILES:
             pragmas = dict(PROFILES[profile].pragmas)
             pragmas.update(overrides)
-            
+
             self._sqlite_profile = profile
             self._sqlite_pragma_overrides = overrides
             self._sqlite_pragmas = pragmas
-            
+
             logger.debug(f"Loaded SQLite tuning profile '{profile}' with {len(overrides)} overrides")
         else:
             logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")
@@ -399,60 +397,3 @@ class LocalTuningMixin(TuningMixin):
             self._sqlite_pragma_overrides = {}
             self._sqlite_pragmas = dict(PROFILES['balanced'].pragmas)
 
-
-class RemoteTuningMixin(TuningMixin):
-    """
-    Remote implementation of tuning mixin for RemoteVectorDB.
-    
-    This class provides the concrete implementation of tuning operations
-    for remote vector databases via HTTP API.
-    """
-    
-    def get_sqlite_tuning(self) -> Dict[str, Any]:
-        """Get current SQLite tuning configuration from remote server."""
-        response = self._make_request("GET", f"/api/database/{self.name}/tuning")
-        return response
-    
-    def set_sqlite_tuning(
-        self, 
-        profile: str, 
-        overrides: Optional[Dict[str, Any]] = None, 
-        persist: bool = True
-    ) -> None:
-        """Apply SQLite tuning profile via remote server."""
-        payload = {
-            "profile": profile,
-            "overrides": overrides or {},
-            "persist": persist
-        }
-        
-        self._make_request("PUT", f"/api/database/{self.name}/tuning", json=payload)
-    
-    def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
-        """Run SQLite WAL checkpoint via remote server."""
-        payload = {"mode": mode}
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/checkpoint", json=payload)
-    
-    def sqlite_optimize(self) -> None:
-        """Run SQLite PRAGMA optimize via remote server."""
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/optimize")
-    
-    def sqlite_vacuum(self) -> None:
-        """Run SQLite VACUUM via remote server."""
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/vacuum")
-    
-    def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
-        """Run incremental VACUUM via remote server."""
-        payload = {"pages": pages}
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/incremental_vacuum", json=payload)
-    
-    def analyze_system_resources(self) -> Dict[str, Any]:
-        """Analyze remote server system resources."""
-        response = self._make_request("GET", "/api/system/resources")
-        return response
-    
-    def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
-        """Check if remote WAL is large and checkpoint if needed."""
-        payload = {"threshold_mb": wal_mb_threshold}
-        response = self._make_request("POST", f"/api/database/{self.name}/maintenance/checkpoint_if_large", json=payload)
-        return response.get("checkpointed", False)

@@ -17,7 +17,7 @@ from functools import wraps
 from typing import Optional
 
 import flask
-from flask import current_app, g, has_app_context, has_request_context, request
+from flask import g, has_app_context, has_request_context, request
 
 
 def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:
@@ -228,7 +228,7 @@ class StructuredFormatter(logging.Formatter):
         if has_app_context():
             if hasattr(g, 'request_id'):
                 log_entry['request_id'] = g.request_id
-            
+
             if hasattr(g, 'api_key_hash'):
                 log_entry['api_key_hash'] = g.api_key_hash
 

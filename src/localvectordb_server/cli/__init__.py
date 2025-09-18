@@ -152,7 +152,7 @@ from localvectordb_server.cli._config import config_group
 from localvectordb_server.cli._db import db_group
 from localvectordb_server.cli._mcp import mcp_commands
 from localvectordb_server.cli._migration import migrate_group
-from localvectordb_server.cli._tuning import tuning_group, maintenance_group
+from localvectordb_server.cli._tuning import maintenance_group, tuning_group
 
 cli.add_command(serve)
 cli.add_command(create_vector_database)

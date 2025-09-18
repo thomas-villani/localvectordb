@@ -60,7 +60,7 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
     try:
         # Check if we should auto-prune expired keys
         auto_prune = (hasattr(current_app, 'config_obj') and
-                      getattr(current_app.config_obj.server, 'auto_prune_expired_keys', False))
+                      getattr(current_app.config_obj.server.security, 'auto_prune_expired_keys', False))
 
         is_valid, permission_level = key_manager.validate_key_with_permissions(
             token,
@@ -352,7 +352,7 @@ def _require_permission(required_permission: PermissionLevel):
             if not auth_required:
                 return f(*args, **kwargs)
 
-            auth_header_key = getattr(current_app.config_obj.server, 'api_key_header', 'Authorization') if hasattr(
+            auth_header_key = getattr(current_app.config_obj.server.security, 'api_key_header', 'Authorization') if hasattr(
                 current_app, 'config_obj') else 'Authorization'
 
             # Extract Authorization header

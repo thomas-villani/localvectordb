@@ -135,8 +135,8 @@ def get_nested_value(config: "Config", key_path: str) -> Any:
     # Handle server.security.* as server.*
     if len(parts) == 3 and section_name == 'server' and parts[1] == 'security':
         attr_name = parts[2]
-        if hasattr(section_obj, attr_name):
-            return getattr(section_obj, attr_name)
+        if hasattr(section_obj.security, attr_name):
+            return getattr(section_obj.security, attr_name)
         else:
             raise ValueError(f"Server setting '{attr_name}' not found")
 
@@ -176,12 +176,12 @@ def set_nested_value(config: "Config", key_path: str, value_str: str) -> None:
     # Handle server.security.* as server.*
     if len(parts) == 3 and section_name == 'server' and parts[1] == 'security':
         attr_name = parts[2]
-        if not hasattr(section_obj, attr_name):
+        if not hasattr(section_obj.security, attr_name):
             raise ValueError(f"Server setting '{attr_name}' not found")
 
-        current_value = getattr(section_obj, attr_name)
-        converted_value = _convert_string_to_type(value_str, type(current_value), section_obj, attr_name)
-        setattr(section_obj, attr_name, converted_value)
+        current_value = getattr(section_obj.security, attr_name)
+        converted_value = _convert_string_to_type(value_str, type(current_value), section_obj.security, attr_name)
+        setattr(section_obj.security, attr_name, converted_value)
         return
 
     # Handle database.metadata_schema.*
