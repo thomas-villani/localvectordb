@@ -411,7 +411,7 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
         """Ensure sync HTTP client is available for connection pooling"""
         if self._sync_client is None or self._sync_client.is_closed:
             self._sync_client = httpx.Client(
-                timeout=httpx.Timeout(self.request_timeout),
+                timeout=httpx.Timeout(self.request_timeout) if self.request_timeout else None,
                 limits=self._connection_pool_limits,
                 headers=self._get_headers()
             )
@@ -1970,7 +1970,7 @@ class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
         """Ensure HTTP client is available"""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.request_timeout),
+                timeout=httpx.Timeout(self.request_timeout) if self.request_timeout else None,
                 limits=self._connection_pool_limits,
                 headers=self._get_headers()
             )

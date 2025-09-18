@@ -14,6 +14,7 @@ This module provides factory functions that automatically choose between
 local and remote database implementations, with support for both sync and async variants.
 """
 import os.path
+import re
 from pathlib import Path
 from typing import Union
 from urllib.parse import parse_qs, urlparse
@@ -153,17 +154,34 @@ def VectorDB(
         return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)
 
 def _fix_types(item):
+    """
+    Safely convert string values to appropriate types for URI parameters.
+
+    This function uses strict regex validation to prevent corruption of
+    dates, negative numbers, and other formatted strings.
+
+    Parameters
+    ----------
+    item : Any
+        The item to convert. Lists are processed recursively.
+
+    Returns
+    -------
+    Any
+        The converted item with safe type coercion applied.
+    """
     if isinstance(item, list):
         return [_fix_types(i) for i in item]
+
     if isinstance(item, str):
-        if item.replace("-","").isdigit():
+        # Only convert purely numeric strings
+        if re.fullmatch(r'-?\d+', item):
             return int(item)
-        if item.replace(".", "").replace("-","").isdigit():
+        elif re.fullmatch(r'-?\d+\.\d+', item):
             return float(item)
-        if item.lower() == "false":
-            return False
-        if item.lower() == "true":
-            return True
+        elif item.lower() in ("true", "false"):
+            return item.lower() == "true"
+
     return item
 
 

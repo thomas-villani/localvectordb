@@ -28,8 +28,7 @@ class TestGetSystemVersion:
         from importlib.metadata import PackageNotFoundError
         mock_version.side_effect = PackageNotFoundError("Package not found")
 
-        with pytest.raises(PackageNotFoundError):
-            get_system_version()
+        assert get_system_version() == "dev"
 
     @patch('importlib.metadata.version')
     def test_get_version_different_versions(self, mock_version):

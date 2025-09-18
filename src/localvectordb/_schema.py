@@ -19,7 +19,7 @@ import aiosqlite
 
 from localvectordb._pools import ReadWriteLock
 from localvectordb.core import MetadataField, MetadataFieldType
-from localvectordb.database._utils import SyncDatabaseExecutor, AsyncDatabaseExecutor
+from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.versioning import DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
@@ -49,21 +49,21 @@ def validate_sql_identifier(identifier: str) -> None:
     """
     if not identifier or not isinstance(identifier, str):
         raise ValueError("SQL identifier must be a non-empty string")
-    
+
     identifier = identifier.strip()
     if not identifier:
         raise ValueError("SQL identifier cannot be whitespace-only")
-    
+
     if len(identifier) > 64:
         raise ValueError(f"SQL identifier too long (max 64 chars): '{identifier}'")
-    
+
     # Check for valid SQL identifier pattern: ^[A-Za-z_][A-Za-z0-9_]*$
     if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', identifier):
         raise ValueError(
             f"Invalid SQL identifier '{identifier}'. Must start with letter or underscore, "
             f"and contain only letters, digits, and underscores."
         )
-    
+
     # Check against SQLite reserved words (common subset)
     reserved_words = {
         'abort', 'action', 'add', 'after', 'all', 'alter', 'analyze', 'and', 'as', 'asc',
@@ -82,7 +82,7 @@ def validate_sql_identifier(identifier: str) -> None:
         'transaction', 'trigger', 'union', 'unique', 'update', 'using', 'vacuum', 'values',
         'view', 'virtual', 'when', 'where', 'with', 'without'
     }
-    
+
     if identifier.lower() in reserved_words:
         raise ValueError(f"SQL identifier '{identifier}' is a reserved word")
 
@@ -594,7 +594,7 @@ class DatabaseSchema:
         """
         if field_def.default_value is None:
             return ""
-        
+
         if field_def.type in (MetadataFieldType.TEXT, MetadataFieldType.DATE, MetadataFieldType.JSON):
             # Skip DEFAULT in DDL for TEXT/DATE/JSON types to avoid SQL injection
             # These will be populated via _populate_field_defaults() instead
@@ -683,7 +683,7 @@ class DatabaseSchema:
                 validate_sql_identifier(field_name)
             except ValueError as e:
                 raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
-            
+
             if field_name.lower() in self.BASE_COLUMNS:
                 raise ValueError(
                     f"Metadata field name '{field_name}' conflicts with reserved column name. "
@@ -738,7 +738,7 @@ class DatabaseSchema:
                 validate_sql_identifier(field_name)
             except ValueError as e:
                 raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
-            
+
             if field_name.lower() in self.BASE_COLUMNS:
                 raise ValueError(
                     f"Metadata field name '{field_name}' conflicts with reserved column name. "
@@ -862,7 +862,7 @@ class DatabaseSchema:
         # Business logic validation
         self._validate_metadata_field_name(field_name)
         sqlite_type = self._get_sqlite_type_mapping(field_def)
-        
+
         # Check if column already exists
         cursor = conn.execute("PRAGMA table_info(documents)")
         existing_columns = {row[1] for row in cursor.fetchall()}
@@ -874,13 +874,13 @@ class DatabaseSchema:
             conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
-            
+
             # Populate default values if specified (especially for TEXT/DATE/JSON types that skip DDL defaults)
             if field_def.default_value is not None:
                 populated_info = self._populate_field_defaults(conn, field_name, field_def)
                 if populated_info['rows_updated'] > 0:
                     logger.info(f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
-            
+
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
@@ -889,7 +889,7 @@ class DatabaseSchema:
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
                 fts_table_name = f'fts_{field_name}'
-                
+
                 # Check tokenizer availability and build FTS SQL
                 if self._check_trigram_tokenizer_availability(conn):
                     tokenizer_clause = "tokenize='trigram'"
@@ -1059,6 +1059,12 @@ class DatabaseSchema:
                 try:
                     # Validate new schema field names and required fields
                     for field_name, field_def in new_schema.items():
+                        # Validate SQL identifier safety
+                        try:
+                            validate_sql_identifier(field_name)
+                        except ValueError as e:
+                            raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
+
                         if field_name.lower() in self.BASE_COLUMNS:
                             raise ValueError(
                                 f"Metadata field name '{field_name}' conflicts with reserved column name. "
@@ -1554,7 +1560,7 @@ class DatabaseSchema:
         # Business logic validation using shared helpers
         self._validate_metadata_field_name(field_name)
         sqlite_type = self._get_sqlite_type_mapping(field_def)
-        
+
         # Check if column already exists
         cursor = await conn.execute("PRAGMA table_info(documents)")
         existing_columns = {row[1] for row in await cursor.fetchall()}
@@ -1566,13 +1572,13 @@ class DatabaseSchema:
             await conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
-            
+
             # Populate default values if specified (especially for TEXT/DATE/JSON types that skip DDL defaults)
             if field_def.default_value is not None:
                 populated_info = await self._populate_field_defaults_async(conn, field_name, field_def)
                 if populated_info and populated_info['rows_updated'] > 0:
                     logger.info(f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
-            
+
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
@@ -1581,7 +1587,7 @@ class DatabaseSchema:
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
                 fts_table_name = f'fts_{field_name}'
-                
+
                 # Check tokenizer availability and build FTS SQL
                 if await self._check_trigram_tokenizer_availability_async(conn):
                     tokenizer_clause = "tokenize='trigram'"

@@ -14,7 +14,10 @@ import re
 
 
 def get_system_version() -> str:
-    system_version = importlib.metadata.version("localvectordb")
+    try:
+        system_version = importlib.metadata.version("localvectordb")
+    except importlib.metadata.PackageNotFoundError:
+        system_version = "dev"
     return system_version
 
 
