@@ -13,7 +13,7 @@ import sqlite3
 import threading
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any, AsyncGenerator, Generator, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
 import aiosqlite
 from aiosqlite import Connection
@@ -53,12 +53,13 @@ class PooledConnection:
 class ConnectionPool:
     """Thread-safe connection pool for SQLite with proper context manager support"""
 
-    def __init__(self, db_path: Union[str, Path], max_connections: int = 10):
+    def __init__(self, db_path: Union[str, Path], max_connections: int = 10, pragmas: Optional[Dict[str, Any]] = None):
         self.db_path = Path(db_path)
         self.max_connections = max_connections
         self._pool: List[sqlite3.Connection] = []
         self._lock = threading.RLock()
         self._created_connections = 0
+        self._pragmas = pragmas or {}
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with proper settings"""
@@ -72,6 +73,15 @@ class ConnectionPool:
             conn.execute("PRAGMA foreign_keys = ON")
 
         conn.row_factory = sqlite3.Row
+        
+        # Apply tuning pragmas if provided
+        if self._pragmas:
+            try:
+                from localvectordb.sqlite_tuning import apply_pragmas
+                apply_pragmas(conn, self._pragmas)
+            except Exception:
+                pass  # Best-effort pragma application
+        
         self._created_connections += 1
         return conn
 
@@ -167,7 +177,7 @@ class AsyncConnectionPool:
     waiting when pool is exhausted instead of immediately failing.
     """
 
-    def __init__(self, db_path: Union[str, Path], max_connections: int = 10, wait_timeout: float = 30.0):
+    def __init__(self, db_path: Union[str, Path], max_connections: int = 10, wait_timeout: float = 30.0, pragmas: Optional[Dict[str, Any]] = None):
         self.db_path = Path(db_path)
         self.max_connections = max_connections
         self.wait_timeout = wait_timeout
@@ -175,6 +185,7 @@ class AsyncConnectionPool:
         self._lock = asyncio.Lock()
         self._condition = asyncio.Condition(self._lock)
         self._created_connections = 0
+        self._pragmas = pragmas or {}
 
     async def _create_connection(self) -> aiosqlite.Connection:
         """Create a new async SQLite connection with proper settings"""
@@ -190,6 +201,15 @@ class AsyncConnectionPool:
 
         # Enable row factory for dict-like access
         conn.row_factory = aiosqlite.Row
+        
+        # Apply tuning pragmas if provided
+        if self._pragmas:
+            try:
+                from localvectordb.sqlite_tuning import apply_pragmas_async
+                await apply_pragmas_async(conn, self._pragmas)
+            except Exception:
+                pass  # Best-effort pragma application
+        
         self._created_connections += 1
         return conn
 

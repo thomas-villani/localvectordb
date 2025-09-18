@@ -304,7 +304,8 @@ class BackupManager:
             metadata={
                 'original_db_path': str(self.database_path),
                 'original_faiss_path': str(self.faiss_index_path),
-                'faiss_included': self.config.include_faiss_index and self.faiss_index_path.exists()
+                'faiss_included': self.config.include_faiss_index and self.faiss_index_path.exists(),
+                'sqlite_pragmas': self._get_current_pragma_settings()
             }
         )
 
@@ -447,7 +448,7 @@ class BackupManager:
                 raise
 
     def _backup_sqlite_database(self, temp_dir: Path) -> None:
-        """Backup SQLite database using SQLite's backup API."""
+        """Backup SQLite database using SQLite's backup API with optimization pragmas."""
         backup_db_path = temp_dir / f"{self.database_name}.sqlite"
 
         # Use SQLite's backup API for consistent backup
@@ -455,13 +456,111 @@ class BackupManager:
         backup_conn = sqlite3.connect(backup_db_path)
 
         try:
+            # Store original pragmas from source
+            original_pragmas = {}
+            pragma_queries = [
+                "PRAGMA synchronous", "PRAGMA journal_mode", "PRAGMA cache_size",
+                "PRAGMA wal_autocheckpoint", "PRAGMA mmap_size"
+            ]
+            
+            for pragma_query in pragma_queries:
+                try:
+                    result = source_conn.execute(pragma_query).fetchone()
+                    if result:
+                        key = pragma_query.split()[-1]  # Extract pragma name
+                        original_pragmas[key] = result[0]
+                except sqlite3.Error:
+                    pass  # Ignore if pragma not supported
+            
+            # Before backup, ensure WAL is checkpointed
+            try:
+                source_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                logger.debug("WAL checkpointed before backup")
+            except sqlite3.Error as e:
+                logger.debug(f"WAL checkpoint failed: {e}")
+            
+            # Apply backup-optimized pragmas temporarily
+            backup_pragmas = {
+                "synchronous": "OFF",        # Faster backup (temporary)
+                "cache_size": -131072,       # 128MB cache for backup
+            }
+            
+            for key, value in backup_pragmas.items():
+                try:
+                    source_conn.execute(f"PRAGMA {key} = {value}")
+                except sqlite3.Error:
+                    pass  # Best effort
+            
+            # Perform the backup
             with source_conn:
                 source_conn.backup(backup_conn)
+                
             logger.debug(f"SQLite database backed up to: {backup_db_path}")
+            
+            # Restore original pragmas
+            for key, value in original_pragmas.items():
+                try:
+                    if isinstance(value, str):
+                        source_conn.execute(f"PRAGMA {key} = '{value}'")
+                    else:
+                        source_conn.execute(f"PRAGMA {key} = {value}")
+                except sqlite3.Error:
+                    pass  # Best effort restoration
 
         finally:
             source_conn.close()
             backup_conn.close()
+
+    def _get_current_pragma_settings(self) -> Dict[str, Any]:
+        """Get current pragma settings from the database for backup metadata."""
+        pragma_settings = {}
+        
+        try:
+            conn = sqlite3.connect(self.database_path)
+            
+            # Query common pragma settings
+            pragma_queries = [
+                ("synchronous", "PRAGMA synchronous"),
+                ("journal_mode", "PRAGMA journal_mode"),
+                ("cache_size", "PRAGMA cache_size"),
+                ("wal_autocheckpoint", "PRAGMA wal_autocheckpoint"),
+                ("mmap_size", "PRAGMA mmap_size"),
+                ("temp_store", "PRAGMA temp_store"),
+                ("foreign_keys", "PRAGMA foreign_keys"),
+                ("busy_timeout", "PRAGMA busy_timeout")
+            ]
+            
+            for pragma_name, pragma_query in pragma_queries:
+                try:
+                    result = conn.execute(pragma_query).fetchone()
+                    if result:
+                        pragma_settings[pragma_name] = result[0]
+                except sqlite3.Error:
+                    pass  # Skip unsupported pragmas
+            
+            # Also try to get profile and overrides from config table if it exists
+            try:
+                config_result = conn.execute(
+                    "SELECT key, value FROM config WHERE key IN ('sqlite_profile', 'sqlite_pragma_overrides')"
+                ).fetchall()
+                
+                for key, value in config_result:
+                    if key == 'sqlite_profile':
+                        pragma_settings['profile'] = value
+                    elif key == 'sqlite_pragma_overrides':
+                        try:
+                            pragma_settings['overrides'] = json.loads(value)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+            except sqlite3.Error:
+                pass  # Config table may not exist
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.debug(f"Failed to get pragma settings: {e}")
+        
+        return pragma_settings
 
     def _backup_faiss_index(self, temp_dir: Path) -> None:
         """Backup FAISS index file."""

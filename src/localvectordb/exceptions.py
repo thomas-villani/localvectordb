@@ -46,5 +46,11 @@ class OllamaNotFoundError(EmbeddingError):
 class ConfigurationError(BaseLocalVectorDBException, RuntimeError):
     pass
 
+
+class ValidationError(BaseLocalVectorDBException, ValueError):
+    """Raised when there's a validation error in input data"""
+    pass
+
+
 class ConnectionPoolError(BaseLocalVectorDBException):
     pass

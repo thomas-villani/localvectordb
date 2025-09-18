@@ -511,6 +511,9 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             enable_gpu: bool = False,
             enable_fts: bool = True,
             connection_pool_size: int = 10,
+            # SQLite tuning settings
+            sqlite_profile: str = "balanced",
+            sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
             # Other
             create_if_not_exists: bool = True,
     ):

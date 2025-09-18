@@ -128,14 +128,14 @@ def cli(ctx, config, db_folder):
     config_path = find_config_file(config)
 
     if not config_path:
-        if ctx.invoked_subcommand not in ("config", "mcp"):
+        if ctx.invoked_subcommand not in ("config", "mcp", "tuning", "maintenance"):
             click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
             raise click.exceptions.Exit(1)
         cfg = config_path = api_key_path = db_folder = None
     else:
         from localvectordb_server.config import load_config
         cfg = load_config(config_path)
-        api_key_path = cfg.server.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
+        api_key_path = cfg.server.security.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
 
         if not db_folder:
             db_folder = cfg.database.root_dir
@@ -152,6 +152,7 @@ from localvectordb_server.cli._config import config_group
 from localvectordb_server.cli._db import db_group
 from localvectordb_server.cli._mcp import mcp_commands
 from localvectordb_server.cli._migration import migrate_group
+from localvectordb_server.cli._tuning import tuning_group, maintenance_group
 
 cli.add_command(serve)
 cli.add_command(create_vector_database)
@@ -163,6 +164,8 @@ cli.add_command(auth)
 cli.add_command(backup_group)
 cli.add_command(migrate_group)
 cli.add_command(mcp_commands)
+cli.add_command(tuning_group)
+cli.add_command(maintenance_group)
 
 __all__ = ["cli"]
 

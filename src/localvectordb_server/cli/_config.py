@@ -518,10 +518,9 @@ def _interactive_config_init(format, output):
 
     if click.confirm("Enable CORS for web applications?", default=True):
         cors_type = click.prompt(
-            "CORS configuration",
+            "CORS configuration (all=allow all origins (*), localhost=allow localhost only, custom=specify origins)",
             type=click.Choice(['all', 'localhost', 'custom'], case_sensitive=False),
             default='localhost',
-            help_text="all=allow all origins (*), localhost=allow localhost only, custom=specify origins"
         )
 
         if cors_type == 'all':
@@ -543,14 +542,15 @@ def _interactive_config_init(format, output):
     click.echo()
     click.secho("8. Default Embedding Provider", fg="cyan", bold=True)
 
-    # TODO: this should be dynamic from the registry
+    from localvectordb.embeddings import EmbeddingRegistry
     provider = click.prompt(
         "Embedding provider",
-        type=click.Choice(['ollama', 'openai'], case_sensitive=False),
+        type=click.Choice(EmbeddingRegistry.list(), case_sensitive=False),
         default='ollama'
     )
     config.embedding.provider = provider
 
+    # TODO: update dynamically
     if provider == 'ollama':
         model = click.prompt("Ollama model", default="nomic-embed-text")
         config.embedding.model = model

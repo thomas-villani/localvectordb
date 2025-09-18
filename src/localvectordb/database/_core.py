@@ -25,6 +25,7 @@ CRUD) is mixed in via other modules to compose the final LocalVectorDB class.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 import threading
@@ -66,7 +67,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
             faiss_index_hnsw_flat_neighbors: Optional[int] = None, faiss_index_lsh_bits: Optional[int] = None,
             enable_gpu: bool = False, enable_fts: bool = True, connection_pool_size: int = 10,
-            create_if_not_exists: bool = True
+            create_if_not_exists: bool = True, sqlite_profile: str = "balanced",
+            sqlite_pragma_overrides: Optional[Dict[str, Any]] = None
     ):
 
         super().__init__(name, base_path, metadata_schema=metadata_schema, doc_id_pattern=doc_id_pattern,
@@ -75,7 +77,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                          chunk_overlap=chunk_overlap, batch_size=batch_size, faiss_index_type=faiss_index_type,
                          faiss_index_hnsw_flat_neighbors=faiss_index_hnsw_flat_neighbors,
                          faiss_index_lsh_bits=faiss_index_lsh_bits, enable_gpu=enable_gpu, enable_fts=enable_fts,
-                         connection_pool_size=connection_pool_size, create_if_not_exists=create_if_not_exists)
+                         connection_pool_size=connection_pool_size, create_if_not_exists=create_if_not_exists,
+                         sqlite_profile=sqlite_profile, sqlite_pragma_overrides=sqlite_pragma_overrides)
         self.name = name
         self._original_memory_request = (name == ":memory:" or base_path == ":memory:")
 
@@ -122,9 +125,20 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._read_write_lock = ReadWriteLock()
         self._faiss_lock = ReadWriteLock()  # ReadWrite lock for FAISS operations to allow concurrent reads
 
-        # Database schema + pools
+        # Initialize SQLite tuning configuration
+        from localvectordb.sqlite_tuning import PROFILES
+        profile = PROFILES.get(sqlite_profile, PROFILES["balanced"])
+        pragmas = dict(profile.pragmas)
+        if sqlite_pragma_overrides:
+            pragmas.update(sqlite_pragma_overrides)
+
+        self._sqlite_profile = sqlite_profile
+        self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
+        self._sqlite_pragmas = pragmas
+
+        # Database schema + pools (with tuning pragmas)
         self.schema = DatabaseSchema(self.db_path, self._read_write_lock)
-        self.connection_pool = ConnectionPool(self.db_path, connection_pool_size)
+        self.connection_pool = ConnectionPool(self.db_path, connection_pool_size, pragmas=self._sqlite_pragmas)
         self.async_connection_pool: Optional[AsyncConnectionPool] = None
         self.async_max_connections = connection_pool_size or 10
         self._async_schema_initialized = False
@@ -149,6 +163,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     self._chunk_overlap = int(loaded_config.get('chunk_overlap', self._chunk_overlap))
                     self._batch_size = int(loaded_config.get('batch_size', self._batch_size))
                     self.doc_id_pattern = loaded_config.get('doc_id_pattern', self.doc_id_pattern)
+
+                    # Load SQLite tuning configuration
+                    self._load_sqlite_tuning(loaded_config)
+                    # Update connection pool with loaded pragma settings
+                    self.connection_pool._pragmas = self._sqlite_pragmas
 
                     # Re-create chunker with loaded configuration
                     self.chunker = ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size, self._chunk_overlap)
@@ -178,8 +197,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._async_id_lock: Optional[asyncio.Lock] = asyncio.Lock()
         self._sync_id_lock: Optional[threading.Lock] = threading.Lock()
 
-        # Save config
+        # Save config including SQLite tuning
         self._save_config()
+        self._save_sqlite_tuning()
 
     # Context managers
     def __enter__(self) -> "LocalVectorDBCore":
@@ -801,7 +821,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     # Async helpers
     def _ensure_async_pool(self) -> None:
         if self.async_connection_pool is None:
-            self.async_connection_pool = AsyncConnectionPool(self.db_path, max_connections=self.async_max_connections)
+            self.async_connection_pool = AsyncConnectionPool(
+                self.db_path, 
+                max_connections=self.async_max_connections,
+                pragmas=self._sqlite_pragmas
+            )
 
     async def _ensure_async_schema_initialized(self) -> None:
         if not self.is_memory_only or self._async_schema_initialized:
@@ -842,3 +866,44 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close_async()
+
+    # SQLite Tuning Methods
+    def _save_sqlite_tuning(self) -> None:
+        """Save SQLite tuning configuration to database."""
+        with self.connection_pool.get_connection() as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', 
+                ('sqlite_profile', self._sqlite_profile)
+            )
+            conn.execute(
+                'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', 
+                ('sqlite_pragma_overrides', json.dumps(self._sqlite_pragma_overrides))
+            )
+            conn.commit()
+
+    def _load_sqlite_tuning(self, config: Dict[str, str]) -> None:
+        """Load SQLite tuning configuration from database config."""
+        import json
+        profile = config.get('sqlite_profile', 'balanced')
+        overrides_json = config.get('sqlite_pragma_overrides', '{}')
+        
+        try:
+            overrides = json.loads(overrides_json) if overrides_json else {}
+        except (json.JSONDecodeError, TypeError):
+            overrides = {}
+        
+        from localvectordb.sqlite_tuning import PROFILES
+        if profile in PROFILES:
+            pragmas = dict(PROFILES[profile].pragmas)
+            pragmas.update(overrides)
+            
+            self._sqlite_profile = profile
+            self._sqlite_pragma_overrides = overrides
+            self._sqlite_pragmas = pragmas
+            
+            logger.debug(f"Loaded SQLite tuning profile '{profile}' with {len(overrides)} overrides")
+        else:
+            logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")
+            self._sqlite_profile = 'balanced'
+            self._sqlite_pragma_overrides = {}
+            self._sqlite_pragmas = dict(PROFILES['balanced'].pragmas)

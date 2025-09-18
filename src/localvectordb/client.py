@@ -268,7 +268,10 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
             return embeddings
 
 
-class RemoteVectorDB(BaseVectorDB):
+from localvectordb.database._tuning import RemoteTuningMixin
+
+
+class RemoteVectorDB(RemoteTuningMixin, BaseVectorDB):
     """Client for interacting with a LocalVectorDB server.
 
     This client provides the same interface as LocalVectorDB but connects to a remote server via HTTP.
@@ -334,6 +337,8 @@ class RemoteVectorDB(BaseVectorDB):
             chunk_overlap: int = 1,
             enable_gpu: bool = False,
             enable_fts: bool = True,
+            sqlite_profile: str = "balanced",
+            sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
             request_timeout: int = None,
             authorization_header: str = "Authorization",
             max_retries: int = 3,
@@ -370,6 +375,8 @@ class RemoteVectorDB(BaseVectorDB):
         self._chunk_overlap = chunk_overlap
         self._enable_gpu = enable_gpu
         self._enable_fts = enable_fts
+        self._sqlite_profile = sqlite_profile
+        self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
         self._authorization_header = authorization_header
 
         self._last_ping_timestamp = 0
@@ -624,7 +631,9 @@ class RemoteVectorDB(BaseVectorDB):
             "chunk_size": self._chunk_size,
             "chunk_overlap": self._chunk_overlap,
             "enable_gpu": self._enable_gpu,
-            "enable_fts": self._enable_fts
+            "enable_fts": self._enable_fts,
+            "sqlite_profile": self._sqlite_profile,
+            "sqlite_pragma_overrides": self._sqlite_pragma_overrides
         }
 
         response = self._make_request_with_retry("POST", url, json=payload)
