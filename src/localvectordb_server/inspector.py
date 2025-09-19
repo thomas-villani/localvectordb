@@ -42,7 +42,7 @@ def inspector_enabled():
     config = getattr(current_app, 'config_obj', None)
     if config and hasattr(config.server, 'inspector_enabled'):
         return config.server.inspector_enabled
-    # Default to enabled if not configured
+    # Default to disabled if not configured
     return False
 
 
@@ -64,7 +64,7 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
             config = getattr(current_app, 'config_obj', None)
             if config and config.server.security.require_api_key:
                 # For web interface, check session or require API key parameter
-                api_key = session.get('inspector_api_key') or request.args.get('api_key')
+                api_key = request.args.get('api_key')
                 if not api_key:
                     return redirect(url_for('inspector.login'))
 
@@ -85,8 +85,6 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                         # Store key_id and permission level in session (NOT the raw key)
                         session['inspector_key_id'] = key_id
                         session['inspector_permission_level'] = permission_level.value
-                        # Temporarily store api_key for backward compat, will be removed
-                        session['inspector_api_key'] = api_key
                     else:
                         # Fall back to simple validation if new method not available
                         if not validate_api_key(api_key):

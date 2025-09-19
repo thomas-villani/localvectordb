@@ -1843,7 +1843,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url("/api/v1/databases")
         response = self._make_request_with_retry("GET", url)
-        databases = response.json().get("databases", [])
+        data = self._handle_response(response)
+        databases = data.get("databases", [])
 
         self._last_ping_status = self.name in databases
         self._last_ping_timestamp = now
@@ -3025,8 +3026,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     ## Tuning
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """Get current SQLite tuning configuration from remote server."""
-        response = self._make_request("GET", f"/api/database/{self.name}/tuning")
-        return response
+        response = self._make_request_with_retry("GET", f"/api/v1/{self.name}/tuning")
+        return self._handle_response(response)
 
     def set_sqlite_tuning(
         self,
@@ -3041,33 +3042,39 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "persist": persist
         }
 
-        self._make_request("PUT", f"/api/database/{self.name}/tuning", json=payload)
+        response = self._make_request_with_retry("PUT", f"/api/v1/{self.name}/tuning", json=payload)
+        self._handle_response(response)
 
     def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
         """Run SQLite WAL checkpoint via remote server."""
         payload = {"mode": mode}
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/checkpoint", json=payload)
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/checkpoint", json=payload)
+        self._handle_response(response)
 
     def sqlite_optimize(self) -> None:
         """Run SQLite PRAGMA optimize via remote server."""
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/optimize")
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/optimize")
+        self._handle_response(response)
 
     def sqlite_vacuum(self) -> None:
         """Run SQLite VACUUM via remote server."""
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/vacuum")
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/vacuum")
+        self._handle_response(response)
 
     def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
         """Run incremental VACUUM via remote server."""
         payload = {"pages": pages}
-        self._make_request("POST", f"/api/database/{self.name}/maintenance/incremental_vacuum", json=payload)
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/incremental_vacuum", json=payload)
+        self._handle_response(response)
 
     def analyze_system_resources(self) -> Dict[str, Any]:
         """Analyze remote server system resources."""
-        response = self._make_request("GET", "/api/system/resources")
-        return response
+        response = self._make_request_with_retry("GET", "/api/system/resources")
+        return self._handle_response(response)
 
     def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
         """Check if remote WAL is large and checkpoint if needed."""
         payload = {"threshold_mb": wal_mb_threshold}
-        response = self._make_request("POST", f"/api/database/{self.name}/maintenance/checkpoint_if_large", json=payload)
-        return response.get("checkpointed", False)
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/checkpoint_if_large", json=payload)
+        data = self._handle_response(response)
+        return data.get("checkpointed", False)

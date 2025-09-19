@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
-from cachelib import DynamoDbCache, FileSystemCache, MemcachedCache, MongoDbCache, RedisCache, SimpleCache
+from cachelib import DynamoDbCache, FileSystemCache, MemcachedCache, MongoDbCache, RedisCache, SimpleCache, UWSGICache
 
 from localvectordb.core import MetadataFieldType
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
@@ -491,7 +491,7 @@ class DatabaseManager:
         elif registry_type == "MemcachedCache":
             cache_instance = MemcachedCache(**registry_config_kwargs)
         elif registry_type == "UWSGICache":
-            cache_instance = MemcachedCache(**registry_config_kwargs)
+            cache_instance = UWSGICache(**registry_config_kwargs)
         elif registry_type == "DynamoDbCache":
             cache_instance = DynamoDbCache(**registry_config_kwargs)
         elif registry_type == "MongoDbCache":

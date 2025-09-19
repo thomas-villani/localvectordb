@@ -391,6 +391,7 @@ class ExtractorRegistry:
 
         return formats
 
+    # TODO: not called anywhere, still needed?
     @classmethod
     def _load_builtin_extractors(cls):
         """Load built-in extractors."""

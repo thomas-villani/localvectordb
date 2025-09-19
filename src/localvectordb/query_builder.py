@@ -655,8 +655,44 @@ class QueryBuilder:
         return self.rerank("diversity", field=field, weight=weight)
 
     # Debug and validation methods
-    def explain(self, detailed: bool = False) -> "QueryBuilder":
-        """Enable query explanation to understand execution plan and performance."""
+    def explain(self, detailed: bool = False, return_plan: bool = False) -> Union["QueryBuilder", Dict[str, Any]]:
+        """
+        Enable query explanation or return execution plan directly.
+
+        Parameters
+        ----------
+        detailed : bool, optional
+            If True, includes additional details in explanation/plan
+        return_plan : bool, optional
+            If True, returns the execution plan dict instead of QueryBuilder.
+            If False (default), returns QueryBuilder with explanation enabled.
+
+        Returns
+        -------
+        Union[QueryBuilder, Dict[str, Any]]
+            If return_plan=False: QueryBuilder with explanation enabled
+            If return_plan=True: Execution plan dictionary
+
+        Examples
+        --------
+        Traditional usage (returns QueryBuilder with explain enabled)::
+
+            results = (db.query_builder()
+                .search("machine learning")
+                .explain(detailed=True)
+                .execute())
+
+        New usage (returns execution plan directly)::
+
+            plan = (db.query_builder()
+                .search("machine learning")
+                .explain(detailed=True, return_plan=True))
+            print(f"Query will execute: {plan['steps']}")
+        """
+        if return_plan:
+            return self.get_execution_plan(detailed=detailed)
+
+        # Traditional behavior: return QueryBuilder with explain enabled
         builder = self.clone()
         builder._explain = True
         return builder
@@ -723,15 +759,49 @@ class QueryBuilder:
         }
 
     # Execution methods
-    def execute(self) -> List[QueryResult]:
-        """Execute the query and return results."""
-        executor = QueryExecutor(self)
-        return executor.execute()
+    def execute(self, *, streaming: bool = False, batch_size: int = 100) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:
+        """
+        Execute the query and return results.
 
-    async def execute_async(self) -> List[QueryResult]:
-        """Execute the query asynchronously with native async support."""
-        executor = AsyncQueryExecutor(self)
-        return await executor.execute()
+        Parameters
+        ----------
+        streaming : bool, default = False
+            If True, return an iterator that yields batches of results instead of all results at once
+        batch_size : int, default = 100
+            Size of each batch when streaming is enabled
+
+        Returns
+        -------
+        Union[List[QueryResult], Iterator[List[QueryResult]]]
+            Query results. Returns List when streaming=False, Iterator[List] when streaming=True
+        """
+        if streaming:
+            return self.stream(batch_size)
+        else:
+            executor = QueryExecutor(self)
+            return executor.execute()
+
+    async def execute_async(self, *, streaming: bool = False, batch_size: int = 100) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:
+        """
+        Execute the query asynchronously with native async support.
+
+        Parameters
+        ----------
+        streaming : bool, default = False
+            If True, return an iterator that yields batches of results instead of all results at once
+        batch_size : int, default = 100
+            Size of each batch when streaming is enabled
+
+        Returns
+        -------
+        Union[List[QueryResult], Iterator[List[QueryResult]]]
+            Query results. Returns List when streaming=False, Iterator[List] when streaming=True
+        """
+        if streaming:
+            return self.stream_async(batch_size)
+        else:
+            executor = AsyncQueryExecutor(self)
+            return await executor.execute()
 
     def stream(self, batch_size: int = 100) -> Iterator[List[QueryResult]]:
         """Stream results in batches."""
@@ -753,6 +823,89 @@ class QueryBuilder:
         """Get count of matching results asynchronously."""
         executor = AsyncQueryExecutor(self)
         return await executor.count()
+
+    def get_execution_plan(self, detailed: bool = False) -> Dict[str, Any]:
+        """
+        Get the execution plan for this query without executing it.
+
+        This method allows you to preview how the query will be executed,
+        including the steps, estimated cost, and optimizations that will be applied.
+
+        Parameters
+        ----------
+        detailed : bool, optional
+            If True, includes additional details like field usage and optimization hints
+
+        Returns
+        -------
+        Dict[str, Any]
+            Execution plan containing:
+            - steps: List of execution steps
+            - estimated_cost: Relative cost estimate
+            - query_type: Type of query (search, filter, hybrid)
+            - optimizations: List of applied optimizations
+            - details: Additional details if detailed=True
+
+        Examples
+        --------
+        >>> plan = (db.query_builder()
+        ...     .search("machine learning")
+        ...     .filter("year", gte=2020)
+        ...     .get_execution_plan())
+        >>> print(f"Query type: {plan['query_type']}")
+        >>> print(f"Steps: {plan['steps']}")
+        """
+        executor = QueryExecutor(self)
+        plan = executor._generate_execution_plan()
+
+        if detailed:
+            plan["details"] = {
+                "search_clauses": len(self._search_clauses),
+                "exact_filters": len(self._exact_filters),
+                "semantic_filters": len(self._semantic_filters),
+                "group_by_fields": self._group_by,
+                "aggregations": [{"field": agg.field, "function": agg.function} for agg in self._aggregations],
+                "order_by": self._order_by,
+                "limit": self._limit,
+                "offset": self._offset,
+                "return_type": self._return_type,
+                "vector_weight": self._vector_weight
+            }
+
+        return plan
+
+    async def get_execution_plan_async(self, detailed: bool = False) -> Dict[str, Any]:
+        """
+        Get the execution plan for this query without executing it (async version).
+
+        Parameters
+        ----------
+        detailed : bool, optional
+            If True, includes additional details like field usage and optimization hints
+
+        Returns
+        -------
+        Dict[str, Any]
+            Execution plan with same structure as get_execution_plan()
+        """
+        executor = AsyncQueryExecutor(self)
+        plan = await executor._generate_execution_plan()
+
+        if detailed:
+            plan["details"] = {
+                "search_clauses": len(self._search_clauses),
+                "exact_filters": len(self._exact_filters),
+                "semantic_filters": len(self._semantic_filters),
+                "group_by_fields": self._group_by,
+                "aggregations": [{"field": agg.field, "function": agg.function} for agg in self._aggregations],
+                "order_by": self._order_by,
+                "limit": self._limit,
+                "offset": self._offset,
+                "return_type": self._return_type,
+                "vector_weight": self._vector_weight
+            }
+
+        return plan
 
 
 class QueryExecutor:

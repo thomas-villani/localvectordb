@@ -33,7 +33,7 @@ from localvectordb.extractors import get_extractor_registry, get_supported_forma
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._cache import cache
-from localvectordb_server.checkdeps import check_ollama_service
+from localvectordb_server.utils.checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
     APIError,
     ValidationError,
@@ -752,7 +752,7 @@ def count_documents(db_name):
                                 has_filters=filters is not None,
                                 filter_complexity=len(str(filters)) if filters else 0)
 
-            count = db.count(filters)
+            count = db.count(where=filters)
 
             db_logger.log_query("count_documents_success",
                                 database_name=db_name,
@@ -1573,7 +1573,6 @@ def upload_files(db_name):
                 )
 
         # Get form parameters
-        extract_text = True # request.form.get('extract_text', 'true').lower() == 'true'
         default_batch_size = current_app.config_obj.embedding.batch_size if hasattr(current_app, 'config_obj') else 100
         batch_size = int(request.form.get('batch_size', default_batch_size))
         mode = request.form.get('mode', 'upsert')  # Default to upsert for backward compatibility
@@ -1753,7 +1752,7 @@ def upload_files(db_name):
             }
 
             # Add extraction summary
-            if extract_text and FILE_EXTRACTION_AVAILABLE:
+            if FILE_EXTRACTION_AVAILABLE:
                 successful_extractions = sum(1 for r in extraction_results if r['extraction_success'])
                 response_data["extraction_summary"] = {
                     "total_files": len(extraction_results),
@@ -2007,7 +2006,7 @@ def get_metadata_schema_info(db_name):
 # SQLite Tuning Endpoints
 # =================================
 
-@api.route("/api/database/<db_name>/tuning", methods=["GET"])
+@api.route("/api/v1/<db_name>/tuning", methods=["GET"])
 @require_read_permission
 @handle_errors
 @log_performance("get_sqlite_tuning")
@@ -2034,7 +2033,7 @@ def get_sqlite_tuning(db_name):
             raise
 
 
-@api.route("/api/database/<db_name>/tuning", methods=["PUT"])
+@api.route("/api/v1/<db_name>/tuning", methods=["PUT"])
 @require_write_permission
 @handle_errors
 @log_performance("set_sqlite_tuning")
@@ -2086,7 +2085,7 @@ def set_sqlite_tuning(db_name):
             raise
 
 
-@api.route("/api/database/<db_name>/maintenance/checkpoint", methods=["POST"])
+@api.route("/api/v1/<db_name>/maintenance/checkpoint", methods=["POST"])
 @require_write_permission
 @handle_errors
 @log_performance("sqlite_checkpoint")
@@ -2130,7 +2129,7 @@ def sqlite_checkpoint(db_name):
             raise
 
 
-@api.route("/api/database/<db_name>/maintenance/optimize", methods=["POST"])
+@api.route("/api/v1/<db_name>/maintenance/optimize", methods=["POST"])
 @require_write_permission
 @handle_errors
 @log_performance("sqlite_optimize")
@@ -2160,7 +2159,7 @@ def sqlite_optimize(db_name):
             raise
 
 
-@api.route("/api/database/<db_name>/maintenance/vacuum", methods=["POST"])
+@api.route("/api/v1/<db_name>/maintenance/vacuum", methods=["POST"])
 @require_write_permission
 @handle_errors
 @log_performance("sqlite_vacuum")
@@ -2191,7 +2190,7 @@ def sqlite_vacuum(db_name):
             raise
 
 
-@api.route("/api/database/<db_name>/maintenance/incremental_vacuum", methods=["POST"])
+@api.route("/api/v1/<db_name>/maintenance/incremental_vacuum", methods=["POST"])
 @require_write_permission
 @handle_errors
 @log_performance("sqlite_incremental_vacuum")
@@ -2234,7 +2233,7 @@ def sqlite_incremental_vacuum(db_name):
             raise
 
 
-@api.route("/api/system/resources", methods=["GET"])
+@api.route("/api/v1/system/resources", methods=["GET"])
 @require_read_permission
 @handle_errors
 @log_performance("analyze_system_resources")
@@ -2274,7 +2273,7 @@ def analyze_system_resources():
             raise
 
 
-@api.route("/api/database/<db_name>/auto-tune", methods=["POST"])
+@api.route("/api/v1/<db_name>/auto-tune", methods=["POST"])
 @require_write_permission
 @handle_errors
 @log_performance("auto_tune_database")
@@ -2320,7 +2319,7 @@ def auto_tune_database(db_name):
             raise
 
 
-@api.route("/api/database/<db_name>/maintenance/checkpoint_if_large", methods=["POST"])
+@api.route("/api/v1/<db_name>/maintenance/checkpoint_if_large", methods=["POST"])
 @require_write_permission
 @handle_errors
 @log_performance("checkpoint_if_wal_large")

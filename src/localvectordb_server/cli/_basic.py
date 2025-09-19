@@ -78,7 +78,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
 
         if not disable_ollama_check:
             from localvectordb.exceptions import OllamaNotFoundError
-            from localvectordb_server.checkdeps import check_ollama_installation, check_ollama_service
+            from localvectordb_server.utils.checkdeps import check_ollama_installation, check_ollama_service
 
             try:
                 # Check Ollama installation

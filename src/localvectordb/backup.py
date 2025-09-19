@@ -30,6 +30,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -311,6 +312,71 @@ class BackupManager:
 
         return metadata
 
+    def _generate_document_manifest(self, db_path: Path) -> Dict[str, Any]:
+        """
+        Generate comprehensive document/chunk manifest for fast diffing.
+
+        Creates a detailed manifest containing all documents and their chunks with
+        content hashes and FAISS IDs. This enables fast incremental backup diffing
+        without requiring parent backup extraction.
+
+        Parameters
+        ----------
+        db_path : Path
+            Path to the SQLite database file
+
+        Returns
+        -------
+        Dict[str, Any]
+            Document manifest containing:
+            - documents: Dict mapping doc_id to document info including:
+              - content_hash: SHA-256 hash of document content
+              - updated_at: Last modification timestamp
+              - chunks: Dict mapping chunk_index to chunk info including:
+                - content_hash: SHA-256 hash of chunk content
+                - faiss_id: FAISS vector ID (may be None)
+                - start_pos, end_pos: Character positions in document
+        """
+        manifest = {'documents': {}}
+
+        try:
+            with sqlite3.connect(db_path) as conn:
+                # Get all documents with their metadata
+                doc_cursor = conn.execute("""
+                    SELECT id, content_hash, updated_at
+                    FROM documents
+                    ORDER BY id
+                """)
+
+                for doc_id, content_hash, updated_at in doc_cursor:
+                    manifest['documents'][doc_id] = {
+                        'content_hash': content_hash,
+                        'updated_at': updated_at,
+                        'chunks': {}
+                    }
+
+                    # Get all chunks for this document
+                    chunk_cursor = conn.execute("""
+                        SELECT chunk_index, content_hash, faiss_id, start_pos, end_pos
+                        FROM chunks
+                        WHERE document_id = ?
+                        ORDER BY chunk_index
+                    """, (doc_id,))
+
+                    for chunk_index, chunk_hash, faiss_id, start_pos, end_pos in chunk_cursor:
+                        manifest['documents'][doc_id]['chunks'][chunk_index] = {
+                            'content_hash': chunk_hash,
+                            'faiss_id': faiss_id,
+                            'start_pos': start_pos,
+                            'end_pos': end_pos
+                        }
+
+        except Exception as e:
+            logger.error(f"Failed to generate document manifest: {e}")
+            raise
+
+        return manifest
+
     def _create_backup_archive(self, metadata: BackupMetadata, temp_dir: Path) -> Path:
         """Create compressed backup archive from temporary directory."""
 
@@ -439,6 +505,13 @@ class BackupManager:
                         logger.debug(f"Added {len(document_ids)} document IDs to backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document IDs to metadata: {e}")
+
+                # Add comprehensive document manifest for fast diffing without extraction
+                try:
+                    metadata.metadata['document_manifest'] = self._generate_document_manifest(self.database_path)
+                    logger.debug(f"Added document manifest to backup metadata")
+                except Exception as e:
+                    logger.warning(f"Could not add document manifest to metadata: {e}")
 
                 # Create compressed archive
                 backup_path = self._create_backup_archive(metadata, temp_dir)
@@ -942,24 +1015,14 @@ class BackupManager:
 
     def _find_backup_file(self, backup_id: str) -> Optional[Path]:
         """
-        Find backup file by ID using manifest-based exact matching.
+        Find backup file by ID using manifest-based exact matching only.
 
-        Falls back to filename-based search if manifest parsing fails
-        for all files (for backward compatibility).
+        This method provides secure, predictable backup file resolution
+        by relying exclusively on manifest parsing rather than potentially
+        unsafe filename matching.
         """
-        # Primary method: exact manifest matching
-        backup_file = self._find_backup_file_by_manifest(backup_id)
-        if backup_file is not None:
-            return backup_file
-
-        # Fallback method: filename substring matching (legacy)
-        logger.warning(f"Manifest-based search failed for {backup_id}, falling back to filename matching")
-        for backup_file in self.config.backup_location.glob("*.lvdb-backup"):
-            if backup_id[:8] in backup_file.name:
-                logger.warning(f"Using potentially unsafe filename match for {backup_id}: {backup_file}")
-                return backup_file
-
-        return None
+        # Use only manifest-based exact matching for security and predictability
+        return self._find_backup_file_by_manifest(backup_id)
 
     def _is_within_directory(self, directory: Path, target: Path) -> bool:
         """
@@ -1418,6 +1481,13 @@ class IncrementalBackupManager:
                 except Exception as e:
                     logger.warning(f"Could not add document IDs to incremental metadata: {e}")
 
+                # Add comprehensive document manifest for fast diffing without extraction
+                try:
+                    metadata.metadata['document_manifest'] = self.backup_manager._generate_document_manifest(self.database_path)
+                    logger.debug(f"Added document manifest to incremental backup metadata")
+                except Exception as e:
+                    logger.warning(f"Could not add document manifest to incremental metadata: {e}")
+
                 # Create compressed archive
                 backup_path = self.backup_manager._create_backup_archive(metadata, temp_dir)
 
@@ -1454,24 +1524,77 @@ class IncrementalBackupManager:
 
     def _get_changes_since_backup(self, parent_backup: BackupMetadata) -> Dict[str, Any]:
         """
-        Get database changes since the parent backup was created.
+        Get database changes since parent backup using manifest-based diffing.
+
+        Uses document manifest from parent backup metadata for fast diffing without
+        extraction. Parent backup must have document manifest.
+
+        Parameters
+        ----------
+        parent_backup : BackupMetadata
+            Parent backup metadata with document manifest
 
         Returns
         -------
         Dict[str, Any]
             Dictionary containing changed documents, deleted documents, and FAISS changes
-        """
 
-        # Get timestamp of parent backup
-        parent_timestamp = parent_backup.created_at
+        Raises
+        ------
+        ValueError
+            If parent backup lacks document manifest
+        """
+        # Check if parent backup has document manifest
+        parent_manifest = parent_backup.metadata.get('document_manifest') if parent_backup.metadata else None
+
+        if not parent_manifest:
+            raise ValueError(f"Parent backup {parent_backup.backup_id} lacks document manifest. "
+                           "Only backups with document manifest are supported for incremental operations.")
+
+        logger.debug("Using manifest-based diffing for incremental backup")
 
         changes = {
             'has_changes': False,
             'changed_documents': [],
             'deleted_documents': [],
             'faiss_changes': [],
-            'parent_timestamp': parent_timestamp
+            'parent_timestamp': parent_backup.created_at
         }
+
+        # Generate current database manifest
+        current_manifest = self.backup_manager._generate_document_manifest(self.database_path)
+
+        current_doc_ids = set(current_manifest['documents'].keys())
+        parent_doc_ids = set(parent_manifest['documents'].keys())
+
+        # Detect deleted documents with FAISS IDs (no extraction needed!)
+        deleted_doc_ids = parent_doc_ids - current_doc_ids
+        if deleted_doc_ids:
+            logger.info(f"Detected {len(deleted_doc_ids)} deleted documents using manifest")
+
+            for doc_id in deleted_doc_ids:
+                parent_doc = parent_manifest['documents'][doc_id]
+
+                # Add deleted document
+                changes['deleted_documents'].append({
+                    'id': doc_id,
+                    'action': 'delete'
+                })
+
+                # Add FAISS IDs for deleted chunks directly from manifest
+                for chunk_index, chunk_info in parent_doc['chunks'].items():
+                    if chunk_info.get('faiss_id') is not None:
+                        changes['faiss_changes'].append({
+                            'document_id': doc_id,
+                            'faiss_id': chunk_info['faiss_id'],
+                            'action': 'delete'
+                        })
+
+                changes['has_changes'] = True
+
+        # Detect modified documents by comparing with parent backup timestamp
+        # This preserves the original timestamp-based logic for modified documents
+        parent_timestamp = parent_backup.created_at
 
         with sqlite3.connect(self.database_path) as conn:
             # Get documents modified since parent backup
@@ -1507,12 +1630,9 @@ class IncrementalBackupManager:
                     ORDER BY document_id, chunk_index
                 """, doc_ids)
 
-                chunks_by_doc: Dict[str, List[Dict[str, Any]]] = {}
+                chunks_by_doc = defaultdict(list)
                 for row in cursor.fetchall():
                     doc_id = row[0]
-                    if doc_id not in chunks_by_doc:
-                        chunks_by_doc[doc_id] = []
-
                     chunk_data = {
                         'chunk_index': row[1],
                         'content': row[2],
@@ -1528,107 +1648,26 @@ class IncrementalBackupManager:
                     }
                     chunks_by_doc[doc_id].append(chunk_data)
 
-                # Add chunks to changed documents
+                # Attach chunks to documents and track FAISS changes
                 for doc in changes['changed_documents']:
                     doc['chunks'] = chunks_by_doc.get(doc['id'], [])
 
-            # Track FAISS changes (new/updated vectors)
-            for doc in changes['changed_documents']:
-                for chunk in doc.get('chunks', []):
-                    if chunk['faiss_id'] is not None:
-                        changes['faiss_changes'].append({
-                            'document_id': doc['id'],
-                            'chunk_index': chunk['chunk_index'],
-                            'faiss_id': chunk['faiss_id'],
-                            'action': 'update'  # Could be 'add' for new chunks
-                        })
+                    # Add FAISS changes for modified chunks
+                    for chunk in doc['chunks']:
+                        if chunk.get('faiss_id') is not None:
+                            changes['faiss_changes'].append({
+                                'document_id': doc['id'],
+                                'chunk_index': chunk['chunk_index'],
+                                'faiss_id': chunk['faiss_id'],
+                                'action': 'update'
+                            })
 
-        # Detect deleted documents by comparing IDs with parent backup
-        # First, check if parent backup has document_ids in metadata (optimization)
-        parent_doc_ids = None
-        deleted_faiss_ids = []
-
-        if parent_backup.metadata and 'document_ids' in parent_backup.metadata:
-            parent_doc_ids = set(parent_backup.metadata['document_ids'])
-            logger.debug("Using cached document IDs from parent backup metadata")
-
-        # If we don't have cached IDs or need FAISS IDs, extract parent backup
-        if parent_doc_ids is None or True:  # Always extract for now to get FAISS IDs
-            logger.debug("Extracting parent backup to detect deletions and get FAISS IDs")
-            with tempfile.TemporaryDirectory() as temp_dir_str:
-                temp_dir = Path(temp_dir_str)
-
-                # Find and extract parent backup
-                parent_backup_file = self.backup_manager._find_backup_file(parent_backup.backup_id)
-                if parent_backup_file:
-                    try:
-                        self.backup_manager._extract_backup_archive(parent_backup_file, temp_dir)
-
-                        # Get all document IDs from parent backup
-                        parent_db_path = temp_dir / f"{self.backup_manager.database_name}.sqlite"
-                        if parent_db_path.exists():
-                            with sqlite3.connect(parent_db_path) as parent_conn:
-                                if parent_doc_ids is None:
-                                    parent_ids_cursor = parent_conn.execute("SELECT id FROM documents")
-                                    parent_doc_ids = set(row[0] for row in parent_ids_cursor.fetchall())
-
-                                # Get current document IDs to find deletions
-                                with sqlite3.connect(self.database_path) as conn:
-                                    current_ids_cursor = conn.execute("SELECT id FROM documents")
-                                    current_doc_ids = set(row[0] for row in current_ids_cursor.fetchall())
-
-                                # Find deleted document IDs
-                                deleted_ids = parent_doc_ids - current_doc_ids
-
-                                # Get FAISS IDs for deleted documents
-                                if deleted_ids:
-                                    placeholders = ','.join(['?' for _ in deleted_ids])
-                                    cursor = parent_conn.execute(f"""
-                                        SELECT document_id, faiss_id
-                                        FROM chunks
-                                        WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL
-                                    """, list(deleted_ids))
-                                    for row in cursor:
-                                        deleted_faiss_ids.append({
-                                            'document_id': row[0],
-                                            'faiss_id': row[1],
-                                            'action': 'delete'
-                                        })
-                    except Exception as e:
-                        logger.warning(f"Could not extract parent backup for deletion detection: {e}")
-
-        # Process deletion information if we have parent document IDs
-        if parent_doc_ids is not None:
-            # If we didn't get current IDs yet (because we used cached parent IDs), get them now
-            if 'deleted_ids' not in locals():
-                with sqlite3.connect(self.database_path) as conn:
-                    current_ids_cursor = conn.execute("SELECT id FROM documents")
-                    current_doc_ids = set(row[0] for row in current_ids_cursor.fetchall())
-                deleted_ids = parent_doc_ids - current_doc_ids
-
-            if deleted_ids:
-                logger.info(f"Detected {len(deleted_ids)} deleted documents")
-
-                # Add deleted documents to changes
-                for doc_id in deleted_ids:
-                    changes['deleted_documents'].append({
-                        'id': doc_id,
-                        'action': 'delete'
-                    })
-                    changes['has_changes'] = True
-
-                # Add deleted FAISS vectors to track
-                for faiss_info in deleted_faiss_ids:
-                    changes['faiss_changes'].append(faiss_info)
-
-                if deleted_faiss_ids:
-                    logger.debug(f"Found {len(deleted_faiss_ids)} FAISS vectors to delete")
-
-        logger.debug(f"Found {len(changes['changed_documents'])} changed documents, "
-                     f"{len(changes['deleted_documents'])} deleted documents, "
-                     f"{len(changes['faiss_changes'])} FAISS changes")
+        logger.info(f"Manifest-based diffing found {len(changes['changed_documents'])} changed documents, "
+                    f"{len(changes['deleted_documents'])} deleted documents, "
+                    f"{len(changes['faiss_changes'])} FAISS changes")
 
         return changes
+
 
     def _create_incremental_database(self, changes: Dict[str, Any], temp_dir: Path) -> None:
         """Create incremental SQLite database containing only changes."""
