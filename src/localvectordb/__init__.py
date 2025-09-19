@@ -204,10 +204,13 @@ from localvectordb.factory import VectorDB
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.query_builder import QueryBuilder
 from localvectordb.versioning import VersionManager
+from localvectordb.sqlite_tuning import (SqliteProfile, get_sqlite_pragma_profile,
+                                         get_profile_description, is_valid_sqlite_pragma_profile)
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",
            "BackupManager", "IncrementalBackupManager", "PointInTimeRecoveryManager",
            "migration", "Migration", "MigrationEngine",
            "versioning", "VersionManager", "QueryBuilder", "query_builder", "extractors", "get_extractor_registry",
-           "ExtractorRegistry", ]
+           "ExtractorRegistry", "sqlite_tuning", "SqliteProfile", "get_profile_description",
+           "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile"]

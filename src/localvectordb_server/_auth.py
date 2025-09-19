@@ -23,6 +23,7 @@ Features:
 import logging
 import time
 from functools import wraps
+from hashlib import sha256
 
 from flask import current_app, g, request
 from werkzeug.exceptions import Unauthorized
@@ -62,7 +63,7 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
         auto_prune = (hasattr(current_app, 'config_obj') and
                       getattr(current_app.config_obj.server.security, 'auto_prune_expired_keys', False))
 
-        is_valid, permission_level = key_manager.validate_key_with_permissions(
+        is_valid, permission_level, key_id = key_manager.validate_key_with_permissions(
             token,
             update_last_used=True,
             prune_expired=auto_prune
@@ -74,9 +75,10 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
                 reason="Database key validated",
                 token_prefix=_mask_token(token),
                 validation_method="database",
-                permission_level=permission_level.value
+                permission_level=permission_level.value,
+                key_id=key_id
             )
-            logger.debug(f"Token validated against database keys with permission: {permission_level.value}")
+            logger.debug(f"Token validated against database keys with permission: {permission_level.value}, key_id: {key_id}")
         else:
             security_logger.log_auth_attempt(
                 success=False,
@@ -430,7 +432,7 @@ def _require_permission(required_permission: PermissionLevel):
             logger.debug(f"API key authentication successful with permission: {permission_level.value}")
 
             # Store token hash and permission for request tracking
-            g.api_key_hash = hash(token)
+            g.api_key_hash = sha256(token.encode("utf-8")).hexdigest()
             g.authenticated = True
             g.permission_level = permission_level
 

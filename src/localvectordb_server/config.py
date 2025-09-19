@@ -498,8 +498,6 @@ class ServerSettings(BaseSettings):
                 for server in self.memcached_servers:
                     if not isinstance(server, str) or ":" not in server:
                         raise ConfigurationError(f"Invalid memcached server format: {server}. Use 'host:port' format")
-            if self.cache_type not in valid_cache_types:
-                raise ConfigurationError(f"cache_type must be one of: {', '.join(valid_cache_types)}")
 
         # Validate security settings
         self.security.validate()

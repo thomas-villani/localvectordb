@@ -679,7 +679,7 @@ def _configure_cors(config, cors_origins):
 
 def _configure_auth(config):
     """Configure API key authentication"""
-    config.server.require_api_key = True
+    config.server.security.require_api_key = True
     click.secho("Configured API key authentication", fg="green")
     click.echo("Note: Use 'lvdb auth create-key' to generate API keys after starting the server")
 
@@ -753,7 +753,7 @@ def _print_config_summary(config, output, is_multi_worker):
         else:
             click.echo(f"CORS: {len(origins) if isinstance(origins, list) else 1} origins")
 
-    if config.server.require_api_key:
+    if config.server.security.require_api_key:
         click.echo("Authentication: API keys required")
 
     click.echo(f"File upload: {'Enabled' if config.server.file_upload_enabled else 'Disabled'}")
@@ -780,7 +780,7 @@ def _print_setup_recommendations(config, deployment_type, output):
     if config.server.cache_enabled and config.server.cache_type == "RedisCache":
         click.echo("   • Ensure Redis server is running for caching")
 
-    if config.server.require_api_key:
+    if config.server.security.require_api_key:
         click.echo()
         click.echo("3. Create API keys:")
         click.echo("   $ lvdb auth create-key --description 'My App'")

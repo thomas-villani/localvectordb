@@ -359,6 +359,7 @@ class TestDatabaseSchema:
         mock_connect.return_value.__enter__.return_value = mock_conn
         mock_cursor = Mock()
         mock_cursor.fetchall.return_value = []
+        mock_cursor.rowcount = 0  # Set rowcount for UPDATE queries
         mock_conn.execute.return_value = mock_cursor
 
         db_path = temp_dir / "test.db"

@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Literal
+from typing import Any, Dict, List, Tuple, Literal, Optional
 
 import aiosqlite
 import psutil
@@ -88,7 +88,7 @@ class SQLitePragmaProfile:
 
 
 # Predefined tuning profiles based on common use cases
-PROFILES: Dict[str, SQLitePragmaProfile] = {
+SQLITE_PRAGMA_PROFILES: Dict[str, SQLitePragmaProfile] = {
     "balanced": SQLitePragmaProfile(
         name="balanced",
         description="Balanced performance for mixed workloads (default)",
@@ -170,6 +170,12 @@ PROFILES: Dict[str, SQLitePragmaProfile] = {
 }
 
 SqliteProfile = Literal["balanced", "fast_ingest", "read_optimized", "durable", "memory_saver"]
+
+def is_valid_sqlite_pragma_profile(profile: SqliteProfile) -> bool:
+    return profile in SQLITE_PRAGMA_PROFILES
+
+def get_sqlite_pragma_profile(profile: SqliteProfile, *, default: Optional[SqliteProfile] = None) -> SQLitePragmaProfile:
+    return SQLITE_PRAGMA_PROFILES.get(profile, SQLITE_PRAGMA_PROFILES.get(default) if default is not None else default)
 
 # Safe pragma values that don't require quotes
 SAFE_PRAGMA_VALUES = {
@@ -624,7 +630,7 @@ def get_profile_description(profile_name: str) -> str:
     str
         Profile description
     """
-    profile = PROFILES.get(profile_name)
+    profile = SQLITE_PRAGMA_PROFILES.get(profile_name)
     return profile.description if profile else "Unknown profile"
 
 
@@ -637,4 +643,4 @@ def list_profiles() -> List[Tuple[str, str]]:
     List[Tuple[str, str]]
         List of (name, description) tuples
     """
-    return [(name, profile.description) for name, profile in PROFILES.items()]
+    return [(name, profile.description) for name, profile in SQLITE_PRAGMA_PROFILES.items()]

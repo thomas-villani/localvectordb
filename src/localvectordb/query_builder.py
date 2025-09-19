@@ -1278,7 +1278,7 @@ class QueryExecutor:
             # Use database count if available, otherwise execute filter
             if hasattr(self.db, 'count'):
                 filters = self._combine_exact_filters()
-                return self.db.count(filters)
+                return self.db.count(where=filters)
             else:
                 results = self._execute_filter_only_query()
                 return len(results)

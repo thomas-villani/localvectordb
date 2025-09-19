@@ -598,6 +598,7 @@ class TestDocumentManagementRoutes:
         """Test listing documents with pagination."""
         app.db_manager.get_db.return_value = mock_db
         mock_db.filter.return_value = [sample_document]
+        mock_db.count.return_value = 1
 
         response = client.get('/api/v1/test_db/documents?page=1&limit=10')
 

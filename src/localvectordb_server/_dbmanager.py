@@ -889,6 +889,7 @@ class DatabaseManager:
     def delete_database(self, name: str) -> bool:
         """Delete a database with coordination and enhanced error handling"""
 
+        # TODO: raise error instead?
         if not self.registry.database_exists(name):
             return False
 
@@ -928,7 +929,7 @@ class DatabaseManager:
                     status_code=500,
                     recoverable=False,
                     details={"original_error": str(e)}
-                )
+                ) from e
 
     @log_performance("search_databases")
     def search_databases(

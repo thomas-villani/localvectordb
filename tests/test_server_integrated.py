@@ -26,8 +26,9 @@ import pytest
 from flask import Flask
 
 from localvectordb.core import MetadataField, MetadataFieldType
-from localvectordb_server import Config
+from localvectordb.exceptions import DocumentNotFoundError
 from localvectordb_server._cache import cache
+from localvectordb_server.config import Config
 from localvectordb_server.keymanager import KeyManager
 from localvectordb_server.routes import api
 
@@ -74,20 +75,23 @@ def integration_app(temp_dir, test_key_manager):
     app = Flask(__name__)
     app.config['TESTING'] = True
 
+    # Set up proper Config object structure
     app.config_obj = Config()
     app.config_obj.database.root_dir = temp_dir
     app.config_obj.server.cache_enabled = False
+
+    # Configure security settings for authentication
+    app.config_obj.server.security.require_api_key = True
+    app.config_obj.server.security.api_key_header = 'Authorization'
+    app.config_obj.server.security.key_audit_logging = False  # Disable for tests
+    app.config_obj.server.security.auto_prune_expired_keys = False  # Disable for tests
+
     # Use temporary directory for test databases
     app.config['DB_ROOT_DIR'] = temp_dir
     app.config['REQUIRE_API_KEY'] = True
     app.config['CACHE_TYPE'] = 'NullCache'
 
     cache.init_app(app)
-
-    # app.config['API_KEY_DB_PATH'] = test_key_manager.db_path
-    # app.config['API_KEY_HEADER'] = 'Authorization'
-    # app.config['API_KEY_AUDIT_LOGGING'] = False  # Disable for tests
-    # app.config['API_KEY_PRUNE_EXPIRED'] = False  # Disable for tests
 
     # Store key manager instance for access in tests
     app.key_manager = test_key_manager
@@ -147,17 +151,28 @@ class DatabaseManagerMock:
                 raise DatabaseNotFoundError(f"Database '{name}' not found")
         return self.databases[name]
 
-    def search_databases(self, query, database_names, search_type, return_type, *args, **kwargs):
-        names = self._created_dbs or database_names
+    def search_databases(
+        self,
+        query: str,
+        database_names=None,
+        search_type="vector",
+        return_type="documents",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters=None,
+        vector_weight: float = 0.7,
+        context_window: int = 2
+    ):
+        names = database_names or list(self._created_dbs)
         all_results = {}
         from localvectordb.core import QueryResult
         for name in names:
             results = []
-            for i in range(5):
+            for i in range(min(k, 5)):  # Limit to requested k or 5, whichever is smaller
                 result = QueryResult(
                     id=f"doc{i}",
                     score=0.8,
-                    type='document',
+                    type=return_type,
                     content=f"doc{i} content"
                 )
                 results.append(result)
@@ -165,26 +180,34 @@ class DatabaseManagerMock:
 
         return all_results
 
-    def delete_database(self, name, *args, **kwargs):
+    def get_embeddings_for_model(self, query_texts, provider: str, model: str):
+        """Mock implementation of get_embeddings_for_model."""
+        import numpy as np
+        if isinstance(query_texts, str):
+            query_texts = [query_texts]
+        # Return mock embeddings for each text
+        return [np.array([0.1, 0.2, 0.3]).tolist() for _ in query_texts]
+
+    def delete_database(self, name: str) -> bool:
         if name in self._created_dbs:
             self._created_dbs.remove(name)
         db_file = self.base_path / f"{name}.sqlite"
         if os.path.exists(db_file):
             os.remove(db_file)
-        self.databases.pop(name)
+        if name in self.databases:
+            self.databases.pop(name)
+        return True
 
-        return True, None
-
-    def create_db(self, name, *args, **kwargs):
+    def create_db(self, new_db_name: str, metadata_schema=None, db_config=None, embedding_config=None):
         """Simulate database creation."""
-        self._created_dbs.add(name)
+        self._created_dbs.add(new_db_name)
         # Create the actual file to simulate real behavior
-        db_file = self.base_path / f"{name}.sqlite"
+        db_file = self.base_path / f"{new_db_name}.sqlite"
         db_file.touch()
 
         # Create mock database instance
-        self.databases[name] = self._create_mock_db(name)
-        return self.databases[name]
+        self.databases[new_db_name] = self._create_mock_db(new_db_name)
+        return self.databases[new_db_name]
 
     def _create_mock_db(self, name):
         """Create a realistic mock database instance."""
@@ -246,7 +269,7 @@ class DatabaseManagerMock:
                     metadata=doc_data['metadata'],
                     content_hash="mock_hash"
                 )
-            return None
+            raise DocumentNotFoundError(f"Document '{doc_id}' cannot be found!", doc_id)
 
         def mock_exists(doc_id):
             if isinstance(doc_id, list):
@@ -352,16 +375,20 @@ class TestAuthenticationFlow:
         """Test API key authentication with different header formats."""
         valid_key = integration_app.key_manager._test_valid_key
 
-        test_cases = [
-            f'Bearer {valid_key}',
-            valid_key,  # Without Bearer prefix
-        ]
+        # Test Bearer format (should work)
+        headers = {'Authorization': f'Bearer {valid_key}'}
+        response = integration_client.get('/api/v1/databases', headers=headers)
+        assert response.status_code == 200
 
-        for auth_value in test_cases:
-            headers = {'Authorization': auth_value}
-            response = integration_client.get('/api/v1/databases', headers=headers)
-            # Should work with either format (depending on auth implementation)
-            assert response.status_code in [200, 401]
+        # Test without Bearer prefix (should fail with current strict implementation)
+        headers = {'Authorization': valid_key}
+        response = integration_client.get('/api/v1/databases', headers=headers)
+        assert response.status_code == 401
+
+        # Test invalid Bearer format (should fail)
+        headers = {'Authorization': f'InvalidType {valid_key}'}
+        response = integration_client.get('/api/v1/databases', headers=headers)
+        assert response.status_code == 401
 
     def test_key_validation_updates_last_used(self, integration_client, valid_auth_headers, integration_app):
         """Test that successful authentication updates the last_used timestamp."""
@@ -525,7 +552,6 @@ class TestErrorHandlingIntegration:
         # Try to get non-existent document
         response = integration_client.get('/api/v1/error_test_db/documents/nonexistent',
                                           headers=valid_auth_headers)
-
         assert response.status_code == 404
 
     def test_invalid_request_data_flow(self, integration_client, integration_app, valid_auth_headers):

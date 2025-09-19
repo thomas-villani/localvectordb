@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.sqlite_tuning import (
-    PROFILES,
+    SQLITE_PRAGMA_PROFILES,
     AutoTuner,
     WorkloadProfile,
     list_profiles,
@@ -276,11 +276,11 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
             persist: bool = True
     ) -> None:
         """Apply SQLite tuning profile to local database."""
-        if profile not in PROFILES:
-            raise ValueError(f"Unknown SQLite profile '{profile}'. Available: {list(PROFILES.keys())}")
+        if profile not in SQLITE_PRAGMA_PROFILES:
+            raise ValueError(f"Unknown SQLite profile '{profile}'. Available: {list(SQLITE_PRAGMA_PROFILES.keys())}")
 
         # Get base profile pragmas
-        base_pragmas = dict(PROFILES[profile].pragmas)
+        base_pragmas = dict(SQLITE_PRAGMA_PROFILES[profile].pragmas)
 
         # Apply overrides
         if overrides:
@@ -382,8 +382,8 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
         except (json.JSONDecodeError, TypeError):
             overrides = {}
 
-        if profile in PROFILES:
-            pragmas = dict(PROFILES[profile].pragmas)
+        if profile in SQLITE_PRAGMA_PROFILES:
+            pragmas = dict(SQLITE_PRAGMA_PROFILES[profile].pragmas)
             pragmas.update(overrides)
 
             self._sqlite_profile = profile
@@ -395,4 +395,4 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
             logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")
             self._sqlite_profile = 'balanced'
             self._sqlite_pragma_overrides = {}
-            self._sqlite_pragmas = dict(PROFILES['balanced'].pragmas)
+            self._sqlite_pragmas = dict(SQLITE_PRAGMA_PROFILES['balanced'].pragmas)

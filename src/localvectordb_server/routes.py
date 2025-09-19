@@ -255,12 +255,11 @@ def delete_database(db_name):
     """Delete a database"""
 
     with request_context("delete_database"):
-        success, errors = current_app.db_manager.delete_database(db_name)
-        if not success:
-            raise APIError(errors, "DATABASE_DELETE_ERROR", 500, {"db_name": db_name}, True)
+        success = current_app.db_manager.delete_database(db_name)
 
         return jsonify({
-            "message": f"Successfully deleted database '{db_name}'",
+            "message": f"Successfully deleted database '{db_name}'" if success
+                       else f"Database '{db_name}' not found. No action taken.",
             "status": "success",
         })
 

@@ -45,6 +45,7 @@ from localvectordb.core import Chunk, MetadataField
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
+from localvectordb.sqlite_tuning import get_sqlite_pragma_profile, is_valid_sqlite_pragma_profile, SqliteProfile
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             faiss_index_hnsw_flat_neighbors: Optional[int] = None, faiss_index_lsh_bits: Optional[int] = None,
             enable_gpu: bool = False, enable_fts: bool = True, connection_pool_size: int = 10,
             create_if_not_exists: bool = True,
-            sqlite_profile: str = "balanced",
+            sqlite_profile: SqliteProfile = "balanced",
             sqlite_pragma_overrides: Optional[Dict[str, Any]] = None
     ):
 
@@ -127,8 +128,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._faiss_lock: ReadWriteLock = ReadWriteLock()  # ReadWrite lock for FAISS operations to allow concurrent reads
 
         # Initialize SQLite tuning configuration
-        from localvectordb.sqlite_tuning import PROFILES
-        profile = PROFILES.get(sqlite_profile, PROFILES["balanced"])
+        profile = get_sqlite_pragma_profile(sqlite_profile, default="balanced")
         pragmas = dict(profile.pragmas)
         if sqlite_pragma_overrides:
             pragmas.update(sqlite_pragma_overrides)
@@ -884,7 +884,6 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     def _load_sqlite_tuning(self, config: Dict[str, str]) -> None:
         """Load SQLite tuning configuration from database config."""
-        import json
         profile = config.get('sqlite_profile', 'balanced')
         overrides_json = config.get('sqlite_pragma_overrides', '{}')
 
@@ -893,9 +892,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         except (json.JSONDecodeError, TypeError):
             overrides = {}
 
-        from localvectordb.sqlite_tuning import PROFILES
-        if profile in PROFILES:
-            pragmas = dict(PROFILES[profile].pragmas)
+        if is_valid_sqlite_pragma_profile(profile):
+            pragmas = dict(get_sqlite_pragma_profile(profile).pragmas)
             pragmas.update(overrides)
 
             self._sqlite_profile = profile
@@ -907,4 +905,4 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")
             self._sqlite_profile = 'balanced'
             self._sqlite_pragma_overrides = {}
-            self._sqlite_pragmas = dict(PROFILES['balanced'].pragmas)
+            self._sqlite_pragmas = dict(get_sqlite_pragma_profile("balanced").pragmas)

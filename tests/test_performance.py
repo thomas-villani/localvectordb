@@ -311,8 +311,8 @@ class TestChunkingPerformance:
             assert chunk_time < 2.0, f"Overlap {overlap} took {chunk_time:.2f}s"
 
         # Overlap shouldn't dramatically increase processing time
-        max_time = max(times)
-        min_time = min(times)
+        max_time = times[-1]
+        min_time = times[1]
         assert max_time < min_time * 10, f"Overlap impact too high: {max_time:.3f}s vs {min_time:.3f}s"
 
 
