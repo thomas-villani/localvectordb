@@ -382,7 +382,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
     # Filter
     # --------
     def filter(
-            self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
+            self,
+            where: Optional[Dict[str, Any]] = None,
+            order_by: Optional[str] = None,
+            limit: Optional[int] = None,
             offset: int = 0
     ) -> List[Document]:
         """

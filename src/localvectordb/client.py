@@ -2226,6 +2226,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Prepare files for streaming upload
         files = []
         file_handles = []
+        result = None
         try:
             for file_path in file_paths:
                 file_handle = open(file_path, 'rb')
@@ -2243,7 +2244,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 except Exception:
                     pass  # Ignore close errors
 
-        return result.get("document_ids", [])
+        if result is not None:
+            return result.get("document_ids", [])
+        return []
 
     async def insert_from_file_async(
             self,

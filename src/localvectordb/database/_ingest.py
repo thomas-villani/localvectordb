@@ -816,6 +816,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             # queue_size: int = 3,
             mode: Literal["upsert", "insert"] = "upsert"
     ) -> List[str]:
+        # Normalize mode for database operations
+        db_mode = "replace" if mode == "upsert" else mode
+
         queue_size = self.pipeline_queue_size
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(ids)
         chunk_queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -931,7 +934,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                         conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'],
                                         chunk_data['faiss_ids_to_remove']
                                     )
-                                self._insert_documents_bulk(conn, documents_data, mode=mode)
+                                self._insert_documents_bulk(conn, documents_data, mode=db_mode)
                                 if new_embeddings.size > 0:
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
                                 self._insert_chunks_bulk(conn, chunks_data)
@@ -1094,7 +1097,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                         conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'],
                                         chunk_data['faiss_ids_to_remove']
                                     )
-                                self._insert_documents_bulk(conn, documents_data, mode=mode)
+                                self._insert_documents_bulk(conn, documents_data, mode=db_mode)
                                 if new_embeddings.size > 0:
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
                                 self._insert_chunks_bulk(conn, chunks_data)
@@ -2083,7 +2086,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     # Fallback for Python < 3.9
                     loop = asyncio.get_event_loop()
                     filtered_chunks, filtered_embeddings, _ = await loop.run_in_executor(
-                        None, self._filter_similar_chunks_vectorized, new_embeddings, chunks_needing_embedding,
+                        None, self._filter_similar_chunks_vectorized,
+                        new_embeddings,
+                        chunks_needing_embedding,
                         doc_chunk_mapping, similarity_threshold
                     )
                 chunks_needing_embedding = filtered_chunks

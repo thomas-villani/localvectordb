@@ -14,10 +14,12 @@ LocalVectorDB v1.0 Core Components
 This module contains the foundational classes and data structures for the new
 document-first architecture.
 """
+from __future__ import annotations
 import hashlib
 import json
 import logging
 import sqlite3
+from collections import UserList
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -188,6 +190,10 @@ class ChunkPosition:
         Line number in the original document (1-based).
     column : int
         Column number in the original document (1-based).
+    end_line : int
+        Line number of end of chunk in original document (1-based)
+    end_column : int
+        Column number of end of chunk in original document (1-based)
     """
 
     start: int
@@ -354,9 +360,6 @@ class Document:
         )
 
 
-# TODO: create a class to handle list of QueryResult with composable subfiltering options, but still acting like a list.
-#   This would allow for further processing like `.semantic_filter` and `.filter`
-#   And also fancier stuff like converting to a numpy array of embeddings
 @dataclass
 class QueryResult:
     """Result from a search query"""
@@ -406,3 +409,34 @@ class QueryResult:
             document_id=data.get("document_id"),
             position=position,
         )
+
+
+# TODO: create a class to handle list of QueryResult with composable subfiltering options, but still acting like a list.
+#   This would allow for further processing like `.semantic_filter` and `.filter` and .limit, etc.
+#   And also fancier stuff like converting to a numpy array of embeddings
+#
+# class QueryResultList(UserList):
+#
+#     def __init__(self, initlist: List[QueryResult] = None):
+#         initlist = initlist or []
+#         if initlist and not all(isinstance(a, QueryResult) for a in initlist):
+#             raise TypeError("`initlist` must be a list of `QueryResult`")
+#
+#         super().__init__(initlist)
+#
+#
+#     def filter(self,
+#                field, value, operator
+#                where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
+#                offset: int = 0) -> QueryResultList:
+#         pass
+#
+#     def semantic_filter(self,) -> QueryResultList:
+#         pass
+#
+#     def limit(self, n: int) -> QueryResultList:
+#         pass
+#
+#     def order_by(self, ) -> QueryResultList:
+#         pass
+
