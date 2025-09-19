@@ -578,7 +578,7 @@ Docker Deployment
 
 .. code-block:: yaml
 
-   version: "3.8"
+   version: "3.12"
 
    services:
      localvectordb:
