@@ -5,6 +5,7 @@ localvectordb_server/__init__.py
 Enhanced server for interacting with `localvectordb.LocalVectorDB` via http
 with structured logging, error handling, and performance monitoring.
 """
+import ipaddress
 import logging
 import os
 from typing import Union
@@ -19,6 +20,7 @@ from localvectordb_server._error_handlers import register_error_handlers
 from localvectordb_server._logcfg import configure_logging, setup_request_logging
 from localvectordb_server.config import Config, load_config
 from localvectordb_server.keymanager import KeyManager
+from localvectordb_server.utils.hostmatch import validate_host_against_patterns
 
 try:
     from flask_talisman import Talisman
@@ -43,6 +45,41 @@ try:
 except ImportError:
     CORS = None
     _FLASK_CORS_AVAILABLE = False
+
+
+def _is_trusted_proxy(remote_addr: str, trusted_proxies: list) -> bool:
+    """
+    Check if the remote address is in the list of trusted proxies
+
+    Parameters
+    ----------
+    remote_addr : str
+        The remote IP address to check
+    trusted_proxies : list
+        List of trusted proxy IP addresses or CIDR blocks
+
+    Returns
+    -------
+    bool
+        True if the remote address is trusted, False otherwise
+    """
+    if not trusted_proxies:
+        return False
+
+    try:
+        remote_ip = ipaddress.ip_address(remote_addr)
+        for proxy in trusted_proxies:
+            try:
+                proxy_network = ipaddress.ip_network(proxy, strict=False)
+                if remote_ip in proxy_network:
+                    return True
+            except ValueError:
+                # Skip invalid proxy entries
+                continue
+        return False
+    except ValueError:
+        # Invalid remote address
+        return False
 
 
 def create_app(
@@ -101,19 +138,37 @@ def create_app(
     if _config.server.security.trusted_hosts:
         @app.before_request
         def validate_host_header():
-            """Validate the Host header against trusted hosts"""
+            """Validate the Host header against trusted hosts with enhanced proxy security"""
 
-            # Skip validation if running behind a trusted proxy
-            if _config.server.proxy_enabled:
-                return
-
-            # Get the host from the request
+            # Get the effective host after ProxyFix processing
             host = request.host
+            trusted_patterns = _config.server.security.trusted_hosts
 
-            # Check if the host is in the trusted hosts list
-            if host not in _config.server.security.trusted_hosts:
-                app.logger.warning(f"Rejected request with untrusted Host header: {host}")
-                abort(400, description=f"Invalid Host header: {host}")
+            # Enhanced proxy validation when behind proxy
+            if _config.server.proxy_enabled:
+                # Validate that the request comes from a trusted proxy
+                remote_addr = request.environ.get('REMOTE_ADDR')
+                if remote_addr and not _is_trusted_proxy(remote_addr, _config.server.trusted_proxies):
+                    app.logger.warning(f"Rejected request from untrusted proxy: {remote_addr}")
+                    abort(403, description="Request from untrusted proxy")
+
+                # Validate X-Forwarded-Host if present
+                forwarded_host = request.headers.get('X-Forwarded-Host')
+                if forwarded_host:
+                    # Check that forwarded host is also in trusted hosts
+                    if not validate_host_against_patterns(forwarded_host, trusted_patterns):
+                        app.logger.warning(f"Rejected request with untrusted X-Forwarded-Host: {forwarded_host}")
+                        abort(400, description=f"Invalid X-Forwarded-Host header: {forwarded_host}")
+
+                # Additional validation: ensure the effective host (after ProxyFix) is trusted
+                if not validate_host_against_patterns(host, trusted_patterns):
+                    app.logger.warning(f"Rejected request with untrusted effective Host header: {host}")
+                    abort(400, description=f"Invalid Host header: {host}")
+            else:
+                # Direct connection validation (no proxy)
+                if not validate_host_against_patterns(host, trusted_patterns):
+                    app.logger.warning(f"Rejected request with untrusted Host header: {host}")
+                    abort(400, description=f"Invalid Host header: {host}")
 
     # Register enhanced error handlers
     register_error_handlers(app)

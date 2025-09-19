@@ -14,6 +14,7 @@ LocalVectorDB Inspector UI
 Web-based interface for inspecting LocalVectorDB databases, testing queries,
 visualizing embeddings, and managing the system.
 """
+import functools
 import logging
 from datetime import datetime
 
@@ -54,6 +55,7 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
         The minimum permission level required (READ_ONLY or READ_WRITE)
     """
     def decorator(f):
+        @functools.wraps(f)
         def decorated_function(*args, **kwargs):
             if not inspector_enabled():
                 return render_template('inspector_disabled.html'), 503
@@ -70,7 +72,7 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                 try:
                     key_manager = getattr(current_app, 'key_manager', None)
                     if key_manager:
-                        is_valid, permission_level = key_manager.validate_key_with_permissions(api_key)
+                        is_valid, permission_level, key_id = key_manager.validate_key_with_permissions(api_key)
                         if not is_valid:
                             flash('Invalid API key', 'error')
                             return redirect(url_for('inspector.login'))
@@ -80,9 +82,11 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                             flash('Insufficient permissions. This action requires write access.', 'error')
                             return redirect(url_for('inspector.dashboard'))
 
-                        # Store valid API key in session
-                        session['inspector_api_key'] = api_key
+                        # Store key_id and permission level in session (NOT the raw key)
+                        session['inspector_key_id'] = key_id
                         session['inspector_permission_level'] = permission_level.value
+                        # Temporarily store api_key for backward compat, will be removed
+                        session['inspector_api_key'] = api_key
                     else:
                         # Fall back to simple validation if new method not available
                         if not validate_api_key(api_key):
@@ -95,7 +99,6 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                     return redirect(url_for('inspector.login'))
 
             return f(*args, **kwargs)
-        decorated_function.__name__ = f.__name__
         return decorated_function
     return decorator
 
@@ -162,10 +165,12 @@ def login():
         try:
             key_manager = getattr(current_app, 'key_manager', None)
             if key_manager:
-                is_valid, permission_level = key_manager.validate_key_with_permissions(api_key)
+                is_valid, permission_level, key_id = key_manager.validate_key_with_permissions(api_key)
                 if is_valid:
-                    session['inspector_api_key'] = api_key
+                    # Store key_id and permission level in session (NOT the raw key)
+                    session['inspector_key_id'] = key_id
                     session['inspector_permission_level'] = permission_level.value if permission_level else 'read_write'
+                    # Note: NOT storing the raw API key in session anymore
                     return redirect(url_for('inspector.dashboard'))
                 else:
                     flash('Invalid API key', 'error')
@@ -181,7 +186,8 @@ def login():
 @inspector_bp.route('/logout')
 def logout():
     """Logout and clear session"""
-    session.pop('inspector_api_key', None)
+    session.pop('inspector_api_key', None)  # Remove if still present (backward compat)
+    session.pop('inspector_key_id', None)
     session.pop('inspector_permission_level', None)
     flash('Logged out successfully', 'success')
     return redirect(url_for('inspector.login'))
@@ -457,10 +463,19 @@ def inspector_server_error(e):
 def inject_inspector_context():
     """Inject common context variables into all inspector templates"""
     config = getattr(current_app, 'config_obj', None)
+    # Check for either new key_id or old api_key for backward compat
+    is_logged_in = 'inspector_key_id' in session or 'inspector_api_key' in session
+    # Display key_id if available, otherwise show truncated old api_key for backward compat
+    current_user = None
+    if 'inspector_key_id' in session:
+        current_user = session.get('inspector_key_id', '')
+    elif 'inspector_api_key' in session:
+        current_user = session.get('inspector_api_key', '')[:8] + '...'
+
     return {
         'inspector_enabled': inspector_enabled(),
         'require_api_key': config.server.security.require_api_key if config else False,
-        'logged_in': 'inspector_api_key' in session,
-        'current_user': session.get('inspector_api_key', '')[:8] + '...' if 'inspector_api_key' in session else None,
+        'logged_in': is_logged_in,
+        'current_user': current_user,
         'permission_level': session.get('inspector_permission_level', 'unknown')
     }

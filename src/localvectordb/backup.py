@@ -430,6 +430,16 @@ class BackupManager:
                     backup_id, backup_type, temp_dir, parent_backup_id
                 )
 
+                # Add document IDs to metadata for optimization (helps detect deletions in future incremental backups)
+                try:
+                    with sqlite3.connect(self.database_path) as conn:
+                        cursor = conn.execute("SELECT id FROM documents")
+                        document_ids = [row[0] for row in cursor.fetchall()]
+                        metadata.metadata['document_ids'] = document_ids
+                        logger.debug(f"Added {len(document_ids)} document IDs to backup metadata")
+                except Exception as e:
+                    logger.warning(f"Could not add document IDs to metadata: {e}")
+
                 # Create compressed archive
                 backup_path = self._create_backup_archive(metadata, temp_dir)
 
@@ -1398,6 +1408,16 @@ class IncrementalBackupManager:
                     'faiss_changes_count': len(changes['faiss_changes'])
                 })
 
+                # Add current document IDs to metadata for future deletion detection
+                try:
+                    with sqlite3.connect(self.database_path) as conn:
+                        cursor = conn.execute("SELECT id FROM documents")
+                        document_ids = [row[0] for row in cursor.fetchall()]
+                        metadata.metadata['document_ids'] = document_ids
+                        logger.debug(f"Added {len(document_ids)} document IDs to incremental backup metadata")
+                except Exception as e:
+                    logger.warning(f"Could not add document IDs to incremental metadata: {e}")
+
                 # Create compressed archive
                 backup_path = self.backup_manager._create_backup_archive(metadata, temp_dir)
 
@@ -1523,7 +1543,89 @@ class IncrementalBackupManager:
                             'action': 'update'  # Could be 'add' for new chunks
                         })
 
+        # Detect deleted documents by comparing IDs with parent backup
+        # First, check if parent backup has document_ids in metadata (optimization)
+        parent_doc_ids = None
+        deleted_faiss_ids = []
+
+        if parent_backup.metadata and 'document_ids' in parent_backup.metadata:
+            parent_doc_ids = set(parent_backup.metadata['document_ids'])
+            logger.debug("Using cached document IDs from parent backup metadata")
+
+        # If we don't have cached IDs or need FAISS IDs, extract parent backup
+        if parent_doc_ids is None or True:  # Always extract for now to get FAISS IDs
+            logger.debug("Extracting parent backup to detect deletions and get FAISS IDs")
+            with tempfile.TemporaryDirectory() as temp_dir_str:
+                temp_dir = Path(temp_dir_str)
+
+                # Find and extract parent backup
+                parent_backup_file = self.backup_manager._find_backup_file(parent_backup.backup_id)
+                if parent_backup_file:
+                    try:
+                        self.backup_manager._extract_backup_archive(parent_backup_file, temp_dir)
+
+                        # Get all document IDs from parent backup
+                        parent_db_path = temp_dir / f"{self.backup_manager.database_name}.sqlite"
+                        if parent_db_path.exists():
+                            with sqlite3.connect(parent_db_path) as parent_conn:
+                                if parent_doc_ids is None:
+                                    parent_ids_cursor = parent_conn.execute("SELECT id FROM documents")
+                                    parent_doc_ids = set(row[0] for row in parent_ids_cursor.fetchall())
+
+                                # Get current document IDs to find deletions
+                                with sqlite3.connect(self.database_path) as conn:
+                                    current_ids_cursor = conn.execute("SELECT id FROM documents")
+                                    current_doc_ids = set(row[0] for row in current_ids_cursor.fetchall())
+
+                                # Find deleted document IDs
+                                deleted_ids = parent_doc_ids - current_doc_ids
+
+                                # Get FAISS IDs for deleted documents
+                                if deleted_ids:
+                                    placeholders = ','.join(['?' for _ in deleted_ids])
+                                    cursor = parent_conn.execute(f"""
+                                        SELECT document_id, faiss_id
+                                        FROM chunks
+                                        WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL
+                                    """, list(deleted_ids))
+                                    for row in cursor:
+                                        deleted_faiss_ids.append({
+                                            'document_id': row[0],
+                                            'faiss_id': row[1],
+                                            'action': 'delete'
+                                        })
+                    except Exception as e:
+                        logger.warning(f"Could not extract parent backup for deletion detection: {e}")
+
+        # Process deletion information if we have parent document IDs
+        if parent_doc_ids is not None:
+            # If we didn't get current IDs yet (because we used cached parent IDs), get them now
+            if 'deleted_ids' not in locals():
+                with sqlite3.connect(self.database_path) as conn:
+                    current_ids_cursor = conn.execute("SELECT id FROM documents")
+                    current_doc_ids = set(row[0] for row in current_ids_cursor.fetchall())
+                deleted_ids = parent_doc_ids - current_doc_ids
+
+            if deleted_ids:
+                logger.info(f"Detected {len(deleted_ids)} deleted documents")
+
+                # Add deleted documents to changes
+                for doc_id in deleted_ids:
+                    changes['deleted_documents'].append({
+                        'id': doc_id,
+                        'action': 'delete'
+                    })
+                    changes['has_changes'] = True
+
+                # Add deleted FAISS vectors to track
+                for faiss_info in deleted_faiss_ids:
+                    changes['faiss_changes'].append(faiss_info)
+
+                if deleted_faiss_ids:
+                    logger.debug(f"Found {len(deleted_faiss_ids)} FAISS vectors to delete")
+
         logger.debug(f"Found {len(changes['changed_documents'])} changed documents, "
+                     f"{len(changes['deleted_documents'])} deleted documents, "
                      f"{len(changes['faiss_changes'])} FAISS changes")
 
         return changes
@@ -1700,6 +1802,13 @@ class IncrementalBackupManager:
                 }
                 for doc in changes['changed_documents']
             ],
+            'deleted_documents': [
+                {
+                    'id': doc['id'],
+                    'action': doc.get('action', 'delete')
+                }
+                for doc in changes['deleted_documents']
+            ],
             'faiss_changes': changes['faiss_changes']
         }
 
@@ -1834,71 +1943,104 @@ class IncrementalBackupManager:
     def _apply_database_changes(self, inc_dir: Path, working_dir: Path) -> None:
         """Apply database changes from incremental backup."""
 
-        inc_db_path = inc_dir / f"{self.backup_manager.database_name}.sqlite"
         working_db_path = working_dir / f"{self.backup_manager.database_name}.sqlite"
-
-        if not inc_db_path.exists():
-            return  # No database changes
-
-        inc_conn = sqlite3.connect(inc_db_path)
         working_conn = sqlite3.connect(working_db_path)
 
         try:
-            # Get documents table schema to handle all columns dynamically
-            cursor = inc_conn.execute("PRAGMA table_info(documents)")
-            column_info = cursor.fetchall()
-            column_names = [col[1] for col in column_info]  # col[1] is the column name
-            placeholders = ', '.join(['?' for _ in column_names])
-            column_names_str = ', '.join(column_names)
+            # First, process deletions from the manifest
+            manifest_path = inc_dir / "incremental_manifest.json"
+            if manifest_path.exists():
+                with open(manifest_path, 'r') as f:
+                    manifest = json.load(f)
 
-            # Copy changed documents with all columns
-            cursor = inc_conn.execute(f"SELECT {column_names_str} FROM documents")
-            for row in cursor.fetchall():
-                working_conn.execute(f"""
-                    INSERT OR REPLACE INTO documents
-                    ({column_names_str})
-                    VALUES ({placeholders})
-                """, row)
+                # Apply deletions first (before any insertions/updates)
+                deleted_documents = manifest.get('deleted_documents', [])
+                if deleted_documents:
+                    deleted_ids = [doc['id'] for doc in deleted_documents]
+                    logger.info(f"Applying {len(deleted_ids)} document deletions")
 
-            # Copy changed chunks with optimized bulk operations
-            cursor = inc_conn.execute("SELECT * FROM chunks")
-            all_chunk_rows = cursor.fetchall()
-
-            if all_chunk_rows:
-                # Collect unique document IDs that need chunk replacement
-                affected_doc_ids = set()
-                for row in all_chunk_rows:
-                    doc_id = row[1]  # document_id is second column
-                    affected_doc_ids.add(doc_id)
-
-                # Bulk delete all chunks for affected documents
-                if affected_doc_ids:
-                    placeholders = ','.join(['?' for _ in affected_doc_ids])
+                    # Delete chunks first (foreign key constraint)
+                    placeholders = ','.join(['?' for _ in deleted_ids])
                     working_conn.execute(
                         f"DELETE FROM chunks WHERE document_id IN ({placeholders})",
-                        list(affected_doc_ids)
+                        deleted_ids
                     )
-                    logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
 
-                # Bulk insert all new chunks
-                chunk_insert_data = []
-                for row in all_chunk_rows:
-                    chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
+                    # Then delete documents
+                    cursor = working_conn.execute(
+                        f"DELETE FROM documents WHERE id IN ({placeholders})",
+                        deleted_ids
+                    )
+                    actual_deleted = cursor.rowcount
+                    logger.debug(f"Deleted {actual_deleted} documents from restored database")
 
-                working_conn.executemany("""
-                    INSERT INTO chunks
-                    (document_id, chunk_index, content, content_hash,
-                     start_pos, end_pos, start_line, start_col, end_line, end_col,
-                     tokens, faiss_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, chunk_insert_data)
-                logger.debug(f"Bulk inserted {len(chunk_insert_data)} chunks")
+                    working_conn.commit()
 
-            working_conn.commit()
+            # Now apply insertions/updates from the incremental database
+            inc_db_path = inc_dir / f"{self.backup_manager.database_name}.sqlite"
+            if not inc_db_path.exists():
+                return  # No database changes to apply
+
+            inc_conn = sqlite3.connect(inc_db_path)
+
+            try:
+                # Get documents table schema to handle all columns dynamically
+                cursor = inc_conn.execute("PRAGMA table_info(documents)")
+                column_info = cursor.fetchall()
+                column_names = [col[1] for col in column_info]  # col[1] is the column name
+                placeholders = ', '.join(['?' for _ in column_names])
+                column_names_str = ', '.join(column_names)
+
+                # Copy changed documents with all columns
+                cursor = inc_conn.execute(f"SELECT {column_names_str} FROM documents")
+                for row in cursor.fetchall():
+                    working_conn.execute(f"""
+                        INSERT OR REPLACE INTO documents
+                        ({column_names_str})
+                        VALUES ({placeholders})
+                    """, row)
+
+                # Copy changed chunks with optimized bulk operations
+                cursor = inc_conn.execute("SELECT * FROM chunks")
+                all_chunk_rows = cursor.fetchall()
+
+                if all_chunk_rows:
+                    # Collect unique document IDs that need chunk replacement
+                    affected_doc_ids = set()
+                    for row in all_chunk_rows:
+                        doc_id = row[1]  # document_id is second column
+                        affected_doc_ids.add(doc_id)
+
+                    # Bulk delete all chunks for affected documents
+                    if affected_doc_ids:
+                        placeholders = ','.join(['?' for _ in affected_doc_ids])
+                        working_conn.execute(
+                            f"DELETE FROM chunks WHERE document_id IN ({placeholders})",
+                            list(affected_doc_ids)
+                        )
+                        logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
+
+                    # Bulk insert all new chunks
+                    chunk_insert_data = []
+                    for row in all_chunk_rows:
+                        chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
+
+                    working_conn.executemany("""
+                        INSERT INTO chunks
+                        (document_id, chunk_index, content, content_hash,
+                         start_pos, end_pos, start_line, start_col, end_line, end_col,
+                         tokens, faiss_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, chunk_insert_data)
+                    logger.debug(f"Bulk inserted {len(chunk_insert_data)} chunks")
+
+                working_conn.commit()
+
+            finally:
+                # Explicitly close connections to release file locks on Windows
+                inc_conn.close()
 
         finally:
-            # Explicitly close connections to release file locks on Windows
-            inc_conn.close()
             working_conn.close()
 
             # Small delay to ensure file locks are released

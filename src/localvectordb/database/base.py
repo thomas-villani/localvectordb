@@ -535,6 +535,8 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
         self._sqlite_pragmas: dict = {}
 
+
+
     @abstractmethod
     def _generate_doc_id(self) -> str:
         pass
@@ -627,6 +629,5 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    @property
     def is_memory_only(self) -> bool:
         pass

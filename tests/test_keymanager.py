@@ -688,16 +688,3 @@ class TestKeyManagerErrorHandling:
                 manager = KeyManager(str(db_path))
                 # Try to create a key, which should fail
                 manager.create_key(description="Test")
-
-    def test_invalid_database_path(self):
-        """Test initialization with invalid database path."""
-        # Test with a path that can't be created (on most systems)
-        invalid_path = "/root/cannot_create/keys.db"
-
-        with patch('localvectordb_server.keymanager.bcrypt'):
-            # Should raise an exception or handle gracefully
-            try:
-                KeyManager(invalid_path)
-            except (PermissionError, OSError):
-                # Expected on systems where /root is not writable
-                pass

@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 
 class SearchMixin(LocalVectorDBBase, ABC):
+
+
     # -----------------
     # Helper methods
     # -----------------

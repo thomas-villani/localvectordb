@@ -2007,49 +2007,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             raise last_exception
         return None
 
-    @staticmethod
-    async def _handle_response_async(response: httpx.Response) -> dict:
-        """Handle API response and raise appropriate exceptions"""
-        if response.status_code == 200:
-            try:
-                return await response.json()
-            except ValueError as e:
-                logger.warning(f"Failed to parse successful response as JSON: {e}")
-                raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
-
-        # Try to parse error response as JSON with fallback to text
-        error_type, error_msg = RemoteVectorDB._normalize_error_response(response)
-        logger.debug(f"Client error (async): {error_type} - {error_msg}")
-
-        # Map error type to appropriate exception
-        error_map = {
-            "database_not_found": DatabaseNotFoundError,
-            "duplicate_document_id": DuplicateDocumentIDError,
-            "embedding_error": EmbeddingError,
-            "document_not_found": DocumentNotFoundError
-        }
-
-        # Raise the appropriate exception if we recognize the type
-        if error_type in error_map:
-            raise error_map[error_type](error_msg)
-
-        # Generic error mapping based on HTTP status
-        if response.status_code == 404:
-            raise DatabaseNotFoundError(error_msg)
-        elif response.status_code == 400:
-            raise ValueError(error_msg)
-        elif response.status_code == 401:
-            raise PermissionError("Authentication failed. Check your API key.")
-        elif response.status_code == 409:
-            raise DuplicateDocumentIDError(error_msg)
-        else:
-            raise BaseLocalVectorDBException(f"API Error: {error_msg}")
-
     async def get_stats_async(self) -> Dict[str, Any]:
         """Get database statistics"""
         url = self._build_url(f"/api/v1/{self.name}/info")
         response = await self._make_request_with_retry_async("GET", url)
-        db_info = await self._handle_response_async(response)
+        db_info = self._handle_response(response)
         return db_info.get("stats", {})
 
 
@@ -2108,7 +2070,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/documents")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         return result.get("ids", [])
 
@@ -2172,7 +2134,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/documents/insert")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         return result.get("ids", [])
 
@@ -2270,7 +2232,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
             # Make request with streaming files
             response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
-            result = await self._handle_response_async(response)
+            result = self._handle_response(response)
         finally:
             # Ensure all file handles are closed
             for file_handle in file_handles:
@@ -2381,7 +2343,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
             # Make request with streaming files
             response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
-            result = await self._handle_response_async(response)
+            result = self._handle_response(response)
         finally:
             # Ensure all file handles are closed
             for file_handle in file_handles:
@@ -2453,7 +2415,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/documents/chunks")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         return result.get("ids", [])
 
@@ -2525,7 +2487,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/documents/chunks/insert")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         return result.get("ids", [])
 
@@ -2551,7 +2513,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(ids)}")
 
         response = await self._make_request_with_retry_async("GET", url)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
         if single_id:
             return Document.from_dict(result)
         else:
@@ -2578,7 +2540,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async(
             "POST", url, json={"ids": check_ids}
         )
-        results = await self._handle_response_async(response)
+        results = self._handle_response(response)
 
         return results.get("exists")[0] if single_id else results.get("exists")
 
@@ -2604,7 +2566,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         async def delete_single(doc_id: str) -> int:
             url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
             response = await self._make_request_with_retry_async("DELETE", url)
-            result = await self._handle_response_async(response)
+            result = self._handle_response(response)
             return result.get("deleted_count", 0)
 
         tasks = [delete_single(doc_id) for doc_id in ids]
@@ -2643,7 +2605,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             payload["filters"] = filters
 
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         return result.get("count", 0)
 
@@ -2684,7 +2646,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         try:
             response = await self._make_request_with_retry_async("PUT", url, json=payload)
-            result = await self._handle_response_async(response)
+            result = self._handle_response(response)
             return result.get("updated", False)
         except DatabaseNotFoundError:
             return False
@@ -2757,7 +2719,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/query")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         # Process results
         raw_results = result.get("results", [])
@@ -2829,7 +2791,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/query-multi-column")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         # Process results
         raw_results = result.get("results", [])
@@ -2876,7 +2838,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/{self.name}/filter")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         # Process results
         raw_docs = result.get("documents", [])
@@ -3010,7 +2972,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async(
             "POST", url, json=payload
         )
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
 
         # Update local metadata schema cache
         if 'new_schema' in result:
@@ -3056,7 +3018,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
         url = self._build_url(f"/api/v1/{self.name}/schema")
         response = await self._make_request_with_retry_async("GET", url)
-        result = await self._handle_response_async(response)
+        result = self._handle_response(response)
         return result.get('schema_info', {})
 
 

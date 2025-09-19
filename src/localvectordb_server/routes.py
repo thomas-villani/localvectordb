@@ -33,7 +33,7 @@ from localvectordb.extractors import get_extractor_registry, get_supported_forma
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._cache import cache
-from localvectordb_server._checkdeps import check_ollama_service
+from localvectordb_server.checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
     APIError,
     ValidationError,
@@ -1365,7 +1365,7 @@ def health_check():
             "status": "healthy",
             "version": get_system_version(),
             "ollama_available": check_ollama_service(),
-            "timestamp": logger.manager.loggerDict.get('timestamp', 'unknown')
+            "timestamp": datetime.now(UTC).isoformat()
         }
         return jsonify(status)
     except Exception as e:

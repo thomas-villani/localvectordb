@@ -43,10 +43,6 @@ def db_group(ctx, name):
     """
     db_folder = ctx.obj["db_folder"]
 
-    # if not db_folder:
-    #     cfg = ctx.obj["config"]
-    #     db_folder = cfg.database.root_dir
-
     if not db_folder or not os.path.exists(db_folder):
         click.secho(
             f"DB_FOLDER {'not specified and not found in configuration' if not db_folder else 'does not exist'}.",
@@ -63,7 +59,7 @@ def db_group(ctx, name):
                     fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
-    ctx.obj = {"db_name": name, "db": db}
+    ctx.obj.update({"db_name": name, "db": db})
 
 
 @db_group.command('info')

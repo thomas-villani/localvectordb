@@ -1,7 +1,7 @@
 #  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
 
 """
-localvectordb_server/_checkdeps.py
+localvectordb_server/checkdeps.py
 Utility functions for checking system dependencies.
 """
 import logging

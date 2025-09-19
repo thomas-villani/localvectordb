@@ -234,7 +234,7 @@ class SecuritySettings(BaseSettings):
     # API Key authentication
     require_api_key: bool = False
     api_key_header: str = "Authorization"  # Header name for API key
-    trusted_hosts: Optional[List[str]] = None
+    trusted_hosts: Optional[List[str]] = None  # Host header validation patterns (e.g., ["localhost", "*.example.com"])
 
     # Key management
     key_database_path: Optional[str] = None  # None = auto-determined from db_root_dir
@@ -280,12 +280,28 @@ class SecuritySettings(BaseSettings):
 
         # Validate key database path if specified
         if self.key_database_path:
+            valid_key_db_path = True
+            reason = ""
             try:
-                Path(self.key_database_path).parent.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                raise ConfigurationError(f"Invalid key_database_path: {e}")
+                key_path = Path(self.key_database_path)
+            except ValueError:
+                valid_key_db_path = False
+                reason = "Must use valid key database path"
+            else:
+                if not os.path.exists(key_path.parent):
+                    valid_key_db_path = False
+                    reason = f"`key_database_path` parent directory does not exist: {str(key_path.parent)}"
+                elif key_path.exists() and not os.access(key_path, os.W_OK):
+                    valid_key_db_path = False
+                    reason = f"Cannot write to `key_database_path`: {str(key_path)}"
+                elif not os.access(key_path.parent, os.W_OK):
+                    valid_key_db_path = False
+                    reason = "key_database_path cannot access"
 
-        # Validate CORS allowed origins
+            if not valid_key_db_path:
+                raise ConfigurationError(f"Invalid key_database_path: {reason}")
+
+            # Validate CORS allowed origins
         if isinstance(self.cors_allowed_origins, str):
             if self.cors_allowed_origins != "*" and not self.cors_allowed_origins:
                 raise ConfigurationError("cors_allowed_origins string must be '*' or a non-empty string")
@@ -297,6 +313,27 @@ class SecuritySettings(BaseSettings):
                     raise ConfigurationError("Each origin in cors_allowed_origins must be a non-empty string")
         else:
             raise ConfigurationError("cors_allowed_origins must be either a string or a list of strings")
+
+        # Validate trusted_hosts patterns if specified
+        if self.trusted_hosts is not None:
+            if not isinstance(self.trusted_hosts, list):
+                raise ConfigurationError("trusted_hosts must be a list of strings")
+
+            if len(self.trusted_hosts) == 0:
+                raise ConfigurationError("trusted_hosts list cannot be empty (use None to disable)")
+
+            # Import here to avoid circular imports
+            try:
+                from localvectordb_server.utils.hostmatch import validate_trusted_host_patterns
+                validation_errors = validate_trusted_host_patterns(self.trusted_hosts)
+                if validation_errors:
+                    error_msg = "Invalid trusted_hosts patterns:\n" + "\n".join(f"  - {error}" for error in validation_errors)
+                    raise ConfigurationError(error_msg)
+            except ImportError:
+                # Fallback validation if hostmatch module not available
+                for i, pattern in enumerate(self.trusted_hosts):
+                    if not isinstance(pattern, str) or not pattern.strip():
+                        raise ConfigurationError(f"trusted_hosts[{i}] must be a non-empty string")
 
         return True
 
@@ -336,7 +373,26 @@ class ServerSettings(BaseSettings):
                         "MemcachedCache", "UWSGICache", "DynamoDbCache",
                         "MongoDbCache", "NullCache"] = "SimpleCache"
     # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
+    # DEPRECATED: Use specific cache backend configurations below instead
     cache_settings: Optional[dict] = None
+
+    # Redis cache specific settings (used when cache_type = "RedisCache")
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: Optional[str] = None
+    redis_db: int = 0
+    redis_url: Optional[str] = None  # If set, overrides individual redis_* settings
+    redis_socket_timeout: Optional[float] = None
+    redis_socket_connect_timeout: Optional[float] = None
+
+    # FileSystem cache specific settings (used when cache_type = "FileSystemCache")
+    filesystem_cache_dir: Optional[str] = None
+    filesystem_cache_threshold: int = 500
+
+    # Memcached cache specific settings (used when cache_type = "MemcachedCache")
+    memcached_servers: List[str] = field(default_factory=lambda: ["127.0.0.1:11211"])
+    memcached_username: Optional[str] = None
+    memcached_password: Optional[str] = None
 
     # Database registry settings for multi-worker coordination
     db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
@@ -353,6 +409,10 @@ class ServerSettings(BaseSettings):
     # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
     # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
     proxy_settings: Optional[dict] = None
+
+    # List of trusted proxy IP addresses/CIDR blocks that are allowed to set forwarded headers
+    # Required when proxy_enabled=True for security
+    trusted_proxies: List[str] = field(default_factory=list)
 
     # Security settings
     security: SecuritySettings = field(default_factory=SecuritySettings)
@@ -390,9 +450,48 @@ class ServerSettings(BaseSettings):
                 raise ConfigurationError("If `proxy_enabled` is True, `proxy_settings` must be a dict containing "
                                          "one or more of the following keys: x_for, x_proto, x_host, x_prefix")
 
+            # Require trusted_proxies when proxy is enabled for security
+            if not self.trusted_proxies:
+                raise ConfigurationError("When `proxy_enabled` is True, `trusted_proxies` must be configured with "
+                                         "a list of trusted proxy IP addresses or CIDR blocks for security")
+
+        # Validate trusted_proxies format
+        if self.trusted_proxies:
+            import ipaddress
+            for proxy in self.trusted_proxies:
+                try:
+                    # Validate IP address or CIDR block format
+                    ipaddress.ip_network(proxy, strict=False)
+                except ValueError:
+                    raise ConfigurationError(f"Invalid IP address or CIDR block in trusted_proxies: {proxy}")
+
         if self.cache_enabled:
             valid_cache_types = ("SimpleCache", "RedisCache", "FileSystemCache", "MemcachedCache",
                                 "UWSGICache", "DynamoDbCache", "MongoDbCache", "NullCache")
+
+            # Validate cache type
+            if self.cache_type not in valid_cache_types:
+                raise ConfigurationError(f"cache_type must be one of: {valid_cache_types}")
+
+            # Backend-specific validation
+            if self.cache_type == "RedisCache":
+                if self.redis_url and (self.redis_host != "localhost" or self.redis_port != 6379 or self.redis_password):
+                    raise ConfigurationError("When redis_url is set, do not set individual redis_host/port/password settings")
+                if not self.redis_url and not self.redis_host:
+                    raise ConfigurationError("Redis cache requires either redis_url or redis_host to be configured")
+
+            elif self.cache_type == "FileSystemCache":
+                if not self.filesystem_cache_dir:
+                    raise ConfigurationError("FileSystem cache requires filesystem_cache_dir to be configured")
+                if self.filesystem_cache_threshold <= 0:
+                    raise ConfigurationError("filesystem_cache_threshold must be a positive integer")
+
+            elif self.cache_type == "MemcachedCache":
+                if not self.memcached_servers:
+                    raise ConfigurationError("Memcached cache requires memcached_servers to be configured")
+                for server in self.memcached_servers:
+                    if not isinstance(server, str) or ":" not in server:
+                        raise ConfigurationError(f"Invalid memcached server format: {server}. Use 'host:port' format")
             if self.cache_type not in valid_cache_types:
                 raise ConfigurationError(f"cache_type must be one of: {', '.join(valid_cache_types)}")
 
@@ -766,15 +865,8 @@ class Config:
             result[f"MIGRATION_{key.upper()}"] = value
 
 
-        cache_options = None
-        if self.server.cache_settings:
-            cache_options = {}
-            for k, v in self.server.cache_settings.items():
-                # Handle signal to load from environment variable (e.g. for redis password)
-                if isinstance(v, str) and v.startswith("$"):
-                    cache_options[k] = os.getenv(v[1:])
-                else:
-                    cache_options[k] = v
+        # Generate Flask-Caching compatible configuration
+        cache_config = self._generate_cache_config()
 
         # Server settings (maintain existing names for backward compatibility)
         result.update({
@@ -789,15 +881,74 @@ class Config:
             "MAX_CONTENT_LENGTH": self.server.max_request_size,
             "AUTH_LOG_LEVEL": self.server.security.auth_log_level,
             "TRUSTED_HOSTS": self.server.security.trusted_hosts,
-            "CACHE_TYPE": "NullCache" if not self.server.cache_enabled else self.server.cache_type,
-            "CACHE_DEFAULT_TIMEOUT": self.server.cache_timeout,
-            "CACHE_OPTIONS": cache_options,
+            "TRUSTED_PROXIES": self.server.trusted_proxies,
             "CACHE_IGNORE_ERRORS": self.server.cache_ignore_errors,
             "CACHE_NO_NULL_WARNING": not self.server.cache_enabled,
             "CACHE_KEY_PREFIX": self.server.cache_key_prefix
         })
 
+        # Add cache configuration
+        result.update(cache_config)
+
         return result
+
+    def _generate_cache_config(self) -> Dict[str, Any]:
+        """Generate Flask-Caching compatible configuration based on cache type and settings"""
+        cache_config = {
+            "CACHE_TYPE": "NullCache" if not self.server.cache_enabled else self.server.cache_type,
+            "CACHE_DEFAULT_TIMEOUT": self.server.cache_timeout,
+        }
+
+        if not self.server.cache_enabled:
+            return cache_config
+
+        # Handle legacy cache_settings for backward compatibility
+        legacy_options = {}
+        if self.server.cache_settings:
+            for k, v in self.server.cache_settings.items():
+                # Handle signal to load from environment variable (e.g. for redis password)
+                if isinstance(v, str) and v.startswith("$"):
+                    legacy_options[k] = os.getenv(v[1:])
+                else:
+                    legacy_options[k] = v
+
+        # Generate backend-specific configuration
+        if self.server.cache_type == "RedisCache":
+            if self.server.redis_url:
+                cache_config["CACHE_REDIS_URL"] = self.server.redis_url
+            else:
+                cache_config["CACHE_REDIS_HOST"] = self.server.redis_host
+                cache_config["CACHE_REDIS_PORT"] = self.server.redis_port
+                if self.server.redis_password:
+                    cache_config["CACHE_REDIS_PASSWORD"] = self.server.redis_password
+                cache_config["CACHE_REDIS_DB"] = self.server.redis_db
+
+            # Add socket timeout options if configured
+            if self.server.redis_socket_timeout is not None:
+                cache_config["CACHE_OPTIONS"] = cache_config.get("CACHE_OPTIONS", {})
+                cache_config["CACHE_OPTIONS"]["socket_timeout"] = self.server.redis_socket_timeout
+            if self.server.redis_socket_connect_timeout is not None:
+                cache_config["CACHE_OPTIONS"] = cache_config.get("CACHE_OPTIONS", {})
+                cache_config["CACHE_OPTIONS"]["socket_connect_timeout"] = self.server.redis_socket_connect_timeout
+
+        elif self.server.cache_type == "FileSystemCache":
+            if self.server.filesystem_cache_dir:
+                cache_config["CACHE_DIR"] = self.server.filesystem_cache_dir
+            cache_config["CACHE_THRESHOLD"] = self.server.filesystem_cache_threshold
+
+        elif self.server.cache_type == "MemcachedCache":
+            cache_config["CACHE_MEMCACHED_SERVERS"] = self.server.memcached_servers
+            if self.server.memcached_username:
+                cache_config["CACHE_MEMCACHED_USERNAME"] = self.server.memcached_username
+            if self.server.memcached_password:
+                cache_config["CACHE_MEMCACHED_PASSWORD"] = self.server.memcached_password
+
+        # Merge any legacy options that don't conflict with backend-specific settings
+        if legacy_options and self.server.cache_type not in ["RedisCache", "FileSystemCache", "MemcachedCache"]:
+            # For unknown backends, fall back to CACHE_OPTIONS
+            cache_config["CACHE_OPTIONS"] = legacy_options
+
+        return cache_config
 
     def generate_toml(self) -> str:
         """Generate enhanced TOML configuration for v1.0 using tomli-w."""

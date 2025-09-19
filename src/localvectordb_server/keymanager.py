@@ -76,6 +76,7 @@ Examples:
         $ lvdb auth prune-expired
 """
 
+import hashlib
 import logging
 import secrets
 import sqlite3
@@ -180,7 +181,7 @@ class KeyManager:
     """
 
     # Database schema version for migrations
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     # Key generation settings
     KEY_PREFIX = "lvdb_"
@@ -210,6 +211,7 @@ class KeyManager:
                 CREATE TABLE IF NOT EXISTS api_keys (
                     id TEXT PRIMARY KEY,
                     key_hash TEXT NOT NULL,
+                    key_fingerprint TEXT,
                     description TEXT,
                     created_at TIMESTAMP NOT NULL,
                     expires_at TIMESTAMP,
@@ -229,6 +231,12 @@ class KeyManager:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_api_keys_expires
                 ON api_keys(expires_at)
+            """)
+
+            # Create fingerprint index for fast lookup
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_api_keys_fingerprint
+                ON api_keys(key_fingerprint)
             """)
 
             # Only create permission index after ensuring column exists
@@ -296,6 +304,36 @@ class KeyManager:
                 logger.error(f"Error during database migration: {e}")
                 raise
 
+        if from_version < 3:
+            # Migration from version 2 to 3: Add key_fingerprint column for fast lookup
+            try:
+                cursor = conn.execute("PRAGMA table_info(api_keys)")
+                columns = [row[1] for row in cursor.fetchall()]
+
+                if 'key_fingerprint' not in columns:
+                    logger.info("Adding key_fingerprint column to api_keys table")
+                    conn.execute("""
+                        ALTER TABLE api_keys
+                        ADD COLUMN key_fingerprint TEXT
+                    """)
+                    # Create index on the fingerprint column for fast lookup
+                    conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_api_keys_fingerprint
+                        ON api_keys(key_fingerprint)
+                    """)
+
+                    # Generate fingerprints for existing keys - we cannot retroactively
+                    # generate them from hashes, so existing keys will have NULL fingerprints
+                    # and will fall back to the slower validation path
+                    logger.info("Successfully added key_fingerprint column and index")
+                    logger.info("Note: Existing keys will use slower validation until rotated")
+                else:
+                    logger.info("key_fingerprint column already exists")
+
+            except Exception as e:
+                logger.error(f"Error during database migration to v3: {e}")
+                raise
+
     @contextmanager
     def _get_connection(self) -> Generator[Connection, Any, None]:
         """Get database connection with proper settings"""
@@ -320,6 +358,22 @@ class KeyManager:
         random_part = ''.join(secrets.choice(self.KEY_CHARSET)
                               for _ in range(self.KEY_LENGTH))
         return f"{self.KEY_PREFIX}{random_part}"
+
+    @staticmethod
+    def _generate_fingerprint(key: str) -> str:
+        """Generate a SHA-256 fingerprint of the API key for fast lookup
+
+        Parameters
+        ----------
+        key : str
+            The API key to fingerprint
+
+        Returns
+        -------
+        str
+            SHA-256 hash of the key (hex digest)
+        """
+        return hashlib.sha256(key.encode('utf-8')).hexdigest()
 
     def _hash_key(self, key: str) -> str:
         """Hash an API key using bcrypt"""
@@ -365,6 +419,7 @@ class KeyManager:
         key_id = self._generate_key_id()
         plain_key = self._generate_api_key()
         key_hash = self._hash_key(plain_key)
+        key_fingerprint = self._generate_fingerprint(plain_key)
         created_at = datetime.now(UTC)
         expires_at = None
         if expires_days is not None:
@@ -374,10 +429,10 @@ class KeyManager:
         with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO api_keys
-                (id, key_hash, description, created_at, expires_at, created_by, active, permission_level)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, key_hash, key_fingerprint, description, created_at, expires_at, created_by, active, permission_level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                key_id, key_hash, description, created_at.isoformat(),
+                key_id, key_hash, key_fingerprint, description, created_at.isoformat(),
                 expires_at.isoformat() if expires_at else None,
                 created_by, True, permission_level.value
             ))
@@ -416,15 +471,30 @@ class KeyManager:
         """
         if not key or not key.startswith(self.KEY_PREFIX):
             return False
+
+        # Generate fingerprint for fast lookup
+        key_fingerprint = self._generate_fingerprint(key)
+
         with self._get_connection() as conn:
-            # Get all active keys
+            # First try fast lookup by fingerprint
             cursor = conn.execute("""
                 SELECT id, key_hash, expires_at FROM api_keys
-                WHERE active = TRUE
-            """)
+                WHERE active = TRUE AND key_fingerprint = ?
+            """, (key_fingerprint,))
 
-            for row in cursor:
-                # Check if key matches
+            candidates = cursor.fetchall()
+
+            # If no fingerprint matches, fall back to checking all active keys
+            # This handles legacy keys without fingerprints
+            if not candidates:
+                cursor = conn.execute("""
+                    SELECT id, key_hash, expires_at FROM api_keys
+                    WHERE active = TRUE AND key_fingerprint IS NULL
+                """)
+                candidates = cursor.fetchall()
+
+            for row in candidates:
+                # Check if key matches using bcrypt
                 if self._verify_key(key, row['key_hash']):
                     # Check expiration
                     if row['expires_at']:
@@ -450,9 +520,9 @@ class KeyManager:
         logger.debug("Key validation failed")
         return False
 
-    def validate_key_with_permissions(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> tuple[bool, Optional[PermissionLevel]]:
+    def validate_key_with_permissions(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> tuple[bool, Optional[PermissionLevel], Optional[str]]:
         """
-        Validate an API key and return its permission level
+        Validate an API key and return its permission level and key_id
 
         Parameters
         ----------
@@ -465,21 +535,35 @@ class KeyManager:
 
         Returns
         -------
-        tuple[bool, Optional[PermissionLevel]]
-            (is_valid, permission_level) - permission_level is None if key is invalid
+        tuple[bool, Optional[PermissionLevel], Optional[str]]
+            (is_valid, permission_level, key_id) - permission_level and key_id are None if key is invalid
         """
         if not key or not key.startswith(self.KEY_PREFIX):
-            return False, None
+            return False, None, None
+
+        # Generate fingerprint for fast lookup
+        key_fingerprint = self._generate_fingerprint(key)
 
         with self._get_connection() as conn:
-            # Get all active keys with permission levels
+            # First try fast lookup by fingerprint
             cursor = conn.execute("""
                 SELECT id, key_hash, expires_at, permission_level FROM api_keys
-                WHERE active = TRUE
-            """)
+                WHERE active = TRUE AND key_fingerprint = ?
+            """, (key_fingerprint,))
 
-            for row in cursor:
-                # Check if key matches
+            candidates = cursor.fetchall()
+
+            # If no fingerprint matches, fall back to checking all active keys
+            # This handles legacy keys without fingerprints
+            if not candidates:
+                cursor = conn.execute("""
+                    SELECT id, key_hash, expires_at, permission_level FROM api_keys
+                    WHERE active = TRUE AND key_fingerprint IS NULL
+                """)
+                candidates = cursor.fetchall()
+
+            for row in candidates:
+                # Check if key matches using bcrypt
                 if self._verify_key(key, row['key_hash']):
                     # Check expiration
                     if row['expires_at']:
@@ -490,7 +574,7 @@ class KeyManager:
                                 logger.info(f"Pruning expired key: {row['id']}")
                                 conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'], ))
                                 conn.commit()
-                            return False, None
+                            return False, None, None
 
                     # Update last used timestamp
                     if update_last_used:
@@ -507,10 +591,10 @@ class KeyManager:
                         permission_level = PermissionLevel.READ_WRITE
 
                     logger.debug(f"Key {row['id']} validated successfully with permission: {permission_level.value}")
-                    return True, permission_level
+                    return True, permission_level, row['id']
 
         logger.debug("Key validation failed")
-        return False, None
+        return False, None, None
 
     def get_key(self, key_id: str) -> Optional[KeyRecord]:
         """

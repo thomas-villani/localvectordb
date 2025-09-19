@@ -349,7 +349,9 @@ class Document:
             chunks=data.get('chunks', [])
         )
 
-
+# TODO: create a class to handle list of QueryResult with composable subfiltering options, but still acting like a list.
+#   This would allow for further processing like `.semantic_filter` and `.filter`
+#   And also fancier stuff like converting to a numpy array of embeddings
 @dataclass
 class QueryResult:
     """Result from a search query"""

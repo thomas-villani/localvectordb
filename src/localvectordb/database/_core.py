@@ -123,8 +123,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._embedding_dimension = self._embedding_provider.get_dimension()
 
         # Threading
-        self._read_write_lock = ReadWriteLock()
-        self._faiss_lock = ReadWriteLock()  # ReadWrite lock for FAISS operations to allow concurrent reads
+        self._read_write_lock: ReadWriteLock = ReadWriteLock()
+        self._faiss_lock: ReadWriteLock = ReadWriteLock()  # ReadWrite lock for FAISS operations to allow concurrent reads
 
         # Initialize SQLite tuning configuration
         from localvectordb.sqlite_tuning import PROFILES
