@@ -79,8 +79,10 @@ def backup_group(ctx):
 @click.option('--json', 'output_json', is_flag=True,
               help='Output result in JSON format')
 @click.pass_context
-def create_backup(ctx, database_name, backup_type, parent, location,
-                  compression, no_verify, exclude_faiss, output_json):
+def create_backup(
+        ctx, database_name, backup_type, parent, location,
+        compression, no_verify, exclude_faiss, output_json
+        ):
     """
     Create a backup of the specified database.
 
@@ -108,7 +110,7 @@ def create_backup(ctx, database_name, backup_type, parent, location,
 
         if not db_path.exists():
             click.secho(f"Database '{database_name}' not found in {db_folder}",
-                       fg="red", err=True)
+                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         # Configure backup settings
@@ -139,7 +141,7 @@ def create_backup(ctx, database_name, backup_type, parent, location,
         else:  # incremental
             if not parent:
                 click.secho("Parent backup ID required for incremental backups",
-                           fg="red", err=True)
+                            fg="red", err=True)
                 raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
             # Create incremental backup
@@ -630,7 +632,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
             else:
                 if dry_run:
                     click.secho(f"Dry run: Would delete {cleanup_result['backups_to_delete']} backup(s)",
-                               fg="yellow")
+                                fg="yellow")
                 else:
                     click.secho(f"✓ Deleted {cleanup_result['deleted_count']} backup(s)", fg="green")
 

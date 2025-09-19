@@ -28,17 +28,17 @@ logger = logging.getLogger(__name__)
 def validate_sql_identifier(identifier: str) -> None:
     """
     Validate that a string is a safe SQL identifier for use in DDL operations.
-    
+
     Parameters
     ----------
     identifier : str
         The identifier to validate
-        
+
     Raises
     ------
     ValueError
         If the identifier is not safe for SQL DDL operations
-        
+
     Notes
     -----
     Safe SQL identifiers must:
@@ -475,7 +475,7 @@ class DatabaseSchema:
 
     def _rebuild_table_for_column_type_change(
             self, conn: sqlite3.Connection, field_name: str, new_sqlite_type: str
-            ) -> None:
+    ) -> None:
         """
         Rebuild documents table with a changed column type using SQLite-compatible operations.
 
@@ -587,7 +587,7 @@ class DatabaseSchema:
     def _build_default_clause(self, field_def: MetadataField) -> str:
         """
         Build DEFAULT clause for column (pure business logic).
-        
+
         For security, TEXT/DATE/JSON types avoid DEFAULT in DDL entirely.
         Instead, defaults are populated via immediate UPDATE after column creation.
         This prevents SQL injection from unescaped default values.
@@ -879,7 +879,8 @@ class DatabaseSchema:
             if field_def.default_value is not None:
                 populated_info = self._populate_field_defaults(conn, field_name, field_def)
                 if populated_info['rows_updated'] > 0:
-                    logger.info(f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
+                    logger.info(
+                        f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
 
             # Create index if requested
             if field_def.indexed:
@@ -1535,7 +1536,7 @@ class DatabaseSchema:
     # Async methods for DatabaseSchema
     async def initialize_async(
             self, metadata_schema: Optional[Dict[str, MetadataField]] = None, db_connection=None
-            ) -> None:
+    ) -> None:
         """Initialize database schema asynchronously"""
 
         # Determine if we need to manage the connection lifecycle
@@ -1577,7 +1578,8 @@ class DatabaseSchema:
             if field_def.default_value is not None:
                 populated_info = await self._populate_field_defaults_async(conn, field_name, field_def)
                 if populated_info and populated_info['rows_updated'] > 0:
-                    logger.info(f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
+                    logger.info(
+                        f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
 
             # Create index if requested
             if field_def.indexed:

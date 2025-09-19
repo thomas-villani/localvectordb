@@ -49,7 +49,7 @@ def global_cleanup():
     for module_name in sys.modules:
         # Only remove migration modules that look like dynamically loaded test migrations
         if ('migration_' in module_name and module_name not in initial_modules and
-            any(pattern in module_name for pattern in ['_1_1_0', '_1_2_0', '_1_3_0', '_1_4_0', '_2_0_0'])):
+                any(pattern in module_name for pattern in ['_1_1_0', '_1_2_0', '_1_3_0', '_1_4_0', '_2_0_0'])):
             modules_to_remove.append(module_name)
     for module_name in modules_to_remove:
         del sys.modules[module_name]

@@ -138,7 +138,6 @@ from localvectordb.core import (
     MetadataFieldType,
     QueryResult,
 )
-
 from localvectordb.database import BaseVectorDB, TuningMixin
 from localvectordb.embeddings import EmbeddingProvider, HTTPEmbeddingProvider
 from localvectordb.exceptions import (
@@ -185,16 +184,18 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
         For custom auth headers.
     """
 
-    def __init__(self,
-                 model: str,
-                 provider: str,
-                 dimension: int,
-                 base_url: str,
-                 api_key: Optional[str] = None,
-                 timeout=90, max_retries=3,
-                 retry_delay=1.0,
-                 max_concurrent_requests=5,
-                 authorization_header="Authorization"):
+    def __init__(
+            self,
+            model: str,
+            provider: str,
+            dimension: int,
+            base_url: str,
+            api_key: Optional[str] = None,
+            timeout=90, max_retries=3,
+            retry_delay=1.0,
+            max_concurrent_requests=5,
+            authorization_header="Authorization"
+            ):
         super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
 
         self._provider = provider
@@ -241,10 +242,10 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
             # Use context manager to ensure proper AsyncClient cleanup
             async with httpx.AsyncClient() as client:
                 response = await client.post(url,
-                    headers=headers,
-                    json=payload,
-                    timeout=self.timeout
-                )
+                                             headers=headers,
+                                             json=payload,
+                                             timeout=self.timeout
+                                             )
                 response.raise_for_status()
                 data = response.json()
 
@@ -256,10 +257,10 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
         else:
             # Use provided client
             response = await client.post(url,
-                headers=headers,
-                json=payload,
-                timeout=self.timeout
-            )
+                                         headers=headers,
+                                         json=payload,
+                                         timeout=self.timeout
+                                         )
             response.raise_for_status()
             data = response.json()
 
@@ -318,7 +319,6 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         Parameters for the httpx client connection pool
 
     """
-
 
     def __init__(
             self,
@@ -1921,8 +1921,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         )
 
     @classmethod
-    def database_exists(cls, db_name: str, base_url: str = "http://127.0.0.1:5000", api_key: str = None,
-                        authorization_header="Authorization") -> bool:
+    def database_exists(
+            cls, db_name: str, base_url: str = "http://127.0.0.1:5000", api_key: str = None,
+            authorization_header="Authorization"
+            ) -> bool:
         """Check if a database exists on the server"""
         url = f"{base_url}/api/v1/databases"
         headers = {"Content-Type": "application/json"}
@@ -2014,7 +2016,6 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("GET", url)
         db_info = self._handle_response(response)
         return db_info.get("stats", {})
-
 
     async def upsert_async(
             self,
@@ -2564,6 +2565,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             ids = [ids]
 
         deleted_count = 0
+
         async def delete_single(doc_id: str) -> int:
             url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
             response = await self._make_request_with_retry_async("DELETE", url)
@@ -3022,7 +3024,6 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         result = self._handle_response(response)
         return result.get('schema_info', {})
 
-
     ## Tuning
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """Get current SQLite tuning configuration from remote server."""
@@ -3030,10 +3031,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         return self._handle_response(response)
 
     def set_sqlite_tuning(
-        self,
-        profile: str,
-        overrides: Optional[Dict[str, Any]] = None,
-        persist: bool = True
+            self,
+            profile: str,
+            overrides: Optional[Dict[str, Any]] = None,
+            persist: bool = True
     ) -> None:
         """Apply SQLite tuning profile via remote server."""
         payload = {
@@ -3064,7 +3065,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
         """Run incremental VACUUM via remote server."""
         payload = {"pages": pages}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/incremental_vacuum", json=payload)
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/incremental_vacuum",
+                                                 json=payload)
         self._handle_response(response)
 
     def analyze_system_resources(self) -> Dict[str, Any]:
@@ -3075,6 +3077,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
         """Check if remote WAL is large and checkpoint if needed."""
         payload = {"threshold_mb": wal_mb_threshold}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/checkpoint_if_large", json=payload)
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/checkpoint_if_large",
+                                                 json=payload)
         data = self._handle_response(response)
         return data.get("checkpointed", False)

@@ -509,7 +509,7 @@ class BackupManager:
                 # Add comprehensive document manifest for fast diffing without extraction
                 try:
                     metadata.metadata['document_manifest'] = self._generate_document_manifest(self.database_path)
-                    logger.debug(f"Added document manifest to backup metadata")
+                    logger.debug("Added document manifest to backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document manifest to metadata: {e}")
 
@@ -564,8 +564,8 @@ class BackupManager:
 
             # Apply backup-optimized pragmas temporarily
             backup_pragmas = {
-                "synchronous": "OFF",        # Faster backup (temporary)
-                "cache_size": -131072,       # 128MB cache for backup
+                "synchronous": "OFF",  # Faster backup (temporary)
+                "cache_size": -131072,  # 128MB cache for backup
             }
 
             for key, value in backup_pragmas.items():
@@ -740,7 +740,8 @@ class BackupManager:
                             archive_checksum_from_sidecar = parts[0]
                             expected_filename = parts[1]
                             if expected_filename != backup_path.name:
-                                logger.warning(f"Sidecar filename mismatch: expected {expected_filename}, got {backup_path.name}")
+                                logger.warning("Sidecar filename mismatch: expected "
+                                               f"{expected_filename}, got {backup_path.name}")
                         else:
                             archive_checksum_from_sidecar = parts[0]
 
@@ -753,7 +754,8 @@ class BackupManager:
                         )
                     logger.debug("Archive checksum verification passed (from sidecar)")
             else:
-                logger.debug(f"No sidecar checksum file found at {sidecar_path}, skipping archive checksum verification")
+                logger.debug(f"No sidecar checksum file found at {sidecar_path}, "
+                             "skipping archive checksum verification")
 
             with tarfile.open(backup_path, "r:*") as tar:
                 # Check that manifest exists
@@ -1223,7 +1225,7 @@ class BackupManager:
     def verify_backup_streaming(self, backup_id: str, verify_archive_members: bool = True) -> bool:
         """
         Verify backup integrity using streaming without full extraction.
-        
+
         Parameters
         ----------
         backup_id : str
@@ -1231,12 +1233,12 @@ class BackupManager:
         verify_archive_members : bool, default True
             Whether to verify individual archive member checksums.
             If False, only verifies archive and manifest checksums.
-            
+
         Returns
         -------
         bool
             True if backup is valid
-            
+
         Notes
         -----
         This method provides efficient verification by streaming archive contents
@@ -1264,7 +1266,8 @@ class BackupManager:
                             archive_checksum_from_sidecar = parts[0]
                             expected_filename = parts[1]
                             if expected_filename != backup_file.name:
-                                logger.warning(f"Sidecar filename mismatch: expected {expected_filename}, got {backup_file.name}")
+                                logger.warning(f"Sidecar filename mismatch: expected "
+                                               f"{expected_filename}, got {backup_file.name}")
                         else:
                             archive_checksum_from_sidecar = parts[0]
 
@@ -1277,7 +1280,8 @@ class BackupManager:
                         )
                     logger.debug("Archive checksum verification passed (from sidecar)")
             else:
-                logger.debug(f"No sidecar checksum file found at {sidecar_path}, skipping archive checksum verification")
+                logger.debug(f"No sidecar checksum file found at {sidecar_path}, "
+                             "skipping archive checksum verification")
 
             with tarfile.open(backup_file, "r:*") as tar:
                 # Extract and parse manifest
@@ -1483,8 +1487,10 @@ class IncrementalBackupManager:
 
                 # Add comprehensive document manifest for fast diffing without extraction
                 try:
-                    metadata.metadata['document_manifest'] = self.backup_manager._generate_document_manifest(self.database_path)
-                    logger.debug(f"Added document manifest to incremental backup metadata")
+                    metadata.metadata['document_manifest'] = self.backup_manager._generate_document_manifest(
+                        self.database_path
+                    )
+                    logger.debug("Added document manifest to incremental backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document manifest to incremental metadata: {e}")
 
@@ -1549,7 +1555,7 @@ class IncrementalBackupManager:
 
         if not parent_manifest:
             raise ValueError(f"Parent backup {parent_backup.backup_id} lacks document manifest. "
-                           "Only backups with document manifest are supported for incremental operations.")
+                             "Only backups with document manifest are supported for incremental operations.")
 
         logger.debug("Using manifest-based diffing for incremental backup")
 
@@ -1582,7 +1588,7 @@ class IncrementalBackupManager:
                 })
 
                 # Add FAISS IDs for deleted chunks directly from manifest
-                for chunk_index, chunk_info in parent_doc['chunks'].items():
+                for _, chunk_info in parent_doc['chunks'].items():
                     if chunk_info.get('faiss_id') is not None:
                         changes['faiss_changes'].append({
                             'document_id': doc_id,
@@ -1667,7 +1673,6 @@ class IncrementalBackupManager:
                     f"{len(changes['faiss_changes'])} FAISS changes")
 
         return changes
-
 
     def _create_incremental_database(self, changes: Dict[str, Any], temp_dir: Path) -> None:
         """Create incremental SQLite database containing only changes."""

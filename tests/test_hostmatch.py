@@ -15,7 +15,6 @@ Tests the robust host matching implementation that addresses security
 vulnerabilities in naive string comparison by providing proper hostname
 parsing and pattern matching with wildcard support.
 """
-import pytest
 
 from localvectordb_server.utils.hostmatch import (
     parse_host,
@@ -364,4 +363,5 @@ class TestIntegrationSecurityScenarios:
         ]
 
         for attack_host in attack_hosts:
-            assert validate_host_against_patterns(attack_host, patterns) is False, f"Attack host '{attack_host}' should not match"
+            assert validate_host_against_patterns(attack_host,
+                                                  patterns) is False, f"Attack host '{attack_host}' should not match"

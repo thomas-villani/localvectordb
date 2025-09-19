@@ -427,7 +427,6 @@ class TestDatabaseSchema:
         assert loaded_schema['rating'].required is True
 
 
-
 @pytest.mark.unit
 class TestConnectionPool:
     """Test ConnectionPool class."""
@@ -455,7 +454,6 @@ class TestConnectionPool:
         mock_connect.assert_called_once_with(db_path, check_same_thread=False, detect_types=1)
         mock_conn.execute.assert_called_with('SELECT 1')
         pool.close_all()
-
 
     @patch('sqlite3.connect')
     def test_get_connection_from_pool(self, mock_connect, temp_dir):
@@ -529,7 +527,6 @@ class TestConnectionPool:
         pool = ConnectionPool(db_path)
 
         results = []
-
 
         with patch('sqlite3.connect') as mock_connect:
             mock_conn = Mock()

@@ -34,6 +34,7 @@ def create_mock_pooled_connection(mock_conn):
     mock_pooled.connection = mock_conn
     return mock_pooled
 
+
 @pytest.mark.unit
 class TestLocalVectorDBInitialization:
     """Test LocalVectorDB initialization."""
@@ -401,6 +402,7 @@ class TestLocalVectorDBInsert:
             # similarity_threshold should be in position or kwargs
             assert result == ["doc_1"]
             mock_pipeline.assert_called_once()
+
 
 @pytest.mark.unit
 class TestLocalVectorDBRetrieval:
@@ -1170,7 +1172,6 @@ class TestMultiColumnEmbedding:
                 patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1217,7 +1218,6 @@ class TestMultiColumnEmbedding:
                 patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1270,7 +1270,6 @@ class TestMultiColumnEmbedding:
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1304,7 +1303,6 @@ class TestMultiColumnEmbedding:
 
             # Mock the internal methods
             with patch.object(db, '_search_metadata_field') as mock_search_meta:
-
                 mock_search_meta.return_value = []
 
                 # Test searching all columns
@@ -1331,7 +1329,6 @@ class TestMultiColumnEmbedding:
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1395,7 +1392,6 @@ class TestMultiColumnEmbedding:
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
                 patch.object(LocalVectorDB, 'save') as mock_save:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1469,7 +1465,6 @@ class TestMultiColumnEmbedding:
                 patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -1615,4 +1610,3 @@ class TestMultiColumnEmbedding:
                     assert callable(db._search_metadata_field)
 
             db.close()
-

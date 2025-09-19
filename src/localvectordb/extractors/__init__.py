@@ -106,7 +106,7 @@ class BaseExtractor(ABC):
     @abstractmethod
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """
         Implementation-specific text extraction.
 
@@ -161,7 +161,7 @@ class BaseExtractor(ABC):
 
     def extract_text(
             self, file_content: bytes, filename: str, mimetype: Optional[str] = None, **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """
         Extract text from file content.
 

@@ -107,8 +107,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
         existing_ids = {row['id'] for row in rows}
         return [doc_id in existing_ids for doc_id in ids_list]
 
-    def _build_filter_sql(self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None,
-                          limit: Optional[int] = None, offset: int = 0) -> tuple[str, List[Any]]:
+    def _build_filter_sql(
+            self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None,
+            limit: Optional[int] = None, offset: int = 0
+            ) -> tuple[str, List[Any]]:
         """Build SQL for filtering documents (pure business logic)"""
         columns = self._build_document_columns_list()
         query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
@@ -382,7 +384,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
     def filter(
             self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
             offset: int = 0
-            ) -> List[Document]:
+    ) -> List[Document]:
         """
         Filter documents using enhanced metadata filtering
 
@@ -642,7 +644,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
     async def filter_async(
             self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
             offset: int = 0
-            ) -> List[Document]:
+    ) -> List[Document]:
         """
         Async filter documents by metadata criteria
 
@@ -675,7 +677,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
     async def update_async(
             self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
-            ) -> bool:
+    ) -> bool:
         """
         Update a document's content and/or metadata asynchronously.
 

@@ -2,7 +2,6 @@
 Tests for localvectordb.chunking module.
 """
 
-
 import pytest
 
 from localvectordb.chunking import (
@@ -92,6 +91,7 @@ class TestPositionTrackingChunker:
         assert chunk.position.column == 1
         assert chunk.index == 1
         assert chunk.tokens == 4  # Mock returns word count
+
 
 @pytest.mark.unit
 @pytest.mark.chunking
@@ -190,6 +190,7 @@ class TestSentenceChunker:
             total_length = sum(end - start for start, end, _ in sentences)
             assert total_length <= len(text)
 
+
 @pytest.mark.unit
 @pytest.mark.chunking
 class TestTokenChunker:
@@ -255,6 +256,7 @@ class TestTokenChunker:
         assert pos >= 0
         assert pos <= len(text)
 
+
 @pytest.mark.unit
 @pytest.mark.chunking
 class TestWordChunker:
@@ -309,6 +311,7 @@ class TestWordChunker:
         all_content = "".join(chunk.content for chunk in chunks)
         # Should capture most of the original text
         assert len(all_content.strip()) > 0
+
 
 @pytest.mark.unit
 @pytest.mark.chunking
@@ -371,6 +374,7 @@ class TestLineChunker:
         reconstructed = "".join(chunk.content for chunk in chunks)
         assert '\n' in reconstructed
 
+
 @pytest.mark.unit
 @pytest.mark.chunking
 class TestCharChunker:
@@ -426,6 +430,7 @@ class TestCharChunker:
             extracted = text[chunk.position.start:chunk.position.end]
             assert extracted == chunk.content
 
+
 @pytest.mark.unit
 @pytest.mark.chunking
 class TestParagraphChunker:
@@ -474,6 +479,7 @@ class TestParagraphChunker:
 
         # Should split the long paragraph
         assert len(chunks) > 1
+
 
 @pytest.mark.unit
 @pytest.mark.chunking
@@ -550,6 +556,7 @@ Content 3."""
         levels = [level for _, _, _, level in sections]
         assert 1 in levels
         assert max(levels) >= 2
+
 
 @pytest.mark.unit
 @pytest.mark.chunking
@@ -653,6 +660,7 @@ if (condition) {
 
         # Should identify function and if blocks
         assert len(blocks) >= 1
+
 
 @pytest.mark.unit
 @pytest.mark.chunking

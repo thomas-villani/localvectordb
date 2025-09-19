@@ -3,5 +3,5 @@ localvectordb.exceptions module
 
 .. automodule:: localvectordb.exceptions
    :members:
-   :inherited-members:
+   :show-inheritance:
    :undoc-members:

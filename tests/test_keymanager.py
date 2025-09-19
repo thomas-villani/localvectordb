@@ -66,6 +66,7 @@ def mock_key_manager(temp_dir):
         manager = KeyManager(str(db_path))
         yield manager, mock_bcrypt
 
+
 @pytest.fixture
 def real_key_manager(temp_dir):
     """Create a KeyManager that uses real bcrypt (no mocking)."""
@@ -120,7 +121,6 @@ class TestKeyRecord:
             expires_at=datetime.now(UTC) + timedelta(days=30)
         )
         assert future_key.days_until_expiry == 30
-
 
     def test_days_until_expiry_expired(self):
         """Test days_until_expiry for expired key."""
@@ -668,12 +668,10 @@ class TestKeyManagerUtilities:
         assert not bcrypt.checkpw("wrong_key".encode('utf-8'), hashed.encode('utf-8'))
 
 
-
 @pytest.mark.unit
 @pytest.mark.database
 class TestKeyManagerErrorHandling:
     """Test KeyManager error handling."""
-
 
     def test_database_connection_error_handling(self, temp_dir):
         """Test handling of database connection errors."""

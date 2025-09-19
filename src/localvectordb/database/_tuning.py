@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 class TuningMixin(ABC):
     """
     Mixin class providing SQLite tuning interface for vector databases.
-    
+
     This mixin defines the common interface for SQLite performance tuning
     that is implemented by both LocalVectorDB and RemoteVectorDB classes.
     """
@@ -49,7 +49,7 @@ class TuningMixin(ABC):
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """
         Get current SQLite tuning configuration.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -62,14 +62,14 @@ class TuningMixin(ABC):
 
     @abstractmethod
     def set_sqlite_tuning(
-        self,
-        profile: str,
-        overrides: Optional[Dict[str, Any]] = None,
-        persist: bool = True
+            self,
+            profile: str,
+            overrides: Optional[Dict[str, Any]] = None,
+            persist: bool = True
     ) -> None:
         """
         Apply SQLite tuning profile with optional overrides.
-        
+
         Parameters
         ----------
         profile : str
@@ -78,7 +78,7 @@ class TuningMixin(ABC):
             Pragma overrides for the profile
         persist : bool, optional
             Whether to persist settings to database config, by default True
-            
+
         Raises
         ------
         ValueError
@@ -90,7 +90,7 @@ class TuningMixin(ABC):
     def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
         """
         Run SQLite WAL checkpoint operation.
-        
+
         Parameters
         ----------
         mode : str, optional
@@ -107,7 +107,7 @@ class TuningMixin(ABC):
     def sqlite_vacuum(self) -> None:
         """
         Run SQLite VACUUM operation.
-        
+
         Warning
         -------
         This operation requires exclusive database access and may take significant time.
@@ -118,7 +118,7 @@ class TuningMixin(ABC):
     def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
         """
         Run incremental VACUUM operation.
-        
+
         Parameters
         ----------
         pages : int, optional
@@ -129,7 +129,7 @@ class TuningMixin(ABC):
     def list_sqlite_profiles(self) -> Dict[str, str]:
         """
         List available SQLite tuning profiles.
-        
+
         Returns
         -------
         Dict[str, str]
@@ -140,7 +140,7 @@ class TuningMixin(ABC):
     def analyze_system_resources(self) -> Dict[str, Any]:
         """
         Analyze system resources for tuning recommendations.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -157,14 +157,14 @@ class TuningMixin(ABC):
         }
 
     def auto_tune(
-        self,
-        workload: Optional[Dict[str, Any]] = None,
-        interactive: bool = False,
-        apply: bool = False
+            self,
+            workload: Optional[Dict[str, Any]] = None,
+            interactive: bool = False,
+            apply: bool = False
     ) -> Dict[str, Any]:
         """
         Get auto-tuning recommendations based on system and workload.
-        
+
         Parameters
         ----------
         workload : Dict[str, Any], optional
@@ -173,7 +173,7 @@ class TuningMixin(ABC):
             Whether to run interactive interview for workload, by default False
         apply : bool, optional
             Whether to apply the recommended settings, by default False
-            
+
         Returns
         -------
         Dict[str, Any]
@@ -233,12 +233,12 @@ class TuningMixin(ABC):
     def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
         """
         Check if WAL file is large and checkpoint if needed.
-        
+
         Parameters
         ----------
         wal_mb_threshold : int, optional
             WAL size threshold in MB, by default 128
-            
+
         Returns
         -------
         bool
@@ -254,7 +254,7 @@ class TuningMixin(ABC):
 class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
     """
     Local implementation of tuning mixin for LocalVectorDB.
-    
+
     This class provides the concrete implementation of tuning operations
     for local SQLite databases.
     """
@@ -270,10 +270,10 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
         return config
 
     def set_sqlite_tuning(
-        self,
-        profile: str,
-        overrides: Optional[Dict[str, Any]] = None,
-        persist: bool = True
+            self,
+            profile: str,
+            overrides: Optional[Dict[str, Any]] = None,
+            persist: bool = True
     ) -> None:
         """Apply SQLite tuning profile to local database."""
         if profile not in PROFILES:
@@ -396,4 +396,3 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
             self._sqlite_profile = 'balanced'
             self._sqlite_pragma_overrides = {}
             self._sqlite_pragmas = dict(PROFILES['balanced'].pragmas)
-

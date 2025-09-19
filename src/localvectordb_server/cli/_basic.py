@@ -185,7 +185,7 @@ def list_databases(ctx, details):
 def create_vector_database(
         ctx, name, embedding_model, embedding_provider, chunk_size, chunking_method,
         chunk_overlap, metadata_schema
-        ):
+):
     """
     Create a new vector database.
 

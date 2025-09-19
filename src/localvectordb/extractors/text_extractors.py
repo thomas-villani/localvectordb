@@ -105,7 +105,7 @@ class TextFileExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Extract text from plain text files."""
         encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
 
@@ -183,7 +183,7 @@ class TextFallbackExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Attempt to extract text using fallback methods."""
 
         # Try UTF-8 with error handling

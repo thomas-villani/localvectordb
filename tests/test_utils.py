@@ -336,7 +336,6 @@ class TestMakeFilenameSafe:
 class TestUtilsIntegration:
     """Test integration between utility functions."""
 
-
     def test_version_with_invalid_chars_in_filename(self):
         """Test version with invalid characters in filename."""
         with patch('importlib.metadata.version', return_value="2.0.1-beta+build"):

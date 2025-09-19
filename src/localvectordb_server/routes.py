@@ -27,13 +27,11 @@ from werkzeug.utils import secure_filename
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
 from localvectordb.exceptions import DocumentNotFoundError
-
 # Add this import after the existing imports in routes.py
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._cache import cache
-from localvectordb_server.utils.checkdeps import check_ollama_service
 from localvectordb_server._error_handlers import (
     APIError,
     ValidationError,
@@ -46,11 +44,10 @@ from localvectordb_server._error_handlers import (
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
+from localvectordb_server.utils.checkdeps import check_ollama_service
 from localvectordb_server.utils.schema import parse_metadata_schema
 
 FILE_EXTRACTION_AVAILABLE = True
-
-
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
@@ -87,7 +84,6 @@ def serialize_query_result(result) -> Dict[str, Any]:
         data["position"] = result.position.to_dict()
 
     return data
-
 
 
 # Database Management Routes
@@ -259,7 +255,6 @@ def delete_database(db_name):
     """Delete a database"""
 
     with request_context("delete_database"):
-
         success, errors = current_app.db_manager.delete_database(db_name)
         if not success:
             raise APIError(errors, "DATABASE_DELETE_ERROR", 500, {"db_name": db_name}, True)
@@ -502,8 +497,8 @@ def upsert_from_chunks(db_name):
             db = current_app.db_manager.get_db(db_name)
 
             db_logger.log_query("upsert_from_chunks",
-                              database_name=db_name,
-                              document_count=len(chunks_by_document))
+                                database_name=db_name,
+                                document_count=len(chunks_by_document))
 
             result_ids = db.upsert_from_chunks(
                 chunks_by_document=processed_chunks,
@@ -566,8 +561,8 @@ def insert_from_chunks(db_name):
             db = current_app.db_manager.get_db(db_name)
 
             db_logger.log_query("insert_from_chunks",
-                              database_name=db_name,
-                              document_count=len(chunks_by_document))
+                                database_name=db_name,
+                                document_count=len(chunks_by_document))
 
             result_ids = db.insert_from_chunks(
                 chunks_by_document=processed_chunks,
@@ -714,7 +709,7 @@ def delete_document(db_name, doc_id):
 @log_performance("count_documents")
 def count_documents(db_name):
     """Count documents matching filter criteria
-    
+
     Request body supports:
     {
         "filters": {
@@ -724,7 +719,7 @@ def count_documents(db_name):
             // ... any filter expression
         }
     }
-    
+
     Returns:
     {
         "count": 42
@@ -896,7 +891,6 @@ def search_handler(db_name, search_params):
     semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
     document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
     document_scoring_options = search_params.get("document_scoring_options", None)
-
 
     try:
         db = current_app.db_manager.get_db(db_name)
@@ -1081,7 +1075,8 @@ def query_multi_column(db_name):
 
         validate_field_type(data, "score_threshold", (int, float))
         if score_threshold < 0 or score_threshold > 1:
-            raise ValidationError("Score threshold must be between 0 and 1", field="score_threshold", value=score_threshold)
+            raise ValidationError("Score threshold must be between 0 and 1", field="score_threshold",
+                                  value=score_threshold)
 
         validate_field_type(data, "vector_weight", (int, float))
         if vector_weight < 0 or vector_weight > 1:
@@ -1434,9 +1429,10 @@ def get_embeddings_for_db(db_name):
             else:
                 embeddings = db.embedding_provider.embed_sync(texts).tolist()
 
-            return jsonify({"embeddings": embeddings,
-                            "provider": db.embedding_provider.provider_name,
-                            "model": db.embedding_provider.model
+            return jsonify({
+                               "embeddings": embeddings,
+                               "provider": db.embedding_provider.provider_name,
+                               "model": db.embedding_provider.model
                            })
 
         except Exception as e:
@@ -1535,7 +1531,8 @@ def upload_files(db_name):
 
     with request_context("upload_files"):
         # Check if server uploads are enabled
-        file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app, 'config_obj') else True
+        file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app,
+                                                                                           'config_obj') else True
         if not file_upload_enabled:
             raise APIError(
                 message="File extraction route is not enabled",
@@ -1779,7 +1776,8 @@ def get_upload_supported_formats():
     and what extraction methods are available.
     """
 
-    file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app, 'config_obj') else True
+    file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app,
+                                                                                       'config_obj') else True
     if not file_upload_enabled:
         raise APIError(
             message="File extraction route is not enabled",
@@ -1837,7 +1835,8 @@ def extract_preview():
     """
 
     with request_context("extract_preview"):
-        file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app, 'config_obj') else True
+        file_upload_enabled = current_app.config_obj.server.file_upload_enabled if hasattr(current_app,
+                                                                                           'config_obj') else True
         if not file_upload_enabled:
             raise APIError(
                 message="File extraction is not enabled",
@@ -2361,4 +2360,3 @@ def checkpoint_if_wal_large(db_name):
         except Exception as e:
             db_logger.log_error("checkpoint_if_wal_large", e, database_name=db_name)
             raise
-

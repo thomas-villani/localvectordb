@@ -24,6 +24,7 @@ from localvectordb_server.utils.hostmatch import validate_host_against_patterns
 
 try:
     from flask_talisman import Talisman
+
     _FLASK_TALISMAN_AVAILABLE = True
 except ImportError:
     Talisman = None
@@ -41,6 +42,7 @@ except ImportError:
 
 try:
     from flask_cors import CORS
+
     _FLASK_CORS_AVAILABLE = True
 except ImportError:
     CORS = None
@@ -88,9 +90,8 @@ def create_app(
         debug=False,
         log_level=None,
         **kwargs
-        ):
+):
     """Enhanced application factory function with improved logging and error handling"""
-
 
     app = Flask(__name__, instance_relative_config=False)
 
@@ -262,7 +263,6 @@ def create_app(
                                "Install using `pip install flask-talisman>=1.1.0`")
         Talisman(app, **security_config)
 
-
     if _config.server.enable_rate_limiting:
         if not _FLASK_LIMITER_AVAILABLE:
             logger.error("Rate limiting requires flask-limiter. Install with: pip install flask-limiter")
@@ -294,7 +294,8 @@ def create_app(
         logger.error(f"Failed to initialize database manager: {e}", exc_info=True)
         raise ConfigurationError(f"Database manager initialization failed: {e}")
 
-    app.key_manager = KeyManager(_config.server.security.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db"))
+    app.key_manager = KeyManager(
+        _config.server.security.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db"))
 
     # Register blueprints
     from localvectordb_server.routes import api

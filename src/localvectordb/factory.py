@@ -150,8 +150,8 @@ def VectorDB(
                             'connection_limits',  # Remote-only parameter
                         ]}
 
-
         return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)
+
 
 def _fix_types(item):
     """
@@ -218,7 +218,6 @@ def from_uri(db_uri: str) -> Union[LocalVectorDB, RemoteVectorDB]:
         full_path = f"{("https" if parsed.scheme in ("https", "lvdb+https") else "http")}://{server_path}"
         if parsed.username:
             query_params["api_key"] = parsed.username
-
 
     if parsed.query:
         parsed_query = parse_qs(parsed.query)

@@ -243,6 +243,7 @@ class AggregationClause:
     function: Literal["count", "sum", "avg", "min", "max", "std", "var"]
     alias: Optional[str] = None
 
+
 # Remove the preceding '$', used in QueryBuilder.filter
 FILTER_OPERATOR_NAMES = tuple(map(lambda x: x[1:], FILTER_OPERATORS))
 
@@ -275,7 +276,6 @@ class QueryBuilder:
         self._semantic_dedup_threshold: Optional[float] = None
         self._document_scoring_method: DocumentScoringMethod = "frequency_boost"
         self._document_scoring_options: Optional[dict] = None
-
 
     def clone(self) -> "QueryBuilder":
         """Create a copy of this QueryBuilder for chaining."""
@@ -501,10 +501,11 @@ class QueryBuilder:
         builder._semantic_dedup_threshold = threshold
         return builder
 
-    def documents(self,
-                  scoring_method: DocumentScoringMethod = "frequency_boost",
-                  scoring_options: dict = None
-                  ) -> "QueryBuilder":
+    def documents(
+            self,
+            scoring_method: DocumentScoringMethod = "frequency_boost",
+            scoring_options: dict = None
+            ) -> "QueryBuilder":
         """Return full documents in results (default)."""
         builder = self.clone()
         builder._return_type = "documents"
@@ -759,7 +760,8 @@ class QueryBuilder:
         }
 
     # Execution methods
-    def execute(self, *, streaming: bool = False, batch_size: int = 100) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:
+    def execute(self, *, streaming: bool = False, batch_size: int = 100) -> Union[
+        List[QueryResult], Iterator[List[QueryResult]]]:
         """
         Execute the query and return results.
 
@@ -781,7 +783,8 @@ class QueryBuilder:
             executor = QueryExecutor(self)
             return executor.execute()
 
-    async def execute_async(self, *, streaming: bool = False, batch_size: int = 100) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:
+    async def execute_async(self, *, streaming: bool = False, batch_size: int = 100) -> Union[
+        List[QueryResult], Iterator[List[QueryResult]]]:
         """
         Execute the query asynchronously with native async support.
 
@@ -1386,6 +1389,7 @@ class QueryExecutor:
             plan["estimated_cost"] += 30
 
         return plan
+
 
 class AsyncQueryExecutor:
     """Asynchronous executor for QueryBuilder queries with native database async support."""

@@ -59,7 +59,6 @@ import ipaddress
 import logging
 import re
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 

@@ -503,7 +503,7 @@ class KeyManager:
                             logger.info(f"Key {row['id']} is expired")
                             if prune_expired:
                                 logger.info(f"Pruning expired key: {row['id']}")
-                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'], ))
+                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'],))
                                 conn.commit()
                             return False
 
@@ -520,7 +520,8 @@ class KeyManager:
         logger.debug("Key validation failed")
         return False
 
-    def validate_key_with_permissions(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> tuple[bool, Optional[PermissionLevel], Optional[str]]:
+    def validate_key_with_permissions(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> \
+    tuple[bool, Optional[PermissionLevel], Optional[str]]:
         """
         Validate an API key and return its permission level and key_id
 
@@ -572,7 +573,7 @@ class KeyManager:
                             logger.info(f"Key {row['id']} is expired")
                             if prune_expired:
                                 logger.info(f"Pruning expired key: {row['id']}")
-                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'], ))
+                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'],))
                                 conn.commit()
                             return False, None, None
 

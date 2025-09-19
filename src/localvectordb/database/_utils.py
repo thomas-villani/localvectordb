@@ -20,7 +20,7 @@ from __future__ import annotations
 class DatabaseExecutor:
     """
     Base abstraction for database operations that differ between sync and async.
-    
+
     This class provides a common interface for database operations, allowing the same
     business logic to be used for both synchronous and asynchronous database connections.
     """
@@ -41,7 +41,7 @@ class DatabaseExecutor:
 class SyncDatabaseExecutor(DatabaseExecutor):
     """
     Synchronous database executor for standard sqlite3 connections.
-    
+
     Provides synchronous implementations of database operations for use with
     sqlite3.Connection objects.
     """
@@ -64,7 +64,7 @@ class SyncDatabaseExecutor(DatabaseExecutor):
 class AsyncDatabaseExecutor(DatabaseExecutor):
     """
     Asynchronous database executor for aiosqlite connections.
-    
+
     Provides asynchronous implementations of database operations for use with
     aiosqlite.Connection objects.
     """

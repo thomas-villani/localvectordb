@@ -178,7 +178,6 @@ class TestOllamaEmbeddings:
         with pytest.raises(OllamaNotFoundError):
             result = provider.validate_model()
 
-
     @patch('httpx.AsyncClient')
     @pytest.mark.asyncio
     async def test_embed_batch_success(self, mock_client_class):
@@ -225,7 +224,7 @@ class TestOllamaEmbeddings:
         mock_response.raise_for_status = Mock()
 
         mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response # AsyncMock(return_value=mock_response)
+        mock_client.post.return_value = mock_response  # AsyncMock(return_value=mock_response)
 
         # Fix: Properly mock the async context manager
         async_context_manager = AsyncMock()

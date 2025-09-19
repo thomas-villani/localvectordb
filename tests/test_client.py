@@ -243,8 +243,8 @@ class TestRemoteVectorDBDocumentOperations:
 
         # Check endpoint
         mock_httpx_client.request.assert_called_with("GET",
-            "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1"
-        )
+                                                     "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1"
+                                                     )
 
     def test_get_multiple_documents(self, mock_httpx_client, mock_db):
         """Test getting multiple documents."""
@@ -305,7 +305,6 @@ class TestRemoteVectorDBDocumentOperations:
 
         with pytest.raises(DocumentNotFoundError):
             result = mock_db.get("nonexistent")
-
 
     def test_exists_documents(self, mock_httpx_client, mock_db):
         """Test checking document existence."""
@@ -610,10 +609,12 @@ class TestRemoteVectorDBErrorHandling:
         """Test embedding error handling."""
         mock_response = Mock()
         mock_response.status_code = 400
-        mock_response.json.return_value = {"error": {
-            "code": "embedding_error",
-            "message": "Embedding model not available"
-        }}
+        mock_response.json.return_value = {
+            "error": {
+                "code": "embedding_error",
+                "message": "Embedding model not available"
+            }
+        }
         mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(EmbeddingError):
@@ -1183,15 +1184,15 @@ class TestRemoteVectorDBAsyncChunkOperations:
             # Create a proper mock response that won't interfere with status_code checks
             mock_response = AsyncMock()
             mock_response.status_code = 200  # This needs to be a plain int
-            mock_response.json = AsyncMock(return_value={
+            mock_response.json.return_value = {
                 "ids": ["async_chunk_doc"],
                 "status": "success"
-            })
+            }
 
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
             mock_get_response = AsyncMock()
-            mock_get_response.json = AsyncMock(return_value={
+            mock_get_response.json.return_value = {
                 "config": {
                     "embedding_provider": "ollama",
                     "embedding_model": "nomic-embed-text",
@@ -1202,7 +1203,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
                     "fts_enabled": True,
                     "metadata_schema": {}
                 }
-            })
+            }
             mock_client.get.return_value = mock_get_response
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None

@@ -1,6 +1,7 @@
 # LocalVectorDB Test Suite
 
-This directory contains a comprehensive test suite for the LocalVectorDB library. The tests are organized by component and include unit tests, integration tests, and performance benchmarks.
+This directory contains a comprehensive test suite for the LocalVectorDB library. The tests are organized by component
+and include unit tests, integration tests, and performance benchmarks.
 
 ## 📁 Test Structure
 

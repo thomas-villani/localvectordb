@@ -535,8 +535,6 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
         self._sqlite_pragmas: dict = {}
 
-
-
     @abstractmethod
     def _generate_doc_id(self) -> str:
         pass
@@ -559,7 +557,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             metadata: Dict[str, Any],
             embedding_enabled_fields: Dict[str, 'MetadataField'],
             batch_size: int = 100
-            ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, np.ndarray]:
         pass
 
     @abstractmethod
@@ -596,7 +594,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             metadata: Dict[str, Any],
             embedding_enabled_fields: Dict[str, 'MetadataField'],
             batch_size: int = 100
-            ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, np.ndarray]:
         pass
 
     @abstractmethod
@@ -605,7 +603,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             conn: aiosqlite.Connection,
             document_id: str,
             field_embeddings: Dict[str, np.ndarray]
-            ) -> None:
+    ) -> None:
         pass
 
     @abstractmethod
@@ -617,7 +615,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
             self,
             old_metadata: Dict[str, Any],
             new_metadata: Dict[str, Any]
-            ) -> Dict[str, 'MetadataField']:
+    ) -> Dict[str, 'MetadataField']:
         pass
 
     @abstractmethod

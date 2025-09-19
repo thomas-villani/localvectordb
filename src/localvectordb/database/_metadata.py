@@ -398,7 +398,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             metadata: Dict[str, Any],
             embedding_enabled_fields: Dict[str, 'MetadataField'],
             batch_size: int = 100
-            ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, np.ndarray]:
         field_embeddings = {}
         for field_name, field_def in embedding_enabled_fields.items():
             field_value = metadata.get(field_name)
@@ -421,7 +421,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             metadata: Dict[str, Any],
             embedding_enabled_fields: Dict[str, 'MetadataField'],
             batch_size: int = 100
-            ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, np.ndarray]:
         field_embeddings = {}
         for field_name, field_def in embedding_enabled_fields.items():
             if field_name not in metadata:
@@ -456,7 +456,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             conn: aiosqlite.Connection,
             document_id: str,
             field_embeddings: Dict[str, np.ndarray]
-            ) -> None:
+    ) -> None:
         for field_name, embeddings in field_embeddings.items():
             if embeddings.size == 0:
                 continue

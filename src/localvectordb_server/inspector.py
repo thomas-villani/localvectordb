@@ -54,6 +54,7 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
     required_permission : PermissionLevel
         The minimum permission level required (READ_ONLY or READ_WRITE)
     """
+
     def decorator(f):
         @functools.wraps(f)
         def decorated_function(*args, **kwargs):
@@ -97,7 +98,9 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                     return redirect(url_for('inspector.login'))
 
             return f(*args, **kwargs)
+
         return decorated_function
+
     return decorator
 
 
@@ -137,9 +140,9 @@ def dashboard():
         manager_stats = db_manager.get_manager_stats()
 
         return render_template('dashboard.html',
-                             databases=db_stats,
-                             system_stats=manager_stats,
-                             total_databases=len(databases))
+                               databases=db_stats,
+                               system_stats=manager_stats,
+                               total_databases=len(databases))
 
     except Exception as e:
         logger.error(f"Error in dashboard: {e}")
@@ -222,10 +225,10 @@ def database_detail(db_name):
         }
 
         return render_template('database.html',
-                             db_name=db_name,
-                             stats=stats,
-                             schema_info=schema_info,
-                             config=config_info)
+                               db_name=db_name,
+                               stats=stats,
+                               schema_info=schema_info,
+                               config=config_info)
 
     except Exception as e:
         logger.error(f"Error in database detail for {db_name}: {e}")
@@ -302,9 +305,9 @@ def admin_interface():
                 logger.error(f"Error getting API keys: {e}")
 
         return render_template('admin.html',
-                             manager_stats=manager_stats,
-                             config=config,
-                             api_keys=api_keys_info)
+                               manager_stats=manager_stats,
+                               config=config,
+                               api_keys=api_keys_info)
 
     except Exception as e:
         logger.error(f"Error in admin interface: {e}")
@@ -443,8 +446,8 @@ def api_upload_document(db_name):
 def inspector_not_found(e):
     """Custom 404 handler for inspector"""
     return render_template('error.html',
-                         error="Page not found",
-                         message="The requested inspector page was not found."), 404
+                           error="Page not found",
+                           message="The requested inspector page was not found."), 404
 
 
 @inspector_bp.errorhandler(500)
@@ -452,8 +455,8 @@ def inspector_server_error(e):
     """Custom 500 handler for inspector"""
     logger.error(f"Inspector server error: {e}")
     return render_template('error.html',
-                         error="Server error",
-                         message="An internal server error occurred in the inspector."), 500
+                           error="Server error",
+                           message="An internal server error occurred in the inspector."), 500
 
 
 # Template context processor to inject common variables

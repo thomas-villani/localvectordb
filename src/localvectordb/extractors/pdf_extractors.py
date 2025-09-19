@@ -65,7 +65,7 @@ class PDFPlumberExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Extract text from PDF using pdfplumber."""
         try:
             import pdfplumber
@@ -168,7 +168,7 @@ class PyPDFExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Extract text from PDF using PyPDF2."""
         try:
             import pypdf

@@ -1,8 +1,7 @@
-localvectordb\_server.cli module
-================================
+localvectordb\_server.cli package
+=================================
 
 .. automodule:: localvectordb_server.cli
    :members:
-   :inherited-members:
    :show-inheritance:
    :undoc-members:

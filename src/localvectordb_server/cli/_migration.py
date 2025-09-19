@@ -87,7 +87,7 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
 
         if not db_path.exists():
             click.secho(f"Database '{database_name}' not found in {db_folder}",
-                       fg="red", err=True)
+                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         # Set up migrations directory
@@ -174,8 +174,10 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
 @click.option('--json', 'output_json', is_flag=True,
               help='Output result in JSON format')
 @click.pass_context
-def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
-                     backup_location, dry_run, output_json):
+def apply_migrations(
+        ctx, database_name, to_version, migrations_dir, backup,
+        backup_location, dry_run, output_json
+        ):
     """
     Apply pending migrations to a database.
 
@@ -203,7 +205,7 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
 
         if not db_path.exists():
             click.secho(f"Database '{database_name}' not found in {db_folder}",
-                       fg="red", err=True)
+                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         # Set up migrations directory
@@ -300,8 +302,10 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup,
 @click.option('--json', 'output_json', is_flag=True,
               help='Output result in JSON format')
 @click.pass_context
-def rollback_migrations(ctx, database_name, target_version, migrations_dir,
-                        backup, backup_location, dry_run, output_json):
+def rollback_migrations(
+        ctx, database_name, target_version, migrations_dir,
+        backup, backup_location, dry_run, output_json
+        ):
     """
     Rollback database to a previous version.
 
@@ -334,7 +338,7 @@ def rollback_migrations(ctx, database_name, target_version, migrations_dir,
 
         if not db_path.exists():
             click.secho(f"Database '{database_name}' not found in {db_folder}",
-                       fg="red", err=True)
+                        fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         # Set up migrations directory

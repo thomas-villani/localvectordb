@@ -33,13 +33,15 @@ logger = logging.getLogger(__name__)
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers."""
 
-    def __init__(self,
-                 model: str,
-                 timeout: int = 90,
-                 max_retries: int = 3,
-                 retry_delay: float = 1.0,
-                 max_concurrent_requests: int = 5,
-                 **kwargs: Any) -> None:
+    def __init__(
+            self,
+            model: str,
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5,
+            **kwargs: Any
+            ) -> None:
         self.model = model
         self.config = kwargs
 
@@ -53,10 +55,12 @@ class EmbeddingProvider(ABC):
     def async_supported(self) -> bool:
         return True
 
-    async def embed_batch(self,
-                          texts: List[str],
-                          batch_size: Optional[int] = None,
-                          progress_callback: Optional[Callable] = None) -> np.ndarray:
+    async def embed_batch(
+            self,
+            texts: List[str],
+            batch_size: Optional[int] = None,
+            progress_callback: Optional[Callable] = None
+            ) -> np.ndarray:
         """Generate embeddings with automatic retry handling."""
 
         for attempt in range(self.max_retries + 1):
@@ -73,7 +77,6 @@ class EmbeddingProvider(ABC):
 
         # Should never reach here, but safety net
         raise RuntimeError(f"All {self.max_retries + 1} embedding attempts failed")
-
 
     def _should_retry(self, error: Exception, attempt: int) -> bool:
         """Determine if an error should trigger a retry."""
@@ -319,9 +322,9 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
         return final_embeddings
 
-
     @abstractmethod
-    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> \
+    List[List[float]]:
         """Embed a batch using asynchronous httpx client.
 
         The async httpx client is passed in as the `client` kwarg."""
@@ -350,8 +353,11 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
 
     _model_info_cache: Dict[str, List[Dict]] = {}
 
-    def __init__(self, model: str, base_url: Optional[str] = None, timeout: int = 300, max_retries: int = 3, retry_delay: float = 1.0,
-                 max_concurrent_requests: int = 3) -> None:
+    def __init__(
+            self, model: str, base_url: Optional[str] = None, timeout: int = 300, max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 3
+            ) -> None:
         super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
         effective_base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.base_url = (effective_base_url or "http://localhost:11434").rstrip('/')
@@ -442,7 +448,8 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             self._dimension = dimension
         return self._dimension
 
-    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> \
+    List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
         if client is None:
             # Use context manager to ensure proper AsyncClient cleanup
@@ -512,8 +519,11 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         How many requests to make concurrently to the OpenAI server.
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, timeout: int = 90, max_retries: int = 3, retry_delay: float = 1.0,
-                 max_concurrent_requests: int = 5) -> None:
+    def __init__(
+            self, model: str, api_key: Optional[str] = None, timeout: int = 90, max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5
+            ) -> None:
         super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
 
         if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
@@ -568,7 +578,8 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
-    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> List[List[float]]:
+    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> \
+    List[List[float]]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -653,33 +664,35 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
     """
 
     def __init__(
-        self,
-        model: str = "gemini-embedding-001",
-        api_key: Optional[str] = None,
-        task_type: Literal["semantic_similarity", "classification", "clustering", "retrieval_document",
-                           "retrieval_query", "code_retrieval_query", "question_answering",
-                           "fact_verification"] = "semantic_similarity",
-        requested_dimensions: Optional[int] = None,
-        normalize: bool = True,
-        base_url: Optional[str] = None,
-        timeout: int = 90,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
-        max_concurrent_requests: int = 5,
-        **kwargs: Any,
+            self,
+            model: str = "gemini-embedding-001",
+            api_key: Optional[str] = None,
+            task_type: Literal["semantic_similarity", "classification", "clustering", "retrieval_document",
+            "retrieval_query", "code_retrieval_query", "question_answering",
+            "fact_verification"] = "semantic_similarity",
+            requested_dimensions: Optional[int] = None,
+            normalize: bool = True,
+            base_url: Optional[str] = None,
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5,
+            **kwargs: Any,
     ) -> None:
-        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests, **kwargs)
+        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests,
+                         **kwargs)
 
         # Resolve API key (param or env)
         if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
             api_key = os.getenv(api_key[1:])
         self.api_key = (
-            api_key
-            or os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
+                api_key
+                or os.getenv("GEMINI_API_KEY")
+                or os.getenv("GOOGLE_API_KEY")
         )
         if not self.api_key:
-            raise ValueError("Google AI (Gemini) API key is required. Set api_key or one of: GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY")
+            raise ValueError(
+                "Google AI (Gemini) API key is required. Set api_key or one of: GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY")
 
         # API base URL (v1beta as in public docs)
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
@@ -781,10 +794,10 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         return self._dimension
 
     async def _embed_single_batch(
-        self,
-        texts: List[str],
-        client: Optional[httpx.AsyncClient] = None,
-        **kwargs: Any
+            self,
+            texts: List[str],
+            client: Optional[httpx.AsyncClient] = None,
+            **kwargs: Any
     ) -> List[List[float]]:
         url = f"{self.base_url}/models/{self.model}:embedContent"
         headers = {
@@ -944,7 +957,6 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         ]
     }
 
-
     def __init__(
             self,
             model: str,
@@ -1050,7 +1062,7 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
             data = resp.json()
             if "error" in data:
                 msg = data["error"]["message"] if isinstance(data["error"], dict) and "message" in data["error"] else \
-                data["error"]
+                    data["error"]
                 raise RuntimeError(f"Jina API error during dimension probe: {msg}")
 
             items = data.get("data", [])
@@ -1139,10 +1151,14 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
 
         return embeddings
 
+
 class MockEmbeddings(EmbeddingProvider):
     """Mock embedding provider for testing"""
 
-    def __init__(self, model: str, dimension: int = 384, timeout: int = 90, max_retries: int = 3, retry_delay: float = 1.0, **kwargs: Any) -> None:
+    def __init__(
+            self, model: str, dimension: int = 384, timeout: int = 90, max_retries: int = 3, retry_delay: float = 1.0,
+            **kwargs: Any
+            ) -> None:
         super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
         self._dimension: int = dimension
         self.number_of_calls = 0
@@ -1179,7 +1195,6 @@ class MockEmbeddings(EmbeddingProvider):
         return embeddings
 
 
-
 class EmbeddingRegistry:
     """Registry for embedding providers with plugin discovery"""
 
@@ -1199,7 +1214,6 @@ class EmbeddingRegistry:
 
         # Python 3.10+ importlib.metadata
         from importlib.metadata import entry_points
-
 
         provider_eps = entry_points(group='localvectordb.embedding_providers')
         for ep in provider_eps:
@@ -1228,10 +1242,10 @@ class EmbeddingRegistry:
 
     @classmethod
     def create_provider(
-        cls,
-        provider_name: str,
-        model: str,
-        **kwargs: Any
+            cls,
+            provider_name: str,
+            model: str,
+            **kwargs: Any
     ) -> EmbeddingProvider:
         """Create an embedding provider instance"""
         provider_class = cls.get(provider_name)
@@ -1257,11 +1271,12 @@ EmbeddingRegistry.register("mock", MockEmbeddings)
 EmbeddingRegistry.register("google", GoogleEmbeddings)
 EmbeddingRegistry.register("jina", JinaEmbeddings)
 
+
 # Convenience functions
 def create_embedding_provider(
-    provider: str,
-    model: str,
-    **kwargs: Any
+        provider: str,
+        model: str,
+        **kwargs: Any
 ) -> EmbeddingProvider:
     """Create an embedding provider instance"""
     return EmbeddingRegistry.create_provider(provider, model, **kwargs)
@@ -1273,11 +1288,11 @@ def list_providers() -> List[str]:
 
 
 async def embed_texts(
-    texts: List[str],
-    provider: str,
-    model: str,
-    batch_size: Optional[int] = None,
-    **provider_kwargs: Any
+        texts: List[str],
+        provider: str,
+        model: str,
+        batch_size: Optional[int] = None,
+        **provider_kwargs: Any
 ) -> np.ndarray:
     """Convenience function to embed texts"""
     embedding_provider = create_embedding_provider(provider, model, **provider_kwargs)
@@ -1285,11 +1300,11 @@ async def embed_texts(
 
 
 def embed_texts_sync(
-    texts: List[str],
-    provider: str,
-    model: str,
-    batch_size: Optional[int] = None,
-    **provider_kwargs: Any
+        texts: List[str],
+        provider: str,
+        model: str,
+        batch_size: Optional[int] = None,
+        **provider_kwargs: Any
 ) -> np.ndarray:
     """Synchronous convenience function to embed texts"""
     embedding_provider = create_embedding_provider(provider, model, **provider_kwargs)

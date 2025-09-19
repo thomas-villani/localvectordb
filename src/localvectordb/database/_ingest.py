@@ -52,11 +52,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         sql = f"{sql_verb} INTO documents ({', '.join(all_columns)}) VALUES ({', '.join(placeholders)})"
         return sql, all_columns
 
-    def _prepare_documents_bulk_data(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
-                                   conn=None, preserve_created_at: bool = True) -> List[tuple]:
+    def _prepare_documents_bulk_data(
+            self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
+            conn=None, preserve_created_at: bool = True
+            ) -> List[tuple]:
         """
         Prepare document data for bulk insertion (pure business logic).
-        
+
         Parameters
         ----------
         documents_data : List[Tuple[str, str, str, Dict[str, Any]]]
@@ -65,7 +67,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Database connection for fetching existing created_at values
         preserve_created_at : bool, default True
             If True, preserve existing created_at values for upserts
-        
+
         Returns
         -------
         List[tuple]
@@ -92,7 +94,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             # Parse the ISO format timestamp back to datetime
                             try:
                                 if isinstance(created_at_str, str):
-                                    existing_created_at[doc_id] = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                                    existing_created_at[doc_id] = datetime.fromisoformat(
+                                        created_at_str.replace('Z', '+00:00'))
                                 else:
                                     # Already a datetime object
                                     existing_created_at[doc_id] = created_at_str
@@ -118,11 +121,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
         return bulk_data
 
-    async def _prepare_documents_bulk_data_async(self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
-                                               conn=None, preserve_created_at: bool = True) -> List[tuple]:
+    async def _prepare_documents_bulk_data_async(
+            self, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
+            conn=None, preserve_created_at: bool = True
+            ) -> List[tuple]:
         """
         Prepare document data for bulk insertion (async version).
-        
+
         Parameters
         ----------
         documents_data : List[Tuple[str, str, str, Dict[str, Any]]]
@@ -131,7 +136,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Database connection for fetching existing created_at values
         preserve_created_at : bool, default True
             If True, preserve existing created_at values for upserts
-        
+
         Returns
         -------
         List[tuple]
@@ -152,14 +157,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if doc_ids:
                 placeholders = ','.join(['?' for _ in doc_ids])
                 try:
-                    cursor = await conn.execute(f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})", doc_ids)
+                    cursor = await conn.execute(f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})",
+                                                doc_ids)
                     rows = await cursor.fetchall()
                     for doc_id, created_at_str in rows:
                         if created_at_str:
                             # Parse the ISO format timestamp back to datetime
                             try:
                                 if isinstance(created_at_str, str):
-                                    existing_created_at[doc_id] = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                                    existing_created_at[doc_id] = datetime.fromisoformat(
+                                        created_at_str.replace('Z', '+00:00'))
                                 else:
                                     # Already a datetime object
                                     existing_created_at[doc_id] = created_at_str
@@ -691,7 +698,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     def _filter_similar_chunks_vectorized(
             self, embeddings: np.ndarray, chunks: List[Chunk], doc_chunk_mapping: List[Tuple],
             similarity_threshold: float, existing_chunk_hashes: Optional[set] = None
-            ):
+    ):
         """
         Filter similar chunks based on content hash and vector similarity.
 
@@ -752,14 +759,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     def _insert_documents_bulk(
             self, conn, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
             mode: Literal["insert", "replace"] = "replace"
-            ) -> None:
+    ) -> None:
         if not documents_data:
             return
 
         # Use shared business logic for SQL and data preparation
         sql, _ = self._build_documents_bulk_insert_sql(mode)
         # Pass connection to preserve created_at timestamps for upserts
-        bulk_data = self._prepare_documents_bulk_data(documents_data, conn=conn, preserve_created_at=(mode == "replace"))
+        bulk_data = self._prepare_documents_bulk_data(documents_data, conn=conn,
+                                                      preserve_created_at=(mode == "replace"))
         conn.executemany(sql, bulk_data)
 
     @staticmethod
@@ -805,7 +813,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             similarity_threshold: Optional[float],
             # queue_size: int = 3,
             mode: Literal["upsert", "insert"] = "upsert"
-            ) -> List[str]:
+    ) -> List[str]:
         queue_size = self.pipeline_queue_size
         existing_chunks_by_doc = self._fetch_existing_chunks_batch(ids)
         chunk_queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -967,7 +975,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             batch_size: int,
             similarity_threshold: Optional[float],
             mode: Literal["upsert", "insert"] = "upsert"
-            ) -> List[str]:
+    ) -> List[str]:
 
         queue_size = self.pipeline_queue_size
         doc_ids = list(chunks_by_document.keys())
@@ -1139,7 +1147,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
     def _remove_old_chunks_batch(
             self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
-            ) -> None:
+    ) -> None:
         if chunk_indices_to_remove:
             placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
             conn.execute(
@@ -1821,7 +1829,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     async def _compare_chunks_and_prepare_async(
             self, doc_id: str, chunks: List[Chunk], metadata: Dict[str, Any],
             existing_chunks: Dict[int, Dict[str, Any]], batch_size: int, embedding_semaphore: asyncio.Semaphore
-            ):
+    ):
         try:
             unchanged_chunks, chunks_needing_embedding, chunk_texts_for_embedding = [], [], []
             reused_chunk_indices = set()
@@ -1894,7 +1902,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     async def _chunk_document_with_comparison_async(
             self, doc_index: int, doc_id: str, doc_text: str, metadata: Dict[str, Any],
             existing_chunks: Dict[int, Dict[str, Any]], semaphore: asyncio.Semaphore
-            ):
+    ):
         async with semaphore:
             loop = asyncio.get_event_loop()
             chunks = await loop.run_in_executor(None, self.chunker.chunk, doc_text)
@@ -1933,7 +1941,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     async def _process_document_data_async(
             self, chunk_data: Dict[str, Any], similarity_threshold: Optional[float],
             mode: Literal["upsert", "insert"] = "upsert"
-            ) -> Optional[str]:
+    ) -> Optional[str]:
         doc_id = chunk_data['doc_id']
         try:
             unchanged_chunks = chunk_data['unchanged_chunks']
@@ -1992,7 +2000,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
     async def _remove_old_chunks_batch_async(
             self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
-            ) -> None:
+    ) -> None:
         if faiss_ids_to_remove:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
@@ -2009,14 +2017,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     async def _insert_documents_bulk_async(
             self, conn: aiosqlite.Connection, documents_data: List[Tuple[str, str, str, Dict[str, Any]]],
             mode: Literal["insert", "replace"] = "replace"
-            ) -> None:
+    ) -> None:
         if not documents_data:
             return
 
         # Use shared business logic for SQL and data preparation
         sql, _ = self._build_documents_bulk_insert_sql(mode)
         # Use async version to properly preserve created_at timestamps for upserts
-        bulk_data = await self._prepare_documents_bulk_data_async(documents_data, conn=conn, preserve_created_at=(mode == "replace"))
+        bulk_data = await self._prepare_documents_bulk_data_async(documents_data, conn=conn,
+                                                                  preserve_created_at=(mode == "replace"))
         await conn.executemany(sql, bulk_data)
 
     @staticmethod

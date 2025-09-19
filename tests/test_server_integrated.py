@@ -31,6 +31,7 @@ from localvectordb_server._cache import cache
 from localvectordb_server.keymanager import KeyManager
 from localvectordb_server.routes import api
 
+
 # EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 
 
@@ -319,6 +320,7 @@ class DatabaseManagerMock:
         db.close = Mock()
 
         return db
+
 
 @pytest.mark.integration
 @pytest.mark.client

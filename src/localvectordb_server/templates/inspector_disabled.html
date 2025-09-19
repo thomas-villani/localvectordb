@@ -10,7 +10,7 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -20,37 +20,37 @@
             justify-content: center;
             padding: 20px;
         }
-        
+
         .container {
             background: white;
             border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
             padding: 50px;
             text-align: center;
             max-width: 600px;
             width: 100%;
         }
-        
+
         .icon {
             font-size: 6em;
             margin-bottom: 30px;
             color: #ffc107;
         }
-        
+
         h1 {
             color: #333;
             margin-bottom: 20px;
             font-size: 2.5em;
             font-weight: 700;
         }
-        
+
         .subtitle {
             color: #666;
             font-size: 1.2em;
             margin-bottom: 30px;
             line-height: 1.6;
         }
-        
+
         .info-box {
             background: #f8f9fa;
             border-left: 4px solid #ffc107;
@@ -59,7 +59,7 @@
             margin: 30px 0;
             text-align: left;
         }
-        
+
         .info-box h3 {
             color: #333;
             margin-bottom: 15px;
@@ -67,13 +67,13 @@
             align-items: center;
             gap: 10px;
         }
-        
+
         .info-box p {
             color: #555;
             line-height: 1.6;
             margin-bottom: 15px;
         }
-        
+
         .config-example {
             background: #2d3748;
             color: #e2e8f0;
@@ -84,19 +84,19 @@
             overflow-x: auto;
             margin: 15px 0;
         }
-        
+
         .config-example .comment {
             color: #68d391;
         }
-        
+
         .config-example .key {
             color: #63b3ed;
         }
-        
+
         .config-example .value {
             color: #fbb6ce;
         }
-        
+
         .steps {
             background: #e3f2fd;
             border: 1px solid #2196f3;
@@ -105,7 +105,7 @@
             margin: 30px 0;
             text-align: left;
         }
-        
+
         .steps h3 {
             color: #1976d2;
             margin-bottom: 20px;
@@ -113,17 +113,17 @@
             align-items: center;
             gap: 10px;
         }
-        
+
         .steps ol {
             color: #333;
             padding-left: 25px;
         }
-        
+
         .steps li {
             margin-bottom: 12px;
             line-height: 1.5;
         }
-        
+
         .steps code {
             background: white;
             border: 1px solid #ddd;
@@ -133,7 +133,7 @@
             font-size: 0.9em;
             color: #d73502;
         }
-        
+
         .warning {
             background: #fff3cd;
             border: 1px solid #ffeaa7;
@@ -142,7 +142,7 @@
             padding: 20px;
             margin: 25px 0;
         }
-        
+
         .warning h4 {
             color: #856404;
             margin-bottom: 10px;
@@ -150,13 +150,13 @@
             align-items: center;
             gap: 8px;
         }
-        
+
         .warning p {
             color: #856404;
             margin: 0;
             line-height: 1.5;
         }
-        
+
         .actions {
             margin-top: 40px;
             display: flex;
@@ -164,7 +164,7 @@
             justify-content: center;
             flex-wrap: wrap;
         }
-        
+
         .btn {
             padding: 12px 30px;
             border-radius: 8px;
@@ -178,29 +178,29 @@
             align-items: center;
             gap: 8px;
         }
-        
+
         .btn-primary {
             background: #007bff;
             color: white;
         }
-        
+
         .btn-primary:hover {
             background: #0056b3;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(0, 123, 255, 0.3);
         }
-        
+
         .btn-secondary {
             background: #6c757d;
             color: white;
         }
-        
+
         .btn-secondary:hover {
             background: #545b62;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
         }
-        
+
         .footer {
             margin-top: 40px;
             padding-top: 25px;
@@ -208,25 +208,25 @@
             color: #666;
             font-size: 0.9em;
         }
-        
+
         @media (max-width: 768px) {
             .container {
                 padding: 30px 20px;
             }
-            
+
             h1 {
                 font-size: 2em;
             }
-            
+
             .icon {
                 font-size: 4em;
             }
-            
+
             .actions {
                 flex-direction: column;
                 align-items: center;
             }
-            
+
             .btn {
                 width: 100%;
                 max-width: 250px;
@@ -236,116 +236,116 @@
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="icon">🚫</div>
-        <h1>Inspector Disabled</h1>
-        <p class="subtitle">
-            The LocalVectorDB Inspector interface is currently disabled. 
-            To use the Inspector, you need to enable it in your server configuration.
+<div class="container">
+    <div class="icon">🚫</div>
+    <h1>Inspector Disabled</h1>
+    <p class="subtitle">
+        The LocalVectorDB Inspector interface is currently disabled.
+        To use the Inspector, you need to enable it in your server configuration.
+    </p>
+
+    <div class="info-box">
+        <h3>
+            ℹ️ What is the Inspector?
+        </h3>
+        <p>
+            The LocalVectorDB Inspector is a web-based interface that allows you to:
         </p>
-        
-        <div class="info-box">
-            <h3>
-                ℹ️ What is the Inspector?
-            </h3>
-            <p>
-                The LocalVectorDB Inspector is a web-based interface that allows you to:
-            </p>
-            <ul style="color: #555; line-height: 1.6; padding-left: 20px;">
-                <li>Browse and search your vector databases</li>
-                <li>Visualize document embeddings and clusters</li>
-                <li>Test and optimize search queries</li>
-                <li>Monitor system performance and health</li>
-                <li>Manage API keys and configuration</li>
-            </ul>
-        </div>
-        
-        <div class="steps">
-            <h3>
-                🔧 How to Enable the Inspector
-            </h3>
-            <ol>
-                <li>
-                    Open your LocalVectorDB configuration file (usually <code>.lvdb-config.toml</code> or <code>.lvdb-config.json</code>)
-                </li>
-                <li>
-                    Add or update the inspector setting in the <code>[server]</code> section:
-                    <div class="config-example">
-<span class="comment"># TOML Configuration</span>
-<span class="key">[server]</span>
-<span class="key">inspector_enabled</span> = <span class="value">true</span>
-                    </div>
-                    
-                    Or for JSON configuration:
-                    <div class="config-example">
-<span class="comment">// JSON Configuration</span>
-{
-  "<span class="key">server</span>": {
-    "<span class="key">inspector_enabled</span>": <span class="value">true</span>
-  }
-}
-                    </div>
-                </li>
-                <li>
-                    Save the configuration file
-                </li>
-                <li>
-                    Restart your LocalVectorDB server:
-                    <div class="config-example">
-<span class="comment"># Restart the server</span>
-lvdb serve
-                    </div>
-                </li>
-                <li>
-                    The Inspector will be available at <code>/inspector</code>
-                </li>
-            </ol>
-        </div>
-        
-        <div class="warning">
-            <h4>
-                ⚠️ Security Consideration
-            </h4>
-            <p>
-                The Inspector provides administrative access to your LocalVectorDB system. 
-                If you're running in production, make sure to secure it with API key authentication 
-                and consider restricting network access.
-            </p>
-        </div>
-        
-        <div class="actions">
-            <button class="btn btn-primary" onclick="checkStatus()">
-                🔄 Check Status
-            </button>
-            <a href="https://docs.localvectordb.com/inspector" class="btn btn-secondary" target="_blank">
-                📚 Documentation
-            </a>
-        </div>
-        
-        <div class="footer">
-            <p>LocalVectorDB Inspector &copy; 2025 | Need help? Check the documentation or GitHub issues.</p>
-        </div>
+        <ul style="color: #555; line-height: 1.6; padding-left: 20px;">
+            <li>Browse and search your vector databases</li>
+            <li>Visualize document embeddings and clusters</li>
+            <li>Test and optimize search queries</li>
+            <li>Monitor system performance and health</li>
+            <li>Manage API keys and configuration</li>
+        </ul>
     </div>
-    
-    <script>
-        function checkStatus() {
-            // Reload the page to check if inspector has been enabled
-            window.location.reload();
-        }
-        
-        // Auto-check every 30 seconds
-        setInterval(function() {
-            fetch('/inspector/', { method: 'HEAD' })
-                .then(response => {
-                    if (response.ok || response.status === 401) {
-                        // Inspector is enabled (either working or needs auth)
-                        window.location.href = '/inspector/';
+
+    <div class="steps">
+        <h3>
+            🔧 How to Enable the Inspector
+        </h3>
+        <ol>
+            <li>
+                Open your LocalVectorDB configuration file (usually <code>.lvdb-config.toml</code> or <code>.lvdb-config.json</code>)
+            </li>
+            <li>
+                Add or update the inspector setting in the <code>[server]</code> section:
+                <div class="config-example">
+                    <span class="comment"># TOML Configuration</span>
+                    <span class="key">[server]</span>
+                    <span class="key">inspector_enabled</span> = <span class="value">true</span>
+                </div>
+
+                Or for JSON configuration:
+                <div class="config-example">
+                    <span class="comment">// JSON Configuration</span>
+                    {
+                    "<span class="key">server</span>": {
+                    "<span class="key">inspector_enabled</span>": <span class="value">true</span>
                     }
-                })
-                .catch(() => {
-                    // Still disabled, do nothing
-                });
-        }, 30000);
-    </script>
+                    }
+                </div>
+            </li>
+            <li>
+                Save the configuration file
+            </li>
+            <li>
+                Restart your LocalVectorDB server:
+                <div class="config-example">
+                    <span class="comment"># Restart the server</span>
+                    lvdb serve
+                </div>
+            </li>
+            <li>
+                The Inspector will be available at <code>/inspector</code>
+            </li>
+        </ol>
+    </div>
+
+    <div class="warning">
+        <h4>
+            ⚠️ Security Consideration
+        </h4>
+        <p>
+            The Inspector provides administrative access to your LocalVectorDB system.
+            If you're running in production, make sure to secure it with API key authentication
+            and consider restricting network access.
+        </p>
+    </div>
+
+    <div class="actions">
+        <button class="btn btn-primary" onclick="checkStatus()">
+            🔄 Check Status
+        </button>
+        <a href="https://docs.localvectordb.com/inspector" class="btn btn-secondary" target="_blank">
+            📚 Documentation
+        </a>
+    </div>
+
+    <div class="footer">
+        <p>LocalVectorDB Inspector &copy; 2025 | Need help? Check the documentation or GitHub issues.</p>
+    </div>
+</div>
+
+<script>
+    function checkStatus() {
+        // Reload the page to check if inspector has been enabled
+        window.location.reload();
+    }
+
+    // Auto-check every 30 seconds
+    setInterval(function () {
+        fetch('/inspector/', {method: 'HEAD'})
+            .then(response => {
+                if (response.ok || response.status === 401) {
+                    // Inspector is enabled (either working or needs auth)
+                    window.location.href = '/inspector/';
+                }
+            })
+            .catch(() => {
+                // Still disabled, do nothing
+            });
+    }, 30000);
+</script>
 </body>
 </html>

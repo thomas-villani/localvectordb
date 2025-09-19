@@ -148,8 +148,10 @@ class DatabaseSettings(BaseSettings):
         if self.chunk_overlap >= self.chunk_size:
             raise ConfigurationError("chunk_overlap must be less than chunk_size")
 
-        if self.faiss_index_type and self.faiss_index_type not in ("IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"):
-            raise ConfigurationError("faiss_index_type must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
+        if self.faiss_index_type and self.faiss_index_type not in ("IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat",
+                                                                   "IndexLSH"):
+            raise ConfigurationError(
+                "faiss_index_type must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
 
         # Validate metadata schema
         for field_name, field_config in self.default_metadata_schema.items():
@@ -227,6 +229,7 @@ class MigrationSettings(BaseSettings):
             raise ConfigurationError("migration_dir must be a non-empty string")
 
         return True
+
 
 @dataclass
 class SecuritySettings(BaseSettings):
@@ -327,7 +330,8 @@ class SecuritySettings(BaseSettings):
                 from localvectordb_server.utils.hostmatch import validate_trusted_host_patterns
                 validation_errors = validate_trusted_host_patterns(self.trusted_hosts)
                 if validation_errors:
-                    error_msg = "Invalid trusted_hosts patterns:\n" + "\n".join(f"  - {error}" for error in validation_errors)
+                    error_msg = "Invalid trusted_hosts patterns:\n" + "\n".join(
+                        f"  - {error}" for error in validation_errors)
                     raise ConfigurationError(error_msg)
             except ImportError:
                 # Fallback validation if hostmatch module not available
@@ -366,12 +370,12 @@ class ServerSettings(BaseSettings):
     # Cache settings
     cache_enabled: bool = False
     cache_ignore_errors: bool = True
-    cache_timeout: int = 300   # 5 min
+    cache_timeout: int = 300  # 5 min
     cache_key_prefix: str = "lvdb_cache_"
     # Which cachelib cache to use: https://cachelib.readthedocs.io/en/stable/
     cache_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
-                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
-                        "MongoDbCache", "NullCache"] = "SimpleCache"
+    "MemcachedCache", "UWSGICache", "DynamoDbCache",
+    "MongoDbCache", "NullCache"] = "SimpleCache"
     # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
     # DEPRECATED: Use specific cache backend configurations below instead
     cache_settings: Optional[dict] = None
@@ -396,8 +400,8 @@ class ServerSettings(BaseSettings):
 
     # Database registry settings for multi-worker coordination
     db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
-                        "MemcachedCache", "UWSGICache", "DynamoDbCache",
-                        "MongoDbCache", "NullCache"] = "SimpleCache"
+    "MemcachedCache", "UWSGICache", "DynamoDbCache",
+    "MongoDbCache", "NullCache"] = "SimpleCache"
 
     # Will try to use the cache_settings if not set and cache_types match.
     db_registry_settings: Optional[dict] = None
@@ -467,7 +471,7 @@ class ServerSettings(BaseSettings):
 
         if self.cache_enabled:
             valid_cache_types = ("SimpleCache", "RedisCache", "FileSystemCache", "MemcachedCache",
-                                "UWSGICache", "DynamoDbCache", "MongoDbCache", "NullCache")
+                                 "UWSGICache", "DynamoDbCache", "MongoDbCache", "NullCache")
 
             # Validate cache type
             if self.cache_type not in valid_cache_types:
@@ -475,8 +479,10 @@ class ServerSettings(BaseSettings):
 
             # Backend-specific validation
             if self.cache_type == "RedisCache":
-                if self.redis_url and (self.redis_host != "localhost" or self.redis_port != 6379 or self.redis_password):
-                    raise ConfigurationError("When redis_url is set, do not set individual redis_host/port/password settings")
+                if self.redis_url and (
+                        self.redis_host != "localhost" or self.redis_port != 6379 or self.redis_password):
+                    raise ConfigurationError(
+                        "When redis_url is set, do not set individual redis_host/port/password settings")
                 if not self.redis_url and not self.redis_host:
                     raise ConfigurationError("Redis cache requires either redis_url or redis_host to be configured")
 
@@ -613,7 +619,6 @@ class Config:
             data = tomllib.load(f)
         return cls.from_dict(data)
 
-
     @classmethod
     def _from_json(cls, path: Path) -> "Config":
         """Load configuration from JSON file."""
@@ -679,7 +684,7 @@ class Config:
     @staticmethod
     def _convert_env_value(value: str, obj: Any, key: str) -> Any:
         """Convert environment variable string to appropriate type based on type hints.
-        
+
         Parameters
         ----------
         value : str
@@ -688,7 +693,7 @@ class Config:
             The object containing the attribute to set.
         key : str
             The attribute name.
-            
+
         Returns
         -------
         Any
@@ -864,7 +869,6 @@ class Config:
         for key, value in asdict(self.migration).items():
             result[f"MIGRATION_{key.upper()}"] = value
 
-
         # Generate Flask-Caching compatible configuration
         cache_config = self._generate_cache_config()
 
@@ -952,6 +956,7 @@ class Config:
 
     def generate_toml(self) -> str:
         """Generate enhanced TOML configuration for v1.0 using tomli-w."""
+
         def clean_none_values(obj):
             """Recursively remove None values and empty containers from nested dicts/lists."""
             if isinstance(obj, dict):

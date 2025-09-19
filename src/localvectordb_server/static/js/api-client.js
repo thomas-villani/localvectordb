@@ -1,6 +1,6 @@
 /**
  * LocalVectorDB Inspector API Client
- * 
+ *
  * JavaScript client for interacting with LocalVectorDB REST API and Inspector endpoints
  */
 
@@ -12,16 +12,16 @@ class LocalVectorDBAPIClient {
         this.defaultTimeout = config.timeout || 30000;
         this.isAuthenticated = config.isAuthenticated || false;
         this.requireApiKey = config.requireApiKey || false;
-        
+
         // Setup default headers
         this.defaultHeaders = {
             'Content-Type': 'application/json'
         };
-        
+
         if (this.apiKey) {
             this.defaultHeaders['Authorization'] = `Bearer ${this.apiKey}`;
         }
-        
+
         // Bind methods to preserve context
         this.get = this.get.bind(this);
         this.post = this.post.bind(this);
@@ -47,7 +47,7 @@ class LocalVectorDBAPIClient {
     async request(url, options = {}) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.defaultTimeout);
-        
+
         try {
             const config = {
                 ...options,
@@ -57,25 +57,25 @@ class LocalVectorDBAPIClient {
                     ...options.headers
                 }
             };
-            
+
             const response = await fetch(url, config);
             clearTimeout(timeoutId);
-            
+
             if (!response.ok) {
                 let errorData;
                 try {
                     errorData = await response.json();
                 } catch (e) {
-                    errorData = { error: 'Unknown error', message: response.statusText };
+                    errorData = {error: 'Unknown error', message: response.statusText};
                 }
-                
+
                 throw new APIError(
                     errorData.message || errorData.error || response.statusText,
                     response.status,
                     errorData
                 );
             }
-            
+
             // Handle empty responses
             const contentType = response.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
@@ -83,22 +83,22 @@ class LocalVectorDBAPIClient {
             } else {
                 return await response.text();
             }
-            
+
         } catch (error) {
             clearTimeout(timeoutId);
-            
+
             if (error.name === 'AbortError') {
                 throw new APIError('Request timeout', 408);
             }
-            
+
             if (error instanceof APIError) {
                 throw error;
             }
-            
+
             throw new APIError(
                 error.message || 'Network error',
                 0,
-                { originalError: error }
+                {originalError: error}
             );
         }
     }
@@ -113,8 +113,8 @@ class LocalVectorDBAPIClient {
                 url.searchParams.append(key, params[key]);
             }
         });
-        
-        return this.request(url.toString(), { method: 'GET' });
+
+        return this.request(url.toString(), {method: 'GET'});
     }
 
     /**
@@ -125,19 +125,19 @@ class LocalVectorDBAPIClient {
             method: 'POST',
             ...options
         };
-        
+
         if (data !== null) {
             if (data instanceof FormData) {
                 config.body = data;
                 // Don't set Content-Type for FormData, let browser set it with boundary
-                const headers = { ...this.defaultHeaders, ...options.headers };
+                const headers = {...this.defaultHeaders, ...options.headers};
                 delete headers['Content-Type'];
                 config.headers = headers;
             } else {
                 config.body = JSON.stringify(data);
             }
         }
-        
+
         const url = new URL(endpoint, window.location.origin);
         return this.request(url.toString(), config);
     }
@@ -149,11 +149,11 @@ class LocalVectorDBAPIClient {
         const config = {
             method: 'PUT'
         };
-        
+
         if (data !== null) {
             config.body = JSON.stringify(data);
         }
-        
+
         const url = new URL(endpoint, window.location.origin);
         return this.request(url.toString(), config);
     }
@@ -163,7 +163,7 @@ class LocalVectorDBAPIClient {
      */
     async delete(endpoint) {
         const url = new URL(endpoint, window.location.origin);
-        return this.request(url.toString(), { method: 'DELETE' });
+        return this.request(url.toString(), {method: 'DELETE'});
     }
 
     // ========== Database Management APIs ==========
@@ -213,7 +213,7 @@ class LocalVectorDBAPIClient {
             page: 1,
             limit: 20
         };
-        return this.get(`${this.apiBaseUrl}/${dbName}/documents`, { ...defaultParams, ...params });
+        return this.get(`${this.apiBaseUrl}/${dbName}/documents`, {...defaultParams, ...params});
     }
 
     /**
@@ -239,7 +239,7 @@ class LocalVectorDBAPIClient {
      * Add documents to database
      */
     async addDocuments(dbName, documents, metadata = null, options = {}) {
-        const data = { documents, ...options };
+        const data = {documents, ...options};
         if (metadata) {
             data.metadata = metadata;
         }
@@ -264,7 +264,7 @@ class LocalVectorDBAPIClient {
      * Check if documents exist
      */
     async checkDocumentsExist(dbName, ids) {
-        return this.post(`${this.apiBaseUrl}/${dbName}/documents/exists`, { ids });
+        return this.post(`${this.apiBaseUrl}/${dbName}/documents/exists`, {ids});
     }
 
     /**
@@ -288,7 +288,7 @@ class LocalVectorDBAPIClient {
             score_threshold: options.scoreThreshold || 0.0,
             ...options
         };
-        
+
         return this.post(`${this.apiBaseUrl}/${dbName}/query`, data);
     }
 
@@ -296,21 +296,21 @@ class LocalVectorDBAPIClient {
      * Vector similarity search
      */
     async vectorSearch(dbName, queryText, options = {}) {
-        return this.query(dbName, queryText, { ...options, searchType: 'vector' });
+        return this.query(dbName, queryText, {...options, searchType: 'vector'});
     }
 
     /**
      * Keyword search
      */
     async keywordSearch(dbName, queryText, options = {}) {
-        return this.query(dbName, queryText, { ...options, searchType: 'keyword' });
+        return this.query(dbName, queryText, {...options, searchType: 'keyword'});
     }
 
     /**
      * Hybrid search
      */
     async hybridSearch(dbName, queryText, options = {}) {
-        return this.query(dbName, queryText, { ...options, searchType: 'hybrid' });
+        return this.query(dbName, queryText, {...options, searchType: 'hybrid'});
     }
 
     /**
@@ -326,7 +326,7 @@ class LocalVectorDBAPIClient {
             score_threshold: options.scoreThreshold || 0.0,
             ...options
         };
-        
+
         return this.post(`${this.apiBaseUrl}/${dbName}/query-multi-column`, data);
     }
 
@@ -343,7 +343,7 @@ class LocalVectorDBAPIClient {
             score_threshold: options.scoreThreshold || 0.0,
             ...options
         };
-        
+
         return this.post(`${this.apiBaseUrl}/search`, data);
     }
 
@@ -354,7 +354,7 @@ class LocalVectorDBAPIClient {
      */
     async uploadFiles(dbName, files, options = {}) {
         const formData = new FormData();
-        
+
         // Add files
         if (files instanceof FileList) {
             for (let i = 0; i < files.length; i++) {
@@ -365,7 +365,7 @@ class LocalVectorDBAPIClient {
         } else {
             formData.append('files', files);
         }
-        
+
         // Add options
         if (options.metadata) {
             formData.append('metadata', JSON.stringify(options.metadata));
@@ -379,7 +379,7 @@ class LocalVectorDBAPIClient {
         if (options.ids) {
             formData.append('ids', JSON.stringify(options.ids));
         }
-        
+
         return this.post(`${this.apiBaseUrl}/${dbName}/upload`, formData);
     }
 
@@ -396,7 +396,7 @@ class LocalVectorDBAPIClient {
     async previewExtraction(file) {
         const formData = new FormData();
         formData.append('file', file);
-        
+
         return this.post(`${this.apiBaseUrl}/upload/extract-preview`, formData);
     }
 
@@ -409,7 +409,7 @@ class LocalVectorDBAPIClient {
         const data = {};
         if (texts) data.texts = Array.isArray(texts) ? texts : [texts];
         if (ids) data.ids = Array.isArray(ids) ? ids : [ids];
-        
+
         return this.post(`${this.apiBaseUrl}/${dbName}/embeddings`, data);
     }
 

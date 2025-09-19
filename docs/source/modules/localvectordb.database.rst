@@ -1,8 +1,15 @@
-localvectordb.database module
-=============================
+localvectordb.database package
+==============================
 
 .. automodule:: localvectordb.database
    :members:
-   :inherited-members:
    :show-inheritance:
    :undoc-members:
+
+Submodules
+----------
+
+.. toctree::
+   :maxdepth: 4
+
+   localvectordb.database.base

@@ -217,7 +217,8 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
                 else:
                     perm_display = click.style(perm_display, fg="green")
 
-                click.echo(f"{key.id:<20} {desc:<25} {perm_display:<22} {status:<20} {created:<12} {expires:<22} {last_used:<12}")
+                click.echo(
+                    f"{key.id:<20} {desc:<25} {perm_display:<22} {status:<20} {created:<12} {expires:<22} {last_used:<12}")
 
     except Exception as e:
         click.secho(f"Error listing API keys: {str(e)}", fg="bright_red")

@@ -1,6 +1,7 @@
 # LocalVectorDB MCP Server
 
-The LocalVectorDB MCP (Model Context Protocol) server enables LLMs and tools like Claude Desktop to interact with LocalVectorDB vector databases through a standardized tool interface.
+The LocalVectorDB MCP (Model Context Protocol) server enables LLMs and tools like Claude Desktop to interact with
+LocalVectorDB vector databases through a standardized tool interface.
 
 ## Features
 
@@ -17,6 +18,7 @@ pip install localvectordb[mcp]
 ```
 
 Or from source:
+
 ```bash
 pip install -e ".[mcp]"
 ```
@@ -146,7 +148,7 @@ retry_delay = 1.0
 The MCP server allows you to customize which tools are available through configuration. This is useful for:
 
 - **Security**: Limiting available functionality in untrusted environments
-- **Performance**: Reducing tool registration overhead for unused features  
+- **Performance**: Reducing tool registration overhead for unused features
 - **Specialization**: Creating task-specific MCP servers
 
 ### Configuring Available Tools

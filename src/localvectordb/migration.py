@@ -264,11 +264,11 @@ class MigrationEngine:
     """
 
     def __init__(
-        self,
-        database_path: Union[str, Path],
-        migrations_directory: Union[str, Path] = "./migrations",
-        backup_manager: Optional[BackupManager] = None,
-        auto_backup: bool = True
+            self,
+            database_path: Union[str, Path],
+            migrations_directory: Union[str, Path] = "./migrations",
+            backup_manager: Optional[BackupManager] = None,
+            auto_backup: bool = True
     ):
         self.database_path = Path(database_path)
         self.migrations_directory = Path(migrations_directory)
@@ -335,8 +335,8 @@ class MigrationEngine:
             migration_class = None
             for name, obj in inspect.getmembers(module):
                 if (inspect.isclass(obj) and
-                    issubclass(obj, Migration) and
-                    obj != Migration):
+                        issubclass(obj, Migration) and
+                        obj != Migration):
                     migration_class = obj
                     break
 
@@ -470,10 +470,10 @@ class MigrationEngine:
         return [version for version in migration_order if version not in applied_versions]
 
     def migrate(
-        self,
-        target_version: Optional[str] = None,
-        dry_run: bool = False,
-        create_backup: Optional[bool] = None
+            self,
+            target_version: Optional[str] = None,
+            dry_run: bool = False,
+            create_backup: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Apply pending migrations up to the target version.
@@ -632,10 +632,10 @@ class MigrationEngine:
             }
 
     def rollback(
-        self,
-        target_version: str,
-        dry_run: bool = False,
-        create_backup: Optional[bool] = None
+            self,
+            target_version: str,
+            dry_run: bool = False,
+            create_backup: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Rollback migrations to a target version.
@@ -858,10 +858,10 @@ class MigrationEngine:
         }
 
     def create_migration_template(
-        self,
-        version: str,
-        description: str,
-        template_type: str = "basic"
+            self,
+            version: str,
+            description: str,
+            template_type: str = "basic"
     ) -> Path:
         """
         Create a new migration template file.
@@ -903,10 +903,10 @@ class MigrationEngine:
         return file_path
 
     def _get_migration_template(
-        self,
-        version: str,
-        description: str,
-        template_type: str
+            self,
+            version: str,
+            description: str,
+            template_type: str
     ) -> str:
         """Generate migration template content."""
 

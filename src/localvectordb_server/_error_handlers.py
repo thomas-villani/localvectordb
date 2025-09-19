@@ -444,7 +444,6 @@ def validate_database_creation_params(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-
 # Global error handlers for Flask app
 def register_error_handlers(app):
     """Register global error handlers for the Flask app"""

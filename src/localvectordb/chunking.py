@@ -380,6 +380,7 @@ class WordChunker(PositionTrackingChunker):
 
         return chunks
 
+
 class LineChunker(PositionTrackingChunker):
     """Chunk by line boundaries"""
 
@@ -1052,7 +1053,7 @@ class CodeBlockChunker(PositionTrackingChunker):
     def _identify_code_blocks(
             lines: List[str], language: str,
             start_patterns: List[str], end_patterns: List[str]
-            ) -> List[dict]:
+    ) -> List[dict]:
         """Identify code blocks based on language-specific patterns"""
         blocks = []
         i = 0

@@ -1,6 +1,6 @@
 /**
  * LocalVectorDB Inspector Main Application
- * 
+ *
  * Main JavaScript application logic for the LocalVectorDB Inspector UI
  */
 
@@ -14,12 +14,12 @@ class InspectorApp {
             refreshInterval: 30000, // 30 seconds
             ...config
         };
-        
+
         this.apiClient = null;
         this.refreshTimer = null;
         this.currentPage = null;
         this.eventListeners = new Map();
-        
+
         // Bind methods
         this.init = this.init.bind(this);
         this.setupEventListeners = this.setupEventListeners.bind(this);
@@ -29,27 +29,121 @@ class InspectorApp {
     }
 
     /**
+     * Show document detail in modal
+     */
+    static async showDocumentDetail(docId) {
+        const app = window.InspectorApp;
+        if (!app) return;
+
+        const dbName = app.getCurrentDatabase();
+        if (!dbName) return;
+
+        try {
+            showLoading();
+            const doc = await app.apiClient.getDocument(dbName, docId);
+            hideLoading();
+
+            const modalContent = `
+                <div class="document-detail">
+                    <div class="detail-section">
+                        <h4>Document Information</h4>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <label>ID:</label>
+                                <span>${doc.id}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Content Hash:</label>
+                                <span class="monospace">${doc.content_hash || 'N/A'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Created:</label>
+                                <span>${doc.created_at ? new Date(doc.created_at).toLocaleString() : 'N/A'}</span>
+                            </div>
+                            <div class="info-item">
+                                <label>Updated:</label>
+                                <span>${doc.updated_at ? new Date(doc.updated_at).toLocaleString() : 'N/A'}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>Content</h4>
+                        <div class="document-content">
+                            <pre>${app.escapeHtml(doc.content)}</pre>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>Metadata</h4>
+                        <div class="metadata-display">
+                            ${app.formatMetadataDetailed(doc.metadata)}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            showModal(`Document: ${docId}`, modalContent, `
+                <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                <button class="btn btn-primary" onclick="InspectorApp.editDocument('${docId}')">Edit Document</button>
+            `);
+
+        } catch (error) {
+            hideLoading();
+            app.showAlert(`Failed to load document: ${error.message}`, 'error');
+        }
+    }
+
+    /**
+     * Static method to load documents (for pagination buttons)
+     */
+    static loadDocuments(page = 1) {
+        const app = window.InspectorApp;
+        if (app && app.loadDocuments) {
+            app.loadDocuments(page);
+        }
+    }
+
+    /**
+     * Edit document
+     */
+    static async editDocument(docId) {
+        console.log('Edit document:', docId);
+        // Edit document functionality
+    }
+
+    /**
+     * Delete document
+     */
+    static async deleteDocument(docId) {
+        if (confirm('Are you sure you want to delete this document?')) {
+            console.log('Delete document:', docId);
+            // Delete document functionality
+        }
+    }
+
+    /**
      * Initialize the inspector application
      */
     init(config = {}) {
         // Merge configuration
-        this.config = { ...this.config, ...config };
-        
+        this.config = {...this.config, ...config};
+
         // Initialize API client
         this.apiClient = initializeAPIClient(this.config);
         window.InspectorAPI = this.apiClient;
-        
+
         // Setup global event listeners
         this.setupEventListeners();
-        
+
         // Detect current page and initialize page-specific functionality
         this.detectCurrentPage();
-        
+
         // Start background refresh if on dashboard
         if (this.currentPage === 'dashboard') {
             this.startBackgroundRefresh();
         }
-        
+
         console.log('LocalVectorDB Inspector initialized');
     }
 
@@ -105,7 +199,7 @@ class InspectorApp {
     detectCurrentPage() {
         const path = window.location.pathname;
         const body = document.body;
-        
+
         if (path.includes('/inspector/query') || body.classList.contains('query-page')) {
             this.currentPage = 'query';
             this.initializeQueryPage();
@@ -130,7 +224,7 @@ class InspectorApp {
     initializeDashboardPage() {
         // Setup real-time statistics updates
         this.setupDashboardUpdates();
-        
+
         // Initialize dashboard widgets
         this.initializeDashboardWidgets();
     }
@@ -141,10 +235,10 @@ class InspectorApp {
     initializeQueryPage() {
         // Setup query form handlers
         this.setupQueryHandlers();
-        
+
         // Initialize query history
         this.loadQueryHistory();
-        
+
         // Setup auto-complete for query input
         this.setupQueryAutoComplete();
     }
@@ -155,10 +249,10 @@ class InspectorApp {
     initializeDatabasePage() {
         // Setup document browser
         this.setupDocumentBrowser();
-        
+
         // Initialize pagination
         this.setupPagination();
-        
+
         // Setup document detail modals
         this.setupDocumentModals();
     }
@@ -169,7 +263,7 @@ class InspectorApp {
     initializeEmbeddingsPage() {
         // Setup visualization controls
         this.setupVisualizationControls();
-        
+
         // Initialize chart containers
         this.initializeCharts();
     }
@@ -180,7 +274,7 @@ class InspectorApp {
     initializeAdminPage() {
         // Setup system monitoring
         this.setupSystemMonitoring();
-        
+
         // Initialize admin controls
         this.setupAdminControls();
     }
@@ -194,11 +288,11 @@ class InspectorApp {
                 // Update system stats
                 const systemStats = await this.apiClient.getSystemStats();
                 this.updateSystemStatsDisplay(systemStats);
-                
+
                 // Update database list
                 const databases = await this.apiClient.getInspectorDatabases();
                 this.updateDatabaseGrid(databases.databases);
-                
+
             } catch (error) {
                 console.warn('Failed to update dashboard:', error);
             }
@@ -206,7 +300,7 @@ class InspectorApp {
 
         // Initial update
         updateDashboard();
-        
+
         // Setup periodic updates
         this.dashboardUpdateInterval = setInterval(updateDashboard, this.config.refreshInterval);
     }
@@ -313,9 +407,9 @@ class InspectorApp {
 
         try {
             showLoading();
-            
+
             // Record query in history
-            this.addToQueryHistory({ dbName, queryText, searchType, limit });
+            this.addToQueryHistory({dbName, queryText, searchType, limit});
 
             const startTime = Date.now();
             const results = await this.apiClient.query(dbName, queryText, {
@@ -324,12 +418,12 @@ class InspectorApp {
                 scoreThreshold: parseFloat(formData.get('score_threshold')) || 0.0,
                 vectorWeight: parseFloat(formData.get('vector_weight')) || 0.7
             });
-            
+
             const queryTime = Date.now() - startTime;
-            
+
             hideLoading();
             this.displayQueryResults(results, queryTime);
-            
+
         } catch (error) {
             hideLoading();
             this.showAlert(`Query failed: ${error.message}`, 'error');
@@ -344,7 +438,7 @@ class InspectorApp {
         const resultsContainer = document.getElementById('query-results');
         if (!resultsContainer) return;
 
-        const { results: documents, search_type, total_results } = results;
+        const {results: documents, search_type, total_results} = results;
 
         let html = `
             <div class="results-header">
@@ -359,7 +453,7 @@ class InspectorApp {
 
         if (documents && documents.length > 0) {
             html += '<div class="results-list">';
-            
+
             documents.forEach((doc, index) => {
                 html += `
                     <div class="result-item" data-doc-id="${doc.id}">
@@ -382,14 +476,14 @@ class InspectorApp {
                     </div>
                 `;
             });
-            
+
             html += '</div>';
         } else {
             html += '<div class="no-results">No results found for your query.</div>';
         }
 
         resultsContainer.innerHTML = html;
-        resultsContainer.scrollIntoView({ behavior: 'smooth' });
+        resultsContainer.scrollIntoView({behavior: 'smooth'});
     }
 
     /**
@@ -403,7 +497,7 @@ class InspectorApp {
         this.currentPage = 1;
         this.pageSize = 20;
         this.totalDocuments = 0;
-        
+
         // Load initial documents
         this.loadDocuments();
 
@@ -420,19 +514,19 @@ class InspectorApp {
 
         try {
             showLoading();
-            
+
             const params = {
                 page,
                 limit: this.pageSize,
                 ...filters
             };
-            
+
             const response = await this.apiClient.listDocuments(dbName, params);
-            
+
             hideLoading();
             this.displayDocuments(response.documents);
             this.updatePagination(response.pagination);
-            
+
         } catch (error) {
             hideLoading();
             this.showAlert(`Failed to load documents: ${error.message}`, 'error');
@@ -484,72 +578,6 @@ class InspectorApp {
         });
 
         container.innerHTML = html;
-    }
-
-    /**
-     * Show document detail in modal
-     */
-    static async showDocumentDetail(docId) {
-        const app = window.InspectorApp;
-        if (!app) return;
-
-        const dbName = app.getCurrentDatabase();
-        if (!dbName) return;
-
-        try {
-            showLoading();
-            const doc = await app.apiClient.getDocument(dbName, docId);
-            hideLoading();
-
-            const modalContent = `
-                <div class="document-detail">
-                    <div class="detail-section">
-                        <h4>Document Information</h4>
-                        <div class="info-grid">
-                            <div class="info-item">
-                                <label>ID:</label>
-                                <span>${doc.id}</span>
-                            </div>
-                            <div class="info-item">
-                                <label>Content Hash:</label>
-                                <span class="monospace">${doc.content_hash || 'N/A'}</span>
-                            </div>
-                            <div class="info-item">
-                                <label>Created:</label>
-                                <span>${doc.created_at ? new Date(doc.created_at).toLocaleString() : 'N/A'}</span>
-                            </div>
-                            <div class="info-item">
-                                <label>Updated:</label>
-                                <span>${doc.updated_at ? new Date(doc.updated_at).toLocaleString() : 'N/A'}</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>Content</h4>
-                        <div class="document-content">
-                            <pre>${app.escapeHtml(doc.content)}</pre>
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>Metadata</h4>
-                        <div class="metadata-display">
-                            ${app.formatMetadataDetailed(doc.metadata)}
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            showModal(`Document: ${docId}`, modalContent, `
-                <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-                <button class="btn btn-primary" onclick="InspectorApp.editDocument('${docId}')">Edit Document</button>
-            `);
-
-        } catch (error) {
-            hideLoading();
-            app.showAlert(`Failed to load document: ${error.message}`, 'error');
-        }
     }
 
     /**
@@ -632,7 +660,7 @@ class InspectorApp {
             ...query,
             timestamp: Date.now()
         });
-        
+
         // Keep only last 50 queries
         const limitedHistory = history.slice(0, 50);
         localStorage.setItem('inspector_query_history', JSON.stringify(limitedHistory));
@@ -653,7 +681,7 @@ class InspectorApp {
      */
     startBackgroundRefresh() {
         this.stopBackgroundRefresh(); // Clear any existing timer
-        
+
         if (this.currentPage === 'dashboard') {
             this.refreshTimer = setInterval(() => {
                 if (!document.hidden) {
@@ -668,7 +696,7 @@ class InspectorApp {
             clearInterval(this.refreshTimer);
             this.refreshTimer = null;
         }
-        
+
         if (this.dashboardUpdateInterval) {
             clearInterval(this.dashboardUpdateInterval);
             this.dashboardUpdateInterval = null;
@@ -711,7 +739,7 @@ class InspectorApp {
      */
     handleFormSubmission(form) {
         const formType = form.dataset.inspectorForm;
-        
+
         switch (formType) {
             case 'query':
                 this.executeQuery(form);
@@ -730,7 +758,7 @@ class InspectorApp {
     loadDynamicContent(trigger) {
         const contentType = trigger.dataset.loadContent;
         const target = trigger.dataset.target;
-        
+
         switch (contentType) {
             case 'documents':
                 this.loadDocuments();
@@ -768,37 +796,37 @@ class InspectorApp {
         const paginationContainer = document.getElementById('pagination');
         if (!paginationContainer || !pagination) return;
 
-        const { current_page, total_pages, total_items } = pagination;
-        
+        const {current_page, total_pages, total_items} = pagination;
+
         let html = '<div class="pagination-info">';
         html += `<span>Page ${current_page} of ${total_pages} (${total_items} total)</span>`;
         html += '</div>';
-        
+
         if (total_pages > 1) {
             html += '<div class="pagination-nav">';
-            
+
             // Previous button
             if (current_page > 1) {
                 html += `<button class="btn btn-sm btn-secondary" onclick="InspectorApp.loadDocuments(${current_page - 1})">&laquo; Previous</button>`;
             }
-            
+
             // Page numbers
             const startPage = Math.max(1, current_page - 2);
             const endPage = Math.min(total_pages, current_page + 2);
-            
+
             for (let i = startPage; i <= endPage; i++) {
                 const isActive = i === current_page ? ' active' : '';
                 html += `<button class="btn btn-sm btn-outline-primary${isActive}" onclick="InspectorApp.loadDocuments(${i})">${i}</button>`;
             }
-            
+
             // Next button
             if (current_page < total_pages) {
                 html += `<button class="btn btn-sm btn-secondary" onclick="InspectorApp.loadDocuments(${current_page + 1})">Next &raquo;</button>`;
             }
-            
+
             html += '</div>';
         }
-        
+
         paginationContainer.innerHTML = html;
     }
 
@@ -829,10 +857,10 @@ class InspectorApp {
     loadQueryHistory() {
         const history = this.getQueryHistory();
         const historyContainer = document.getElementById('query-history');
-        
+
         if (historyContainer && history.length > 0) {
             let html = '<h5>Recent Queries</h5><div class="query-history-list">';
-            
+
             history.slice(0, 10).forEach((query, index) => {
                 html += `
                     <div class="history-item" onclick="InspectorApp.loadHistoryQuery(${index})">
@@ -844,7 +872,7 @@ class InspectorApp {
                     </div>
                 `;
             });
-            
+
             html += '</div>';
             historyContainer.innerHTML = html;
         }
@@ -893,45 +921,17 @@ class InspectorApp {
     }
 
     /**
-     * Static method to load documents (for pagination buttons)
-     */
-    static loadDocuments(page = 1) {
-        const app = window.InspectorApp;
-        if (app && app.loadDocuments) {
-            app.loadDocuments(page);
-        }
-    }
-
-    /**
-     * Edit document
-     */
-    static async editDocument(docId) {
-        console.log('Edit document:', docId);
-        // Edit document functionality
-    }
-
-    /**
-     * Delete document
-     */
-    static async deleteDocument(docId) {
-        if (confirm('Are you sure you want to delete this document?')) {
-            console.log('Delete document:', docId);
-            // Delete document functionality
-        }
-    }
-
-    /**
      * Cleanup method
      */
     destroy() {
         this.stopBackgroundRefresh();
-        
+
         // Remove event listeners
         this.eventListeners.forEach((listener, element) => {
             element.removeEventListener(listener.event, listener.handler);
         });
         this.eventListeners.clear();
-        
+
         console.log('LocalVectorDB Inspector destroyed');
     }
 }

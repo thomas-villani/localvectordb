@@ -66,7 +66,7 @@ class DocxExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Extract text from DOCX files."""
         try:
             from docx import Document
@@ -178,7 +178,7 @@ class PptxExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Extract text from PPTX files."""
         try:
             from pptx import Presentation
@@ -300,7 +300,7 @@ class XlsxExtractor(BaseExtractor):
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
-            ) -> ExtractionResult:
+    ) -> ExtractionResult:
         """Extract text from XLSX files."""
         try:
             from openpyxl import load_workbook

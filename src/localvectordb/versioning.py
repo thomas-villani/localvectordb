@@ -315,8 +315,10 @@ class VersionManager:
             if should_close:
                 conn.close()
 
-    def record_migration(self, version: str, rollback_script: Optional[str] = None,
-                        checksum: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> None:
+    def record_migration(
+            self, version: str, rollback_script: Optional[str] = None,
+            checksum: Optional[str] = None, conn: Optional[sqlite3.Connection] = None
+            ) -> None:
         """
         Record a completed migration in the migration log.
 
@@ -348,8 +350,10 @@ class VersionManager:
             if should_close:
                 conn.close()
 
-    def needs_migration(self, target_version: Optional[DatabaseVersion] = None,
-                       conn: Optional[sqlite3.Connection] = None) -> bool:
+    def needs_migration(
+            self, target_version: Optional[DatabaseVersion] = None,
+            conn: Optional[sqlite3.Connection] = None
+            ) -> bool:
         """
         Check if database needs migration to target version.
 

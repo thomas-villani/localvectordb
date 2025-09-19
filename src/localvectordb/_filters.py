@@ -725,6 +725,7 @@ def matches_metadata_filter(doc_or_metadata, metadata_filter: dict) -> bool:
         if not field.startswith('$')
     )
 
+
 class FTSQuerySanitization:
 
     @staticmethod

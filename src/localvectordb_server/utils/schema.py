@@ -26,11 +26,11 @@ from localvectordb_server._error_handlers import ValidationError
 def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataField]:
     """
     Parse metadata schema from configuration data with validation.
-    
+
     This is the canonical implementation for parsing metadata schema configurations
     across the LocalVectorDB server. It handles both simple string type specifications
     and full field configuration dictionaries.
-    
+
     Parameters
     ----------
     schema_data : Dict[str, Any]
@@ -38,22 +38,22 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
         - Empty dict for no schema
         - Dict mapping field names to type strings (e.g., {"title": "text"})
         - Dict mapping field names to configuration dicts (e.g., {"title": {"type": "text", "indexed": true}})
-        
+
     Returns
     -------
     Dict[str, MetadataField]
         Parsed metadata schema with validated fields
-        
+
     Raises
     ------
     ValidationError
         If the schema data is invalid or contains unsafe field names
-        
+
     Examples
     --------
     Simple string types:
     >>> parse_metadata_schema({"title": "text", "created_at": "date"})
-    
+
     Full configuration:
     >>> parse_metadata_schema({
     ...     "title": {"type": "text", "indexed": True, "required": False},

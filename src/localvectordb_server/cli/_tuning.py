@@ -208,7 +208,8 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
         db.set_sqlite_tuning(current_config['profile'], overrides, persist=not no_persist)
         db.close()
 
-        click.echo(f" Set pragma '{click.style(pragma_key, fg='cyan')}' = '{click.style(str(parsed_value), fg='yellow')}' for '{database}'")
+        click.echo(
+            f" Set pragma '{click.style(pragma_key, fg='cyan')}' = '{click.style(str(parsed_value), fg='yellow')}' for '{database}'")
 
         if not no_persist:
             click.echo(" Setting persisted to database")
@@ -220,7 +221,8 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
 @tuning_group.command("auto")
 @click.argument("database")
 @click.option("--interactive", "-i", is_flag=True, help="Run interactive workload interview")
-@click.option("--workload-type", type=click.Choice(["read_heavy", "write_heavy", "balanced", "batch_ingest", "real_time"]),
+@click.option("--workload-type",
+              type=click.Choice(["read_heavy", "write_heavy", "balanced", "batch_ingest", "real_time"]),
               help="Workload type (skips interview)")
 @click.option("--memory-constraint", type=click.Choice(["generous", "moderate", "limited"]),
               help="Memory availability")

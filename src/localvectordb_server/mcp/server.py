@@ -94,10 +94,10 @@ class MCPManager:
         return sorted(databases)
 
     async def create_database(
-        self,
-        name: str,
-        metadata_schema: Optional[Dict[str, Any]] = None,
-        **kwargs
+            self,
+            name: str,
+            metadata_schema: Optional[Dict[str, Any]] = None,
+            **kwargs
     ):
         """Create a new database (write mode only)"""
         self.config.check_write_permission("create_database")
@@ -229,8 +229,10 @@ mcp = FastMCP("LocalVectorDB MCP Server", lifespan=lifespan)
 # Store all tool functions for dynamic registration
 TOOL_REGISTRY = {}
 
+
 def register_tool(name: str, read_only: bool = True):
     """Decorator to register tools in the registry"""
+
     def decorator(func):
         TOOL_REGISTRY[name] = {
             'function': func,
@@ -238,6 +240,7 @@ def register_tool(name: str, read_only: bool = True):
             'registered': False
         }
         return func
+
     return decorator
 
 
@@ -290,7 +293,8 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
             "name": db.name,
             "stats": stats,
             "config": {
-                "embedding_provider": db.embedding_provider.provider_name if hasattr(db, 'embedding_provider') else "unknown",
+                "embedding_provider": db.embedding_provider.provider_name if hasattr(db,
+                                                                                     'embedding_provider') else "unknown",
                 "embedding_model": db.embedding_provider.model if hasattr(db, 'embedding_provider') else "unknown",
                 "embedding_dimension": db.embedding_dimension if hasattr(db, 'embedding_dimension') else None,
                 "chunking_method": db.chunking_method if hasattr(db, 'chunking_method') else "unknown",
@@ -322,17 +326,17 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
 
 @register_tool("query_database", read_only=True)
 async def query_database(
-    database_name: str,
-    query: str,
-    search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-    return_type: Literal["documents", "chunks", "context"] = "documents",
-    k: int = 10,
-    score_threshold: float = 0.0,
-    filters: Optional[Dict] = None,
-    vector_weight: float = 0.7,
-    context_window: int = 2,
-    semantic_dedup_threshold: Optional[float] = None,
-    document_scoring_method: str = "frequency_boost"
+        database_name: str,
+        query: str,
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
+        return_type: Literal["documents", "chunks", "context"] = "documents",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: str = "frequency_boost"
 ) -> Dict[str, Any]:
     """
     Search a database using vector, keyword, or hybrid search
@@ -422,10 +426,10 @@ async def query_database(
 
 @register_tool("filter_documents", read_only=True)
 async def filter_documents(
-    database_name: str,
-    filters: Dict[str, Any],
-    limit: int = 100,
-    offset: int = 0
+        database_name: str,
+        filters: Dict[str, Any],
+        limit: int = 100,
+        offset: int = 0
 ) -> Dict[str, Any]:
     """
     Filter documents by metadata
@@ -480,8 +484,8 @@ async def filter_documents(
 
 @register_tool("get_document", read_only=True)
 async def get_document(
-    database_name: str,
-    document_id: str
+        database_name: str,
+        document_id: str
 ) -> Dict[str, Any]:
     """
     Retrieve a specific document by ID
@@ -524,8 +528,8 @@ async def get_document(
 
 @register_tool("check_documents_exist", read_only=True)
 async def check_documents_exist(
-    database_name: str,
-    document_ids: List[str]
+        database_name: str,
+        document_ids: List[str]
 ) -> Dict[str, Any]:
     """
     Check if documents exist in the database
@@ -614,13 +618,13 @@ async def get_system_info() -> Dict[str, Any]:
 
 @register_tool("create_database", read_only=False)
 async def create_database(
-    name: str,
-    metadata_schema: Optional[Dict[str, Any]] = None,
-    embedding_provider: Optional[str] = None,
-    embedding_model: Optional[str] = None,
-    chunking_method: Optional[str] = None,
-    chunk_size: Optional[int] = None,
-    chunk_overlap: Optional[int] = None
+        name: str,
+        metadata_schema: Optional[Dict[str, Any]] = None,
+        embedding_provider: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        chunking_method: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Create a new vector database
@@ -665,7 +669,8 @@ async def create_database(
             "status": "success",
             "config": {
                 "name": db.name,
-                "embedding_provider": kwargs.get("embedding_provider", mcp_manager.config.db_defaults["embedding_provider"]),
+                "embedding_provider": kwargs.get("embedding_provider",
+                                                 mcp_manager.config.db_defaults["embedding_provider"]),
                 "embedding_model": kwargs.get("embedding_model", mcp_manager.config.db_defaults["embedding_model"]),
                 "chunking_method": kwargs.get("chunking_method", mcp_manager.config.db_defaults["chunking_method"]),
                 "chunk_size": kwargs.get("chunk_size", mcp_manager.config.db_defaults["chunk_size"]),
@@ -710,12 +715,12 @@ async def delete_database(name: str) -> Dict[str, Any]:
 
 @register_tool("upsert_documents", read_only=False)
 async def upsert_documents(
-    database_name: str,
-    documents: Union[str, List[str]],
-    metadata: Optional[Union[Dict, List[Dict]]] = None,
-    ids: Optional[Union[str, List[str]]] = None,
-    batch_size: int = 100,
-    similarity_threshold: Optional[float] = None
+        database_name: str,
+        documents: Union[str, List[str]],
+        metadata: Optional[Union[Dict, List[Dict]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Insert or update documents in the database
@@ -778,10 +783,10 @@ async def upsert_documents(
 
 @register_tool("update_document", read_only=False)
 async def update_document(
-    database_name: str,
-    document_id: str,
-    content: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+        database_name: str,
+        document_id: str,
+        content: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Update a document's content and/or metadata
@@ -830,8 +835,8 @@ async def update_document(
 
 @register_tool("delete_document", read_only=False)
 async def delete_document(
-    database_name: str,
-    document_id: str
+        database_name: str,
+        document_id: str
 ) -> Dict[str, Any]:
     """
     Delete a document from the database
@@ -875,8 +880,8 @@ async def delete_document(
 
 @register_tool("update_metadata_schema", read_only=False)
 async def update_metadata_schema(
-    database_name: str,
-    metadata_schema: Dict[str, Any]
+        database_name: str,
+        metadata_schema: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
     Update the metadata schema for a database
@@ -919,12 +924,12 @@ async def update_metadata_schema(
         return {"error": str(e), "error_type": type(e).__name__}
 
 
-
 # Initialize all tool definitions to populate the registry
 def _initialize_tools():
     """Initialize tool definitions to populate TOOL_REGISTRY"""
     # This ensures all @register_tool decorators are executed
     pass
+
 
 # Call it to populate the registry
 _initialize_tools()

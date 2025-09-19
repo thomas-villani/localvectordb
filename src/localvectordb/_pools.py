@@ -177,7 +177,10 @@ class AsyncConnectionPool:
     waiting when pool is exhausted instead of immediately failing.
     """
 
-    def __init__(self, db_path: Union[str, Path], max_connections: int = 10, wait_timeout: float = 30.0, pragmas: Optional[Dict[str, Any]] = None):
+    def __init__(
+            self, db_path: Union[str, Path], max_connections: int = 10, wait_timeout: float = 30.0,
+            pragmas: Optional[Dict[str, Any]] = None
+            ):
         self.db_path = Path(db_path)
         self.max_connections = max_connections
         self.wait_timeout = wait_timeout
@@ -220,12 +223,12 @@ class AsyncConnectionPool:
     async def get_connection(self) -> aiosqlite.Connection:
         """
         Get a connection from the pool, waiting if necessary.
-        
+
         Returns
         -------
         aiosqlite.Connection
             A database connection
-            
+
         Raises
         ------
         asyncio.TimeoutError

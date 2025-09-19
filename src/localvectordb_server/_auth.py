@@ -212,6 +212,7 @@ def validate_api_key_with_permissions(token: str) -> tuple[bool, PermissionLevel
     logger.debug("Token validation failed for all sources")
     return False, PermissionLevel.READ_WRITE
 
+
 # Removed in favor of
 # def require_api_key(f):
 #     """
@@ -344,6 +345,7 @@ def _require_permission(required_permission: PermissionLevel):
     callable
         Decorator function that enforces the permission requirement
     """
+
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
@@ -352,7 +354,8 @@ def _require_permission(required_permission: PermissionLevel):
             if not auth_required:
                 return f(*args, **kwargs)
 
-            auth_header_key = getattr(current_app.config_obj.server.security, 'api_key_header', 'Authorization') if hasattr(
+            auth_header_key = getattr(current_app.config_obj.server.security, 'api_key_header',
+                                      'Authorization') if hasattr(
                 current_app, 'config_obj') else 'Authorization'
 
             # Extract Authorization header
@@ -411,7 +414,8 @@ def _require_permission(required_permission: PermissionLevel):
                     required_permission=required_permission.value,
                     actual_permission=permission_level.value
                 )
-                raise Unauthorized(f"Insufficient permissions. This endpoint requires {required_permission.value} access.")
+                raise Unauthorized(
+                    f"Insufficient permissions. This endpoint requires {required_permission.value} access.")
 
             # Success logging
             security_logger.log_auth_attempt(
@@ -433,6 +437,7 @@ def _require_permission(required_permission: PermissionLevel):
             return f(*args, **kwargs)
 
         return decorated
+
     return decorator
 
 

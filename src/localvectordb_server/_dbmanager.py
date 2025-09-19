@@ -464,7 +464,6 @@ class DatabaseManager:
         # Get registry configuration from server settings
         registry_type = self.app.config_obj.server.db_registry_type
 
-
         registry_settings = self.app.config_obj.server.db_registry_settings
 
         if registry_type == self.app.config_obj.server.cache_type and not registry_settings:
@@ -1257,7 +1256,8 @@ class DatabaseManager:
         try:
             if not self._shutdown_complete:
                 logger.debug(
-                    f"DatabaseManager garbage collected, ensuring cleanup (worker: {getattr(self, 'worker_id', 'unknown')})")
+                    "DatabaseManager garbage collected, ensuring cleanup "
+                    f"(worker: {getattr(self, 'worker_id', 'unknown')})")
                 self.close_all()
         except Exception as e:
             # Use print since logging might not work during GC

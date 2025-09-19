@@ -220,7 +220,6 @@ class TestDatabaseSettings:
             settings.validate()
 
 
-
 @pytest.mark.unit
 class TestSecuritySettings:
     """Test SecuritySettings configuration."""
@@ -336,7 +335,6 @@ class TestServerSettings:
 
         with pytest.raises(ConfigurationError, match="max_request_size must be a positive integer"):
             settings.validate()
-
 
 
 @pytest.mark.unit
@@ -501,7 +499,8 @@ port = 9000
         config = Config.from_env()
         assert config.database.enable_gpu is True
 
-    @patch.dict(os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["http://localhost", "https://example.com"]'},
+    @patch.dict(os.environ,
+                {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["http://localhost", "https://example.com"]'},
                 clear=True)
     def test_from_env_list_conversion(self):
         """Test environment variable list conversion."""

@@ -270,6 +270,7 @@ class TestBackupManager:
         remaining_ids = {b.backup_id for b in backups}
         assert recent_backup_id in remaining_ids
 
+
 @pytest.mark.unit
 class TestIncrementalBackup:
     """Test cases for incremental backup functionality."""
@@ -341,6 +342,7 @@ class TestIncrementalBackup:
         assert len(docs) >= 5  # Original 3 + 2 incremental
 
         restored_db.close()
+
 
 @pytest.mark.unit
 class TestPointInTimeRecovery:

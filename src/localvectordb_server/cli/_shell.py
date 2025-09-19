@@ -589,4 +589,3 @@ def shell(ctx):
         raise click.Abort()
     finally:
         db.close()
-

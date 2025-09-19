@@ -43,6 +43,7 @@ def create_mock_pooled_connection(mock_conn):
     mock_pooled.connection = mock_conn
     return mock_pooled
 
+
 @pytest.mark.integration
 class TestLocalVectorDBIntegration:
     """Integration tests for LocalVectorDB with real components."""
@@ -384,10 +385,9 @@ class TestLocalVectorDBIntegration:
                 'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
             }
 
-
             # Patch the LocalVectorDB class that's imported in factory.py
             with patch.object(factory, "LocalVectorDB") as mock_local:
-            # with patch('localvectordb.database.LocalVectorDB') as mock_local:
+                # with patch('localvectordb.database.LocalVectorDB') as mock_local:
                 mock_local.return_value = Mock()
 
                 VectorDB(
@@ -696,7 +696,6 @@ class TestLocalVectorDBIntegration:
         def test_database_error_propagation(self, temp_dir):
             """Test that errors propagate correctly through the system."""
             with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding:
-
                 # Setup mock that will fail
                 mock_provider = Mock()
                 mock_provider.validate_model.return_value = False  # Invalid model
@@ -984,7 +983,6 @@ class TestMultiColumnIntegration:
         with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
@@ -1099,7 +1097,6 @@ class TestMultiColumnIntegration:
         # Mock the query methods to avoid complex FAISS interactions
         with patch.object(multi_column_db, 'query') as mock_query, \
                 patch.object(multi_column_db, '_search_metadata_field') as mock_search:
-
             # Setup mock returns
             mock_result = Mock()
             mock_result.score = 0.9
@@ -1162,7 +1159,6 @@ class TestMultiColumnIntegration:
         with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
 

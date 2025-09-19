@@ -173,7 +173,6 @@ def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:
         # Error logger gets its own file
         config['loggers']['localvectordb.errors']['handlers'].append('error_file')
 
-
         config['loggers']['flask-limiter']['handlers'].append('file')
 
     # Add performance logging if enabled
@@ -202,7 +201,6 @@ def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:
     logger.info(f"Logging configured - Level: {logging.getLevelName(level)}, Structured: {use_structured}")
     if log_file:
         logger.info(f"File logging enabled: {log_file}")
-
 
 
 class StructuredFormatter(logging.Formatter):

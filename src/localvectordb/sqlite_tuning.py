@@ -62,17 +62,17 @@ class WorkloadType(Enum):
 
 class DurabilityLevel(Enum):
     """Data durability importance levels."""
-    CRITICAL = "critical"      # Banking, medical records
-    HIGH = "high"              # Production data
-    NORMAL = "normal"          # Standard applications
-    LOW = "low"               # Temporary data, caches
+    CRITICAL = "critical"  # Banking, medical records
+    HIGH = "high"  # Production data
+    NORMAL = "normal"  # Standard applications
+    LOW = "low"  # Temporary data, caches
 
 
 @dataclass
 class SQLitePragmaProfile:
     """
     SQLite pragma configuration profile.
-    
+
     Parameters
     ----------
     name : str
@@ -98,8 +98,8 @@ PROFILES: Dict[str, SQLitePragmaProfile] = {
             "foreign_keys": "ON",
             "busy_timeout": 5000,
             "temp_store": "MEMORY",
-            "cache_size": -65536,          # ~64MB
-            "mmap_size": 268435456,        # 256MB
+            "cache_size": -65536,  # ~64MB
+            "mmap_size": 268435456,  # 256MB
             "wal_autocheckpoint": 1000,
             "cache_spill": "ON",
             "automatic_index": "ON",
@@ -110,13 +110,13 @@ PROFILES: Dict[str, SQLitePragmaProfile] = {
         description="Optimized for high-throughput data ingestion",
         pragmas={
             "journal_mode": "WAL",
-            "synchronous": "NORMAL",       # Consider OFF only if acceptable risk
+            "synchronous": "NORMAL",  # Consider OFF only if acceptable risk
             "foreign_keys": "ON",
             "busy_timeout": 10000,
             "temp_store": "MEMORY",
-            "cache_size": -262144,         # ~256MB
-            "mmap_size": 268435456,        # 256MB
-            "wal_autocheckpoint": 4000,    # Larger WAL before checkpoint
+            "cache_size": -262144,  # ~256MB
+            "mmap_size": 268435456,  # 256MB
+            "wal_autocheckpoint": 4000,  # Larger WAL before checkpoint
             "cache_spill": "ON",
             "automatic_index": "ON",
         }
@@ -130,8 +130,8 @@ PROFILES: Dict[str, SQLitePragmaProfile] = {
             "foreign_keys": "ON",
             "busy_timeout": 3000,
             "temp_store": "MEMORY",
-            "cache_size": -131072,         # ~128MB
-            "mmap_size": 536870912,        # 512MB
+            "cache_size": -131072,  # ~128MB
+            "mmap_size": 536870912,  # 512MB
             "wal_autocheckpoint": 1000,
             "cache_spill": "ON",
             "automatic_index": "ON",
@@ -146,9 +146,9 @@ PROFILES: Dict[str, SQLitePragmaProfile] = {
             "foreign_keys": "ON",
             "busy_timeout": 10000,
             "temp_store": "FILE",
-            "cache_size": -65536,          # ~64MB
-            "mmap_size": 134217728,        # 128MB
-            "wal_autocheckpoint": 100,     # Frequent checkpoints
+            "cache_size": -65536,  # ~64MB
+            "mmap_size": 134217728,  # 128MB
+            "wal_autocheckpoint": 100,  # Frequent checkpoints
             "cache_spill": "ON",
         }
     ),
@@ -161,8 +161,8 @@ PROFILES: Dict[str, SQLitePragmaProfile] = {
             "foreign_keys": "ON",
             "busy_timeout": 5000,
             "temp_store": "FILE",
-            "cache_size": -8192,           # ~8MB
-            "mmap_size": 0,                # Disable mmap
+            "cache_size": -8192,  # ~8MB
+            "mmap_size": 0,  # Disable mmap
             "wal_autocheckpoint": 500,
             "cache_spill": "ON",
         }
@@ -182,12 +182,12 @@ SAFE_PRAGMA_VALUES = {
 def validate_pragma_key(key: str) -> bool:
     """
     Validate pragma key for safety.
-    
+
     Parameters
     ----------
     key : str
         Pragma key to validate
-        
+
     Returns
     -------
     bool
@@ -199,12 +199,12 @@ def validate_pragma_key(key: str) -> bool:
 def format_pragma_value(value: Any) -> str:
     """
     Format pragma value for SQL execution.
-    
+
     Parameters
     ----------
     value : Any
         Pragma value to format
-        
+
     Returns
     -------
     str
@@ -226,7 +226,7 @@ def format_pragma_value(value: Any) -> str:
 def apply_pragmas(conn: sqlite3.Connection, pragmas: Dict[str, Any]) -> None:
     """
     Apply pragma settings to a SQLite connection.
-    
+
     Parameters
     ----------
     conn : sqlite3.Connection
@@ -253,7 +253,7 @@ def apply_pragmas(conn: sqlite3.Connection, pragmas: Dict[str, Any]) -> None:
 async def apply_pragmas_async(conn: aiosqlite.Connection, pragmas: Dict[str, Any]) -> None:
     """
     Apply pragma settings to an async SQLite connection.
-    
+
     Parameters
     ----------
     conn : aiosqlite.Connection
@@ -281,7 +281,7 @@ async def apply_pragmas_async(conn: aiosqlite.Connection, pragmas: Dict[str, Any
 class SystemInfo:
     """
     System resource information for tuning decisions.
-    
+
     Parameters
     ----------
     total_ram_mb : int
@@ -309,7 +309,7 @@ class SystemInfo:
 class WorkloadProfile:
     """
     User workload characteristics for auto-tuning.
-    
+
     Parameters
     ----------
     workload_type : WorkloadType
@@ -334,7 +334,7 @@ class WorkloadProfile:
 class TuningRecommendation:
     """
     Auto-tuner recommendation result.
-    
+
     Parameters
     ----------
     profile_name : str
@@ -355,7 +355,7 @@ class TuningRecommendation:
 class AutoTuner:
     """
     Intelligent SQLite tuning based on system resources and workload.
-    
+
     This class analyzes system resources and user requirements to recommend
     optimal SQLite pragma settings for LocalVectorDB.
     """
@@ -364,7 +364,7 @@ class AutoTuner:
     def analyze_system() -> SystemInfo:
         """
         Analyze system resources for tuning decisions.
-        
+
         Returns
         -------
         SystemInfo
@@ -429,19 +429,19 @@ class AutoTuner:
 
     @staticmethod
     def recommend_profile(
-        system: SystemInfo,
-        workload: WorkloadProfile
+            system: SystemInfo,
+            workload: WorkloadProfile
     ) -> TuningRecommendation:
         """
         Recommend optimal tuning profile based on system and workload.
-        
+
         Parameters
         ----------
         system : SystemInfo
             System resource information
         workload : WorkloadProfile
             User workload characteristics
-            
+
         Returns
         -------
         TuningRecommendation
@@ -528,7 +528,7 @@ class AutoTuner:
     def interview_user_cli() -> WorkloadProfile:
         """
         Interactive CLI interview to gather workload information.
-        
+
         Returns
         -------
         WorkloadProfile
@@ -613,12 +613,12 @@ class AutoTuner:
 def get_profile_description(profile_name: str) -> str:
     """
     Get human-readable description of a profile.
-    
+
     Parameters
     ----------
     profile_name : str
         Name of the profile
-        
+
     Returns
     -------
     str
@@ -631,7 +631,7 @@ def get_profile_description(profile_name: str) -> str:
 def list_profiles() -> List[Tuple[str, str]]:
     """
     List all available tuning profiles.
-    
+
     Returns
     -------
     List[Tuple[str, str]]

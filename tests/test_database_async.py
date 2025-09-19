@@ -38,7 +38,6 @@ class TestAsyncInitialization:
                 patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -75,7 +74,6 @@ class TestAsyncInitialization:
                 patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
                 patch('faiss.IndexFlatL2') as mock_faiss, \
                 patch('faiss.IndexIDMap2') as mock_faiss_idmap:
-
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -313,7 +311,7 @@ class TestAsyncQuery:
         assert len(result) <= 3
         # Should find relevant documents
         assert any("machine learning" in doc.content.lower() or "artificial intelligence" in doc.content.lower()
-                  for doc in result if hasattr(doc, 'content'))
+                   for doc in result if hasattr(doc, 'content'))
 
     async def test_keyword_search_async(self, mock_db_for_query):
         """Test keyword search asynchronously."""

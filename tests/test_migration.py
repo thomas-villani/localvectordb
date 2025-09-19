@@ -24,6 +24,7 @@ from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.versioning import VersionManager
 
+
 # IMPORTANT: Sample migration classes are now created dynamically in fixtures to avoid
 # module loading conflicts when tests run in the full suite. Previously, these were
 # defined as module-level classes, but this caused issues when tests ran in different
@@ -533,10 +534,10 @@ class TestMigrationEngine:
 
         # Check schema was rolled back
         current_schema = migration_engine.database_schema.load_metadata_schema()
-        assert 'user_id' in current_schema      # Restored
-        assert 'priority' in current_schema     # Kept
+        assert 'user_id' in current_schema  # Restored
+        assert 'priority' in current_schema  # Kept
         assert 'author_id' not in current_schema  # Removed
-        assert 'created_by' not in current_schema # Removed
+        assert 'created_by' not in current_schema  # Removed
 
         # Check version was rolled back
         version_manager = VersionManager(migration_engine.database_path)
@@ -688,9 +689,9 @@ class MigrationE2E_1_1_0(Migration):
         # Insert test documents
         with sqlite3.connect(temp_db_path) as conn:
             conn.execute("INSERT INTO documents (id, content, content_hash) VALUES (?, ?, ?)",
-                        ("doc1", "test content", "hash1"))
+                         ("doc1", "test content", "hash1"))
             conn.execute("INSERT INTO documents (id, content, content_hash) VALUES (?, ?, ?)",
-                        ("doc2", "test content 2", "hash2"))
+                         ("doc2", "test content 2", "hash2"))
             conn.commit()
 
         # Create migration that adds field with default

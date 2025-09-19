@@ -171,7 +171,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     self.connection_pool._pragmas = self._sqlite_pragmas
 
                     # Re-create chunker with loaded configuration
-                    self.chunker = ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size, self._chunk_overlap)
+                    self.chunker = ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size,
+                                                                 self._chunk_overlap)
 
                     # Re-create embedding provider with loaded configuration
                     embedding_config = embedding_config or {}
@@ -458,7 +459,6 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             # Method 3: Fallback to individual reconstruct calls
             return self._reconstruct_individual_fallback(faiss_ids)
 
-
     def _reconstruct_with_id_mapping(self, faiss_ids: List[int]) -> np.ndarray:
         """Reconstruct embeddings for IndexIDMap2 using optimized mapping strategies."""
         if not faiss_ids:
@@ -611,7 +611,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _load_config(self, conn: sqlite3.Connection) -> Dict[str, str]:
         """
         Load configuration from the config table.
-        
+
         Returns
         -------
         Dict[str, str]

@@ -52,7 +52,8 @@ def config_group(ctx):
               help='Output format (defaults to format of config file)')
 @click.option('--toml', 'format', flag_value='toml', help="Output in `toml` format")
 @click.option('--json', 'format', flag_value='json', help="Output in `json` format")
-@click.option('--section', '-s', type=click.Choice(['database', 'embedding', 'server', 'backup', 'migration']), default=None,
+@click.option('--section', '-s', type=click.Choice(['database', 'embedding', 'server', 'backup', 'migration']),
+              default=None,
               help='Only show specific section')
 @click.pass_context
 def show_config(ctx, format, section):
@@ -134,7 +135,6 @@ def show_config(ctx, format, section):
     click.secho(title, fg="cyan")
     click.secho("=" * len(title), fg="cyan")
     click.echo(config_str)
-
 
 
 @config_group.command('get')
@@ -310,7 +310,7 @@ def init_config(
         enable_cache, cache_type, cache_redis_url, enable_rate_limiting,
         rate_limit, enable_cors, cors_origins, enable_auth, host, port, enable_file_upload, max_request_size_mb,
         interactive
-        ):
+):
     """
     Initialize a new configuration file with default settings.
 

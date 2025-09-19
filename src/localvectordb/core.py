@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the document-score aggregation that occurs when querying
 DocumentScoringMethod = Literal["best", "average", "worst", "weighted_average", "frequency_boost",
-                                         "harmonic_mean", "diminishing_returns", "statistical", "robust_mean",
-                                         "percentile", "geometric_mean"]
+"harmonic_mean", "diminishing_returns", "statistical", "robust_mean",
+"percentile", "geometric_mean"]
 """
 Document scoring methods for aggregating chunk scores:
 
@@ -57,6 +57,7 @@ Document scoring methods for aggregating chunk scores:
 def _adapt_datetime_with_tz(dt) -> str:
     return dt.isoformat()
 
+
 def _convert_datetime_with_tz(dt) -> datetime:
     s = dt.decode("utf-8")
     try:
@@ -66,18 +67,20 @@ def _convert_datetime_with_tz(dt) -> datetime:
         # This can happen when SQLite type detection is overly aggressive
         return s
 
+
 def _adapt_json(json_data) -> str:
     return json.dumps(json_data)
 
+
 def _convert_json(json_data) -> dict | list:
     return json.loads(json_data.decode("utf-8"))
+
 
 sqlite3.register_adapter(datetime, _adapt_datetime_with_tz)
 sqlite3.register_converter("timestamp", _convert_datetime_with_tz)
 sqlite3.register_adapter(dict, _adapt_json)
 sqlite3.register_adapter(list, _adapt_json)
 sqlite3.register_converter("json", _convert_json)
-
 
 
 class MetadataFieldType(str, Enum):
@@ -90,9 +93,9 @@ class MetadataFieldType(str, Enum):
 
     def valid_types(self) -> Tuple[type, ...]:
         if self.value == "text":
-            return (str, )
+            return (str,)
         elif self.value == "integer":
-            return (int, )
+            return (int,)
         elif self.value == "real":
             return (int, float)
         elif self.value == "boolean":
@@ -102,6 +105,7 @@ class MetadataFieldType(str, Enum):
         elif self.value == "json":
             return (dict, list)
         return ()
+
 
 @dataclass
 class MetadataField:
@@ -348,6 +352,7 @@ class Document:
             content_hash=data.get('content_hash'),
             chunks=data.get('chunks', [])
         )
+
 
 # TODO: create a class to handle list of QueryResult with composable subfiltering options, but still acting like a list.
 #   This would allow for further processing like `.semantic_filter` and `.filter`

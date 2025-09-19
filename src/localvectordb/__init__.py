@@ -210,4 +210,4 @@ __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVector
            "BackupManager", "IncrementalBackupManager", "PointInTimeRecoveryManager",
            "migration", "Migration", "MigrationEngine",
            "versioning", "VersionManager", "QueryBuilder", "query_builder", "extractors", "get_extractor_registry",
-           "ExtractorRegistry",]
+           "ExtractorRegistry", ]

@@ -47,7 +47,7 @@ def db_group(ctx, name):
         click.secho(
             f"DB_FOLDER {'not specified and not found in configuration' if not db_folder else 'does not exist'}.",
             fg="bright_red", err=True
-            )
+        )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     from localvectordb.exceptions import DatabaseNotFoundError
@@ -181,7 +181,7 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
 def search(
         ctx, query, limit, search_type, return_type, score_threshold, vector_weight,
         metadata_filter, output_as_json, output, metadata, pretty
-        ):
+):
     """
     Search a vector database using the unified query interface.
 

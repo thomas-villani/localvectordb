@@ -25,6 +25,7 @@ from localvectordb.query_builder import (
     SimilarityMetric,
 )
 
+
 # EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 
 
@@ -1014,4 +1015,3 @@ class TestQueryBuilderErrorHandling:
         """Test with large limit values."""
         query = builder.limit(10000)
         assert query._limit == 10000
-
