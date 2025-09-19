@@ -748,8 +748,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         final_chunks = [filtered_chunks[i] for i in range(len(filtered_chunks)) if keep_mask[i]]
         final_embeddings = filtered_embeddings[keep_mask]
         final_mappings = [filtered_mappings[i] for i in range(len(filtered_mappings)) if keep_mask[i]]
+        removed_count = len(chunks) - len(final_chunks)
         logger.debug(
-            f"Similarity filtering: {len(chunks)} → {len(final_chunks)} chunks (removed {len(chunks) - len(final_chunks)} similar/duplicate)"
+            f"Similarity filtering: {len(chunks)} → {len(final_chunks)} chunks "
+            f"(removed {removed_count} similar/duplicate)"
         )
         return final_chunks, final_embeddings, final_mappings
 
@@ -1131,10 +1133,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         existing = {}
         with self.connection_pool.get_connection() as conn:
             placeholders = ','.join(['?'] * len(doc_ids))
-            cursor = conn.execute(
-                f'''SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks WHERE document_id IN ({placeholders})''',
-                doc_ids,
-            )
+            query = f'''SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
+                        WHERE document_id IN ({placeholders})'''
+            cursor = conn.execute(query, doc_ids)
             for row in cursor.fetchall():
                 doc_id = row['document_id']
                 if doc_id not in existing:
@@ -1157,7 +1158,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if faiss_ids_to_remove:
             self._remove_old_vectors_bulk(faiss_ids_to_remove)
             logger.debug(
-                f"Removed {len(chunk_indices_to_remove)} old chunks and {len(faiss_ids_to_remove)} FAISS vectors for {doc_id}"
+                f"Removed {len(chunk_indices_to_remove)} old chunks and "
+                f"{len(faiss_ids_to_remove)} FAISS vectors for {doc_id}"
             )
 
     # ------------------
@@ -1702,76 +1704,137 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
         existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(ids)
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
-        embedding_queue: asyncio.Queue = asyncio.Queue(maxsize=3)
+
+        # Use asyncio.Queue for proper async pipeline communication
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
+        embedding_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
+
+        # Use asyncio.Semaphore for proper async concurrency control
         chunk_semaphore = asyncio.Semaphore(max_concurrent_chunks)
         embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
+
         result_ids: List[str] = []
+        total_docs = len(documents)
 
-        async def chunking_producer():
-            try:
-                tasks = []
-                for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids, strict=False)):
-                    task = asyncio.create_task(
-                        self._chunk_document_with_comparison_async(i, doc_id, doc_text, metadata,
-                                                                   existing_chunks_by_doc.get(doc_id, {}),
-                                                                   chunk_semaphore)
-                    )
-                    tasks.append(task)
-                for task in asyncio.as_completed(tasks):
-                    chunk_data = await task
-                    await chunk_queue.put(chunk_data)
-                await chunk_queue.put(None)
-            except Exception as e:
-                logger.error(f"Async chunking error: {e}")
-                await chunk_queue.put(None)
-                raise
+        # Create tasks for pipeline stages
+        chunking_task = asyncio.create_task(
+            self._chunking_stage(documents, metadata_batch, ids, existing_chunks_by_doc,
+                               chunk_queue, chunk_semaphore)
+        )
 
-        async def embedding_processor():
-            try:
-                while True:
-                    chunk_data = await chunk_queue.get()
-                    if chunk_data is None:
-                        await embedding_queue.put(None)
-                        break
-                    async with embedding_semaphore:
-                        chunk_texts_for_embedding = chunk_data['chunk_texts_for_embedding']
-                        if chunk_texts_for_embedding:
-                            new_embeddings = await self.embedding_provider.embed_batch(chunk_texts_for_embedding,
-                                                                                       batch_size)
-                            chunk_data['new_embeddings'] = new_embeddings
-                        else:
-                            chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
-                        embedding_enabled_fields = self._get_embedding_enabled_fields()
-                        if embedding_enabled_fields:
-                            metadata = chunk_data['metadata']
-                            field_embeddings = await self._generate_metadata_embeddings_async(metadata,
-                                                                                              embedding_enabled_fields,
-                                                                                              batch_size)
-                            chunk_data['field_embeddings'] = field_embeddings
-                        else:
-                            chunk_data['field_embeddings'] = {}
-                    await embedding_queue.put(chunk_data)
-            except Exception as e:
-                logger.error(f"Async embedding error: {e}")
-                await embedding_queue.put(None)
-                raise
+        embedding_task = asyncio.create_task(
+            self._embedding_stage(chunk_queue, embedding_queue, batch_size, embedding_semaphore)
+        )
 
-        async def database_processor():
-            try:
-                while True:
-                    chunk_data = await embedding_queue.get()
-                    if chunk_data is None:
-                        break
-                    doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
-                    if doc_id:
-                        result_ids.append(doc_id)
-            except Exception as e:
-                logger.error(f"Async database error: {e}")
-                raise
+        database_task = asyncio.create_task(
+            self._database_stage(embedding_queue, similarity_threshold, mode, result_ids, total_docs)
+        )
 
-        await asyncio.gather(chunking_producer(), embedding_processor(), database_processor())
+        # Run all pipeline stages concurrently
+        await asyncio.gather(chunking_task, embedding_task, database_task)
         return result_ids
+
+    async def _chunking_stage(
+            self,
+            documents: List[str],
+            metadata_batch: List[Dict[str, Any]],
+            ids: List[str],
+            existing_chunks_by_doc: Dict[str, Dict[int, Dict[str, Any]]],
+            chunk_queue: asyncio.Queue,
+            chunk_semaphore: asyncio.Semaphore
+    ) -> None:
+        try:
+            # Create concurrent chunking tasks
+            tasks = []
+            for i, (doc_text, metadata, doc_id) in enumerate(zip(documents, metadata_batch, ids, strict=False)):
+                task = asyncio.create_task(
+                    self._chunk_document_with_comparison_async(
+                        i, doc_id, doc_text, metadata,
+                        existing_chunks_by_doc.get(doc_id, {}),
+                        chunk_semaphore
+                    )
+                )
+                tasks.append(task)
+
+            # Process completed tasks as they finish and send to next stage
+            for task in asyncio.as_completed(tasks):
+                chunk_data = await task
+                await chunk_queue.put(chunk_data)
+
+            # Signal completion to next stage
+            await chunk_queue.put(None)
+        except Exception as e:
+            logger.error(f"Async chunking stage error: {e}")
+            await chunk_queue.put(None)
+            raise
+
+    async def _embedding_stage(
+            self,
+            chunk_queue: asyncio.Queue,
+            embedding_queue: asyncio.Queue,
+            batch_size: int,
+            embedding_semaphore: asyncio.Semaphore
+    ) -> None:
+        try:
+            while True:
+                chunk_data = await chunk_queue.get()
+                if chunk_data is None:
+                    await embedding_queue.put(None)
+                    break
+
+                # Process embeddings with proper async concurrency control
+                async with embedding_semaphore:
+                    chunk_texts_for_embedding = chunk_data['chunk_texts_for_embedding']
+                    if chunk_texts_for_embedding:
+                        new_embeddings = await self.embedding_provider.embed_batch(
+                            chunk_texts_for_embedding, batch_size
+                        )
+                        chunk_data['new_embeddings'] = new_embeddings
+                    else:
+                        chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
+
+                    # Generate metadata embeddings if needed
+                    embedding_enabled_fields = self._get_embedding_enabled_fields()
+                    if embedding_enabled_fields:
+                        metadata = chunk_data['metadata']
+                        field_embeddings = await self._generate_metadata_embeddings_async(
+                            metadata, embedding_enabled_fields, batch_size
+                        )
+                        chunk_data['field_embeddings'] = field_embeddings
+                    else:
+                        chunk_data['field_embeddings'] = {}
+
+                await embedding_queue.put(chunk_data)
+                chunk_queue.task_done()
+        except Exception as e:
+            logger.error(f"Async embedding stage error: {e}")
+            await embedding_queue.put(None)
+            raise
+
+    async def _database_stage(
+            self,
+            embedding_queue: asyncio.Queue,
+            similarity_threshold: Optional[float],
+            mode: Literal["upsert", "insert"],
+            result_ids: List[str],
+            total_docs: int
+    ) -> None:
+        try:
+            processed_count = 0
+            while processed_count < total_docs:
+                chunk_data = await embedding_queue.get()
+                if chunk_data is None:
+                    break
+
+                doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
+                if doc_id:
+                    result_ids.append(doc_id)
+                    processed_count += 1
+
+                embedding_queue.task_done()
+        except Exception as e:
+            logger.error(f"Async database stage error: {e}")
+            raise
 
     async def _async_process_from_chunks_pipeline(
             self,
@@ -1785,46 +1848,90 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     ) -> List[str]:
         doc_ids = list(chunks_by_document.keys())
         existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(doc_ids)
-        embedding_queue: asyncio.Queue = asyncio.Queue(maxsize=3)
+
+        # Use asyncio.Queue for proper async pipeline communication
+        processing_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
+
+        # Use asyncio.Semaphore for proper async concurrency control
         embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
+
         result_ids: List[str] = []
+        total_docs = len(doc_ids)
 
-        async def chunk_comparison_producer():
-            try:
-                tasks = []
-                for doc_id, chunks in chunks_by_document.items():
-                    metadata = metadata_batch.get(doc_id, {})
-                    task = asyncio.create_task(
-                        self._compare_chunks_and_prepare_async(doc_id, chunks, metadata,
-                                                               existing_chunks_by_doc.get(doc_id, {}), batch_size,
-                                                               embedding_semaphore)
-                    )
-                    tasks.append(task)
-                for task in asyncio.as_completed(tasks):
-                    chunk_data = await task
-                    if chunk_data:
-                        await embedding_queue.put(chunk_data)
-                await embedding_queue.put(None)
-            except Exception as e:
-                logger.error(f"Chunk comparison producer error: {e}")
-                await embedding_queue.put(None)
-                raise
+        # Create tasks for pipeline stages
+        comparison_task = asyncio.create_task(
+            self._chunk_comparison_stage(chunks_by_document, metadata_batch, existing_chunks_by_doc,
+                                       processing_queue, batch_size, embedding_semaphore)
+        )
 
-        async def database_consumer():
-            try:
-                while True:
-                    chunk_data = await embedding_queue.get()
-                    if chunk_data is None:
-                        break
-                    doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
-                    if doc_id:
-                        result_ids.append(doc_id)
-            except Exception as e:
-                logger.error(f"Database consumer error: {e}")
-                raise
+        database_task = asyncio.create_task(
+            self._chunk_database_stage(processing_queue, similarity_threshold, mode, result_ids, total_docs)
+        )
 
-        await asyncio.gather(chunk_comparison_producer(), database_consumer())
+        # Run pipeline stages concurrently
+        await asyncio.gather(comparison_task, database_task)
         return result_ids
+
+    async def _chunk_comparison_stage(
+            self,
+            chunks_by_document: Dict[str, List[Chunk]],
+            metadata_batch: Dict[str, Dict[str, Any]],
+            existing_chunks_by_doc: Dict[str, Dict[int, Dict[str, Any]]],
+            processing_queue: asyncio.Queue,
+            batch_size: int,
+            embedding_semaphore: asyncio.Semaphore
+    ) -> None:
+        try:
+            # Create concurrent chunk comparison and embedding tasks
+            tasks = []
+            for doc_id, chunks in chunks_by_document.items():
+                metadata = metadata_batch.get(doc_id, {})
+                task = asyncio.create_task(
+                    self._compare_chunks_and_prepare_async(
+                        doc_id, chunks, metadata,
+                        existing_chunks_by_doc.get(doc_id, {}),
+                        batch_size, embedding_semaphore
+                    )
+                )
+                tasks.append(task)
+
+            # Process completed tasks as they finish and send to next stage
+            for task in asyncio.as_completed(tasks):
+                chunk_data = await task
+                if chunk_data:
+                    await processing_queue.put(chunk_data)
+
+            # Signal completion to next stage
+            await processing_queue.put(None)
+        except Exception as e:
+            logger.error(f"Async chunk comparison stage error: {e}")
+            await processing_queue.put(None)
+            raise
+
+    async def _chunk_database_stage(
+            self,
+            processing_queue: asyncio.Queue,
+            similarity_threshold: Optional[float],
+            mode: Literal["upsert", "insert"],
+            result_ids: List[str],
+            total_docs: int
+    ) -> None:
+        try:
+            processed_count = 0
+            while processed_count < total_docs:
+                chunk_data = await processing_queue.get()
+                if chunk_data is None:
+                    break
+
+                doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
+                if doc_id:
+                    result_ids.append(doc_id)
+                    processed_count += 1
+
+                processing_queue.task_done()
+        except Exception as e:
+            logger.error(f"Async chunk database stage error: {e}")
+            raise
 
     async def _compare_chunks_and_prepare_async(
             self, doc_id: str, chunks: List[Chunk], metadata: Dict[str, Any],
@@ -1885,10 +1992,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         existing = {}
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ','.join(['?'] * len(doc_ids))
-            cursor = await conn.execute(
-                f'''SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks WHERE document_id IN ({placeholders})''',
-                doc_ids,
-            )
+            query = f'''SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
+                        WHERE document_id IN ({placeholders})'''
+            cursor = await conn.execute(query, doc_ids)
             async for row in cursor:
                 doc_id = row['document_id']
                 if doc_id not in existing:
@@ -1904,27 +2010,40 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             existing_chunks: Dict[int, Dict[str, Any]], semaphore: asyncio.Semaphore
     ):
         async with semaphore:
-            loop = asyncio.get_event_loop()
-            chunks = await loop.run_in_executor(None, self.chunker.chunk, doc_text)
+            # Use asyncio.to_thread for CPU-bound chunking operation in Python 3.9+
+            # Falls back to run_in_executor for compatibility
+            try:
+                chunks = await asyncio.to_thread(self.chunker.chunk, doc_text)
+            except AttributeError:
+                # Fallback for Python < 3.9
+                loop = asyncio.get_event_loop()
+                chunks = await loop.run_in_executor(None, self.chunker.chunk, doc_text)
+
             content_hash = hashlib.sha256(doc_text.encode('utf-8')).hexdigest()
             unchanged_chunks, chunks_needing_embedding, chunk_texts_for_embedding = [], [], []
             reused_chunk_indices = set()
+
+            # Process chunks to determine which need embedding
             for chunk in chunks:
                 existing_chunk = existing_chunks.get(chunk.index)
-                if existing_chunk and existing_chunk['content_hash'] == chunk.content_hash and existing_chunk[
-                    'faiss_id'] is not None:
+                if (existing_chunk and
+                    existing_chunk['content_hash'] == chunk.content_hash and
+                    existing_chunk['faiss_id'] is not None):
                     chunk.faiss_id = existing_chunk['faiss_id']
                     unchanged_chunks.append(chunk)
                     reused_chunk_indices.add(chunk.index)
                 else:
                     chunks_needing_embedding.append(chunk)
                     chunk_texts_for_embedding.append(chunk.content)
+
+            # Identify chunks to remove from previous version
             chunk_indices_to_remove, faiss_ids_to_remove = [], []
             for chunk_index, chunk_info in existing_chunks.items():
                 if chunk_index not in reused_chunk_indices:
                     chunk_indices_to_remove.append(chunk_index)
                     if chunk_info['faiss_id'] is not None:
                         faiss_ids_to_remove.append(chunk_info['faiss_id'])
+
             return {
                 'doc_index': doc_index,
                 'doc_id': doc_id,
@@ -1950,14 +2069,23 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             field_embeddings = chunk_data.get('field_embeddings', {})
 
             if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
-                loop = asyncio.get_event_loop()
+                # Use asyncio.to_thread for CPU-bound similarity filtering in Python 3.9+
+                # Falls back to run_in_executor for compatibility
                 doc_info = (chunk_data['doc_text'], chunk_data['metadata'], chunk_data['doc_id'],
                             chunk_data['content_hash'])
                 doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
-                filtered_chunks, filtered_embeddings, _ = await loop.run_in_executor(
-                    None, self._filter_similar_chunks_vectorized, new_embeddings, chunks_needing_embedding,
-                    doc_chunk_mapping, similarity_threshold
-                )
+                try:
+                    filtered_chunks, filtered_embeddings, _ = await asyncio.to_thread(
+                        self._filter_similar_chunks_vectorized, new_embeddings, chunks_needing_embedding,
+                        doc_chunk_mapping, similarity_threshold
+                    )
+                except AttributeError:
+                    # Fallback for Python < 3.9
+                    loop = asyncio.get_event_loop()
+                    filtered_chunks, filtered_embeddings, _ = await loop.run_in_executor(
+                        None, self._filter_similar_chunks_vectorized, new_embeddings, chunks_needing_embedding,
+                        doc_chunk_mapping, similarity_threshold
+                    )
                 chunks_needing_embedding = filtered_chunks
                 new_embeddings = filtered_embeddings
             all_chunks = unchanged_chunks + chunks_needing_embedding
@@ -1980,9 +2108,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
                         await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
                         if new_embeddings.size > 0:
-                            loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, new_embeddings,
+                            # Use asyncio.to_thread for FAISS operations in Python 3.9+
+                            # Falls back to run_in_executor for compatibility
+                            try:
+                                await asyncio.to_thread(self._add_vectors_to_faiss_bulk, new_embeddings,
                                                        chunks_needing_embedding)
+                            except AttributeError:
+                                # Fallback for Python < 3.9
+                                loop = asyncio.get_event_loop()
+                                await loop.run_in_executor(None, self._add_vectors_to_faiss_bulk, new_embeddings,
+                                                           chunks_needing_embedding)
                         await self._insert_chunks_bulk_async(conn, chunks_data)
 
                         # Store metadata embeddings if present
@@ -2002,8 +2137,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
     ) -> None:
         if faiss_ids_to_remove:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
+            # Use asyncio.to_thread for FAISS operations in Python 3.9+
+            # Falls back to run_in_executor for compatibility
+            try:
+                await asyncio.to_thread(self._remove_old_vectors_bulk, faiss_ids_to_remove)
+            except AttributeError:
+                # Fallback for Python < 3.9
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
         if chunk_indices_to_remove:
             placeholders = ','.join(['?'] * len(chunk_indices_to_remove))
             await conn.execute(
@@ -2011,7 +2152,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 [doc_id] + chunk_indices_to_remove,
             )
         logger.debug(
-            f"Removed {len(chunk_indices_to_remove)} old chunks and {len(faiss_ids_to_remove)} FAISS vectors for document {doc_id}"
+            f"Removed {len(chunk_indices_to_remove)} old chunks and "
+            f"{len(faiss_ids_to_remove)} FAISS vectors for document {doc_id}"
         )
 
     async def _insert_documents_bulk_async(
@@ -2071,7 +2213,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             )
             faiss_ids = [row['faiss_id'] for row in await cursor.fetchall()]
             if faiss_ids:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
+                # Use asyncio.to_thread for FAISS operations in Python 3.9+
+                # Falls back to run_in_executor for compatibility
+                try:
+                    await asyncio.to_thread(self._remove_old_vectors_bulk, faiss_ids)
+                except AttributeError:
+                    # Fallback for Python < 3.9
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
             await conn.execute(f'DELETE FROM chunks WHERE document_id IN ({placeholders})', doc_ids)
             await conn.execute(f'DELETE FROM documents WHERE id IN ({placeholders})', doc_ids)
