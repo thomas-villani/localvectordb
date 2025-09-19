@@ -391,41 +391,6 @@ class ExtractorRegistry:
 
         return formats
 
-    # TODO: not called anywhere, still needed?
-    @classmethod
-    def _load_builtin_extractors(cls):
-        """Load built-in extractors."""
-        # Import and register built-in extractors
-        from localvectordb.extractors.office_extractors import DocxExtractor, PptxExtractor, XlsxExtractor
-        from localvectordb.extractors.other_extractors import EPubExtractor, RTFExtractor
-        from localvectordb.extractors.pdf_extractors import PDFPlumberExtractor, PyPDFExtractor
-        from localvectordb.extractors.text_extractors import TextFallbackExtractor, TextFileExtractor
-
-        # Register in order of preference
-        extractors = [
-            # Text files (highest priority for text files)
-            TextFileExtractor,
-
-            # PDF extractors (pdfplumber preferred over PyPDF2)
-            PDFPlumberExtractor,
-            PyPDFExtractor,
-
-            # Office formats
-            DocxExtractor,
-            PptxExtractor,
-            XlsxExtractor,
-
-            # Other formats
-            RTFExtractor,
-            EPubExtractor,
-
-            # Fallback (lowest priority)
-            TextFallbackExtractor,
-        ]
-
-        for extractor in extractors:
-            cls.register(extractor)
-
 
 def get_extractor_registry():
     """Get the global extractor registry."""
