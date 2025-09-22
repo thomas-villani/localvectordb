@@ -11,6 +11,8 @@
 import importlib.metadata
 import os
 import re
+from datetime import datetime
+from typing import Union
 
 
 def get_system_version() -> str:
@@ -52,3 +54,54 @@ def make_filename_safe(name: str, max_length: int = 255) -> str:
 
     # Return a fallback name if the result is empty
     return safe_name
+
+
+def parse_iso8601(s: Union[str, datetime]) -> datetime:
+    """
+    Parse an ISO 8601 datetime string with automatic Z suffix handling.
+
+    This function centralizes datetime parsing logic to handle the common
+    case where ISO 8601 strings end with 'Z' (UTC timezone), which
+    datetime.fromisoformat() cannot parse directly.
+
+    Parameters
+    ----------
+    s : Union[str, datetime]
+        ISO 8601 datetime string or datetime object. If already a datetime,
+        returns it unchanged.
+
+    Returns
+    -------
+    datetime
+        Parsed datetime object with timezone information preserved.
+
+    Raises
+    ------
+    ValueError
+        If the string cannot be parsed as a valid datetime.
+
+    Examples
+    --------
+    >>> parse_iso8601("2023-12-01T10:30:00Z")
+    datetime.datetime(2023, 12, 1, 10, 30, tzinfo=datetime.timezone.utc)
+
+    >>> parse_iso8601("2023-12-01T10:30:00+00:00")
+    datetime.datetime(2023, 12, 1, 10, 30, tzinfo=datetime.timezone.utc)
+
+    >>> parse_iso8601("2023-12-01T10:30:00")
+    datetime.datetime(2023, 12, 1, 10, 30)
+    """
+    if isinstance(s, datetime):
+        return s
+
+    if not isinstance(s, str):
+        raise ValueError(f"Expected str or datetime, got {type(s)}")
+
+    # Handle the common case where ISO 8601 strings end with 'Z' (UTC)
+    # datetime.fromisoformat() can't parse 'Z', but can parse '+00:00'
+    normalized_string = s.replace('Z', '+00:00')
+
+    try:
+        return datetime.fromisoformat(normalized_string)
+    except ValueError as e:
+        raise ValueError(f"Unable to parse datetime string '{s}': {e}") from e

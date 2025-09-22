@@ -80,6 +80,7 @@ import numpy as np
 from localvectordb._filters import FILTER_OPERATORS
 from localvectordb.core import Document, DocumentScoringMethod, QueryResult
 from localvectordb.database.base import BaseVectorDB
+from localvectordb.utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
 
@@ -1239,7 +1240,7 @@ class QueryExecutor:
                     try:
                         date_value = result.metadata[date_field]
                         if isinstance(date_value, str):
-                            date_obj = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                            date_obj = parse_iso8601(date_value)
                         elif isinstance(date_value, datetime):
                             date_obj = date_value
                         else:

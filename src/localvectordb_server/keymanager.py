@@ -89,6 +89,8 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Dict, Generator, List, Optional
 
+from localvectordb.utils import parse_iso8601
+
 import bcrypt
 
 logger = logging.getLogger(__name__)
@@ -162,9 +164,9 @@ class KeyRecord:
             id=row['id'],
             key_hash=row['key_hash'],
             description=row['description'],
-            created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
-            expires_at=datetime.fromisoformat(row['expires_at']) if row['expires_at'] else None,
-            last_used=datetime.fromisoformat(row['last_used']) if row['last_used'] else None,
+            created_at=parse_iso8601(row['created_at']) if row['created_at'] else None,
+            expires_at=parse_iso8601(row['expires_at']) if row['expires_at'] else None,
+            last_used=parse_iso8601(row['last_used']) if row['last_used'] else None,
             active=bool(row['active']),
             created_by=row['created_by'],
             permission_level=permission_level
@@ -498,7 +500,7 @@ class KeyManager:
                 if self._verify_key(key, row['key_hash']):
                     # Check expiration
                     if row['expires_at']:
-                        expires_at = datetime.fromisoformat(row['expires_at'])
+                        expires_at = parse_iso8601(row['expires_at'])
                         if datetime.now(UTC) > expires_at:
                             logger.info(f"Key {row['id']} is expired")
                             if prune_expired:
@@ -568,7 +570,7 @@ class KeyManager:
                 if self._verify_key(key, row['key_hash']):
                     # Check expiration
                     if row['expires_at']:
-                        expires_at = datetime.fromisoformat(row['expires_at'])
+                        expires_at = parse_iso8601(row['expires_at'])
                         if datetime.now(UTC) > expires_at:
                             logger.info(f"Key {row['id']} is expired")
                             if prune_expired:

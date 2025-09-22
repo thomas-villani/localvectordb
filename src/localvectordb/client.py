@@ -1501,6 +1501,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if isinstance(ids, str):
             ids = [ids]
 
+        # Use batch endpoint for multiple IDs (threshold: 2+ IDs)
+        if len(ids) >= 2:
+            url = self._build_url(f"/api/v1/{self.name}/documents/delete")
+            payload = {"ids": ids}
+            response = self._make_request_with_retry("POST", url, json=payload)
+            result = self._handle_response(response)
+            return result.get("deleted_count", 0)
+
+        # Single ID: use original DELETE endpoint
         deleted_count = 0
         for doc_id in ids:
             url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
@@ -2876,6 +2885,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if isinstance(ids, str):
             ids = [ids]
 
+        # Use batch endpoint for multiple IDs (threshold: 2+ IDs)
+        if len(ids) >= 2:
+            url = self._build_url(f"/api/v1/{self.name}/documents/delete")
+            payload = {"ids": ids}
+            response = await self._make_request_with_retry_async("POST", url, json=payload)
+            result = self._handle_response(response)
+            return result.get("deleted_count", 0)
+
+        # Single ID: use original DELETE endpoint (keeping async concurrency for very small batches)
         deleted_count = 0
 
         async def delete_single(doc_id: str) -> int:

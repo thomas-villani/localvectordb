@@ -45,8 +45,9 @@ from localvectordb.core import Chunk, MetadataField
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
-from localvectordb.sqlite_tuning import get_sqlite_pragma_profile, is_valid_sqlite_pragma_profile, SqliteProfile
+from localvectordb.sqlite_tuning import SqliteProfile, get_sqlite_pragma_profile, is_valid_sqlite_pragma_profile
 from localvectordb.utils import get_system_version
+from localvectordb.database._faiss_utils import get_faiss_external_ids, build_id_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             enable_gpu: bool = False, enable_fts: bool = True, connection_pool_size: int = 10,
             create_if_not_exists: bool = True,
             sqlite_profile: SqliteProfile = "balanced",
-            sqlite_pragma_overrides: Optional[Dict[str, Any]] = None
+            sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
+            pipeline_worker_timeout: float = 300.0
     ):
 
         super().__init__(name, base_path, metadata_schema=metadata_schema, doc_id_pattern=doc_id_pattern,
@@ -193,6 +195,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # How many items allowed on the processing queues.
         self.pipeline_queue_size: int = 3
+
+        # Timeout for joining pipeline worker threads (in seconds)
+        self.pipeline_worker_timeout: float = pipeline_worker_timeout
 
         # State
         self._next_doc_id = self._load_next_doc_id()
@@ -513,13 +518,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Strategy 3: Fallback to standardized ID mapping using faiss.vector_to_array
         # Build a reverse mapping dictionary first for better performance
 
-        # Build id_map lookup once for all IDs using standardized access
+        # Build id_map lookup once for all IDs using centralized utilities
         try:
-            external_ids = faiss.vector_to_array(self.index.id_map.id_map).astype(np.int64)
-            id_map_lookup = {external_id: internal_idx for internal_idx, external_id in enumerate(external_ids)}
+            id_map_lookup = build_id_lookup(self.index)
         except Exception as e:
-            logger.debug(f"Failed to get ID mapping via faiss.vector_to_array: {e}")
-            # Fallback to individual access if vector_to_array fails
+            logger.debug(f"Failed to get ID mapping via centralized utilities: {e}")
+            # Fallback to individual access if centralized method fails
             id_map_lookup = {}
             for i in range(self.index.ntotal):
                 try:

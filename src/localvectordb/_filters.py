@@ -221,14 +221,7 @@ class FilterQueryBuilder:
         converted_value = self._convert_value_for_type(value, field_type) if field_type else value
 
         # Handle special cases
-        if operator == 'LIKE' and field.endswith('_ilike'):
-            # Case-insensitive LIKE
-            field_expr = f"LOWER({field})"
-            if isinstance(converted_value, str):
-                converted_value = converted_value.lower()
-            param_placeholder = self._add_param(converted_value)
-            return f"{field_expr} LIKE {param_placeholder}"
-        elif operator in ('IN', 'NOT IN'):
+        if operator in ('IN', 'NOT IN'):
             if not isinstance(value, (list, tuple)):
                 raise DatabaseError(f"Operator {operator} requires a list/array value")
             if not value:

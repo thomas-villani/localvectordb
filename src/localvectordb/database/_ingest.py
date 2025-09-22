@@ -35,6 +35,7 @@ from localvectordb.exceptions import (
     DuplicateDocumentIDError,
 )
 from localvectordb.extractors import ExtractorRegistry
+from localvectordb.utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             # Parse the ISO format timestamp back to datetime
                             try:
                                 if isinstance(created_at_str, str):
-                                    existing_created_at[doc_id] = datetime.fromisoformat(
-                                        created_at_str.replace('Z', '+00:00'))
+                                    existing_created_at[doc_id] = parse_iso8601(created_at_str)
                                 else:
                                     # Already a datetime object
                                     existing_created_at[doc_id] = created_at_str
@@ -165,8 +165,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             # Parse the ISO format timestamp back to datetime
                             try:
                                 if isinstance(created_at_str, str):
-                                    existing_created_at[doc_id] = datetime.fromisoformat(
-                                        created_at_str.replace('Z', '+00:00'))
+                                    existing_created_at[doc_id] = parse_iso8601(created_at_str)
                                 else:
                                     # Already a datetime object
                                     existing_created_at[doc_id] = created_at_str
@@ -952,9 +951,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 raise
 
         workers = [
-            threading.Thread(target=chunking_worker, name="ChunkingWorker"),
-            threading.Thread(target=embedding_worker, name="EmbeddingWorker"),
-            threading.Thread(target=database_worker, name="DatabaseWorker"),
+            threading.Thread(target=chunking_worker, name="ChunkingWorker", daemon=True),
+            threading.Thread(target=embedding_worker, name="EmbeddingWorker", daemon=True),
+            threading.Thread(target=database_worker, name="DatabaseWorker", daemon=True),
         ]
         for w in workers:
             w.start()
@@ -966,11 +965,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     break
                 processed_ids.append(result)
         finally:
-            # Join workers without timeout to allow completion of heavy ingestion
+            # Join workers with timeout to prevent hanging
             for w in workers:
-                w.join()
+                w.join(timeout=self.pipeline_worker_timeout)
                 if w.is_alive():
-                    logger.warning(f"Worker {w.name} is still alive after join()")
+                    logger.warning(f"Worker {w.name} did not exit within {self.pipeline_worker_timeout} seconds, may be blocked")
         return processed_ids
 
     def _process_from_chunks_pipeline(
@@ -981,6 +980,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             similarity_threshold: Optional[float],
             mode: Literal["upsert", "insert"] = "upsert"
     ) -> List[str]:
+        # Normalize mode for database operations
+        db_mode = "replace" if mode == "upsert" else mode
 
         queue_size = self.pipeline_queue_size
         doc_ids = list(chunks_by_document.keys())
@@ -1115,19 +1116,19 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 raise
 
         workers = [
-            threading.Thread(target=chunk_comparison_worker, name="ChunkComparisonWorker"),
-            threading.Thread(target=embedding_worker, name="EmbeddingWorker"),
+            threading.Thread(target=chunk_comparison_worker, name="ChunkComparisonWorker", daemon=True),
+            threading.Thread(target=embedding_worker, name="EmbeddingWorker", daemon=True),
         ]
         for w in workers:
             w.start()
         try:
             processed_ids = database_worker()
         finally:
-            # Join workers without timeout to allow completion of heavy ingestion
+            # Join workers with timeout to prevent hanging
             for w in workers:
-                w.join()
+                w.join(timeout=self.pipeline_worker_timeout)
                 if w.is_alive():
-                    logger.warning(f"Worker {w.name} is still alive after join()")
+                    logger.warning(f"Worker {w.name} did not exit within {self.pipeline_worker_timeout} seconds, may be blocked")
         return processed_ids
 
     def _fetch_existing_chunks_batch(self, doc_ids: List[str]):

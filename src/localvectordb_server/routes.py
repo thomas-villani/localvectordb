@@ -27,6 +27,7 @@ from werkzeug.utils import secure_filename
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
 from localvectordb.exceptions import DocumentNotFoundError
+
 # Add this import after the existing imports in routes.py
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
 from localvectordb.utils import get_system_version
@@ -702,6 +703,113 @@ def delete_document(db_name, doc_id):
             raise
 
 
+@api.route("/api/v1/<db_name>/documents/delete", methods=["POST"])
+@require_write_permission
+@handle_errors
+@log_performance("delete_documents_batch")
+def delete_documents_batch(db_name):
+    """Delete multiple documents by IDs"""
+
+    with request_context("delete_documents_batch"):
+        try:
+            db = current_app.db_manager.get_db(db_name)
+
+            # Get request data
+            data = request.get_json()
+            if not data or 'ids' not in data:
+                raise APIError(
+                    message="Request must include 'ids' field with list of document IDs to delete",
+                    error_code="MISSING_REQUIRED_FIELD",
+                    status_code=400,
+                    recoverable=True
+                )
+
+            ids = data['ids']
+            if not isinstance(ids, list):
+                raise APIError(
+                    message="'ids' field must be a list of document IDs",
+                    error_code="INVALID_FIELD_TYPE",
+                    status_code=400,
+                    recoverable=True
+                )
+
+            if not ids:
+                return jsonify({
+                    "message": "No documents to delete",
+                    "status": "success",
+                    "deleted_count": 0,
+                    "failed_ids": []
+                })
+
+            # Validate all IDs are strings
+            for i, doc_id in enumerate(ids):
+                if not isinstance(doc_id, str):
+                    raise APIError(
+                        message=f"All document IDs must be strings, but item {i} is {type(doc_id).__name__}",
+                        error_code="INVALID_DOCUMENT_ID_TYPE",
+                        status_code=400,
+                        recoverable=True
+                    )
+
+            # Check for duplicates
+            unique_ids = list(set(ids))
+            if len(unique_ids) != len(ids):
+                logger.warning("Duplicate IDs found in batch delete request, removing duplicates")
+                ids = unique_ids
+
+            # Limit batch size for safety
+            max_batch_size = 1000
+            if len(ids) > max_batch_size:
+                raise APIError(
+                    message=f"Batch size ({len(ids)}) exceeds maximum allowed ({max_batch_size})",
+                    error_code="BATCH_SIZE_EXCEEDED",
+                    status_code=400,
+                    recoverable=True
+                )
+
+            # Check which documents exist
+            existing_ids = []
+            non_existing_ids = []
+
+            for doc_id in ids:
+                if db.exists(doc_id):
+                    existing_ids.append(doc_id)
+                else:
+                    non_existing_ids.append(doc_id)
+
+            # Delete existing documents
+            deleted_count = 0
+            failed_ids = []
+
+            for doc_id in existing_ids:
+                try:
+                    count = db.delete(doc_id)
+                    deleted_count += count
+                except Exception as e:
+                    logger.warning(f"Failed to delete document {doc_id}: {e}")
+                    failed_ids.append(doc_id)
+
+            # Add non-existing IDs to failed list
+            failed_ids.extend(non_existing_ids)
+
+            db_logger.log_query("delete_documents_batch_success",
+                                database_name=db_name,
+                                total_requested=len(ids),
+                                deleted_count=deleted_count,
+                                failed_count=len(failed_ids))
+
+            return jsonify({
+                "message": f"Batch delete completed. Deleted {deleted_count} documents, {len(failed_ids)} failed",
+                "status": "success",
+                "deleted_count": deleted_count,
+                "failed_ids": failed_ids
+            })
+
+        except Exception as e:
+            db_logger.log_error("delete_documents_batch", e, database_name=db_name)
+            raise
+
+
 @api.route("/api/v1/<db_name>/documents/count", methods=["POST"])
 @require_read_permission
 @handle_errors
@@ -959,7 +1067,7 @@ def search_handler(db_name, search_params):
                     import numpy as np
                     filtered_docs = []
 
-                    for doc, field_emb in zip(valid_docs, field_embeddings):
+                    for doc, field_emb in zip(valid_docs, field_embeddings, strict=False):
                         if metric == "cosine":
                             # Cosine similarity
                             similarity = np.dot(concept_embedding, field_emb) / (

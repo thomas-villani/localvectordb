@@ -40,6 +40,8 @@ import faiss
 import numpy as np
 
 from localvectordb.versioning import VersionManager
+from .utils import parse_iso8601
+from .database._faiss_utils import get_faiss_external_ids
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ class CompressionAlgorithm(Enum):
     NONE = "none"
     GZIP = "gzip"
     LZMA = "lzma"
+    BZIP = "bzip2"
 
 
 class BackupMetadata:
@@ -150,7 +153,7 @@ class BackupMetadata:
             backup_type=BackupType(data['backup_type']),
             database_name=data['database_name'],
             database_version=data['database_version'],
-            created_at=datetime.fromisoformat(data['created_at']),
+            created_at=parse_iso8601(data['created_at']),
             file_paths=data['file_paths'],
             checksums=data['checksums'],
             compression_algorithm=CompressionAlgorithm(data['compression_algorithm']),
@@ -405,24 +408,19 @@ class BackupManager:
             manifest_data_for_archive['archive_checksum'] = None
             json.dump(manifest_data_for_archive, f, indent=2)
 
-        # Create compressed archive
-        if self.config.compression_algorithm == CompressionAlgorithm.GZIP:
-            with tarfile.open(backup_path, "w:gz") as tar:
-                for file_path in temp_dir.iterdir():
-                    if file_path.is_file():
-                        tar.add(file_path, arcname=file_path.name)
+        write_mode = {
+            CompressionAlgorithm.GZIP: "w:gz",
+            CompressionAlgorithm.LZMA: "w:xz",
+            CompressionAlgorithm.BZIP: "w:bz2",
+            CompressionAlgorithm.NONE: "w"
+        }.get(self.config.compression_algorithm, "w")
 
-        elif self.config.compression_algorithm == CompressionAlgorithm.LZMA:
-            with tarfile.open(backup_path, "w:xz") as tar:
-                for file_path in temp_dir.iterdir():
-                    if file_path.is_file():
-                        tar.add(file_path, arcname=file_path.name)
 
-        else:  # No compression
-            with tarfile.open(backup_path, "w") as tar:
-                for file_path in temp_dir.iterdir():
-                    if file_path.is_file():
-                        tar.add(file_path, arcname=file_path.name)
+
+        with tarfile.open(backup_path, write_mode) as tar:
+            for file_path in temp_dir.iterdir():
+                if file_path.is_file():
+                    tar.add(file_path, arcname=file_path.name)
 
         # Calculate archive checksum for integrity verification
         archive_checksum = self._calculate_file_checksum(backup_path)
@@ -667,7 +665,7 @@ class BackupManager:
                     metadata.created_at.isoformat(),
                     metadata.database_version,
                     str(backup_path),
-                    self._calculate_file_checksum(backup_path),
+                    metadata.archive_checksum or self._calculate_file_checksum(backup_path),
                     metadata.parent_backup_id,
                     json.dumps(metadata.metadata),
                     metadata.size_bytes,
@@ -852,7 +850,7 @@ class BackupManager:
             backup_type=BackupType(backup_type),
             database_name=self.database_name,
             database_version=database_version,
-            created_at=datetime.fromisoformat(created_at),
+            created_at=parse_iso8601(created_at),
             file_paths={"backup": file_path},
             checksums={"backup": checksum},
             compression_algorithm=CompressionAlgorithm(compression_algorithm or "gzip"),
@@ -1045,7 +1043,8 @@ class BackupManager:
         try:
             directory = directory.resolve()
             target = target.resolve()
-            return str(target).startswith(str(directory))
+            target.relative_to(directory)
+            return True
         except Exception:
             return False
 
@@ -2105,8 +2104,8 @@ class IncrementalBackupManager:
             working_index = faiss.read_index(str(working_faiss_path))
             inc_index = faiss.read_index(str(inc_faiss_path))
 
-            # Extract vectors and IDs from incremental index using standardized approach
-            inc_ids = faiss.vector_to_array(inc_index.id_map.id_map).astype(np.int64)
+            # Extract vectors and IDs from incremental index using centralized utilities
+            inc_ids = get_faiss_external_ids(inc_index)
 
             # Reconstruct vectors using external IDs (preferred method for IndexIDMap2)
             inc_vectors = []

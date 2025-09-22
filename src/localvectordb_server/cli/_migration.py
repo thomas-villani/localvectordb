@@ -31,6 +31,7 @@ from localvectordb.backup import BackupConfig, BackupManager
 from localvectordb.migration import MigrationEngine
 from localvectordb.versioning import DatabaseVersion
 from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
+from localvectordb.utils import parse_iso8601
 
 
 @click.group('migrate')
@@ -122,7 +123,7 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
             if status['applied_migrations']:
                 click.secho("Applied Migrations:", fg="green")
                 for migration in status['applied_migrations'][-5:]:  # Show last 5
-                    applied_at = datetime.fromisoformat(migration['applied_at'])
+                    applied_at = parse_iso8601(migration['applied_at'])
                     click.echo(f"  ✓ {migration['version']} - {applied_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
                 if len(status['applied_migrations']) > 5:

@@ -25,6 +25,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 
+from .utils import parse_iso8601
+
 logger = logging.getLogger(__name__)
 
 # Type alias for the document-score aggregation that occurs when querying
@@ -63,7 +65,7 @@ def _adapt_datetime_with_tz(dt) -> str:
 def _convert_datetime_with_tz(dt) -> datetime:
     s = dt.decode("utf-8")
     try:
-        return datetime.fromisoformat(s)
+        return parse_iso8601(s)
     except ValueError:
         # If it's not a valid datetime string, just return the original string
         # This can happen when SQLite type detection is overly aggressive
@@ -343,11 +345,11 @@ class Document:
         # Parse datetime fields
         created_at = None
         if data.get('created_at'):
-            created_at = datetime.fromisoformat(data['created_at'])
+            created_at = parse_iso8601(data['created_at'])
 
         updated_at = None
         if data.get('updated_at'):
-            updated_at = datetime.fromisoformat(data['updated_at'])
+            updated_at = parse_iso8601(data['updated_at'])
 
         return cls(
             id=data['id'],

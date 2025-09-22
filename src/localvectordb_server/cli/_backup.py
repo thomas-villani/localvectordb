@@ -34,6 +34,7 @@ from localvectordb.backup import (
     PointInTimeRecoveryManager,
 )
 from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
+from localvectordb.utils import parse_iso8601
 
 
 @click.group('backup')
@@ -69,7 +70,7 @@ def backup_group(ctx):
               type=click.Path(exists=False, file_okay=False),
               help='Backup storage location (default: ./backups)')
 @click.option('--compression', '-c',
-              type=click.Choice(['none', 'gzip', 'lzma']),
+              type=click.Choice(['none', 'gzip', 'lzma', 'bzip2']),
               default='gzip',
               help='Compression algorithm to use')
 @click.option('--no-verify', is_flag=True,
@@ -292,7 +293,7 @@ def list_backups(ctx, database, type, limit, output_json, location):
 
             for backup in backups:
                 size_mb = backup['size_bytes'] / (1024 * 1024) if backup['size_bytes'] else 0
-                created_dt = datetime.fromisoformat(backup['created_at'].replace('Z', '+00:00'))
+                created_dt = parse_iso8601(backup['created_at'])
                 created_str = created_dt.strftime('%Y-%m-%d %H:%M:%S')
                 parent_short = backup['parent_backup_id'][:8] if backup['parent_backup_id'] else '-'
 
@@ -698,7 +699,7 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
         try:
             # Try ISO format first
             if 'T' in timestamp:
-                target_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                target_dt = parse_iso8601(timestamp)
             else:
                 # Try simple format
                 target_dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
