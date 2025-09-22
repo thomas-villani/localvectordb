@@ -1676,6 +1676,309 @@ Check server and system health.
      "ollama_available": true
    }
 
+Database Tuning Operations
+---------------------------
+
+The LocalVectorDB server provides comprehensive SQLite tuning capabilities through HTTP endpoints, allowing remote optimization of database performance. These operations require ``read_write`` API keys and provide the same functionality as the local tuning interface.
+
+Get SQLite Tuning Configuration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Retrieve current SQLite tuning settings for a database.
+
+**Endpoint**: ``GET /api/v1/<db_name>/tuning``
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -H "Authorization: Bearer your_api_key" \
+        http://localhost:5000/api/v1/mydatabase/tuning
+
+**Python Example**:
+
+.. code-block:: python
+
+   response = requests.get(
+       "http://localhost:5000/api/v1/mydatabase/tuning",
+       headers={"Authorization": "Bearer your_api_key"}
+   )
+   config = response.json()
+
+   print(f"Current profile: {config['profile']}")
+   print(f"Pragma overrides: {config['overrides']}")
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "profile": "read_optimized",
+     "overrides": {
+       "cache_size": -131072,
+       "mmap_size": 536870912
+     },
+     "pragmas": {
+       "cache_size": -131072,
+       "mmap_size": 536870912,
+       "synchronous": "NORMAL",
+       "wal_autocheckpoint": 1000,
+       "temp_store": "MEMORY",
+       "busy_timeout": 3000
+     }
+   }
+
+Set SQLite Tuning Configuration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Apply a tuning profile with optional pragma overrides to a database.
+
+**Endpoint**: ``POST /api/v1/<db_name>/tuning``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "profile": "fast_ingest",
+     "overrides": {
+       "cache_size": -262144,
+       "wal_autocheckpoint": 10000
+     },
+     "persist": true
+   }
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -X POST \
+        -H "Authorization: Bearer your_api_key" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "profile": "fast_ingest",
+          "overrides": {"cache_size": -262144},
+          "persist": true
+        }' \
+        http://localhost:5000/api/v1/mydatabase/tuning
+
+**Python Example**:
+
+.. code-block:: python
+
+   response = requests.post(
+       "http://localhost:5000/api/v1/mydatabase/tuning",
+       headers={"Authorization": "Bearer your_api_key"},
+       json={
+           "profile": "fast_ingest",
+           "overrides": {"cache_size": -262144},
+           "persist": True
+       }
+   )
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "success": true,
+     "message": "SQLite tuning profile 'fast_ingest' applied successfully",
+     "applied_profile": "fast_ingest",
+     "applied_overrides": {
+       "cache_size": -262144
+     }
+   }
+
+Get Available Tuning Profiles
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+List all available SQLite tuning profiles and their descriptions.
+
+**Endpoint**: ``GET /api/v1/<db_name>/tuning/profiles``
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -H "Authorization: Bearer your_api_key" \
+        http://localhost:5000/api/v1/mydatabase/tuning/profiles
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "balanced": "Balanced profile for mixed workloads",
+     "fast_ingest": "Optimized for high-throughput data ingestion",
+     "read_optimized": "Optimized for query-heavy workloads",
+     "durable": "Maximum data safety with frequent checkpoints",
+     "memory_saver": "Minimal memory usage for resource-constrained environments"
+   }
+
+Auto-Tune Database
+^^^^^^^^^^^^^^^^^^
+
+Get auto-tuning recommendations based on server resources and workload characteristics.
+
+**Endpoint**: ``POST /api/v1/<db_name>/tuning/auto``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "workload": {
+       "workload_type": "read_heavy",
+       "document_size": "large",
+       "concurrent_users": 50,
+       "durability_level": "normal",
+       "memory_constraint": "generous"
+     },
+     "interactive": false,
+     "apply": false
+   }
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -X POST \
+        -H "Authorization: Bearer your_api_key" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "workload": {
+            "workload_type": "read_heavy",
+            "memory_constraint": "generous"
+          },
+          "apply": true
+        }' \
+        http://localhost:5000/api/v1/mydatabase/tuning/auto
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "profile_name": "read_optimized",
+     "pragma_overrides": {
+       "cache_size": -262144,
+       "mmap_size": 1073741824
+     },
+     "reasoning": [
+       "Read-heavy workload detected",
+       "Generous memory available (16GB+)",
+       "SSD storage detected - enabling memory mapping",
+       "High concurrent users - increasing cache size"
+     ],
+     "estimated_memory_mb": 512,
+     "applied": true,
+     "current_settings": {
+       "profile": "read_optimized",
+       "overrides": {"cache_size": -262144},
+       "pragmas": {...}
+     }
+   }
+
+Analyze System Resources
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Get server system resource information for tuning decisions.
+
+**Endpoint**: ``GET /api/v1/<db_name>/tuning/system``
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -H "Authorization: Bearer your_api_key" \
+        http://localhost:5000/api/v1/mydatabase/tuning/system
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "total_ram_mb": 16384,
+     "available_ram_mb": 8192,
+     "cpu_cores": 8,
+     "disk_type": "SSD",
+     "disk_free_gb": 500,
+     "os_type": "Linux"
+   }
+
+Database Maintenance Operations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Perform maintenance operations on the database's SQLite backend.
+
+**SQLite Checkpoint**
+
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/checkpoint``
+
+.. code-block:: json
+
+   {
+     "mode": "TRUNCATE"
+   }
+
+**SQLite Optimize**
+
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/optimize``
+
+**SQLite Vacuum**
+
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/vacuum``
+
+.. code-block:: json
+
+   {
+     "incremental": true,
+     "pages": 5000
+   }
+
+**Example curl commands**:
+
+.. code-block:: bash
+
+   # Checkpoint WAL file
+   curl -X POST \
+        -H "Authorization: Bearer your_api_key" \
+        -H "Content-Type: application/json" \
+        -d '{"mode": "TRUNCATE"}' \
+        http://localhost:5000/api/v1/mydatabase/maintenance/checkpoint
+
+   # Update query optimizer statistics
+   curl -X POST \
+        -H "Authorization: Bearer your_api_key" \
+        http://localhost:5000/api/v1/mydatabase/maintenance/optimize
+
+   # Run incremental vacuum
+   curl -X POST \
+        -H "Authorization: Bearer your_api_key" \
+        -H "Content-Type: application/json" \
+        -d '{"incremental": true, "pages": 2000}' \
+        http://localhost:5000/api/v1/mydatabase/maintenance/vacuum
+
+Tuning Endpoint Security
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+All tuning endpoints have specific security requirements:
+
+- **API Key Level**: Requires ``read_write`` API keys (read-only keys will receive 401 errors)
+- **Audit Logging**: All tuning operations are logged on the server
+- **Rate Limiting**: Tuning endpoints respect server rate limits (typically lower limits for administrative operations)
+- **Validation**: All tuning parameters are validated before application
+
+**Error Response Example**:
+
+.. code-block:: json
+
+   {
+     "error": "Insufficient permissions. Tuning operations require read_write access.",
+     "status_code": 401,
+     "type": "authentication_error"
+   }
+
 Error Handling
 --------------
 

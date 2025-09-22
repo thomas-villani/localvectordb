@@ -29,12 +29,14 @@ scale to distributed deployments without changing your code.
    quickstart
    installation
    overview
+   client
    query
    embeddings
    chunking
    metadata.filtering
    querybuilder
    document-scoring
+   file-extraction
    server/index
    cli
    mcp

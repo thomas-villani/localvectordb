@@ -223,7 +223,6 @@ class SemanticFilter:
             return float(np.dot(a_flat, b_flat) / (np.linalg.norm(a_flat) * np.linalg.norm(b_flat)))
         elif self.metric == SimilarityMetric.DOT_PRODUCT:
             return float(np.dot(a_flat, b_flat))
-        # TODO: i don't think this is euclidean distance.
         elif self.metric == SimilarityMetric.EUCLIDEAN:
             # Convert distance to similarity (0-1 range)
             distance = float(np.linalg.norm(a_flat - b_flat))

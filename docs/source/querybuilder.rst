@@ -260,6 +260,215 @@ Grouping and Aggregation
        .execute()
    )
 
+Result Reranking
+^^^^^^^^^^^^^^^^
+
+The QueryBuilder provides powerful reranking capabilities to improve search relevance by reordering results based on various criteria. This is particularly useful for enhancing the quality of search results beyond simple relevance scoring.
+
+Basic Reranking
+~~~~~~~~~~~~~~~
+
+Rerank results using different strategies:
+
+.. code-block:: python
+
+   # Rerank by recency (newer documents ranked higher)
+   results = (
+       db.query_builder()
+       .search("machine learning research")
+       .rerank_by_recency(date_field="publish_date", weight=0.3)  # 30% weight to recency
+       .execute()
+   )
+
+   # Rerank by diversity (promote variety in specified field)
+   results = (
+       db.query_builder()
+       .search("AI applications")
+       .rerank_by_diversity(field="category", weight=0.5)  # Promote diverse categories
+       .execute()
+   )
+
+Advanced Reranking Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use the generic ``rerank()`` method for more control:
+
+.. code-block:: python
+
+   # Custom recency reranking with specific parameters
+   results = (
+       db.query_builder()
+       .search("recent developments")
+       .rerank("recency",
+               date_field="updated_at",
+               weight=0.4,
+               decay_factor=0.95)  # How quickly recency importance decays
+       .execute()
+   )
+
+   # Diversity reranking with threshold
+   results = (
+       db.query_builder()
+       .search("research papers")
+       .rerank("diversity",
+               field="author",
+               weight=0.6,
+               max_per_group=2)  # Maximum 2 papers per author
+       .execute()
+   )
+
+Combining Multiple Reranking Strategies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Apply multiple reranking strategies in sequence:
+
+.. code-block:: python
+
+   # First promote diversity, then favor recent content
+   results = (
+       db.query_builder()
+       .search("technology trends")
+       .filter("category", "tech")
+       .rerank_by_diversity(field="subcategory", weight=0.3)  # Promote diverse subcategories
+       .rerank_by_recency(date_field="publish_date", weight=0.2)  # Then favor recent
+       .order_by("score", "desc")  # Final ordering by combined score
+       .limit(20)
+       .execute()
+   )
+
+Use Cases for Reranking
+~~~~~~~~~~~~~~~~~~~~~~~
+
+**Recency Reranking** - Ideal for:
+
+- News and content feeds where freshness matters
+- Documentation where newer versions are preferred
+- Research databases prioritizing recent findings
+- Time-sensitive information retrieval
+
+.. code-block:: python
+
+   # News feed with recency boost
+   news_results = (
+       db.query_builder()
+       .search("economic forecast")
+       .filter("type", "news")
+       .rerank_by_recency(
+           date_field="publish_date",
+           weight=0.5  # Strong recency preference
+       )
+       .limit(10)
+       .execute()
+   )
+
+**Diversity Reranking** - Ideal for:
+
+- Avoiding echo chambers by promoting varied perspectives
+- Ensuring broad coverage across categories or sources
+- Reducing redundancy in search results
+- Providing comprehensive overviews of topics
+
+.. code-block:: python
+
+   # Diverse perspectives on a topic
+   diverse_results = (
+       db.query_builder()
+       .search("climate change solutions")
+       .rerank_by_diversity(
+           field="source_type",  # Mix academic, news, government sources
+           weight=0.4
+       )
+       .limit(15)
+       .execute()
+   )
+
+Understanding Reranking Impact
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Monitor how reranking affects your results:
+
+.. code-block:: python
+
+   # Compare results with and without reranking
+   base_results = (
+       db.query_builder()
+       .search("artificial intelligence")
+       .limit(10)
+       .execute()
+   )
+
+   reranked_results = (
+       db.query_builder()
+       .search("artificial intelligence")
+       .rerank_by_recency(date_field="publish_date", weight=0.3)
+       .limit(10)
+       .execute()
+   )
+
+   # Analyze the differences
+   print("Base results order:")
+   for i, result in enumerate(base_results):
+       print(f"{i+1}. {result.metadata.get('title', 'No title')} "
+             f"(score: {result.score:.3f}, date: {result.metadata.get('publish_date')})")
+
+   print("\nReranked results order:")
+   for i, result in enumerate(reranked_results):
+       print(f"{i+1}. {result.metadata.get('title', 'No title')} "
+             f"(score: {result.score:.3f}, date: {result.metadata.get('publish_date')})")
+
+Reranking with Query Explanation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use query explanation to understand reranking decisions:
+
+.. code-block:: python
+
+   # Get detailed explanation of reranking process
+   results = (
+       db.query_builder()
+       .search("data science techniques")
+       .rerank_by_diversity(field="methodology", weight=0.4)
+       .explain(detailed=True)
+       .execute()
+   )
+
+   # Check execution plan
+   for result in results:
+       if "_execution_plan" in result.metadata:
+           plan = result.metadata["_execution_plan"]
+           if "reranking" in plan["steps"]:
+               print(f"Reranking applied: {plan['reranking_details']}")
+
+Best Practices for Reranking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. **Start with Low Weights**: Begin with reranking weights of 0.1-0.3 and adjust based on results
+2. **Test with Real Queries**: Use actual user queries to evaluate reranking effectiveness
+3. **Monitor User Engagement**: Track click-through rates and user satisfaction
+4. **Combine Strategically**: Use multiple reranking strategies thoughtfully to avoid conflicts
+5. **Consider Field Quality**: Ensure reranking fields have good data quality and coverage
+
+.. code-block:: python
+
+   # Example of gradual reranking tuning
+   def test_reranking_weights(query, weights=[0.1, 0.2, 0.3, 0.4, 0.5]):
+       results_by_weight = {}
+
+       for weight in weights:
+           results = (
+               db.query_builder()
+               .search(query)
+               .rerank_by_recency(date_field="publish_date", weight=weight)
+               .limit(5)
+               .execute()
+           )
+           results_by_weight[weight] = results
+
+       return results_by_weight
+
+   # Test different weights to find optimal setting
+   test_results = test_reranking_weights("machine learning frameworks")
+
 Optimizing Performance
 ^^^^^^^^^^^^^^^^^^^^^^
 
@@ -378,16 +587,262 @@ Combined Features
 Debug and Diagnostics
 ^^^^^^^^^^^^^^^^^^^^^
 
+The QueryBuilder provides comprehensive debugging and diagnostic capabilities to help you understand query execution, optimize performance, and troubleshoot issues.
+
+Query Explanation
+~~~~~~~~~~~~~~~~~~
+
+The ``explain()`` method provides detailed information about how your query will be executed. It can be used in two ways: traditional mode (returns QueryBuilder with explanation enabled) or direct mode (returns execution plan immediately).
+
+**Traditional Usage** (returns QueryBuilder with explanation enabled):
+
 .. code-block:: python
 
-   # Build a complex query that you want to inspect
-   query = (
+   # Enable explanation for query execution
+   results = (
        db.query_builder()
-       .search("complex query")  # Search term
-       .filter(category="tech")  # Filter to tech category
-       .hybrid(vector_weight=0.6)  # Use hybrid search
+       .search("machine learning")
+       .filter(category="tech")
+       .rerank_by_recency(date_field="publish_date", weight=0.3)
+       .explain(detailed=True)  # Enable detailed explanation
+       .execute()
    )
 
-   # Get detailed diagnostic information including SQL preview, filter details, etc.
+   # Execution plan is included in result metadata
+   for result in results:
+       if "_execution_plan" in result.metadata:
+           plan = result.metadata["_execution_plan"]
+           print(f"Query type: {plan['query_type']}")
+           print(f"Execution steps: {plan['steps']}")
+           print(f"Estimated cost: {plan['estimated_cost']}")
+
+**Direct Usage** (returns execution plan immediately):
+
+.. code-block:: python
+
+   # Get execution plan directly without executing the query
+   plan = (
+       db.query_builder()
+       .search("machine learning")
+       .filter(category="tech", year=2024)
+       .rerank_by_recency(date_field="publish_date", weight=0.3)
+       .explain(detailed=True, return_plan=True)  # Return plan directly
+   )
+
+   print(f"Query will execute with these steps: {plan['steps']}")
+   print(f"Estimated relative cost: {plan['estimated_cost']}")
+   print(f"Query type: {plan['query_type']}")
+   print(f"Optimizations: {plan['optimizations']}")
+
+   # With detailed=True, get additional information
+   if 'details' in plan:
+       details = plan['details']
+       print(f"Search clauses: {details['search_clauses']}")
+       print(f"Exact filters: {details['exact_filters']}")
+       print(f"Semantic filters: {details['semantic_filters']}")
+       print(f"Aggregations: {details['aggregations']}")
+
+Execution Plan Analysis
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Understanding the execution plan helps optimize query performance:
+
+.. code-block:: python
+
+   # Analyze different query variations
+   queries = [
+       db.query_builder().search("AI research"),
+       db.query_builder().search("AI research").filter(year=2024),
+       db.query_builder().search("AI research").semantic_filter("methodology", "deep learning", 0.8)
+   ]
+
+   for i, query in enumerate(queries):
+       plan = query.explain(return_plan=True)
+       print(f"\nQuery {i+1} execution plan:")
+       print(f"  Steps: {' -> '.join(plan['steps'])}")
+       print(f"  Estimated cost: {plan['estimated_cost']}")
+
+       # Identify expensive operations
+       if plan['estimated_cost'] > 100:
+           print(f"  ⚠️  High cost query - consider optimization")
+
+       if 'semantic_filtering' in plan['steps']:
+           print(f"  🧠 Semantic filtering detected - will use embeddings")
+
+Async Execution Plans
+~~~~~~~~~~~~~~~~~~~~~
+
+Get execution plans for async queries:
+
+.. code-block:: python
+
+   # Get execution plan for async query
+   async def analyze_async_query():
+       plan = await (
+           db.query_builder()
+           .search("complex async query")
+           .semantic_filter("field", "concept", 0.75)
+           .get_execution_plan_async(detailed=True)
+       )
+
+       print(f"Async execution plan: {plan}")
+       return plan
+
+   # Use in async context
+   import asyncio
+   plan = asyncio.run(analyze_async_query())
+
+Performance Profiling
+~~~~~~~~~~~~~~~~~~~~~~
+
+Monitor query execution time and performance:
+
+.. code-block:: python
+
+   import time
+
+   # Compare execution times with and without optimizations
+   def profile_query_variations():
+       base_query = (
+           db.query_builder()
+           .search("machine learning algorithms")
+           .filter(year=2024)
+       )
+
+       # Test different configurations
+       test_cases = [
+           ("Base query", base_query),
+           ("With semantic filter", base_query.semantic_filter("topic", "neural networks", 0.8)),
+           ("With reranking", base_query.rerank_by_recency("publish_date", 0.3)),
+           ("With both", base_query.semantic_filter("topic", "neural networks", 0.8)
+                                  .rerank_by_recency("publish_date", 0.3))
+       ]
+
+       for name, query in test_cases:
+           # Get execution plan first
+           plan = query.explain(return_plan=True)
+
+           # Time the actual execution
+           start_time = time.time()
+           results = query.execute()
+           execution_time = time.time() - start_time
+
+           print(f"\n{name}:")
+           print(f"  Estimated cost: {plan['estimated_cost']}")
+           print(f"  Actual time: {execution_time:.3f}s")
+           print(f"  Results count: {len(results)}")
+           print(f"  Steps: {' -> '.join(plan['steps'])}")
+
+   profile_query_variations()
+
+Debug Information
+~~~~~~~~~~~~~~~~~
+
+Get comprehensive debug information about query state:
+
+.. code-block:: python
+
+   # Build a complex query for debugging
+   query = (
+       db.query_builder()
+       .search("complex query")
+       .filter(category="tech")
+       .semantic_filter("abstract", "machine learning", 0.7)
+       .rerank_by_diversity(field="author", weight=0.4)
+       .group_by("institution")
+       .count_by("*", "paper_count")
+       .having("paper_count", "gte", 5)
+       .order_by("paper_count", "desc")
+       .limit(20)
+   )
+
+   # Get detailed debug information
    debug_info = query.debug_info()
-   print(debug_info)  # Useful for debugging and optimization
+   print(f"Query complexity: {debug_info}")
+
+   # Debug information includes:
+   # - Number of search clauses, filters, aggregations
+   # - Current query configuration
+   # - Return type and limits
+   # - Ordering and grouping information
+
+Query Validation
+~~~~~~~~~~~~~~~~~
+
+Validate query configuration before execution:
+
+.. code-block:: python
+
+   # Build a potentially problematic query
+   query = (
+       db.query_builder()
+       .semantic_filter("field", "concept", 0.8)  # Semantic filter without search
+       .group_by("category")
+       .having("count", "gte", 10)  # Having without aggregation
+       .limit(10000)  # Very large limit
+   )
+
+   # Validate the query
+   validation = query.validate()
+
+   print(f"Query valid: {validation['valid']}")
+
+   if validation['issues']:
+       print("Issues found:")
+       for issue in validation['issues']:
+           print(f"  ❌ {issue}")
+
+   if validation['warnings']:
+       print("Warnings:")
+       for warning in validation['warnings']:
+           print(f"  ⚠️  {warning}")
+
+   if validation['recommendations']:
+       print("Recommendations:")
+       for rec in validation['recommendations']:
+           print(f"  💡 {rec}")
+
+   print(f"Query complexity: {validation['query_complexity']}")
+
+Debugging Common Issues
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Use diagnostics to troubleshoot common problems:
+
+.. code-block:: python
+
+   # Debug slow queries
+   def debug_slow_query(query_builder):
+       plan = query_builder.explain(detailed=True, return_plan=True)
+
+       # Check for expensive operations
+       expensive_ops = []
+       if plan['estimated_cost'] > 200:
+           expensive_ops.append("High overall cost")
+
+       if 'semantic_filtering' in plan['steps']:
+           semantic_count = plan['details']['semantic_filters']
+           if semantic_count > 2:
+               expensive_ops.append(f"Multiple semantic filters ({semantic_count})")
+
+       if expensive_ops:
+           print("⚠️  Performance concerns:")
+           for op in expensive_ops:
+               print(f"   - {op}")
+
+           print("\n💡 Optimization suggestions:")
+           print("   - Reduce semantic filter count")
+           print("   - Add exact filters before semantic filters")
+           print("   - Consider using streaming for large result sets")
+
+   # Example usage
+   slow_query = (
+       db.query_builder()
+       .search("broad topic")
+       .semantic_filter("field1", "concept1", 0.7)
+       .semantic_filter("field2", "concept2", 0.8)
+       .semantic_filter("field3", "concept3", 0.75)
+       .limit(1000)
+   )
+
+   debug_slow_query(slow_query)

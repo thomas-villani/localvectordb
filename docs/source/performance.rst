@@ -558,20 +558,210 @@ The tuning system integrates with backup operations:
 Remote Database Tuning
 -----------------------
 
-All tuning features work with remote databases:
+LocalVectorDB provides full remote tuning capabilities through the HTTP API, allowing administrators to optimize database performance on remote servers without direct server access. This is particularly valuable for production deployments where database servers are managed centrally.
+
+RemoteVectorDB Client Tuning
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``RemoteVectorDB`` client inherits all tuning capabilities from the ``TuningMixin``, providing the same interface as local databases:
 
 .. code-block:: python
 
-   # Remote database with tuning
+   from localvectordb import RemoteVectorDB
+
+   # Connect to remote database with initial tuning profile
    remote_db = RemoteVectorDB(
        name="mydatabase",
        base_url="http://server:5000",
+       api_key="your_api_key",
        sqlite_profile="read_optimized"
    )
-   
+
    # Same API as local databases
    remote_db.set_sqlite_tuning("fast_ingest")
    config = remote_db.get_sqlite_tuning()
+
+   print(f"Current profile: {config['profile']}")
+   print(f"Active pragmas: {config['pragmas']}")
+
+Real-Time Performance Adjustments
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Remote tuning allows dynamic performance optimization based on changing workload patterns:
+
+.. code-block:: python
+
+   # Switch to fast ingestion during bulk data import
+   remote_db.set_sqlite_tuning("fast_ingest", {
+       "cache_size": -262144,  # 256MB cache for large operations
+       "wal_autocheckpoint": 10000  # Larger WAL for bulk operations
+   })
+
+   # Perform bulk import operations
+   documents = load_large_dataset()
+   remote_db.upsert_documents(documents)
+
+   # Switch back to read-optimized for normal operations
+   remote_db.set_sqlite_tuning("read_optimized")
+
+Auto-Tuning Remote Databases
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The auto-tuner works seamlessly with remote databases, analyzing the server's system resources:
+
+.. code-block:: python
+
+   # Get auto-tuning recommendations for remote server
+   recommendation = remote_db.auto_tune(
+       workload={
+           "workload_type": "read_heavy",
+           "document_size": "large",
+           "concurrent_users": 50,
+           "durability_level": "normal",
+           "memory_constraint": "generous"
+       }
+   )
+
+   print(f"Recommended profile: {recommendation['profile_name']}")
+   print(f"Reasoning: {recommendation['reasoning']}")
+   print(f"Estimated memory usage: {recommendation['estimated_memory_mb']} MB")
+
+   # Apply recommendations if suitable
+   if recommendation['profile_name'] != remote_db.get_sqlite_tuning()['profile']:
+       remote_db.set_sqlite_tuning(
+           recommendation['profile_name'],
+           recommendation['pragma_overrides'],
+           persist=True
+       )
+
+System Resource Analysis
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Analyze remote server resources to inform tuning decisions:
+
+.. code-block:: python
+
+   # Get remote server system information
+   system_info = remote_db.analyze_system_resources()
+
+   print(f"Server RAM: {system_info['total_ram_mb']} MB")
+   print(f"Available RAM: {system_info['available_ram_mb']} MB")
+   print(f"CPU cores: {system_info['cpu_cores']}")
+   print(f"Disk type: {system_info['disk_type']}")
+   print(f"OS: {system_info['os_type']}")
+
+   # Use system info to make informed tuning decisions
+   if system_info['disk_type'] == 'SSD' and system_info['total_ram_mb'] > 8192:
+       # High-performance configuration for well-equipped servers
+       remote_db.set_sqlite_tuning("read_optimized", {
+           "cache_size": -524288,  # 512MB cache
+           "mmap_size": 2147483648,  # 2GB memory mapping
+       })
+
+Remote Maintenance Operations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Perform database maintenance operations on remote servers:
+
+.. code-block:: python
+
+   # Run maintenance operations remotely
+   remote_db.sqlite_checkpoint("TRUNCATE")  # Checkpoint and truncate WAL
+   remote_db.sqlite_optimize()  # Update query planner statistics
+   remote_db.sqlite_incremental_vacuum(5000)  # Reclaim space
+
+   # Check if WAL checkpoint is needed
+   if remote_db.checkpoint_if_wal_large(wal_mb_threshold=256):
+       print("Large WAL file was checkpointed")
+
+Multi-Database Remote Management
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Manage tuning across multiple remote databases:
+
+.. code-block:: python
+
+   databases = [
+       ("analytics_db", "read_optimized"),
+       ("staging_db", "balanced"),
+       ("ingest_db", "fast_ingest")
+   ]
+
+   for db_name, profile in databases:
+       remote_db = RemoteVectorDB(
+           name=db_name,
+           base_url="http://server:5000",
+           api_key="admin_key"
+       )
+
+       # Apply appropriate tuning profile
+       remote_db.set_sqlite_tuning(profile)
+
+       # Get current configuration for monitoring
+       config = remote_db.get_sqlite_tuning()
+       print(f"{db_name}: {config['profile']} profile applied")
+
+Security Considerations
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Remote tuning requires appropriate API permissions:
+
+- **API Key Requirements**: Tuning operations require ``read_write`` API keys
+- **Administrative Access**: Tuning changes affect server-wide database performance
+- **Audit Logging**: All remote tuning operations are logged on the server
+- **Rate Limiting**: Tuning endpoints respect server rate limiting policies
+
+.. code-block:: python
+
+   # Use administrative API key for tuning operations
+   remote_db = RemoteVectorDB(
+       name="production_db",
+       base_url="https://db-server.company.com",
+       api_key="admin_write_key",  # Must be read_write key
+       verify_ssl=True
+   )
+
+   try:
+       remote_db.set_sqlite_tuning("read_optimized")
+       print("Tuning applied successfully")
+   except PermissionError:
+       print("Insufficient API key permissions for tuning operations")
+
+Best Practices for Remote Tuning
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+1. **Monitor Before Changes**: Always check current performance before applying new tuning
+2. **Use Auto-Tuning**: Leverage auto-tuning for initial recommendations based on server hardware
+3. **Test in Staging**: Test tuning changes in staging environments before production
+4. **Schedule Appropriately**: Apply tuning changes during low-traffic periods
+5. **Document Changes**: Keep records of tuning changes and their performance impact
+6. **Monitor After Changes**: Track performance metrics after applying tuning changes
+
+.. code-block:: python
+
+   # Example monitoring and tuning workflow
+   def optimize_remote_database(remote_db, target_profile):
+       # 1. Get baseline performance info
+       baseline_config = remote_db.get_sqlite_tuning()
+       print(f"Current profile: {baseline_config['profile']}")
+
+       # 2. Get auto-tuning recommendation
+       recommendation = remote_db.auto_tune()
+
+       # 3. Apply changes during maintenance window
+       if recommendation['profile_name'] != baseline_config['profile']:
+           remote_db.set_sqlite_tuning(
+               recommendation['profile_name'],
+               recommendation['pragma_overrides']
+           )
+           print(f"Applied new profile: {recommendation['profile_name']}")
+
+       # 4. Perform maintenance if recommended
+       if recommendation['estimated_memory_mb'] > 1000:
+           remote_db.sqlite_checkpoint("TRUNCATE")
+           remote_db.sqlite_optimize()
+
+       return recommendation
 
 API Reference
 =============

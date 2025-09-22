@@ -119,13 +119,19 @@ Full backups are self-contained and can be restored independently.
 
 .. code-block:: python
 
-    from localvectordb.backup import BackupManager
-    
-    backup_manager = BackupManager(
-        db_path="./my_database.db",
-        backup_dir="./backups"
+    from localvectordb.backup import BackupManager, BackupConfig
+
+    # Create backup configuration
+    config = BackupConfig(
+        backup_location="./backups",
+        compression_type="gzip"
     )
-    
+
+    backup_manager = BackupManager(
+        database_path="./my_database.db",
+        config=config
+    )
+
     # Create a full backup
     backup_id = backup_manager.create_backup(BackupType.FULL)
     print(f"Created backup: {backup_id}")
@@ -135,7 +141,7 @@ Incremental Backups
 
 Incremental backups only store changes since the last backup:
 
-- Uses SQLite WAL (Write-Ahead Logging) to track changes
+- Uses manifest-based diffing to compare document and chunk hashes
 - Significantly smaller than full backups
 - Requires the backup chain for restoration
 
@@ -244,7 +250,7 @@ How PITR Works
 ^^^^^^^^^^^^^^
 
 1. **Backup Chain**: PITR uses a chain of full and incremental backups
-2. **WAL Replay**: Applies Write-Ahead Log entries up to the target time
+2. **Manifest-Based Recovery**: Applies document and chunk changes from the backup chain up to the target time
 3. **Consistent State**: Ensures database consistency at the recovery point
 
 Using PITR
@@ -267,21 +273,25 @@ Using PITR
 
 .. code-block:: python
 
-    from localvectordb.backup import PointInTimeRecoveryManager
+    from localvectordb.backup import BackupManager, BackupConfig
     from datetime import datetime, timedelta
-    
-    pitr_manager = PointInTimeRecoveryManager(
-        backup_dir="./backups",
-        db_name="mydatabase"
+
+    # Create backup configuration
+    config = BackupConfig(backup_location="./backups")
+
+    # Use BackupManager for PITR operations
+    backup_manager = BackupManager(
+        database_path="./mydatabase.db",
+        config=config
     )
-    
-    # Restore to specific time
+
+    # Restore to specific time using PITR
     target_time = datetime.now() - timedelta(hours=2)
-    restored_path = pitr_manager.restore_to_point_in_time(
+    restored_path = backup_manager.restore_to_point_in_time(
         target_time=target_time,
         restore_path="./restored_db"
     )
-    
+
     print(f"Database restored to: {restored_path}")
 
 PITR Limitations
@@ -289,7 +299,7 @@ PITR Limitations
 
 - Requires a complete backup chain from a full backup to the target time
 - Cannot recover beyond the latest backup
-- WAL mode must be enabled for incremental backups
+- Backup chain integrity must be maintained for successful recovery
 
 Backup Management
 -----------------
@@ -320,6 +330,282 @@ Verify all backups for a database:
     report = backup_manager.verify_backup(backup_id, detailed=True)
     print(f"Checksum valid: {report['checksum_valid']}")
     print(f"Files intact: {report['files_intact']}")
+
+Streaming Verification
+^^^^^^^^^^^^^^^^^^^^^^
+
+For large backups or memory-constrained environments, LocalVectorDB provides streaming verification that can verify backup integrity without extracting the entire archive to disk. This is particularly useful for backups that exceed available disk space or memory.
+
+**Command Line:**
+
+.. code-block:: bash
+
+    # Streaming verification (memory-efficient)
+    $ lvdb backup verify backup-id-here --streaming
+
+    # Verify only archive and manifest checksums (fastest)
+    $ lvdb backup verify backup-id-here --streaming --quick
+
+    # Stream verify all backups for a database
+    $ lvdb backup verify --database mydatabase --all --streaming
+
+**Python API:**
+
+.. code-block:: python
+
+    # Basic streaming verification
+    is_valid = backup_manager.verify_backup_streaming(backup_id)
+    print(f"Backup valid: {is_valid}")
+
+    # Stream verification with selective checking
+    is_valid = backup_manager.verify_backup_streaming(
+        backup_id,
+        verify_archive_members=True  # Set to False for faster verification
+    )
+
+    # Streaming verification with progress monitoring
+    def verify_large_backup_with_progress(backup_id):
+        """Example of streaming verification with progress tracking."""
+        print(f"Starting streaming verification of {backup_id}...")
+
+        try:
+            is_valid = backup_manager.verify_backup_streaming(
+                backup_id,
+                verify_archive_members=True
+            )
+
+            if is_valid:
+                print("✅ Backup verification successful")
+                return True
+            else:
+                print("❌ Backup verification failed")
+                return False
+
+        except Exception as e:
+            print(f"❌ Verification error: {e}")
+            return False
+
+    # Verify multiple backups with streaming
+    backup_ids = backup_manager.list_backups()
+    for backup_info in backup_ids:
+        backup_id = backup_info['backup_id']
+        size_mb = backup_info.get('size_bytes', 0) / (1024 * 1024)
+
+        # Use streaming verification for large backups
+        if size_mb > 100:  # Backups larger than 100MB
+            print(f"Streaming verification for large backup ({size_mb:.1f}MB): {backup_id}")
+            is_valid = backup_manager.verify_backup_streaming(backup_id)
+        else:
+            print(f"Standard verification for backup ({size_mb:.1f}MB): {backup_id}")
+            is_valid = backup_manager.verify_backup(backup_id)
+
+        print(f"  Result: {'✅ Valid' if is_valid else '❌ Invalid'}")
+
+Benefits of Streaming Verification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Memory Efficiency**: Streaming verification processes backup archives in small chunks, using minimal memory regardless of backup size.
+
+**Disk Space Savings**: No temporary extraction required - verification happens directly from the compressed archive.
+
+**Faster for Large Backups**: Avoids the overhead of extracting large archives to disk before verification.
+
+**Suitable for Production**: Can verify backups without impacting system resources significantly.
+
+**Performance Comparison:**
+
+.. code-block:: python
+
+    import time
+    from pathlib import Path
+
+    def compare_verification_methods(backup_id):
+        """Compare standard vs streaming verification performance."""
+
+        # Get backup info
+        backup_file = backup_manager._find_backup_file(backup_id)
+        backup_size = Path(backup_file).stat().st_size / (1024 * 1024)  # MB
+
+        print(f"Backup size: {backup_size:.1f} MB")
+
+        # Standard verification
+        print("\nStandard verification:")
+        start_time = time.time()
+        try:
+            standard_valid = backup_manager.verify_backup(backup_id)
+            standard_time = time.time() - start_time
+            print(f"  Time: {standard_time:.2f}s")
+            print(f"  Result: {'✅ Valid' if standard_valid else '❌ Invalid'}")
+        except Exception as e:
+            print(f"  Failed: {e}")
+            standard_time = None
+
+        # Streaming verification
+        print("\nStreaming verification:")
+        start_time = time.time()
+        try:
+            streaming_valid = backup_manager.verify_backup_streaming(backup_id)
+            streaming_time = time.time() - start_time
+            print(f"  Time: {streaming_time:.2f}s")
+            print(f"  Result: {'✅ Valid' if streaming_valid else '❌ Invalid'}")
+
+            # Performance comparison
+            if standard_time and streaming_time:
+                speedup = standard_time / streaming_time
+                if speedup > 1:
+                    print(f"  🚀 Streaming is {speedup:.1f}x faster")
+                else:
+                    print(f"  📊 Standard is {1/speedup:.1f}x faster")
+
+        except Exception as e:
+            print(f"  Failed: {e}")
+
+    # Example usage
+    recent_backups = backup_manager.list_backups()[:3]  # Test latest 3 backups
+    for backup_info in recent_backups:
+        compare_verification_methods(backup_info['backup_id'])
+
+Verification Options
+~~~~~~~~~~~~~~~~~~~~
+
+The streaming verification method provides several options for different use cases:
+
+**Full Verification** (verify_archive_members=True):
+- Verifies archive integrity and manifest checksum
+- Checks individual file checksums within the archive
+- Most thorough but takes longer for large backups
+
+**Quick Verification** (verify_archive_members=False):
+- Verifies only archive and manifest checksums
+- Fastest option for regular health checks
+- Suitable for automated monitoring
+
+.. code-block:: python
+
+    # Full verification (recommended for important backups)
+    is_valid_full = backup_manager.verify_backup_streaming(
+        backup_id,
+        verify_archive_members=True
+    )
+
+    # Quick verification (suitable for regular health checks)
+    is_valid_quick = backup_manager.verify_backup_streaming(
+        backup_id,
+        verify_archive_members=False
+    )
+
+    print(f"Quick check: {'✅' if is_valid_quick else '❌'}")
+    print(f"Full check: {'✅' if is_valid_full else '❌'}")
+
+Automated Backup Health Monitoring
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use streaming verification in automated backup monitoring systems:
+
+.. code-block:: python
+
+    import schedule
+    import logging
+    from datetime import datetime, timedelta
+
+    def automated_backup_health_check():
+        """Daily backup health check using streaming verification."""
+
+        logging.info("Starting automated backup health check")
+
+        # Get backups from last 7 days
+        cutoff_date = datetime.now() - timedelta(days=7)
+        recent_backups = []
+
+        for backup_info in backup_manager.list_backups():
+            backup_date = datetime.fromisoformat(backup_info['created_at'])
+            if backup_date >= cutoff_date:
+                recent_backups.append(backup_info)
+
+        # Verify each recent backup
+        failed_backups = []
+        for backup_info in recent_backups:
+            backup_id = backup_info['backup_id']
+
+            try:
+                # Use quick streaming verification for daily checks
+                is_valid = backup_manager.verify_backup_streaming(
+                    backup_id,
+                    verify_archive_members=False
+                )
+
+                if not is_valid:
+                    failed_backups.append(backup_id)
+                    logging.warning(f"Backup verification failed: {backup_id}")
+                else:
+                    logging.info(f"Backup verified successfully: {backup_id}")
+
+            except Exception as e:
+                failed_backups.append(backup_id)
+                logging.error(f"Backup verification error for {backup_id}: {e}")
+
+        # Report results
+        if failed_backups:
+            logging.error(f"Failed backup verifications: {failed_backups}")
+            # Send alert notification here
+        else:
+            logging.info("All recent backups verified successfully")
+
+        return len(failed_backups) == 0
+
+    # Schedule daily health checks
+    schedule.every().day.at("02:00").do(automated_backup_health_check)
+
+    # Run the scheduler
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+Best Practices for Streaming Verification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. **Use for Large Backups**: Prefer streaming verification for backups over 100MB
+2. **Regular Health Checks**: Use quick streaming verification (verify_archive_members=False) for daily monitoring
+3. **Full Verification Periodically**: Run full streaming verification weekly or monthly
+4. **Monitor Performance**: Track verification times to detect backup corruption or system issues
+5. **Automate Verification**: Include streaming verification in automated backup monitoring workflows
+
+.. code-block:: python
+
+    # Example best practice workflow
+    def backup_verification_workflow(backup_id):
+        """Best practice backup verification workflow."""
+
+        # Get backup metadata
+        backup_info = backup_manager.get_backup_metadata(backup_id)
+        size_mb = backup_info['size_bytes'] / (1024 * 1024)
+        age_days = (datetime.now() - backup_info['created_at']).days
+
+        # Choose verification method based on size and age
+        if size_mb > 100:
+            print(f"Large backup ({size_mb:.1f}MB) - using streaming verification")
+            use_streaming = True
+        else:
+            print(f"Standard backup ({size_mb:.1f}MB) - using regular verification")
+            use_streaming = False
+
+        # Choose verification depth based on age
+        if age_days <= 1:
+            # Recent backups get full verification
+            verify_members = True
+            print("Recent backup - performing full verification")
+        else:
+            # Older backups get quick verification unless it's a weekly full check
+            verify_members = (age_days % 7 == 0)  # Full check weekly
+            print(f"Older backup - {'full' if verify_members else 'quick'} verification")
+
+        # Perform verification
+        if use_streaming:
+            is_valid = backup_manager.verify_backup_streaming(backup_id, verify_members)
+        else:
+            is_valid = backup_manager.verify_backup(backup_id)
+
+        return is_valid
 
 Cleanup and Retention
 ^^^^^^^^^^^^^^^^^^^^^
@@ -366,17 +652,23 @@ Archive Structure
 
 .. code-block:: none
 
-    backup.lvdb-backup
-    ├── manifest.json        # Backup metadata
-    ├── database.db         # SQLite database
-    ├── index.faiss        # FAISS index
-    ├── checksum.sha256    # Integrity checksum
-    └── wal/               # WAL files (incremental only)
-        ├── wal-00001
-        └── wal-00002
+    backup.lvdb-backup              # Main backup archive (gzip/lzma compressed)
+    ├── manifest.json               # Backup metadata and integrity information
+    ├── database.db                 # SQLite database snapshot
+    ├── index.faiss                # FAISS vector index
+    └── [other components]          # Additional database files
+
+    backup.lvdb-backup.sha256       # Sidecar file with archive checksum
+
+The backup system creates **two files** for each backup:
+
+1. **Main Archive** (``.lvdb-backup``): Contains all database components in a compressed archive
+2. **Sidecar File** (``.sha256``): Contains the SHA-256 checksum of the main archive for integrity verification
 
 Manifest Format
 ^^^^^^^^^^^^^^^
+
+The manifest.json file contains comprehensive metadata and integrity information:
 
 .. code-block:: json
 
@@ -399,8 +691,200 @@ Manifest Format
         "chain": {
             "parent_backup": null,
             "chain_length": 1
-        }
+        },
+        "file_paths": {
+            "database.db": "database.db",
+            "index.faiss": "index.faiss"
+        },
+        "checksums": {
+            "database.db": "a1b2c3d4e5f6...",
+            "index.faiss": "f6e5d4c3b2a1..."
+        },
+        "archive_checksum": "9f8e7d6c5b4a3210...",
+        "manifest_checksum": "1234567890abcdef..."
     }
+
+Integrity Protection System
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+LocalVectorDB implements a comprehensive multi-layered integrity protection system to ensure backup reliability:
+
+**1. Sidecar Checksum Files (.sha256)**
+
+Every backup creates a sidecar file containing the SHA-256 checksum of the entire archive:
+
+.. code-block:: none
+
+    # Contents of backup.lvdb-backup.sha256
+    9f8e7d6c5b4a3210fedcba0987654321  backup.lvdb-backup
+
+This allows quick verification without opening the archive:
+
+.. code-block:: bash
+
+    # Verify archive integrity using system tools
+    sha256sum -c backup.lvdb-backup.sha256
+
+    # Or use LocalVectorDB verification
+    lvdb backup verify backup-id-here
+
+**2. Individual File Checksums**
+
+Each file within the backup has its own SHA-256 checksum stored in the manifest:
+
+.. code-block:: python
+
+    # Access individual file checksums
+    metadata = backup_manager.get_backup_metadata(backup_id)
+
+    for filename, checksum in metadata.checksums.items():
+        print(f"{filename}: {checksum}")
+
+    # Example output:
+    # database.db: a1b2c3d4e5f6789012345678901234567890abcdef
+    # index.faiss: f6e5d4c3b2a1098765432109876543210fedcba
+
+**3. Manifest Integrity Protection**
+
+The manifest itself is protected with a checksum to detect tampering:
+
+.. code-block:: python
+
+    # The manifest_checksum protects against manifest tampering
+    metadata = backup_manager.get_backup_metadata(backup_id)
+    print(f"Manifest checksum: {metadata.manifest_checksum}")
+
+    # Verification process:
+    # 1. Extract manifest from archive
+    # 2. Remove checksum fields to create normalized version
+    # 3. Calculate SHA-256 of normalized manifest
+    # 4. Compare with stored manifest_checksum
+
+**4. Archive-Level Protection**
+
+The archive_checksum provides end-to-end verification:
+
+.. code-block:: python
+
+    # Archive checksum protects the entire backup file
+    metadata = backup_manager.get_backup_metadata(backup_id)
+    print(f"Archive checksum: {metadata.archive_checksum}")
+
+    # This checksum is calculated after the archive is created
+    # and stored both in the manifest and the sidecar file
+
+Verification Hierarchy
+^^^^^^^^^^^^^^^^^^^^^^
+
+The backup system uses a hierarchical verification approach:
+
+**Level 1: Quick Archive Verification**
+- Verify sidecar `.sha256` file against archive
+- Fast integrity check without extracting archive
+- Suitable for automated monitoring
+
+**Level 2: Manifest Verification**
+- Extract and verify manifest.json integrity
+- Detect any tampering with backup metadata
+- Moderate performance impact
+
+**Level 3: Individual File Verification**
+- Extract and verify each file's checksum
+- Most thorough but slowest verification
+- Used for complete integrity validation
+
+.. code-block:: python
+
+    # Example verification workflow
+    def comprehensive_backup_verification(backup_id):
+        """Perform all levels of backup verification."""
+
+        # Level 1: Quick archive check
+        try:
+            backup_file = backup_manager._find_backup_file(backup_id)
+            sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
+
+            if sidecar_path.exists():
+                with open(sidecar_path, 'r') as f:
+                    expected_checksum = f.readline().split()[0]
+
+                actual_checksum = backup_manager._calculate_file_checksum(backup_file)
+
+                if actual_checksum == expected_checksum:
+                    print("✅ Level 1: Archive integrity verified")
+                else:
+                    print("❌ Level 1: Archive checksum mismatch")
+                    return False
+        except Exception as e:
+            print(f"❌ Level 1: Archive verification failed: {e}")
+            return False
+
+        # Level 2 & 3: Full verification using built-in method
+        try:
+            is_valid = backup_manager.verify_backup(backup_id)
+            if is_valid:
+                print("✅ Level 2&3: Manifest and file integrity verified")
+                return True
+            else:
+                print("❌ Level 2&3: Detailed verification failed")
+                return False
+        except Exception as e:
+            print(f"❌ Level 2&3: Verification failed: {e}")
+            return False
+
+Integrity in Practice
+^^^^^^^^^^^^^^^^^^^^^
+
+**Backup Creation Process:**
+
+1. Create temporary directory with database components
+2. Calculate SHA-256 checksum for each file
+3. Create manifest with file checksums
+4. Calculate manifest checksum (without archive_checksum field)
+5. Create compressed archive with all components
+6. Calculate archive checksum of final archive
+7. Write sidecar `.sha256` file with archive checksum
+8. Update manifest with archive checksum
+
+**Verification Process:**
+
+1. **Quick Check**: Compare sidecar checksum with actual archive checksum
+2. **Manifest Check**: Extract and verify manifest integrity
+3. **File Check**: Verify individual file checksums within archive
+4. **Streaming Verification**: All checks without full extraction (for large backups)
+
+**Corruption Detection:**
+
+The multi-layer approach detects various corruption scenarios:
+
+- **Storage corruption**: Sidecar checksum catches archive-level corruption
+- **Archive corruption**: Individual file checksums detect partial corruption
+- **Tampering**: Manifest checksum detects metadata manipulation
+- **Incomplete backups**: Missing files detected during verification
+
+.. code-block:: python
+
+    # Example: Detect specific corruption types
+    def diagnose_backup_corruption(backup_id):
+        """Diagnose the type of backup corruption."""
+
+        try:
+            backup_manager.verify_backup_streaming(backup_id, verify_archive_members=False)
+            print("✅ Archive and manifest are intact")
+
+            try:
+                backup_manager.verify_backup_streaming(backup_id, verify_archive_members=True)
+                print("✅ All individual files are intact")
+            except Exception as e:
+                print(f"❌ File corruption detected: {e}")
+
+        except Exception as e:
+            if "archive checksum mismatch" in str(e).lower():
+                print("❌ Archive-level corruption (storage/transmission error)")
+            elif "manifest integrity" in str(e).lower():
+                print("❌ Manifest tampering detected")
+            else:
+                print(f"❌ Unknown corruption: {e}")
 
 Best Practices
 --------------
@@ -500,8 +984,10 @@ BackupManager
 
     class BackupManager:
         """Manages database backups."""
-        
-        def __init__(self, db_path: str, backup_dir: str = "./backups"):
+
+        def __init__(self, database_path: Union[str, Path],
+                     faiss_index_path: Optional[Union[str, Path]] = None,
+                     config: Optional[BackupConfig] = None):
             """Initialize backup manager."""
         
         def create_backup(self, backup_type: BackupType = BackupType.FULL,
@@ -522,26 +1008,23 @@ BackupManager
         def cleanup_old_backups(self, retention_days: int = 30) -> List[str]:
             """Clean up old backups."""
 
-PointInTimeRecoveryManager
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+Point-in-Time Recovery Methods
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Point-in-time recovery functionality is provided by the BackupManager class:
 
 .. code-block:: python
 
-    class PointInTimeRecoveryManager:
-        """Manages point-in-time recovery."""
-        
-        def __init__(self, backup_dir: str, db_name: str):
-            """Initialize PITR manager."""
-        
-        def restore_to_point_in_time(self, target_time: datetime,
-                                    restore_path: str) -> str:
-            """Restore database to specific point in time."""
-        
-        def get_available_recovery_points(self) -> List[datetime]:
-            """Get list of available recovery points."""
-        
-        def validate_recovery_point(self, target_time: datetime) -> bool:
-            """Check if recovery to target time is possible."""
+    # PITR methods in BackupManager class
+    def restore_to_point_in_time(self, target_time: datetime,
+                                restore_path: str) -> str:
+        """Restore database to specific point in time."""
+
+    def get_available_recovery_points(self) -> List[datetime]:
+        """Get list of available recovery points."""
+
+    def validate_recovery_point(self, target_time: datetime) -> bool:
+        """Check if recovery to target time is possible."""
 
 See Also
 --------

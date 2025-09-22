@@ -111,10 +111,15 @@ JinaAI Provider
 
 Advanced cloud-based embedding models with extensive customization options.
 
+.. note::
+   The JinaAI provider is built into LocalVectorDB and requires no additional dependencies.
+   It uses the standard HTTP client already included with LocalVectorDB.
+
 Setup:
 
 .. code-block:: bash
 
+   # No additional installation required - JinaAI provider is built-in
    export JINA_API_KEY=your_api_key_here
    # Get your free API key at: https://jina.ai/?sui=apikey
 
@@ -180,10 +185,15 @@ Google AI Provider
 
 Google's Gemini embedding models with flexible configuration.
 
+.. note::
+   The Google AI provider is built into LocalVectorDB and requires no additional dependencies.
+   It uses the standard HTTP client already included with LocalVectorDB.
+
 Setup:
 
 .. code-block:: bash
 
+   # No additional installation required - Google AI provider is built-in
    # Set one of these environment variables
    export GEMINI_API_KEY=your_api_key_here
    export GOOGLE_API_KEY=your_api_key_here
@@ -261,14 +271,14 @@ Custom Provider Example
        def get_dimension(self) -> int:
            return 768  # Your embedding dimension
 
-       async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-           # Implement your embedding logic
+       async def _embed_single_batch(self, texts: List[str], **kwargs) -> List[List[float]]:
+           # Implement your embedding logic for a single batch
            embeddings = []
            for text in texts:
                # Call your embedding API/model
                embedding = await self._get_embedding(text)
                embeddings.append(embedding)
-           return np.array(embeddings, dtype=np.float32)
+           return embeddings
 
        async def _get_embedding(self, text: str) -> List[float]:
            # Your implementation here
@@ -528,29 +538,20 @@ Create a Python package with entry points.
            # Return dimension for your model
            return 512
 
-       async def embed_batch(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
-           batch_size = batch_size or self.max_batch_size
-           all_embeddings = []
+       async def _embed_single_batch(self, texts: List[str], **kwargs) -> List[List[float]]:
+           response = requests.post(
+               f"{self.api_url}/embed",
+               json={
+                   "model": self.model,
+                   "input": texts
+               },
+               headers={"Authorization": f"Bearer {self.api_key}"}
+           )
 
-           for i in range(0, len(texts), batch_size):
-               batch = texts[i:i + batch_size]
+           if response.status_code != 200:
+               raise RuntimeError(f"API error: {response.text}")
 
-               response = requests.post(
-                   f"{self.api_url}/embed",
-                   json={
-                       "model": self.model,
-                       "input": batch
-                   },
-                   headers={"Authorization": f"Bearer {self.api_key}"}
-               )
-
-               if response.status_code != 200:
-                   raise RuntimeError(f"API error: {response.text}")
-
-               batch_embeddings = response.json()['embeddings']
-               all_embeddings.extend(batch_embeddings)
-
-           return np.array(all_embeddings, dtype=np.float32)
+           return response.json()['embeddings']
 
 Installation and Usage:
 

@@ -746,8 +746,8 @@ def _print_config_summary(config, output, is_multi_worker):
     if config.server.enable_rate_limiting:
         click.echo(f"Rate limit: {config.server.rate_limit}")
 
-    if config.server.cors_enabled:
-        origins = config.server.cors_allowed_origins
+    if config.server.security.cors_enabled:
+        origins = config.server.security.cors_allowed_origins
         if origins == "*":
             click.echo("CORS: All origins")
         else:

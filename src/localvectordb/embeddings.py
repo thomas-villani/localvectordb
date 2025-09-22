@@ -237,6 +237,22 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
     """
 
+    def __init__(self,
+                 model: str,
+                 base_url: Optional[str] = None,
+                 timeout: int = 90,
+                 max_retries: int = 3,
+                 retry_delay: float = 1.0,
+                 max_concurrent_requests: int = 5,
+                 **kwargs: Any):
+        self.base_url = base_url
+        super().__init__(model,
+                         timeout=timeout,
+                         max_retries=max_retries,
+                         retry_delay=retry_delay,
+                         max_concurrent_requests=max_concurrent_requests,
+                         **kwargs)
+
     async def _embed_batch_impl(
             self,
             texts: List[str],
@@ -330,7 +346,7 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         The async httpx client is passed in as the `client` kwarg."""
         pass
 
-
+# NOTE: OLLAMA_HOST is meant to tell ollama how to serve (e.g. 127.0.0.1 vs. 0.0.0.0) so we should choose a different var.
 class OllamaEmbeddings(HTTPEmbeddingProvider):
     """Ollama embedding provider.
 
@@ -342,7 +358,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         The base url for the ollama server (default for Ollama install is http://localhost:11434)
         Alternatively, you can set the `OLLAMA_HOST` environment variable.
     timeout : int, default = 90
-        Timeout in sceonds for the http request
+        Timeout in seconds for the http request
     max_retries : int, default = 3
         How many times to retry on a failed request.
     retry_delay : float, default = 1.0
@@ -358,7 +374,8 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             retry_delay: float = 1.0,
             max_concurrent_requests: int = 3
             ) -> None:
-        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
+        super().__init__(model, base_url=base_url, timeout=timeout, max_retries=max_retries,
+                         retry_delay=retry_delay, max_concurrent_requests=max_concurrent_requests)
         effective_base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.base_url = (effective_base_url or "http://localhost:11434").rstrip('/')
         self._validated = False

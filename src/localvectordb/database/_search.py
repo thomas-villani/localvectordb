@@ -140,11 +140,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold : Optional[float]
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
         document_scoring_method : DocumentScoringMethod
-            Method for aggregating chunk scores into document scores
+            Method for aggregating chunk scores into document scores.
             One of: {"best", "average", "worst", "weighted_average", "frequency_boost", "harmonic_mean",
             "diminishing_returns", "statistical", "robust_mean", "percentile", "geometric_mean"}
+            For detailed explanations and guidance on selecting the appropriate method,
+            see the Document Scoring documentation.
         document_scoring_options : dict, optional
-            Parameters to pass to the scoring method function.
+            Parameters to pass to the scoring method function. For complete parameter
+            documentation and examples, see the Document Scoring documentation.
+
+            Common parameters by method:
+
             - frequency_boost
                 frequency_bias : 0.0 - 1.0, default = 0.3
                     The ratio of the frequency multiplier to apply. Higher favors documents with more matching chunks
@@ -1199,8 +1205,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Similarity threshold for semantic deduplication (0-1, higher=more similar), by default None
         document_scoring_method : DocumentScoringMethod
             Method for aggregating chunk scores into document scores, by default "frequency_boost"
+            For detailed explanations and guidance on selecting the appropriate method,
+            see the Document Scoring documentation.
         document_scoring_options : dict, optional
-            Parameters for the document_scoring_method (to choose overall scores for documents from chunk results)
+            Parameters for the document_scoring_method (to choose overall scores for documents from chunk results).
+            For complete parameter documentation and examples, see the Document Scoring documentation.
 
         Returns
         -------
