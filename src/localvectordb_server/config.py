@@ -28,8 +28,7 @@ Features:
 
 Supported environment variables (prefix LVDB_):
 - Sectioned variables like LVDB_DATABASE_* LVDB_SERVER_* LVDB_EMBEDDING_*
-- Nested server security variables like LVDB_SERVER_SECURITY_* and a set of
-  legacy mappings for backward compatibility
+- Nested server security variables like LVDB_SERVER_SECURITY_*
 
 See class docstrings for detailed field descriptions and validation rules.
 """
@@ -38,7 +37,7 @@ import json
 import os
 import tomllib
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, get_args, get_origin, get_type_hints
@@ -154,7 +153,7 @@ class DatabaseSettings(BaseSettings):
                 "faiss_index_type must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
 
         # Validate metadata schema
-        for field_name, field_config in self.default_metadata_schema.items():
+        for field_name, _field_config in self.default_metadata_schema.items():
             if not isinstance(field_name, str) or not field_name:
                 raise ConfigurationError("Metadata field names must be non-empty strings")
 
@@ -337,7 +336,7 @@ class SecuritySettings(BaseSettings):
                 # Fallback validation if hostmatch module not available
                 for i, pattern in enumerate(self.trusted_hosts):
                     if not isinstance(pattern, str) or not pattern.strip():
-                        raise ConfigurationError(f"trusted_hosts[{i}] must be a non-empty string")
+                        raise ConfigurationError(f"trusted_hosts[{i}] must be a non-empty string") from None
 
         return True
 
@@ -410,7 +409,8 @@ class ServerSettings(BaseSettings):
     use_single_cache: bool = False
 
     proxy_enabled: bool = False
-    # These proxy settings are passed to the werkzeug ProxyFix middleware. Keys are: x_for, x_proto, x_host, x_port, x_prefix
+    # These proxy settings are passed to the werkzeug ProxyFix middleware.
+    # Keys are: x_for, x_proto, x_host, x_port, x_prefix
     # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
     proxy_settings: Optional[dict] = None
 
@@ -466,8 +466,8 @@ class ServerSettings(BaseSettings):
                 try:
                     # Validate IP address or CIDR block format
                     ipaddress.ip_network(proxy, strict=False)
-                except ValueError:
-                    raise ConfigurationError(f"Invalid IP address or CIDR block in trusted_proxies: {proxy}")
+                except ValueError as e:
+                    raise ConfigurationError(f"Invalid IP address or CIDR block in trusted_proxies: {proxy}") from e
 
         if self.cache_enabled:
             valid_cache_types = ("SimpleCache", "RedisCache", "FileSystemCache", "MemcachedCache",
@@ -582,19 +582,6 @@ class Config:
                 elif hasattr(config.server, key):
                     setattr(config.server, key, value)
 
-            # Also handle legacy security fields directly in server section for backward compatibility
-            legacy_security_fields = {
-                'require_api_key', 'api_key_header', 'trusted_hosts', 'key_database_path',
-                'default_key_expiry_days', 'auto_prune_expired_keys', 'key_audit_logging',
-                'auth_log_level', 'warn_expiring_days', 'cors_enabled', 'cors_allowed_origins',
-                'cors_allowed_methods', 'cors_allowed_headers', 'cors_max_age',
-                'security_headers_enabled', 'force_https', 'strict_transport_security',
-                'strict_transport_security_max_age', 'content_security_policy',
-                'content_type_nosniff', 'x_frame_options', 'x_xss_protection', 'referrer_policy'
-            }
-            for key, value in server_data.items():
-                if key in legacy_security_fields and hasattr(config.server.security, key):
-                    setattr(config.server.security, key, value)
 
         # Process backup settings
         if 'backup' in data and isinstance(data['backup'], dict):
@@ -657,25 +644,6 @@ class Config:
 
                 if hasattr(section_obj, key):
                     setattr(section_obj, key, value)
-                # Handle legacy security settings mapped to server.security
-                elif section_name == 'server' and hasattr(section_obj.security, key):
-                    value = cls._convert_env_value(env_value, section_obj.security, key)
-                    setattr(section_obj.security, key, value)
-
-            # Handle legacy environment variables
-            elif name in ['host', 'port', 'log_level', 'root_dir']:
-                legacy_mapping = {
-                    'host': ('server', 'host'),
-                    'port': ('server', 'port'),
-                    'log_level': ('server', 'log_level'),
-                    'root_dir': ('database', 'root_dir')
-                }
-
-                if name in legacy_mapping:
-                    section_name, attr = legacy_mapping[name]
-                    section_obj = getattr(config, section_name)
-                    value = cls._convert_env_value(env_value, section_obj, attr)
-                    setattr(section_obj, attr, value)
 
         return config
 
@@ -710,22 +678,29 @@ class Config:
         args = get_args(target_type)
 
         # Handle basic types first (these have no origin)
-        if target_type == bool:
+        if target_type is bool:
             return value.lower() in ['true', 'yes', '1', 'on']
-        elif target_type == int:
+        elif target_type is int:
             return int(value)
-        elif target_type == float:
+        elif target_type is float:
             return float(value)
-        elif target_type == str:
+        elif target_type is str:
             return value
 
         # Handle Union types (including Optional which is Union[T, None])
         elif origin is Union:
             # Filter out NoneType to get actual types
-            non_none_types = [arg for arg in args if arg != type(None)]
+            non_none_types = [arg for arg in args if arg is not type(None)]
 
             # Special case: Union[str, List[str]] for cors_allowed_origins
-            if len(non_none_types) == 2 and str in non_none_types and List[str] in non_none_types:
+            # Use get_origin() to handle typing system changes in Python 3.11+
+            is_str_list_union = False
+            if len(non_none_types) == 2:
+                has_str = str in non_none_types
+                has_list_str = any(get_origin(arg) is list for arg in non_none_types)
+                is_str_list_union = has_str and has_list_str
+
+            if is_str_list_union:
                 # Try to parse as JSON array first
                 if value.startswith('[') and value.endswith(']'):
                     try:
@@ -734,9 +709,11 @@ class Config:
                         # Fallback to comma-separated list
                         items = value[1:-1].split(',')
                         return [item.strip(' "\'') for item in items if item.strip()]
-                # If it contains commas, treat as list
-                elif ',' in value:
-                    return [item.strip(' "\'') for item in value.split(',') if item.strip()]
+                # If it contains commas or semicolons, treat as list
+                elif ',' in value or ';' in value:
+                    # Support both comma and semicolon delimiters
+                    delimiter = ';' if ';' in value else ','
+                    return [item.strip(' "\'') for item in value.split(delimiter) if item.strip()]
                 # Otherwise, return as string
                 else:
                     return value
@@ -751,13 +728,13 @@ class Config:
                 # Convert using the inner type
                 inner_origin = get_origin(inner_type)
 
-                if inner_type == bool:
+                if inner_type is bool:
                     return value.lower() in ['true', 'yes', '1', 'on']
-                elif inner_type == int:
+                elif inner_type is int:
                     return int(value)
-                elif inner_type == float:
+                elif inner_type is float:
                     return float(value)
-                elif inner_type == str:
+                elif inner_type is str:
                     return value
                 elif inner_origin is list:
                     # Handle Optional[List[str]]
@@ -799,7 +776,7 @@ class Config:
                 return [item.strip(' "\'') for item in value.split(',') if item.strip()]
 
         # Handle Dict types
-        elif origin is dict or target_type == dict:
+        elif origin is dict or target_type is dict:
             try:
                 return json.loads(value)
             except json.JSONDecodeError:
@@ -904,15 +881,6 @@ class Config:
         if not self.server.cache_enabled:
             return cache_config
 
-        # Handle legacy cache_settings for backward compatibility
-        legacy_options = {}
-        if self.server.cache_settings:
-            for k, v in self.server.cache_settings.items():
-                # Handle signal to load from environment variable (e.g. for redis password)
-                if isinstance(v, str) and v.startswith("$"):
-                    legacy_options[k] = os.getenv(v[1:])
-                else:
-                    legacy_options[k] = v
 
         # Generate backend-specific configuration
         if self.server.cache_type == "RedisCache":
@@ -945,10 +913,6 @@ class Config:
             if self.server.memcached_password:
                 cache_config["CACHE_MEMCACHED_PASSWORD"] = self.server.memcached_password
 
-        # Merge any legacy options that don't conflict with backend-specific settings
-        if legacy_options and self.server.cache_type not in ["RedisCache", "FileSystemCache", "MemcachedCache"]:
-            # For unknown backends, fall back to CACHE_OPTIONS
-            cache_config["CACHE_OPTIONS"] = legacy_options
 
         return cache_config
 
@@ -1072,6 +1036,13 @@ class Config:
                         merged_schema = base_value.copy()
                         merged_schema.update(override_value)
                         setattr(result, key, merged_schema)
+                # Handle nested dataclasses recursively
+                elif (is_dataclass(base_value) and is_dataclass(override_value) and
+                      type(base_value) is type(override_value)):
+                    # Create a new instance of the dataclass and recursively merge
+                    nested_result = type(base_value)()
+                    merge_dataclass(base_value, override_value, nested_result)
+                    setattr(result, key, nested_result)
                 elif isinstance(override_value, (list, dict)):
                     # For container types, check if they're empty (default)
                     if not override_value:
@@ -1188,7 +1159,7 @@ def load_config(
                 config = config.merge(file_config)
             except Exception as e:
                 click.secho(f"Error loading config file: {e}", fg="bright_red", err=True)
-                raise ConfigurationError(f"Failed to load configuration file: {str(repr(e))}")
+                raise ConfigurationError(f"Failed to load configuration file: {str(repr(e))}") from e
         else:
             if verbose:
                 click.secho("No config file provided, using default configuration", fg="blue", err=True)

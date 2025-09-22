@@ -771,3 +771,181 @@ class TestConfigErrorHandling:
             # Should not raise error, but return empty dict for invalid JSON
             config = Config.from_env()
             # The conversion should handle the error gracefully
+
+
+@pytest.mark.unit
+class TestConfigRefactorFixes:
+    """Test the fixes for config refactoring issues."""
+
+    def test_recursive_dataclass_merge_preserves_nested_settings(self):
+        """Test that nested dataclass merging preserves base settings not overridden."""
+        # Issue 1: Config.merge does shallow merge of nested dataclasses
+        base_config = Config()
+        base_config.server.security.require_api_key = True
+        base_config.server.security.cors_enabled = True
+        base_config.server.security.cors_allowed_origins = ["https://example.com"]
+        base_config.server.security.auth_log_level = "DEBUG"
+
+        override_config = Config()
+        # Only override cors_allowed_origins, not other security settings
+        override_config.server.security.cors_allowed_origins = ["https://override.com"]
+
+        merged = base_config.merge(override_config)
+
+        # Test that recursive merge preserved the base settings
+        assert merged.server.security.require_api_key is True, "Base require_api_key should be preserved"
+        assert merged.server.security.cors_enabled is True, "Base cors_enabled should be preserved"
+        assert merged.server.security.auth_log_level == "DEBUG", "Base auth_log_level should be preserved"
+
+        # Test that override was applied
+        assert merged.server.security.cors_allowed_origins == ["https://override.com"], "Override should be applied"
+
+    def test_recursive_dataclass_merge_multiple_levels(self):
+        """Test recursive merging works with complex nested structures."""
+        base_config = Config()
+        base_config.server.security.require_api_key = True
+        base_config.server.security.cors_allowed_origins = ["https://base.com"]
+        base_config.server.port = 5000
+        base_config.database.root_dir = "/base/db"
+
+        override_config = Config()
+        override_config.server.security.cors_allowed_origins = ["https://override.com"]
+        override_config.server.port = 8080
+        # Don't override database settings
+
+        merged = base_config.merge(override_config)
+
+        # Server.security should be recursively merged
+        assert merged.server.security.require_api_key is True
+        assert merged.server.security.cors_allowed_origins == ["https://override.com"]
+
+        # Server port should be overridden
+        assert merged.server.port == 8080
+
+        # Database should preserve base values
+        assert merged.database.root_dir == "/base/db"
+
+    def test_union_str_list_env_parsing_with_get_origin(self):
+        """Test that Union[str, List[str]] environment parsing works with get_origin()."""
+        # Issue 2: Environment parsing for Union[str, List[str]] fails in Python 3.11+
+
+        # Test JSON array format
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["https://test1.com", "https://test2.com"]'
+        }, clear=True):
+            config = Config.from_env()
+            assert config.server.security.cors_allowed_origins == ["https://test1.com", "https://test2.com"]
+
+        # Test comma-separated format
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://test1.com,https://test2.com"
+        }, clear=True):
+            config = Config.from_env()
+            assert config.server.security.cors_allowed_origins == ["https://test1.com", "https://test2.com"]
+
+        # Test semicolon-separated format (new feature)
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://test1.com;https://test2.com"
+        }, clear=True):
+            config = Config.from_env()
+            assert config.server.security.cors_allowed_origins == ["https://test1.com", "https://test2.com"]
+
+        # Test single string value
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://single.com"
+        }, clear=True):
+            config = Config.from_env()
+            assert config.server.security.cors_allowed_origins == "https://single.com"
+
+        # Test wildcard string
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "*"
+        }, clear=True):
+            config = Config.from_env()
+            assert config.server.security.cors_allowed_origins == "*"
+
+    def test_union_str_list_malformed_json_fallback(self):
+        """Test that malformed JSON falls back to comma-separated parsing."""
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["incomplete json'
+        }, clear=True):
+            config = Config.from_env()
+            # Malformed JSON without comma should be treated as single string
+            assert config.server.security.cors_allowed_origins == '["incomplete json'
+
+        # Test malformed JSON that contains commas - should fall back to comma parsing
+        with patch.dict(os.environ, {
+            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["site1.com", "site2.com"'
+        }, clear=True):
+            config = Config.from_env()
+            # Should fall back to parsing the content as comma-separated
+            # The parsing strips quotes and whitespace from each item
+            assert config.server.security.cors_allowed_origins == ['["site1.com', 'site2.com']
+
+    def test_no_legacy_environment_variables_supported(self):
+        """Test that legacy environment variables are no longer supported."""
+        # Issue 3: Remove legacy configuration handling
+
+        # These legacy env vars should no longer work
+        legacy_env_vars = {
+            "LVDB_HOST": "192.168.1.1",
+            "LVDB_PORT": "9999",
+            "LVDB_LOG_LEVEL": "DEBUG",
+            "LVDB_ROOT_DIR": "/legacy/path"
+        }
+
+        with patch.dict(os.environ, legacy_env_vars, clear=True):
+            config = Config.from_env()
+
+            # These should all be default values, not the legacy env values
+            assert config.server.host == "127.0.0.1"  # default, not 192.168.1.1
+            assert config.server.port == 5000  # default, not 9999
+            assert config.server.log_level == "INFO"  # default, not DEBUG
+            assert config.database.root_dir == "./.lvdb"  # default, not /legacy/path
+
+    def test_no_legacy_security_fields_in_server_section(self):
+        """Test that legacy security fields in server section are no longer supported."""
+        # Issue 3: Legacy handling in from_dict should be removed
+
+        config_data = {
+            "server": {
+                "port": 8080,
+                # These legacy security fields should no longer be automatically mapped
+                "require_api_key": True,
+                "cors_enabled": False,
+                "cors_allowed_origins": ["https://legacy.com"]
+            }
+        }
+
+        config = Config.from_dict(config_data)
+
+        # Port should be set
+        assert config.server.port == 8080
+
+        # Security fields should remain at defaults, not be set from legacy locations
+        assert config.server.security.require_api_key is False  # default
+        assert config.server.security.cors_enabled is True  # default
+        assert config.server.security.cors_allowed_origins == "*"  # default
+
+    def test_proper_nested_security_configuration_still_works(self):
+        """Test that proper nested security configuration still works."""
+        config_data = {
+            "server": {
+                "port": 8080,
+                "security": {
+                    "require_api_key": True,
+                    "cors_enabled": False,
+                    "cors_allowed_origins": ["https://proper.com"]
+                }
+            }
+        }
+
+        config = Config.from_dict(config_data)
+
+        # Port should be set
+        assert config.server.port == 8080
+
+        # Security fields should be properly set from nested structure
+        assert config.server.security.require_api_key is True
+        assert config.server.security.cors_enabled is False
+        assert config.server.security.cors_allowed_origins == ["https://proper.com"]
