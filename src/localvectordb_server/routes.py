@@ -890,6 +890,7 @@ def search_handler(db_name, search_params):
     semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
     document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
     document_scoring_options = search_params.get("document_scoring_options", None)
+    semantic_filters = search_params.get("semantic_filters")
 
     try:
         db = current_app.db_manager.get_db(db_name)
@@ -915,6 +916,85 @@ def search_handler(db_name, search_params):
             document_scoring_options=document_scoring_options
         )
 
+        # Apply semantic filters server-side if provided
+        if semantic_filters:
+            from localvectordb.core import Document
+
+            # Convert results to documents for semantic filtering
+            documents = []
+            for result in results:
+                doc = Document(
+                    id=result.id,
+                    content=result.content,
+                    metadata=result.metadata
+                )
+                doc.metadata["_original_score"] = result.score
+                documents.append(doc)
+
+            # Apply each semantic filter
+            for sem_filter in semantic_filters:
+                field = sem_filter["field"]
+                concept = sem_filter["concept"]
+                threshold = sem_filter.get("threshold", 0.7)
+                metric = sem_filter.get("metric", "cosine")
+
+                # Get field contents for documents
+                field_contents = []
+                valid_docs = []
+                for doc in documents:
+                    if field == "content":
+                        field_contents.append(doc.content)
+                        valid_docs.append(doc)
+                    elif field in doc.metadata and doc.metadata[field]:
+                        field_contents.append(str(doc.metadata[field]))
+                        valid_docs.append(doc)
+
+                if field_contents:
+                    # Generate embeddings using database's embedding provider
+                    embedding_provider = db.embedding_provider
+                    concept_embedding = embedding_provider.embed_sync([concept])[0]
+                    field_embeddings = embedding_provider.embed_sync(field_contents)
+
+                    # Apply similarity filtering based on metric
+                    import numpy as np
+                    filtered_docs = []
+
+                    for doc, field_emb in zip(valid_docs, field_embeddings):
+                        if metric == "cosine":
+                            # Cosine similarity
+                            similarity = np.dot(concept_embedding, field_emb) / (
+                                np.linalg.norm(concept_embedding) * np.linalg.norm(field_emb)
+                            )
+                        elif metric == "euclidean":
+                            # Euclidean distance (convert to similarity)
+                            distance = np.linalg.norm(concept_embedding - field_emb)
+                            similarity = 1 / (1 + distance)
+                        elif metric == "dot":
+                            # Dot product
+                            similarity = np.dot(concept_embedding, field_emb)
+                        else:
+                            similarity = 0.0
+
+                        if similarity >= threshold:
+                            filtered_docs.append(doc)
+
+                    documents = filtered_docs
+
+            # Convert filtered documents back to QueryResult format
+            from localvectordb.core import QueryResult
+            filtered_results = []
+            for doc in documents:
+                score = doc.metadata.pop("_original_score", 0.0)
+                filtered_results.append(QueryResult(
+                    id=doc.id,
+                    score=score,
+                    type="document",
+                    content=doc.content,
+                    metadata=doc.metadata
+                ))
+
+            results = filtered_results
+
         # Serialize results
         serialized_results = [serialize_query_result(result) for result in results]
 
@@ -932,7 +1012,8 @@ def search_handler(db_name, search_params):
             "processing_info": {
                 "context_window": context_window if return_type in ('context', 'enriched') else None,
                 "semantic_dedup_applied": semantic_dedup_threshold is not None,
-                "document_scoring_method": document_scoring_method if return_type == 'documents' else None
+                "document_scoring_method": document_scoring_method if return_type == 'documents' else None,
+                "semantic_filters_applied": len(semantic_filters) if semantic_filters else 0
             }
         })
 
@@ -1018,6 +1099,104 @@ def hybrid_search(db_name):
         # Add search_type to data
         data["search_type"] = "hybrid"
         return search_handler(db_name, data)
+
+
+@api.route("/api/v1/<db_name>/query_builder", methods=["POST"])
+@require_read_permission
+@handle_errors
+@log_performance("query_builder")
+def query_builder_execute(db_name):
+    """Execute a QueryBuilder query with full state from client
+
+    This endpoint allows RemoteVectorDB to send a complete QueryBuilder state
+    for server-side execution, including semantic filters.
+    """
+
+    with request_context("query_builder"):
+        if not request.is_json:
+            raise ValidationError("Request must contain JSON data")
+
+        data = request.get_json()
+        if not data:
+            raise ValidationError("Request body cannot be empty")
+
+        try:
+            db = current_app.db_manager.get_db(db_name)
+
+            # Reconstruct QueryBuilder from state
+            from localvectordb.query_builder import QueryBuilder
+
+            builder = QueryBuilder(db)
+
+            # Apply search clauses
+            search_clauses = data.get("search_clauses", [])
+            for clause in search_clauses:
+                builder = builder.search(
+                    clause["text"],
+                    columns=clause.get("columns"),
+                    search_type=clause.get("search_type", "hybrid")
+                )
+
+            # Apply exact filters
+            exact_filters = data.get("exact_filters", [])
+            for filter_item in exact_filters:
+                builder = builder.filter(filter_item["field"], **filter_item["conditions"])
+
+            # Apply semantic filters
+            semantic_filters = data.get("semantic_filters", [])
+            for sem_filter in semantic_filters:
+                builder = builder.semantic_filter(
+                    sem_filter["field"],
+                    sem_filter["concept"],
+                    threshold=sem_filter.get("threshold", 0.7),
+                    metric=sem_filter.get("metric", "cosine")
+                )
+
+            # Apply other builder settings
+            if "search_type" in data:
+                builder._search_type = data["search_type"]
+
+            if "vector_weight" in data:
+                builder._vector_weight = data["vector_weight"]
+
+            if "return_type" in data:
+                builder._return_type = data["return_type"]
+
+            if "order_by" in data:
+                for order in data["order_by"]:
+                    builder = builder.order_by(order["field"], order.get("direction", "asc"))
+
+            if "limit" in data:
+                builder = builder.limit(data["limit"])
+
+            if "offset" in data:
+                builder = builder.offset(data["offset"])
+
+            if "group_by" in data:
+                builder = builder.group_by(*data["group_by"])
+
+            if "aggregations" in data:
+                for agg in data["aggregations"]:
+                    builder = builder.aggregate(agg["field"], agg["function"], agg.get("alias"))
+
+            # Execute the query
+            results = builder.execute()
+
+            # Serialize results
+            serialized_results = [serialize_query_result(result) for result in results]
+
+            db_logger.log_query("query_builder_success",
+                              database_name=db_name,
+                              result_count=len(serialized_results))
+
+            return jsonify({
+                "results": serialized_results,
+                "total_results": len(serialized_results)
+            })
+
+        except Exception as e:
+            db_logger.log_error("query_builder", e, database_name=db_name)
+            raise
 
 
 @api.route("/api/v1/<db_name>/query-multi-column", methods=["POST"])

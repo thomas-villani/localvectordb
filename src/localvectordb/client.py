@@ -153,12 +153,237 @@ from localvectordb.sqlite_tuning import SqliteProfile
 logger = logging.getLogger(__name__)
 
 
+class RemoteQueryBuilder:
+    """
+    Remote query builder that serializes state for server-side execution.
+
+    This class provides the same fluent API as the local QueryBuilder but
+    instead of executing queries locally, it sends the complete query state
+    to the server for processing. This eliminates the need for client-side
+    embedding operations.
+
+    Parameters
+    ----------
+    db : RemoteVectorDB
+        The RemoteVectorDB instance to execute queries against
+
+    Examples
+    --------
+    Basic query with filters::
+
+        results = (db.query_builder()
+            .search("machine learning")
+            .filter("year", gte_=2020)
+            .semantic_filter("methodology", "neural networks", threshold=0.8)
+            .order_by("relevance", "desc")
+            .limit(10)
+            .execute())
+    """
+
+    def __init__(self, db: "RemoteVectorDB"):
+        """Initialize the RemoteQueryBuilder."""
+        self._db = db
+        self._search_clauses = []
+        self._exact_filters = []
+        self._semantic_filters = []
+        self._search_type = "hybrid"
+        self._vector_weight = 0.7
+        self._return_type = "documents"
+        self._order_by = []
+        self._limit = 10
+        self._offset = 0
+        self._group_by = []
+        self._aggregations = []
+
+    def clone(self) -> "RemoteQueryBuilder":
+        """Create a copy of the current builder state."""
+        new_builder = RemoteQueryBuilder(self._db)
+        new_builder._search_clauses = self._search_clauses.copy()
+        new_builder._exact_filters = self._exact_filters.copy()
+        new_builder._semantic_filters = self._semantic_filters.copy()
+        new_builder._search_type = self._search_type
+        new_builder._vector_weight = self._vector_weight
+        new_builder._return_type = self._return_type
+        new_builder._order_by = self._order_by.copy()
+        new_builder._limit = self._limit
+        new_builder._offset = self._offset
+        new_builder._group_by = self._group_by.copy()
+        new_builder._aggregations = self._aggregations.copy()
+        return new_builder
+
+    def search(
+        self,
+        text: str,
+        columns: Optional[List[str]] = None,
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
+    ) -> "RemoteQueryBuilder":
+        """Add a search clause to the query."""
+        builder = self.clone()
+        builder._search_clauses.append({
+            "text": text,
+            "columns": columns,
+            "search_type": search_type
+        })
+        return builder
+
+    def filter(self, field: str, **conditions) -> "RemoteQueryBuilder":
+        """Add an exact filter to the query."""
+        builder = self.clone()
+        builder._exact_filters.append({
+            "field": field,
+            "conditions": conditions
+        })
+        return builder
+
+    def semantic_filter(
+        self,
+        field: str,
+        concept: str,
+        threshold: float = 0.7,
+        metric: Literal["cosine", "euclidean", "dot"] = "cosine"
+    ) -> "RemoteQueryBuilder":
+        """
+        Add a semantic filter to the query.
+
+        The semantic filtering is performed server-side using the database's
+        configured embedding provider.
+
+        Parameters
+        ----------
+        field : str
+            The field to filter on ('content' for main text or metadata field name)
+        concept : str
+            The concept to match against
+        threshold : float
+            Minimum similarity score (0.0 to 1.0)
+        metric : Literal["cosine", "euclidean", "dot"]
+            Similarity metric to use
+
+        Returns
+        -------
+        RemoteQueryBuilder
+            A new builder with the semantic filter added
+        """
+        if threshold < 0 or threshold > 1:
+            raise ValueError("Threshold must be between 0 and 1")
+
+        builder = self.clone()
+        builder._semantic_filters.append({
+            "field": field,
+            "concept": concept,
+            "threshold": threshold,
+            "metric": metric
+        })
+        return builder
+
+    def order_by(self, field: str, direction: Literal["asc", "desc"] = "asc") -> "RemoteQueryBuilder":
+        """Add ordering to the query."""
+        builder = self.clone()
+        builder._order_by.append({
+            "field": field,
+            "direction": direction
+        })
+        return builder
+
+    def limit(self, n: int) -> "RemoteQueryBuilder":
+        """Set the maximum number of results."""
+        builder = self.clone()
+        builder._limit = n
+        return builder
+
+    def offset(self, n: int) -> "RemoteQueryBuilder":
+        """Set the result offset for pagination."""
+        builder = self.clone()
+        builder._offset = n
+        return builder
+
+    def group_by(self, *fields: str) -> "RemoteQueryBuilder":
+        """Group results by fields."""
+        builder = self.clone()
+        builder._group_by = list(fields)
+        return builder
+
+    def aggregate(
+        self,
+        field: str,
+        function: Literal["count", "sum", "avg", "min", "max"],
+        alias: Optional[str] = None
+    ) -> "RemoteQueryBuilder":
+        """Add an aggregation to the query."""
+        builder = self.clone()
+        builder._aggregations.append({
+            "field": field,
+            "function": function,
+            "alias": alias
+        })
+        return builder
+
+    def with_search_type(self, search_type: Literal["vector", "keyword", "hybrid"]) -> "RemoteQueryBuilder":
+        """Set the default search type."""
+        builder = self.clone()
+        builder._search_type = search_type
+        return builder
+
+    def with_vector_weight(self, weight: float) -> "RemoteQueryBuilder":
+        """Set the vector weight for hybrid search."""
+        builder = self.clone()
+        builder._vector_weight = weight
+        return builder
+
+    def with_return_type(
+        self,
+        return_type: Literal["documents", "chunks", "context"]
+    ) -> "RemoteQueryBuilder":
+        """Set the return type."""
+        builder = self.clone()
+        builder._return_type = return_type
+        return builder
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the builder state to a dictionary."""
+        return {
+            "search_clauses": self._search_clauses,
+            "exact_filters": self._exact_filters,
+            "semantic_filters": self._semantic_filters,
+            "search_type": self._search_type,
+            "vector_weight": self._vector_weight,
+            "return_type": self._return_type,
+            "order_by": self._order_by,
+            "limit": self._limit,
+            "offset": self._offset,
+            "group_by": self._group_by,
+            "aggregations": self._aggregations
+        }
+
+    def execute(self) -> List[QueryResult]:
+        """
+        Execute the query on the server.
+
+        Returns
+        -------
+        List[QueryResult]
+            The query results
+        """
+        return self._db._execute_query_builder(self.to_dict())
+
+    async def execute_async(self) -> List[QueryResult]:
+        """
+        Execute the query on the server asynchronously.
+
+        Returns
+        -------
+        List[QueryResult]
+            The query results
+        """
+        return await self._db._execute_query_builder_async(self.to_dict())
+
+
 class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
     """Embedding provider that proxies requests to a LocalVectorDB server.
 
     This provider mimics the interface of local embedding providers but makes
-    HTTP requests to the server's embedding endpoint. This allows RemoteVectorDB
-    to seamlessly support semantic filtering and other embedding-dependent features.
+    HTTP requests to the server's embedding endpoint. This provides API parity
+    with LocalVectorDB while keeping all embedding operations server-side.
 
     Parameters
     ----------
@@ -250,22 +475,22 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
                 data = response.json()
 
                 if "error" in data:
-                    raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+                    raise RuntimeError(f"Server error: {data['error']['message']}")
 
                 embeddings = [item["embedding"] for item in data["data"]]
                 return embeddings
         else:
             # Use provided client
             response = await client.post(url,
-                                         headers=headers,
-                                         json=payload,
-                                         timeout=self.timeout
-                                         )
+                                        headers=headers,
+                                        json=payload,
+                                        timeout=self.timeout
+                                        )
             response.raise_for_status()
             data = response.json()
 
             if "error" in data:
-                raise RuntimeError(f"OpenAI error: {data['error']['message']}")
+                raise RuntimeError(f"Server error: {data['error']['message']}")
 
             embeddings = [item["embedding"] for item in data["data"]]
             return embeddings
@@ -619,7 +844,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
     @property
     def embedding_provider(self) -> EmbeddingProvider:
-        """Return the remote embedding provider instance."""
+        """Return the remote embedding provider instance.
+
+        This provider proxies embedding requests to the server, providing
+        API parity with LocalVectorDB while keeping operations server-side.
+        """
         return self._remote_embedding_provider
 
     @property
@@ -1612,6 +1841,86 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Process results
         raw_docs = result.get("documents", [])
         return [Document.from_dict(doc) for doc in raw_docs]
+
+    def query_builder(self) -> RemoteQueryBuilder:
+        """
+        Create a new RemoteQueryBuilder for this database.
+
+        The RemoteQueryBuilder provides a fluent API for building complex queries
+        that are executed server-side, including semantic filters.
+
+        Returns
+        -------
+        RemoteQueryBuilder
+            A new query builder instance
+
+        Examples
+        --------
+        Basic query with semantic filter::
+
+            results = (db.query_builder()
+                .search("machine learning")
+                .filter("year", gte_=2020)
+                .semantic_filter("methodology", "neural networks", threshold=0.8)
+                .limit(10)
+                .execute())
+
+        Complex multi-criteria query::
+
+            results = (db.query_builder()
+                .search("quantum computing", search_type="hybrid")
+                .filter("publication_type", "paper")
+                .filter("citations", gte_=50)
+                .semantic_filter("approach", "quantum machine learning", threshold=0.75)
+                .order_by("publication_date", "desc")
+                .limit(25)
+                .execute())
+        """
+        return RemoteQueryBuilder(self)
+
+    def _execute_query_builder(self, query_state: Dict[str, Any]) -> List[QueryResult]:
+        """
+        Execute a query builder request on the server.
+
+        Parameters
+        ----------
+        query_state : Dict[str, Any]
+            The serialized query builder state
+
+        Returns
+        -------
+        List[QueryResult]
+            The query results
+        """
+        url = self._build_url(f"/api/v1/{self.name}/query_builder")
+        response = self._make_request_with_retry("POST", url, json=query_state)
+        result = self._handle_response(response)
+
+        # Process results
+        raw_results = result.get("results", [])
+        return [QueryResult.from_dict(res) for res in raw_results]
+
+    async def _execute_query_builder_async(self, query_state: Dict[str, Any]) -> List[QueryResult]:
+        """
+        Execute a query builder request on the server asynchronously.
+
+        Parameters
+        ----------
+        query_state : Dict[str, Any]
+            The serialized query builder state
+
+        Returns
+        -------
+        List[QueryResult]
+            The query results
+        """
+        url = self._build_url(f"/api/v1/{self.name}/query_builder")
+        response = await self._make_async_request_with_retry("POST", url, json=query_state)
+        result = self._handle_response(response)
+
+        # Process results
+        raw_results = result.get("results", [])
+        return [QueryResult.from_dict(res) for res in raw_results]
 
     def save(self):
         """Save the database (no-op for remote client)"""

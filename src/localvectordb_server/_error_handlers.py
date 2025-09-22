@@ -392,6 +392,48 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
                               field="document_scoring_options",
                               value=document_scoring_options)
 
+    # Validate semantic_filters
+    semantic_filters = data.get("semantic_filters")
+    if semantic_filters is not None:
+        if not isinstance(semantic_filters, list):
+            raise ValidationError("semantic_filters must be a list",
+                                field="semantic_filters",
+                                value=semantic_filters)
+
+        for idx, filter_item in enumerate(semantic_filters):
+            if not isinstance(filter_item, dict):
+                raise ValidationError(f"semantic_filters[{idx}] must be a dictionary",
+                                    field=f"semantic_filters[{idx}]",
+                                    value=filter_item)
+
+            # Check required fields
+            if "field" not in filter_item:
+                raise ValidationError(f"semantic_filters[{idx}] missing required field 'field'",
+                                    field=f"semantic_filters[{idx}]")
+
+            if "concept" not in filter_item:
+                raise ValidationError(f"semantic_filters[{idx}] missing required field 'concept'",
+                                    field=f"semantic_filters[{idx}]")
+
+            # Validate threshold
+            threshold = filter_item.get("threshold", 0.7)
+            if not isinstance(threshold, (int, float)):
+                raise ValidationError(f"semantic_filters[{idx}].threshold must be a number",
+                                    field=f"semantic_filters[{idx}].threshold",
+                                    value=threshold)
+
+            if threshold < 0.0 or threshold > 1.0:
+                raise ValidationError(f"semantic_filters[{idx}].threshold must be between 0.0 and 1.0",
+                                    field=f"semantic_filters[{idx}].threshold",
+                                    value=threshold)
+
+            # Validate metric
+            metric = filter_item.get("metric", "cosine")
+            if metric not in ["cosine", "euclidean", "dot"]:
+                raise ValidationError(f"semantic_filters[{idx}].metric must be one of: cosine, euclidean, dot",
+                                    field=f"semantic_filters[{idx}].metric",
+                                    value=metric)
+
     return data
 
 
