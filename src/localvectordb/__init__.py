@@ -126,7 +126,7 @@ Embedding Providers
 - **Plugin System**: Extensible via entry points
 
 Chunking Strategies
-------------------
+-------------------
 - **Sentences**: Split by sentence boundaries (default)
 - **Tokens**: Split by token count using tiktoken
 - **Words**: Split by word boundaries

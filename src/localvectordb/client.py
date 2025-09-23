@@ -412,16 +412,23 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
     def __init__(
             self,
             model: str,
+            *,
             provider: str,
             dimension: int,
             base_url: str,
             api_key: Optional[str] = None,
-            timeout=90, max_retries=3,
+            timeout=90,
+            max_retries=3,
             retry_delay=1.0,
             max_concurrent_requests=5,
             authorization_header="Authorization"
             ):
-        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
+        super().__init__(model,
+                         timeout=timeout,
+                         max_retries=max_retries,
+                         retry_delay=retry_delay,
+                         base_url=base_url,
+                         max_concurrent_requests=max_concurrent_requests)
 
         self._provider = provider
         self._model_name = model

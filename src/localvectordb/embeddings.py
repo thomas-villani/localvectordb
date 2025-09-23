@@ -36,6 +36,7 @@ class EmbeddingProvider(ABC):
     def __init__(
             self,
             model: str,
+            *,
             timeout: int = 90,
             max_retries: int = 3,
             retry_delay: float = 1.0,
@@ -239,13 +240,14 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
     def __init__(self,
                  model: str,
-                 base_url: Optional[str] = None,
+                 *,
                  timeout: int = 90,
                  max_retries: int = 3,
                  retry_delay: float = 1.0,
                  max_concurrent_requests: int = 5,
+                 base_url: Optional[str] = None,
                  **kwargs: Any):
-        self.base_url = base_url
+        self.base_url: Optional[str] = base_url
         super().__init__(model,
                          timeout=timeout,
                          max_retries=max_retries,
@@ -346,7 +348,6 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         The async httpx client is passed in as the `client` kwarg."""
         pass
 
-# NOTE: OLLAMA_HOST is meant to tell ollama how to serve (e.g. 127.0.0.1 vs. 0.0.0.0) so we should choose a different var.
 class OllamaEmbeddings(HTTPEmbeddingProvider):
     """Ollama embedding provider.
 
@@ -356,7 +357,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         The OpenAI model to use for embeddding
     base_url : str
         The base url for the ollama server (default for Ollama install is http://localhost:11434)
-        Alternatively, you can set the `OLLAMA_HOST` environment variable.
+        Alternatively, you can set the `OLLAMA_URL` environment variable.
     timeout : int, default = 90
         Timeout in seconds for the http request
     max_retries : int, default = 3
@@ -370,13 +371,22 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     _model_info_cache: Dict[str, List[Dict]] = {}
 
     def __init__(
-            self, model: str, base_url: Optional[str] = None, timeout: int = 300, max_retries: int = 3,
+            self,
+            model: str,
+            *,
+            timeout: int = 300,
+            max_retries: int = 3,
             retry_delay: float = 1.0,
-            max_concurrent_requests: int = 3
+            max_concurrent_requests: int = 3,
+            base_url: Optional[str] = None,
             ) -> None:
-        super().__init__(model, base_url=base_url, timeout=timeout, max_retries=max_retries,
-                         retry_delay=retry_delay, max_concurrent_requests=max_concurrent_requests)
-        effective_base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        super().__init__(model,
+                         timeout=timeout,
+                         max_retries=max_retries,
+                         retry_delay=retry_delay,
+                         max_concurrent_requests=max_concurrent_requests,
+                         base_url=base_url)
+        effective_base_url = base_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.base_url = (effective_base_url or "http://localhost:11434").rstrip('/')
         self._validated = False
 
@@ -537,11 +547,19 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
     """
 
     def __init__(
-            self, model: str, api_key: Optional[str] = None, timeout: int = 90, max_retries: int = 3,
+            self,
+            model: str,
+            *,
+            timeout: int = 90,
+            max_retries: int = 3,
             retry_delay: float = 1.0,
-            max_concurrent_requests: int = 5
+            max_concurrent_requests: int = 5,
+            api_key: Optional[str] = None,
+            base_url: Optional[str] = None,
             ) -> None:
-        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests)
+        super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay,
+                         max_concurrent_requests=max_concurrent_requests,
+                         base_url=base_url)
 
         if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
             api_key = os.getenv(api_key[1:])
@@ -683,20 +701,26 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
     def __init__(
             self,
             model: str = "gemini-embedding-001",
-            api_key: Optional[str] = None,
-            task_type: Literal["semantic_similarity", "classification", "clustering", "retrieval_document",
-            "retrieval_query", "code_retrieval_query", "question_answering",
-            "fact_verification"] = "semantic_similarity",
-            requested_dimensions: Optional[int] = None,
-            normalize: bool = True,
-            base_url: Optional[str] = None,
+            *,
             timeout: int = 90,
             max_retries: int = 3,
             retry_delay: float = 1.0,
             max_concurrent_requests: int = 5,
+            api_key: Optional[str] = None,
+            task_type: Literal["semantic_similarity", "classification", "clustering", "retrieval_document",
+                               "retrieval_query", "code_retrieval_query", "question_answering",
+                               "fact_verification"] = "semantic_similarity",
+            requested_dimensions: Optional[int] = None,
+            normalize: bool = True,
+            base_url: Optional[str] = None,
             **kwargs: Any,
     ) -> None:
-        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests,
+        super().__init__(model,
+                         timeout=timeout,
+                         max_retries=max_retries,
+                         retry_delay=retry_delay,
+                         max_concurrent_requests=max_concurrent_requests,
+                         base_url=base_url,
                          **kwargs)
 
         # Resolve API key (param or env)
@@ -977,18 +1001,23 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
     def __init__(
             self,
             model: str,
+            *,
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5,
             api_key: Optional[str] = None,
             task: Optional[str] = "auto",
             truncate: bool = False,
             late_chunking: bool = False,
             requested_dimensions: Optional[int] = None,
-            timeout: int = 90,
-            max_retries: int = 3,
-            retry_delay: float = 1.0,
-            max_concurrent_requests: int = 5,
             **kwargs: Any
     ) -> None:
-        super().__init__(model, timeout, max_retries, retry_delay, max_concurrent_requests=max_concurrent_requests,
+        super().__init__(model,
+                         timeout=timeout,
+                         max_retries=max_retries,
+                         retry_delay=retry_delay,
+                         max_concurrent_requests=max_concurrent_requests,
                          **kwargs)
 
         # Resolve API key from env if formatted as "$ENVVAR"
@@ -1176,7 +1205,7 @@ class MockEmbeddings(EmbeddingProvider):
             self, model: str, dimension: int = 384, timeout: int = 90, max_retries: int = 3, retry_delay: float = 1.0,
             **kwargs: Any
             ) -> None:
-        super().__init__(model, timeout, max_retries, retry_delay, **kwargs)
+        super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay, **kwargs)
         self._dimension: int = dimension
         self.number_of_calls = 0
 

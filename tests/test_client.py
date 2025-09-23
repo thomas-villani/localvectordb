@@ -330,7 +330,7 @@ class TestRemoteVectorDBDocumentOperations:
 
     def test_delete_documents(self, mock_httpx_client, mock_db):
         """Test deleting documents."""
-        mock_httpx_client.request.return_value.json.return_value = {"deleted_count": 1}
+        mock_httpx_client.request.return_value.json.return_value = {"deleted_count": 2}
 
         result = mock_db.delete(["doc_1", "doc_2"])
 
