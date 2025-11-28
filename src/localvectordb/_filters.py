@@ -32,6 +32,40 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DatabaseError
 
+# Pattern for valid SQL identifiers (alphanumeric and underscores, starting with letter or underscore)
+_SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
+def _validate_and_quote_identifier(name: str) -> str:
+    """Validate and quote a SQL identifier for safe use in queries.
+
+    This function validates the identifier against a strict pattern and
+    wraps it in double quotes with proper escaping for defense in depth.
+
+    Parameters
+    ----------
+    name : str
+        The identifier to validate and quote
+
+    Returns
+    -------
+    str
+        The safely quoted identifier (e.g., '"field_name"')
+
+    Raises
+    ------
+    DatabaseError
+        If the identifier contains unsafe characters
+    """
+    if not _SAFE_IDENTIFIER_PATTERN.match(name):
+        raise DatabaseError(
+            f"Invalid SQL identifier '{name}': must contain only alphanumeric "
+            "characters and underscores, and start with a letter or underscore"
+        )
+    # Escape any embedded double quotes (shouldn't happen due to validation, but defense in depth)
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
+
 FILTER_OPERATORS = (
     '$eq',
     '$ne',
@@ -466,10 +500,6 @@ class FilterQueryBuilder:
         if direction not in ('ASC', 'DESC'):
             raise DatabaseError("ORDER BY direction must be ASC or DESC")
 
-        # Validate field name format (prevent injection)
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', field_name):
-            raise DatabaseError(f"Invalid field name format: {field_name}")
-
         # Determine valid columns
         if valid_columns is None:
             valid_columns = set(self.RESERVED_COLUMNS)
@@ -479,8 +509,8 @@ class FilterQueryBuilder:
         if field_name not in valid_columns:
             raise DatabaseError(f"Field '{field_name}' not found in schema. Valid fields: {sorted(valid_columns)}")
 
-        # Quote the field name for SQL safety and return
-        quoted_field = f'"{field_name}"'
+        # Validate and quote the field name for SQL safety (includes format validation)
+        quoted_field = _validate_and_quote_identifier(field_name)
         return f"ORDER BY {quoted_field} {direction}"
 
     def build_where_clause(self, filter_spec: Dict[str, Any]) -> Tuple[str, List[Any]]:

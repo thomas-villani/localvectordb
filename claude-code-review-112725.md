@@ -10,6 +10,8 @@
 
 | Date | Issue # | Description | Resolution |
 |------|---------|-------------|------------|
+| 2025-11-28 | #1 | SQL Injection in ORDER BY Clause | FIXED - Added `_validate_and_quote_identifier()` helper to `_filters.py` with validation and defense-in-depth escaping |
+| 2025-11-28 | #2 | SQL Injection in DDL Statements | FIXED - Added `quote_sql_identifier()` helper to `_schema.py` and applied to all DDL statements (ALTER TABLE, CREATE INDEX, DROP INDEX, UPDATE) |
 | 2025-11-28 | #3 | SQL Injection in Database Package | FIXED - Added `_validate_sql_identifier()` and `_quote_identifier()` helpers to validate and safely quote field names in UPDATE statements |
 | 2025-11-27 | #12 | Type Confusion in SQLite Type Converter | FIXED - Returns `Optional[datetime]` (None on parse failure) with warning log |
 | 2025-11-27 | #13 | Race Condition in Connection Pool | VERIFIED OK - Lock is already held during entire pop-validate-return sequence |
@@ -53,7 +55,7 @@ This comprehensive code review examined the LocalVectorDB library ahead of its v
 
 ## Critical Security Issues
 
-### 1. SQL Injection Vulnerability in ORDER BY Clause Construction
+### 1. SQL Injection Vulnerability in ORDER BY Clause Construction - **[FIXED 2025-11-28]**
 
 **File:** `src/localvectordb/_filters.py`
 **Line:** 484
@@ -70,9 +72,15 @@ While there is regex validation (`r'^[A-Za-z_][A-Za-z0-9_]*$'`), the double-quot
 
 **Recommendation:** Use parameterized queries or a whitelist approach. Since SQLite doesn't support parameterized identifiers, use a more robust escaping mechanism or enforce stricter validation.
 
+**Resolution:** Added `_validate_and_quote_identifier()` helper function to `_filters.py` that:
+- Validates field names against strict pattern `^[a-zA-Z_][a-zA-Z0-9_]*$`
+- Raises `DatabaseError` for invalid identifiers
+- Quotes identifiers with double quotes and escapes embedded quotes (defense in depth)
+Applied to `build_order_by_clause()` method. All 60 filter-related tests pass.
+
 ---
 
-### 2. SQL Injection Risk in Dynamic DDL Statements
+### 2. SQL Injection Risk in Dynamic DDL Statements - **[FIXED 2025-11-28]**
 
 **File:** `src/localvectordb/_schema.py`
 **Lines:** 873, 888, 903-904, 1305, 1480-1504
@@ -88,6 +96,17 @@ conn.execute(ddl)
 - Use quoted identifiers consistently
 - Consider using a SQL builder library
 - Add integration tests that attempt malicious field names
+
+**Resolution:** Added `quote_sql_identifier()` helper function to `_schema.py` that:
+- Validates identifiers via existing `validate_sql_identifier()` function
+- Quotes identifiers with double quotes and escapes embedded quotes (defense in depth)
+Applied to all DDL statements including:
+- ALTER TABLE ADD COLUMN (sync and async)
+- CREATE INDEX IF NOT EXISTS (multiple locations)
+- DROP INDEX IF EXISTS
+- ALTER TABLE DROP COLUMN
+- UPDATE statements for column transfers and default population
+All 72 database tests pass (49 sync + 23 async).
 
 ---
 
@@ -1067,7 +1086,7 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 
 | Issue | Description | Files | Status |
 |-------|-------------|-------|--------|
-| SQL Injection | Parameterize or quote all dynamic SQL identifiers | `_filters.py`, `_schema.py`, ~~`_crud.py`~~, `routes.py` | PARTIAL (**`_crud.py` FIXED**) |
+| SQL Injection | Parameterize or quote all dynamic SQL identifiers | ~~`_filters.py`~~, ~~`_schema.py`~~, ~~`_crud.py`~~, `routes.py` | PARTIAL (**`_crud.py`, `_filters.py`, `_schema.py` FIXED**) |
 | ~~XXE Protection~~ | ~~Add defusedxml, disable external entities~~ | ~~`web_extractors.py`~~ | **FIXED** |
 | ~~File Size Limits~~ | ~~Add configurable limits to all extractors~~ | ~~All extractor files~~ | **FIXED** |
 | ZIP Bomb Protection | Add decompression limits | `office_extractors.py`, `other_extractors.py` | PENDING |

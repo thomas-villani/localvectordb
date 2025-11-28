@@ -87,6 +87,39 @@ def validate_sql_identifier(identifier: str) -> None:
         raise ValueError(f"SQL identifier '{identifier}' is a reserved word")
 
 
+def quote_sql_identifier(identifier: str) -> str:
+    """
+    Validate and quote a SQL identifier for safe use in DDL operations.
+
+    This function first validates the identifier, then wraps it in double quotes
+    with proper escaping for defense in depth.
+
+    Parameters
+    ----------
+    identifier : str
+        The identifier to validate and quote
+
+    Returns
+    -------
+    str
+        The safely quoted identifier (e.g., '"field_name"')
+
+    Raises
+    ------
+    ValueError
+        If the identifier is not safe for SQL DDL operations
+
+    Examples
+    --------
+    >>> quote_sql_identifier("my_field")
+    '"my_field"'
+    """
+    validate_sql_identifier(identifier)
+    # Escape any embedded double quotes (shouldn't happen due to validation, but defense in depth)
+    escaped = identifier.replace('"', '""')
+    return f'"{escaped}"'
+
+
 class DatabaseSchema:
     """
     Manages the SQLite database schema for LocalVectorDB, including support for custom document metadata fields.
@@ -468,8 +501,9 @@ class DatabaseSchema:
         for (indexed_field,) in cursor.fetchall():
             if indexed_field in current_columns:
                 try:
+                    quoted_field = quote_sql_identifier(indexed_field)
                     index_name = f'idx_documents_{indexed_field}'
-                    conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({indexed_field})')
+                    conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})')
                 except Exception as e:
                     logger.warning(f"Failed to recreate index for {indexed_field}: {e}")
 
@@ -547,8 +581,9 @@ class DatabaseSchema:
         cursor = conn.execute("SELECT field_name FROM metadata_schema WHERE indexed = 1")
         for (indexed_field,) in cursor.fetchall():
             try:
+                quoted_field = quote_sql_identifier(indexed_field)
                 index_name = f'idx_documents_{indexed_field}'
-                conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({indexed_field})')
+                conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})')
             except Exception as e:
                 logger.warning(f"Failed to recreate index for {indexed_field}: {e}")
 
@@ -868,9 +903,10 @@ class DatabaseSchema:
         existing_columns = {row[1] for row in cursor.fetchall()}
 
         if field_name not in existing_columns:
-            # Build and execute column addition
+            # Build and execute column addition with quoted identifier
+            quoted_field = quote_sql_identifier(field_name)
             default_clause = self._build_default_clause(field_def)
-            ddl = f'ALTER TABLE documents ADD COLUMN {field_name} {sqlite_type}{default_clause}'
+            ddl = f'ALTER TABLE documents ADD COLUMN {quoted_field} {sqlite_type}{default_clause}'
             conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
@@ -885,10 +921,11 @@ class DatabaseSchema:
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
-                conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+                conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})')
 
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
+                # FTS table names are also validated via field_name validation above
                 fts_table_name = f'fts_{field_name}'
 
                 # Check tokenizer availability and build FTS SQL
@@ -1184,13 +1221,14 @@ class DatabaseSchema:
 
                                     # Handle index changes
                                     if 'indexed' in change_details:
+                                        quoted_field = quote_sql_identifier(field_name)
                                         if field_def.indexed:
                                             # Add index
                                             index_name = f'idx_documents_{field_name}'
                                             try:
                                                 conn.execute(
                                                     f'CREATE INDEX IF NOT EXISTS {index_name} '
-                                                    f'ON documents({field_name})')
+                                                    f'ON documents({quoted_field})')
                                             except Exception as e:
                                                 changes['errors'].append(
                                                     f"Failed to create index on '{field_name}': {str(e)}")
@@ -1275,16 +1313,18 @@ class DatabaseSchema:
                                         existing_columns = {row[1] for row in cursor.fetchall()}
 
                                         if field_name in existing_columns:
+                                            # Validate field_name for safe use in DDL
+                                            validate_sql_identifier(field_name)
                                             # First drop any FTS triggers and tables
                                             current_field = current_schema.get(field_name)
                                             if current_field and getattr(current_field, 'fts_enabled', False):
                                                 fts_table_name = f'fts_{field_name}'
                                                 try:
-                                                    # Drop FTS triggers
+                                                    # Drop FTS triggers (trigger names are derived from validated field_name)
                                                     conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_insert')
                                                     conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_update')
                                                     conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_delete')
-                                                    # Drop FTS table
+                                                    # Drop FTS table (table name derived from validated field_name)
                                                     conn.execute(f'DROP TABLE IF EXISTS {fts_table_name}')
                                                     logger.debug(f"Dropped FTS triggers and table for '{field_name}'")
                                                 except Exception as e:
@@ -1301,8 +1341,9 @@ class DatabaseSchema:
 
                                             # Now drop the column - use native DROP COLUMN if supported,
                                             # otherwise rebuild table
+                                            quoted_field = quote_sql_identifier(field_name)
                                             if self._supports_drop_column(conn):
-                                                conn.execute(f'ALTER TABLE documents DROP COLUMN {field_name}')
+                                                conn.execute(f'ALTER TABLE documents DROP COLUMN {quoted_field}')
                                                 logger.info(f"Dropped column '{field_name}' using native DROP COLUMN")
                                             else:
                                                 self._rebuild_table_for_column_drop(conn, field_name)
@@ -1472,36 +1513,39 @@ class DatabaseSchema:
     ) -> str:
         """Generate SQL for transferring data between columns with type conversion.
 
-        **Warning:** input must be pre-validated before using this function.
+        Validates and quotes column identifiers for SQL safety.
         """
+        # Validate and quote column identifiers
+        quoted_new = quote_sql_identifier(new_col)
+        quoted_old = quote_sql_identifier(old_col)
 
         if old_type == new_type:
             # Direct copy for same types
-            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = {quoted_old} WHERE {quoted_old} IS NOT NULL"
 
         elif old_type == MetadataFieldType.TEXT:
             # TEXT to other types - direct copy (SQLite will handle conversion)
-            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = {quoted_old} WHERE {quoted_old} IS NOT NULL"
 
         elif old_type == MetadataFieldType.INTEGER and new_type == MetadataFieldType.REAL:
             # Integer to real - direct copy
-            return f"UPDATE documents SET {new_col} = CAST({old_col} AS REAL) WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = CAST({quoted_old} AS REAL) WHERE {quoted_old} IS NOT NULL"
 
         elif old_type == MetadataFieldType.BOOLEAN and new_type == MetadataFieldType.INTEGER:
             # Boolean to integer
-            return f"UPDATE documents SET {new_col} = CAST({old_col} AS INTEGER) WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = CAST({quoted_old} AS INTEGER) WHERE {quoted_old} IS NOT NULL"
 
         elif old_type == MetadataFieldType.BOOLEAN and new_type == MetadataFieldType.REAL:
             # Boolean to real
-            return f"UPDATE documents SET {new_col} = CAST({old_col} AS REAL) WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = CAST({quoted_old} AS REAL) WHERE {quoted_old} IS NOT NULL"
 
         elif old_type == MetadataFieldType.JSON and new_type == MetadataFieldType.TEXT:
             # JSON to text - direct copy (it's already stored as text in SQLite)
-            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = {quoted_old} WHERE {quoted_old} IS NOT NULL"
 
         else:
             # Default case - try direct copy and let SQLite handle it
-            return f"UPDATE documents SET {new_col} = {old_col} WHERE {old_col} IS NOT NULL"
+            return f"UPDATE documents SET {quoted_new} = {quoted_old} WHERE {quoted_old} IS NOT NULL"
 
     @staticmethod
     def _populate_field_defaults(
@@ -1521,9 +1565,10 @@ class DatabaseSchema:
         else:
             default_value = field_def.default_value
 
-        # Update existing documents with the default value
+        # Update existing documents with the default value (use quoted identifier)
+        quoted_field = quote_sql_identifier(field_name)
         cursor = conn.execute(
-            f"UPDATE documents SET {field_name} = ? WHERE {field_name} IS NULL",
+            f"UPDATE documents SET {quoted_field} = ? WHERE {quoted_field} IS NULL",
             (default_value,)
         )
 
@@ -1567,9 +1612,10 @@ class DatabaseSchema:
         existing_columns = {row[1] for row in await cursor.fetchall()}
 
         if field_name not in existing_columns:
-            # Build and execute column addition using shared business logic
+            # Build and execute column addition with quoted identifier
+            quoted_field = quote_sql_identifier(field_name)
             default_clause = self._build_default_clause(field_def)
-            ddl = f'ALTER TABLE documents ADD COLUMN {field_name} {sqlite_type}{default_clause}'
+            ddl = f'ALTER TABLE documents ADD COLUMN {quoted_field} {sqlite_type}{default_clause}'
             await conn.execute(ddl)
 
             logger.info(f"Added new column: {field_name} {sqlite_type}{default_clause}")
@@ -1584,10 +1630,11 @@ class DatabaseSchema:
             # Create index if requested
             if field_def.indexed:
                 index_name = f'idx_documents_{field_name}'
-                await conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})')
+                await conn.execute(f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})')
 
             # Create FTS table if requested
             if field_def.fts_enabled and field_def.type == MetadataFieldType.TEXT:
+                # FTS table names are validated via field_name validation above
                 fts_table_name = f'fts_{field_name}'
 
                 # Check tokenizer availability and build FTS SQL
@@ -1735,10 +1782,11 @@ class DatabaseSchema:
 
                         # Check index change
                         if old_def.indexed != field_def.indexed:
+                            quoted_field = quote_sql_identifier(field_name)
                             index_name = f'idx_documents_{field_name}'
                             if field_def.indexed:
                                 await db_connection.execute(
-                                    f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({field_name})'
+                                    f'CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})'
                                 )
                                 modifications.append({'change': 'index', 'action': 'added'})
                             else:
@@ -1922,8 +1970,11 @@ class DatabaseSchema:
         if field_def.default_value is None:
             return None
 
-        # Build WHERE clause
-        where_clause = f"{field_name} IS NULL"
+        # Validate and quote field name for SQL safety
+        quoted_field = quote_sql_identifier(field_name)
+
+        # Build WHERE clause with quoted identifier
+        where_clause = f"{quoted_field} IS NULL"
 
         # Don't populate defaults if the field already had a default
         # (existing NULLs were intentional)
@@ -1946,9 +1997,9 @@ class DatabaseSchema:
         else:
             sql_value = field_def.default_value
 
-        # Update the NULL values
+        # Update the NULL values (use quoted identifier)
         await conn.execute(
-            f"UPDATE documents SET {field_name} = ? WHERE {where_clause}",
+            f"UPDATE documents SET {quoted_field} = ? WHERE {where_clause}",
             (sql_value,)
         )
 
