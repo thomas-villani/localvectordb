@@ -1048,9 +1048,21 @@ class BackupManager:
         except Exception:
             return False
 
+    # Maximum allowed path length to prevent DoS via excessively long paths
+    MAX_PATH_LENGTH = 4096
+
     def _safe_extract(self, tar: tarfile.TarFile, path: Path) -> None:
         """
         Safely extract tar archive, preventing path traversal attacks.
+
+        Security features:
+        - Rejects symlinks and hard links
+        - Rejects absolute paths (Unix and Windows formats)
+        - Rejects path traversal attempts (..)
+        - Rejects null bytes and control characters
+        - Enforces maximum path length
+        - Verifies extracted paths stay within destination
+        - Rejects device files and special file types
 
         Parameters
         ----------
@@ -1065,23 +1077,54 @@ class BackupManager:
             If archive contains unsafe paths or file types
         """
         for member in tar.getmembers():
-            member_path = path / member.name
+            member_name = member.name
+
+            # Reject null bytes which could be used for path manipulation
+            if '\x00' in member_name:
+                raise ValueError(f"Null byte detected in path: {repr(member_name)}")
+
+            # Reject control characters (ASCII 0-31 except tab, newline, carriage return)
+            for char in member_name:
+                if ord(char) < 32 and char not in '\t\n\r':
+                    raise ValueError(f"Control character detected in path: {repr(member_name)}")
+
+            # Reject excessively long paths (DoS prevention)
+            if len(member_name) > self.MAX_PATH_LENGTH:
+                raise ValueError(
+                    f"Path exceeds maximum length ({self.MAX_PATH_LENGTH} chars): {member_name[:100]}..."
+                )
+
+            member_path = path / member_name
 
             # Reject symlinks and hard links to prevent link-based attacks
             if member.islnk() or member.issym():
-                raise ValueError(f"Refusing to extract archives with (sym)links: {member.name}")
+                raise ValueError(f"Refusing to extract archives with (sym)links: {member_name}")
 
-            # Reject absolute paths and path traversal attempts
-            if member.name.startswith("/") or ".." in Path(member.name).parts:
-                raise ValueError(f"Unsafe path in tar: {member.name}")
+            # Reject absolute paths - both Unix (/path) and Windows (C:\path, \\server\share)
+            # Using Path.is_absolute() handles both platforms correctly
+            if Path(member_name).is_absolute():
+                raise ValueError(f"Absolute path detected in tar: {member_name}")
+
+            # Also check for Windows drive letters that Path might not catch in all cases
+            # e.g., "C:" at the start of the path
+            if len(member_name) >= 2 and member_name[1] == ':' and member_name[0].isalpha():
+                raise ValueError(f"Windows absolute path detected in tar: {member_name}")
+
+            # Check for UNC paths (\\server\share or //server/share)
+            if member_name.startswith('\\\\') or member_name.startswith('//'):
+                raise ValueError(f"UNC path detected in tar: {member_name}")
+
+            # Reject path traversal attempts using .. in any path component
+            if ".." in Path(member_name).parts:
+                raise ValueError(f"Path traversal attempt detected: {member_name}")
 
             # Verify extracted path stays within destination directory
             if not self._is_within_directory(path, member_path):
-                raise ValueError(f"Path traversal detected: {member.name}")
+                raise ValueError(f"Path traversal detected: {member_name}")
 
             # Reject device files and other special file types
             if member.ischr() or member.isblk() or member.isfifo():
-                raise ValueError(f"Refusing to extract special file type: {member.name}")
+                raise ValueError(f"Refusing to extract special file type: {member_name}")
 
         # If all validations pass, extract the archive
         tar.extractall(path=path)

@@ -13,6 +13,9 @@
 | 2025-11-27 | #12 | Type Confusion in SQLite Type Converter | FIXED - Returns `Optional[datetime]` (None on parse failure) with warning log |
 | 2025-11-27 | #13 | Race Condition in Connection Pool | VERIFIED OK - Lock is already held during entire pop-validate-return sequence |
 | 2025-11-27 | #14 | Race Condition in ID Generation | FIXED - Unified to single `threading.Lock` for both sync and async paths |
+| 2025-11-27 | #5 | XXE (XML External Entity) Attack Vulnerability | FIXED - Added defusedxml validation before parsing, enforces file size limits, uses safe html.parser |
+| 2025-11-27 | #6 | Billion Laughs / XML Bomb Attack | FIXED - defusedxml blocks entity expansion attacks, added MAX_XML_SIZE_BYTES limit (10 MB) |
+| 2025-11-27 | #7 | Path Traversal in Backup Archive Extraction | FIXED - Added Windows path detection, UNC paths, null bytes, control chars, path length limits (4096) |
 
 ---
 
@@ -116,7 +119,7 @@ for field_name, value in updated_metadata.items():
 
 ---
 
-### 5. XXE (XML External Entity) Attack Vulnerability
+### 5. XXE (XML External Entity) Attack Vulnerability - **[FIXED 2025-11-27]**
 
 **File:** `src/localvectordb/extractors/web_extractors.py`
 **Lines:** 287-332
@@ -140,9 +143,11 @@ parser = etree.XMLParser(resolve_entities=False, no_network=True)
 
 Add `defusedxml` to dependencies.
 
+**Resolution:** Added defusedxml validation before parsing. XML content is first validated with `defusedxml.ElementTree.fromstring()` which detects XXE attacks. If malicious content is detected, the extractor returns an error. Also switched to using `html.parser` which doesn't process external entities. Added `defusedxml>=0.7.1` to `file-extraction` and `file-extraction-web` dependencies.
+
 ---
 
-### 6. Billion Laughs / XML Bomb Attack
+### 6. Billion Laughs / XML Bomb Attack - **[FIXED 2025-11-27]**
 
 **File:** `src/localvectordb/extractors/web_extractors.py`
 **Lines:** 300-346
@@ -154,9 +159,11 @@ Add `defusedxml` to dependencies.
 - Implement size limits for XML documents before parsing
 - Set entity expansion limits
 
+**Resolution:** Added defusedxml validation which includes built-in protection against billion laughs attacks. Also added `MAX_XML_SIZE_BYTES = 10 * 1024 * 1024` (10 MB) file size limit that is checked before any parsing begins. Files exceeding this limit are rejected with an appropriate error message.
+
 ---
 
-### 7. Potential Command Injection in Backup Archive Extraction
+### 7. Potential Command Injection in Backup Archive Extraction - **[FIXED 2025-11-27]**
 
 **File:** `src/localvectordb/backup.py`
 **Lines:** 1051-1087
@@ -175,6 +182,15 @@ if member.name.startswith("/") or ".." in Path(member.name).parts:
 - Add Windows absolute path detection: `if Path(member.name).is_absolute():`
 - Add path length validation
 - Use `pathlib.Path.resolve()` and verify it stays within destination
+
+**Resolution:** Comprehensive security improvements to `_safe_extract`:
+- Added `Path.is_absolute()` check for cross-platform absolute path detection
+- Added explicit Windows drive letter check (e.g., `C:`)
+- Added UNC path detection (`\\server\share` and `//server/share`)
+- Added null byte detection to prevent path manipulation
+- Added control character rejection (ASCII 0-31)
+- Added `MAX_PATH_LENGTH = 4096` to prevent DoS via excessively long paths
+- Existing `_is_within_directory()` check using `Path.resolve()` was already present
 
 ---
 
@@ -1036,26 +1052,27 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 
 ### P0 - Must Fix Before Release
 
-| Issue | Description | Files |
-|-------|-------------|-------|
-| SQL Injection | Parameterize or quote all dynamic SQL identifiers | `_filters.py`, `_schema.py`, `_crud.py`, `routes.py` |
-| XXE Protection | Add defusedxml, disable external entities | `web_extractors.py` |
-| File Size Limits | Add configurable limits to all extractors | All extractor files |
-| ZIP Bomb Protection | Add decompression limits | `office_extractors.py`, `other_extractors.py` |
-| Connection Pool Race | Hold locks during entire check-use sequence | `_pools.py` |
-| ID Generation Race | Unify async/sync ID generation | `_core.py` |
-| SQL Injection Tests | Add comprehensive security test cases | Test suite |
+| Issue | Description | Files | Status |
+|-------|-------------|-------|--------|
+| SQL Injection | Parameterize or quote all dynamic SQL identifiers | `_filters.py`, `_schema.py`, `_crud.py`, `routes.py` | PENDING |
+| ~~XXE Protection~~ | ~~Add defusedxml, disable external entities~~ | ~~`web_extractors.py`~~ | **FIXED** |
+| File Size Limits | Add configurable limits to all extractors | All extractor files | PENDING (XML done) |
+| ZIP Bomb Protection | Add decompression limits | `office_extractors.py`, `other_extractors.py` | PENDING |
+| ~~Connection Pool Race~~ | ~~Hold locks during entire check-use sequence~~ | ~~`_pools.py`~~ | **VERIFIED OK** |
+| ~~ID Generation Race~~ | ~~Unify async/sync ID generation~~ | ~~`_core.py`~~ | **FIXED** |
+| SQL Injection Tests | Add comprehensive security test cases | Test suite | PENDING |
+| ~~Path Traversal in Backup~~ | ~~Add Windows path detection, length limits~~ | ~~`backup.py`~~ | **FIXED** |
 
 ### P1 - Fix Within 1 Week of Release
 
-| Issue | Description | Files |
-|-------|-------------|-------|
-| CSRF Protection | Implement Flask-WTF CSRF | `inspector.py` |
-| Path Traversal | Validate and canonicalize all paths | `backup.py`, `_dbmanager.py`, CLI files |
-| Session Security | Remove raw API key storage | `inspector.py` |
-| Type Confusion | Fix datetime converter return type | `core.py` |
-| Parsing Timeouts | Add timeout limits to extractors | All extractor files |
-| Resource Cleanup | Use context managers consistently | `backup.py`, `_crud.py` |
+| Issue | Description | Files | Status |
+|-------|-------------|-------|--------|
+| CSRF Protection | Implement Flask-WTF CSRF | `inspector.py` | PENDING |
+| Path Traversal | Validate and canonicalize all paths | `_dbmanager.py`, CLI files | PENDING (backup.py done) |
+| Session Security | Remove raw API key storage | `inspector.py` | PENDING |
+| ~~Type Confusion~~ | ~~Fix datetime converter return type~~ | ~~`core.py`~~ | **FIXED** |
+| Parsing Timeouts | Add timeout limits to extractors | All extractor files | PENDING |
+| Resource Cleanup | Use context managers consistently | `backup.py`, `_crud.py` | PENDING |
 
 ### P2 - Fix Soon After Release
 

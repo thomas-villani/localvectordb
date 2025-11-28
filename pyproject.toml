@@ -69,6 +69,7 @@ file-extraction = [
     "pypdf>=3.1.0",
     "beautifulsoup4>=4.13.4",
     "lxml>=5.4.0",
+    "defusedxml>=0.7.1",  # XXE protection for XML parsing
     "ebooklib>=0.19",
     "striprtf>=0.0.29",
 ]
@@ -84,6 +85,7 @@ file-extraction-pdf = [
 file-extraction-web = [
     "beautifulsoup4>=4.13.4",
     "lxml>=5.4.0",
+    "defusedxml>=0.7.1",  # XXE protection for XML parsing
 ]
 file-extraction-rtf-epub = [
     "ebooklib>=0.19",

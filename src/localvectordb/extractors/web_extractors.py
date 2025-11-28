@@ -10,6 +10,9 @@
 # src/localvectordb/extractors/web_extractors.py
 """
 HTML and XML file extractors using BeautifulSoup4.
+
+Security Note: XML parsing uses defusedxml to protect against XXE (XML External Entity)
+attacks and billion laughs/XML bomb attacks.
 """
 
 import logging
@@ -21,6 +24,9 @@ from localvectordb.core import MetadataFieldType
 from localvectordb.extractors import BaseExtractor, ExtractionResult
 
 logger = logging.getLogger(__name__)
+
+# Maximum XML file size to prevent resource exhaustion (10 MB)
+MAX_XML_SIZE_BYTES = 10 * 1024 * 1024
 
 
 class HTMLExtractor(BaseExtractor):
@@ -251,7 +257,12 @@ class HTMLExtractor(BaseExtractor):
 
 class XMLExtractor(BaseExtractor):
     """
-    Extractor for XML files using BeautifulSoup4.
+    Extractor for XML files using BeautifulSoup4 with defusedxml for security.
+
+    Security features:
+    - Uses defusedxml to prevent XXE (XML External Entity) attacks
+    - Protects against billion laughs/XML bomb attacks
+    - Enforces file size limits to prevent resource exhaustion
     """
 
     @property
@@ -270,7 +281,7 @@ class XMLExtractor(BaseExtractor):
 
     @property
     def required_packages(self) -> List[str]:
-        return ['beautifulsoup4', 'lxml']
+        return ['beautifulsoup4', 'lxml', 'defusedxml']
 
     @property
     def priority(self) -> int:
@@ -286,21 +297,35 @@ class XMLExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         try:
-            import lxml
-            from bs4 import BeautifulSoup
+            import defusedxml  # noqa: F401
+            from bs4 import BeautifulSoup  # noqa: F401
             return True
         except ImportError:
             try:
-                from bs4 import BeautifulSoup
-                # BeautifulSoup can work without lxml, but lxml is preferred for XML
-                return True
+                from bs4 import BeautifulSoup  # noqa: F401
+                # BeautifulSoup can work without defusedxml, but it's required for security
+                logger.warning(
+                    "defusedxml not installed - XML extraction will be unavailable for security reasons. "
+                    "Install with: pip install defusedxml"
+                )
+                return False
             except ImportError:
                 return False
 
     def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str]) -> ExtractionResult:
-        """Extract text from XML files."""
+        """Extract text from XML files with XXE protection."""
+        # Check file size limit to prevent resource exhaustion
+        if len(file_content) > MAX_XML_SIZE_BYTES:
+            return ExtractionResult(
+                text="",
+                success=False,
+                method='XMLExtractor',
+                error=f"XML file exceeds maximum size limit ({MAX_XML_SIZE_BYTES // (1024*1024)} MB)"
+            )
+
         try:
             from bs4 import BeautifulSoup
+            import defusedxml.ElementTree as DefusedET
 
             # Decode XML content
             try:
@@ -321,14 +346,37 @@ class XMLExtractor(BaseExtractor):
                         error="Could not decode XML file with supported encodings"
                     )
 
-            # Choose parser based on availability
+            # First, validate XML with defusedxml to catch XXE and entity expansion attacks
+            # This will raise an exception if malicious content is detected
             try:
-                import lxml
-                parser = 'xml'  # lxml XML parser
+                import defusedxml
+                DefusedET.fromstring(file_content)
             except ImportError:
-                parser = 'html.parser'  # fallback to html.parser
+                # defusedxml not available - this shouldn't happen as _check_availability should catch it
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='XMLExtractor',
+                    error="defusedxml library required for secure XML parsing"
+                )
+            except defusedxml.DefusedXmlException as e:
+                logger.warning(f"Blocked potentially malicious XML in {filename}: {e}")
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='XMLExtractor',
+                    error=f"XML security validation failed: {type(e).__name__}"
+                )
+            except Exception as e:
+                # XML parsing failed but may not be a security issue - log and continue
+                # BeautifulSoup may still be able to parse malformed XML
+                logger.debug(f"Initial XML validation warning for {filename}: {e}")
 
-            # Parse XML with BeautifulSoup
+            # Use html.parser which is safe from XXE (doesn't process external entities)
+            # Note: lxml's XML parser can be vulnerable to XXE, so we avoid it
+            parser = 'html.parser'
+
+            # Parse XML with BeautifulSoup using safe parser
             soup = BeautifulSoup(xml_content, parser)
 
             # Detect XML type and extract accordingly
