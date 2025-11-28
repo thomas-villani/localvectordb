@@ -10,6 +10,7 @@
 
 | Date | Issue # | Description | Resolution |
 |------|---------|-------------|------------|
+| 2025-11-28 | #3 | SQL Injection in Database Package | FIXED - Added `_validate_sql_identifier()` and `_quote_identifier()` helpers to validate and safely quote field names in UPDATE statements |
 | 2025-11-27 | #12 | Type Confusion in SQLite Type Converter | FIXED - Returns `Optional[datetime]` (None on parse failure) with warning log |
 | 2025-11-27 | #13 | Race Condition in Connection Pool | VERIFIED OK - Lock is already held during entire pop-validate-return sequence |
 | 2025-11-27 | #14 | Race Condition in ID Generation | FIXED - Unified to single `threading.Lock` for both sync and async paths |
@@ -90,7 +91,7 @@ conn.execute(ddl)
 
 ---
 
-### 3. SQL Injection in Database Package
+### 3. SQL Injection in Database Package - **[FIXED 2025-11-28]**
 
 **File:** `src/localvectordb/database/_crud.py`
 **Lines:** 278, 288, 292, 371-372
@@ -104,6 +105,12 @@ for field_name, value in updated_metadata.items():
 ```
 
 **Recommendation:** Add explicit validation that `field_name` only contains alphanumeric characters and underscores before interpolation.
+
+**Resolution:** Added `_validate_sql_identifier()` and `_quote_identifier()` helper functions to `_crud.py` that:
+- Validate field names match the pattern `^[a-zA-Z_][a-zA-Z0-9_]*$` (alphanumeric + underscores only)
+- Raise `DatabaseError` for invalid identifiers
+- Quote identifiers with double quotes and escape embedded quotes (defense in depth)
+Applied to both `update()` and `update_async()` methods. All 72 database tests pass.
 
 ---
 
@@ -1060,7 +1067,7 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 
 | Issue | Description | Files | Status |
 |-------|-------------|-------|--------|
-| SQL Injection | Parameterize or quote all dynamic SQL identifiers | `_filters.py`, `_schema.py`, `_crud.py`, `routes.py` | PENDING |
+| SQL Injection | Parameterize or quote all dynamic SQL identifiers | `_filters.py`, `_schema.py`, ~~`_crud.py`~~, `routes.py` | PARTIAL (**`_crud.py` FIXED**) |
 | ~~XXE Protection~~ | ~~Add defusedxml, disable external entities~~ | ~~`web_extractors.py`~~ | **FIXED** |
 | ~~File Size Limits~~ | ~~Add configurable limits to all extractors~~ | ~~All extractor files~~ | **FIXED** |
 | ZIP Bomb Protection | Add decompression limits | `office_extractors.py`, `other_extractors.py` | PENDING |

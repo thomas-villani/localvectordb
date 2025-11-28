@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from abc import ABC
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Union
@@ -28,10 +29,63 @@ from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Document
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.exceptions import DocumentNotFoundError, MetadataFilterError
+from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError
 from localvectordb.query_builder import QueryBuilder
 
 logger = logging.getLogger(__name__)
+
+# Pattern for valid SQL identifiers (alphanumeric and underscores, starting with letter or underscore)
+_SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
+def _validate_sql_identifier(name: str) -> None:
+    """Validate that a string is a safe SQL identifier.
+
+    This prevents SQL injection by ensuring field names only contain
+    alphanumeric characters and underscores.
+
+    Parameters
+    ----------
+    name : str
+        The identifier to validate
+
+    Raises
+    ------
+    DatabaseError
+        If the identifier contains unsafe characters
+    """
+    if not _SAFE_IDENTIFIER_PATTERN.match(name):
+        raise DatabaseError(
+            f"Invalid SQL identifier '{name}': must contain only alphanumeric "
+            "characters and underscores, and start with a letter or underscore"
+        )
+
+
+def _quote_identifier(name: str) -> str:
+    """Quote a SQL identifier for safe use in queries.
+
+    This function validates and quotes the identifier with double quotes,
+    escaping any embedded double quotes (though validation should prevent them).
+
+    Parameters
+    ----------
+    name : str
+        The identifier to quote
+
+    Returns
+    -------
+    str
+        The safely quoted identifier
+
+    Raises
+    ------
+    DatabaseError
+        If the identifier contains unsafe characters
+    """
+    _validate_sql_identifier(name)
+    # Escape any double quotes (shouldn't happen due to validation, but defense in depth)
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
 
 
 class CrudMixin(LocalVectorDBBase, ABC):
@@ -361,11 +415,13 @@ class CrudMixin(LocalVectorDBBase, ABC):
                                 logger.debug(
                                     f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}"
                                 )
-                        set_clauses = ['updated_at = ?']
+                        set_clauses = ['"updated_at" = ?']
                         values = [datetime.now(UTC)]
                         for field_name, value in updated_metadata.items():
                             if field_name in self.metadata_schema:
-                                set_clauses.append(f'{field_name} = ?')
+                                # Validate and quote field name to prevent SQL injection
+                                quoted_field = _quote_identifier(field_name)
+                                set_clauses.append(f'{quoted_field} = ?')
                                 values.append(value)
                         values.append(doc_id)
                         sql = f"UPDATE documents SET {', '.join(set_clauses)} WHERE id = ?"
@@ -761,11 +817,13 @@ class CrudMixin(LocalVectorDBBase, ABC):
                             await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
                             logger.debug(
                                 f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}")
-                    set_clauses = ['updated_at = ?']
+                    set_clauses = ['"updated_at" = ?']
                     values = [datetime.now(UTC)]
                     for field_name, value in updated_metadata.items():
                         if field_name in self.metadata_schema:
-                            set_clauses.append(f'{field_name} = ?')
+                            # Validate and quote field name to prevent SQL injection
+                            quoted_field = _quote_identifier(field_name)
+                            set_clauses.append(f'{quoted_field} = ?')
                             values.append(value)
                     values.append(doc_id)
                     update_sql = f"""
