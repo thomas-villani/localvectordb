@@ -28,6 +28,108 @@ logger = logging.getLogger(__name__)
 # This prevents DoS attacks via memory exhaustion from extremely large files
 MAX_FILE_SIZE_BYTES: int = 100 * 1024 * 1024
 
+# ZIP bomb protection constants
+# These prevent decompression attacks (zip bombs) in ZIP-based formats like DOCX, XLSX, PPTX, EPUB
+MAX_ZIP_DECOMPRESSED_SIZE: int = 1024 * 1024 * 1024  # 1 GB maximum decompressed size
+MAX_ZIP_COMPRESSION_RATIO: int = 100  # Maximum compression ratio (100:1)
+MAX_ZIP_FILE_COUNT: int = 10000  # Maximum number of files in archive
+
+
+class ZipBombError(Exception):
+    """Exception raised when a potential ZIP bomb is detected."""
+    pass
+
+
+def validate_zip_safety(
+    file_content: bytes,
+    max_decompressed_size: int = MAX_ZIP_DECOMPRESSED_SIZE,
+    max_compression_ratio: int = MAX_ZIP_COMPRESSION_RATIO,
+    max_file_count: int = MAX_ZIP_FILE_COUNT
+) -> None:
+    """
+    Validate a ZIP file for potential ZIP bomb attacks.
+
+    This function checks for common ZIP bomb attack patterns:
+    - Excessive decompressed size (billion laughs style)
+    - High compression ratios indicating recursive compression
+    - Excessive number of files (many small files attack)
+
+    Parameters
+    ----------
+    file_content : bytes
+        Raw ZIP file content
+    max_decompressed_size : int
+        Maximum allowed total decompressed size in bytes (default 1GB)
+    max_compression_ratio : int
+        Maximum allowed compression ratio (default 100:1)
+    max_file_count : int
+        Maximum allowed number of files in archive (default 10,000)
+
+    Raises
+    ------
+    ZipBombError
+        If the ZIP file exhibits characteristics of a ZIP bomb
+    ValueError
+        If the file is not a valid ZIP archive
+    """
+    import io
+    import zipfile
+
+    compressed_size = len(file_content)
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_content), 'r') as zf:
+            # Check file count
+            file_count = len(zf.namelist())
+            if file_count > max_file_count:
+                raise ZipBombError(
+                    f"ZIP archive contains {file_count} files, exceeding limit of {max_file_count}. "
+                    "This may indicate a ZIP bomb attack."
+                )
+
+            # Calculate total decompressed size and check compression ratio
+            total_uncompressed = 0
+            for info in zf.infolist():
+                total_uncompressed += info.file_size
+
+                # Check for individual files with suspicious compression ratios
+                if info.compress_size > 0:
+                    file_ratio = info.file_size / info.compress_size
+                    if file_ratio > max_compression_ratio:
+                        raise ZipBombError(
+                            f"File '{info.filename}' has compression ratio {file_ratio:.1f}:1, "
+                            f"exceeding limit of {max_compression_ratio}:1. "
+                            "This may indicate a ZIP bomb attack."
+                        )
+
+                # Early exit if total size exceeds limit
+                if total_uncompressed > max_decompressed_size:
+                    size_mb = total_uncompressed / (1024 * 1024)
+                    limit_mb = max_decompressed_size / (1024 * 1024)
+                    raise ZipBombError(
+                        f"ZIP archive decompressed size ({size_mb:.1f} MB) exceeds "
+                        f"limit of {limit_mb:.1f} MB. This may indicate a ZIP bomb attack."
+                    )
+
+            # Final check on overall compression ratio
+            if compressed_size > 0:
+                overall_ratio = total_uncompressed / compressed_size
+                if overall_ratio > max_compression_ratio:
+                    raise ZipBombError(
+                        f"ZIP archive overall compression ratio {overall_ratio:.1f}:1 "
+                        f"exceeds limit of {max_compression_ratio}:1. "
+                        "This may indicate a ZIP bomb attack."
+                    )
+
+            logger.debug(
+                f"ZIP safety check passed: {file_count} files, "
+                f"{total_uncompressed / (1024 * 1024):.2f} MB uncompressed, "
+                f"ratio {total_uncompressed / compressed_size:.1f}:1"
+            )
+
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"Invalid ZIP archive: {e}")
+
 
 class ExtractionResult:
     """

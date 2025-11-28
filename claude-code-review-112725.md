@@ -21,6 +21,8 @@
 | 2025-11-27 | #7 | Path Traversal in Backup Archive Extraction | FIXED - Added Windows path detection, UNC paths, null bytes, control chars, path length limits (4096) |
 | 2025-11-27 | #10 | No File Size Limits in Extractors | FIXED - Added configurable MAX_FILE_SIZE_BYTES (100 MB default) to BaseExtractor with check in extract_text() |
 | 2025-11-27 | #15 | Unclosed Resources in Error Paths | FIXED - Converted backup.py SQLite connections to use context managers (with statements) |
+| 2025-11-28 | #4 | SQL Injection via ORDER BY in Server Routes | VERIFIED OK - Already protected via `FilterQueryBuilder.build_order_by_clause()` which uses `_validate_and_quote_identifier()` from Issue #1 fix |
+| 2025-11-28 | #11 | ZIP Bomb Vulnerability | FIXED - Added `validate_zip_safety()` function with decompressed size limits (1GB), compression ratio checks (100:1), and file count limits (10,000) to all ZIP-based extractors (DOCX, PPTX, XLSX, EPUB) |
 
 ---
 
@@ -133,7 +135,7 @@ Applied to both `update()` and `update_async()` methods. All 72 database tests p
 
 ---
 
-### 4. SQL Injection via ORDER BY in Server Routes
+### 4. SQL Injection via ORDER BY in Server Routes - **[VERIFIED OK 2025-11-28]**
 
 **File:** `src/localvectordb_server/routes.py`
 **Lines:** 1479-1519
@@ -144,6 +146,13 @@ Applied to both `update()` and `update_async()` methods. All 72 database tests p
 - Implement parameterized queries for ORDER BY clauses
 - Use strict enum-based column selection
 - Consider removing dynamic ORDER BY for untrusted clients
+
+**Verification:** Upon review, the filter endpoint at lines 1500-1519 already implements proper protection:
+- Validates `order_by` is a string type
+- Uses `FilterQueryBuilder.build_order_by_clause()` which validates against a whitelist of valid columns (base columns + metadata schema)
+- The `_validate_and_quote_identifier()` function (added in Issue #1 fix) validates field name format and safely quotes identifiers
+- Invalid column names or malformed ORDER BY clauses raise `ValidationError`
+No additional fix required - protection was already in place.
 
 ---
 
@@ -284,7 +293,7 @@ def update_from_dict(self, update_dict, raise_errors: bool = False):
 
 ---
 
-### 11. ZIP Bomb Vulnerability
+### 11. ZIP Bomb Vulnerability - **[FIXED 2025-11-28]**
 
 **Files:** `other_extractors.py`, `office_extractors.py`
 **Lines:** EPUB (176-177), DOCX/PPTX/XLSX (74-75, 186-187, 308-309)
@@ -295,6 +304,15 @@ def update_from_dict(self, update_dict, raise_errors: bool = False):
 - Implement decompressed size limits
 - Check compression ratios (reject if ratio > 100:1)
 - Set maximum number of files in archive
+
+**Resolution:** Added comprehensive ZIP bomb protection to `extractors/__init__.py`:
+- New `validate_zip_safety()` function checks ZIP archives before processing
+- `MAX_ZIP_DECOMPRESSED_SIZE = 1 GB` - maximum total decompressed size
+- `MAX_ZIP_COMPRESSION_RATIO = 100` - maximum compression ratio (100:1)
+- `MAX_ZIP_FILE_COUNT = 10,000` - maximum number of files in archive
+- Per-file compression ratio checking with early exit on detection
+- New `ZipBombError` exception for clear error reporting
+- Applied to all ZIP-based extractors: DocxExtractor, PptxExtractor, XlsxExtractor, EPubExtractor
 
 ---
 
@@ -1086,10 +1104,10 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 
 | Issue | Description | Files | Status |
 |-------|-------------|-------|--------|
-| SQL Injection | Parameterize or quote all dynamic SQL identifiers | ~~`_filters.py`~~, ~~`_schema.py`~~, ~~`_crud.py`~~, `routes.py` | PARTIAL (**`_crud.py`, `_filters.py`, `_schema.py` FIXED**) |
+| ~~SQL Injection~~ | ~~Parameterize or quote all dynamic SQL identifiers~~ | ~~`_filters.py`~~, ~~`_schema.py`~~, ~~`_crud.py`~~, ~~`routes.py`~~ | **FIXED** (all files including routes.py - uses FilterQueryBuilder validation) |
 | ~~XXE Protection~~ | ~~Add defusedxml, disable external entities~~ | ~~`web_extractors.py`~~ | **FIXED** |
 | ~~File Size Limits~~ | ~~Add configurable limits to all extractors~~ | ~~All extractor files~~ | **FIXED** |
-| ZIP Bomb Protection | Add decompression limits | `office_extractors.py`, `other_extractors.py` | PENDING |
+| ~~ZIP Bomb Protection~~ | ~~Add decompression limits~~ | ~~`office_extractors.py`~~, ~~`other_extractors.py`~~ | **FIXED** (validate_zip_safety with 1GB/100:1/10K limits) |
 | ~~Connection Pool Race~~ | ~~Hold locks during entire check-use sequence~~ | ~~`_pools.py`~~ | **VERIFIED OK** |
 | ~~ID Generation Race~~ | ~~Unify async/sync ID generation~~ | ~~`_core.py`~~ | **FIXED** |
 | SQL Injection Tests | Add comprehensive security test cases | Test suite | PENDING |

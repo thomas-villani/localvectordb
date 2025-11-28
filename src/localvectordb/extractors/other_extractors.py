@@ -17,7 +17,7 @@ from typing import List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
-from localvectordb.extractors import BaseExtractor, ExtractionResult
+from localvectordb.extractors import BaseExtractor, ExtractionResult, validate_zip_safety, ZipBombError
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,25 @@ class EPubExtractor(BaseExtractor):
         """Extract text from EPUB files."""
         try:
             import io
+
+            # Validate ZIP archive safety before processing (EPUB files are ZIP archives)
+            try:
+                validate_zip_safety(file_content)
+            except ZipBombError as e:
+                logger.warning(f"ZIP bomb detected in '{filename}': {e}")
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='EPubExtractor',
+                    error=f"ZIP bomb protection triggered: {str(e)}"
+                )
+            except ValueError as e:
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='EPubExtractor',
+                    error=f"Invalid EPUB file: {str(e)}"
+                )
 
             import ebooklib
             from ebooklib import epub

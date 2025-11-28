@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
-from localvectordb.extractors import BaseExtractor, ExtractionResult
+from localvectordb.extractors import BaseExtractor, ExtractionResult, validate_zip_safety, ZipBombError
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,25 @@ class DocxExtractor(BaseExtractor):
     ) -> ExtractionResult:
         """Extract text from DOCX files."""
         try:
+            # Validate ZIP archive safety before processing (DOCX files are ZIP archives)
+            try:
+                validate_zip_safety(file_content)
+            except ZipBombError as e:
+                logger.warning(f"ZIP bomb detected in '{filename}': {e}")
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='DocxExtractor',
+                    error=f"ZIP bomb protection triggered: {str(e)}"
+                )
+            except ValueError as e:
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='DocxExtractor',
+                    error=f"Invalid DOCX file: {str(e)}"
+                )
+
             from docx import Document
 
             with io.BytesIO(file_content) as file_buffer:
@@ -181,6 +200,25 @@ class PptxExtractor(BaseExtractor):
     ) -> ExtractionResult:
         """Extract text from PPTX files."""
         try:
+            # Validate ZIP archive safety before processing (PPTX files are ZIP archives)
+            try:
+                validate_zip_safety(file_content)
+            except ZipBombError as e:
+                logger.warning(f"ZIP bomb detected in '{filename}': {e}")
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='PptxExtractor',
+                    error=f"ZIP bomb protection triggered: {str(e)}"
+                )
+            except ValueError as e:
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='PptxExtractor',
+                    error=f"Invalid PPTX file: {str(e)}"
+                )
+
             from pptx import Presentation
 
             with io.BytesIO(file_content) as file_buffer:
@@ -303,6 +341,25 @@ class XlsxExtractor(BaseExtractor):
     ) -> ExtractionResult:
         """Extract text from XLSX files."""
         try:
+            # Validate ZIP archive safety before processing (XLSX files are ZIP archives)
+            try:
+                validate_zip_safety(file_content)
+            except ZipBombError as e:
+                logger.warning(f"ZIP bomb detected in '{filename}': {e}")
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='XlsxExtractor',
+                    error=f"ZIP bomb protection triggered: {str(e)}"
+                )
+            except ValueError as e:
+                return ExtractionResult(
+                    text="",
+                    success=False,
+                    method='XlsxExtractor',
+                    error=f"Invalid XLSX file: {str(e)}"
+                )
+
             from openpyxl import load_workbook
 
             with io.BytesIO(file_content) as file_buffer:
