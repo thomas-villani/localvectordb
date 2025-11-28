@@ -1024,7 +1024,25 @@ class DatabaseManager:
             )
 
     def _validate_database_name(self, name: str) -> bool:
-        """Validate database name"""
+        """
+        Validate database name for security and filesystem compatibility.
+
+        Security checks include:
+        - Path traversal prevention (.., null bytes, control characters)
+        - Invalid filesystem characters
+        - Windows reserved names
+        - Unicode normalization attacks
+
+        Parameters
+        ----------
+        name : str
+            Database name to validate
+
+        Returns
+        -------
+        bool
+            True if name is valid, False otherwise
+        """
         if not name or not isinstance(name, str):
             return False
 
@@ -1032,14 +1050,59 @@ class DatabaseManager:
         if len(name) < 1 or len(name) > 64:
             return False
 
-        # Check for invalid characters
+        # Security: Check for null bytes (path manipulation)
+        if '\x00' in name:
+            return False
+
+        # Security: Check for control characters (ASCII 0-31)
+        if any(ord(char) < 32 for char in name):
+            return False
+
+        # Security: Check for path traversal sequences
+        if '..' in name:
+            return False
+
+        # Security: Check for hidden file indicators
+        if name.startswith('.'):
+            return False
+
+        # Check for invalid characters (filesystem and path separators)
         invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']
         if any(char in name for char in invalid_chars):
             return False
 
-        # Check for reserved names
-        reserved_names = ['con', 'prn', 'aux', 'nul']
-        if name.lower() in reserved_names:
+        # Security: Check for Unicode path separators and lookalikes
+        # U+2215 DIVISION SLASH, U+2044 FRACTION SLASH, U+29F8 BIG SOLIDUS
+        # U+FF0F FULLWIDTH SOLIDUS, U+FF3C FULLWIDTH REVERSE SOLIDUS
+        unicode_path_chars = ['\u2215', '\u2044', '\u29f8', '\uff0f', '\uff3c']
+        if any(char in name for char in unicode_path_chars):
+            return False
+
+        # Security: Check for Unicode homoglyphs that could confuse users
+        # (e.g., Cyrillic 'а' vs Latin 'a' in reserved names)
+        # Normalize to NFKC and recheck
+        import unicodedata
+        normalized_name = unicodedata.normalize('NFKC', name)
+        if normalized_name != name:
+            # Name contains characters that normalize differently
+            # This could indicate Unicode tricks
+            return False
+
+        # Check for reserved names (Windows compatibility)
+        reserved_names = ['con', 'prn', 'aux', 'nul',
+                          'com1', 'com2', 'com3', 'com4', 'com5',
+                          'com6', 'com7', 'com8', 'com9',
+                          'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5',
+                          'lpt6', 'lpt7', 'lpt8', 'lpt9']
+        # Check base name (before any extension)
+        base_name = name.lower().split('.')[0]
+        if base_name in reserved_names:
+            return False
+
+        # Ensure name contains only safe characters: alphanumeric, underscore, hyphen
+        # This is a whitelist approach for defense in depth
+        import re
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', name):
             return False
 
         return True

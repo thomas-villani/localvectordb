@@ -23,6 +23,8 @@
 | 2025-11-27 | #15 | Unclosed Resources in Error Paths | FIXED - Converted backup.py SQLite connections to use context managers (with statements) |
 | 2025-11-28 | #4 | SQL Injection via ORDER BY in Server Routes | VERIFIED OK - Already protected via `FilterQueryBuilder.build_order_by_clause()` which uses `_validate_and_quote_identifier()` from Issue #1 fix |
 | 2025-11-28 | #11 | ZIP Bomb Vulnerability | FIXED - Added `validate_zip_safety()` function with decompressed size limits (1GB), compression ratio checks (100:1), and file count limits (10,000) to all ZIP-based extractors (DOCX, PPTX, XLSX, EPUB) |
+| 2025-11-28 | #23 | Unclosed Cursor Resources | FIXED - Added explicit cursor closing with try-finally blocks in `_crud.py` for `_core_get_sync()`, `_core_exists_sync()`, `delete()`, and `filter()` methods |
+| 2025-11-28 | #31 | Path Traversal in Database Name | FIXED - Enhanced `_validate_database_name()` in `_dbmanager.py` with null byte detection, control character rejection, '..' sequence validation, Unicode path separator checks, NFKC normalization validation, expanded Windows reserved names, and whitelist character validation |
 
 ---
 
@@ -482,7 +484,7 @@ self.connection_pool._pragmas = self._sqlite_pragmas
 
 ---
 
-### 23. Unclosed Cursor Resources
+### 23. Unclosed Cursor Resources - **[FIXED 2025-11-28]**
 
 **File:** `src/localvectordb/database/_crud.py`
 **Lines:** Multiple (164, 227, etc.)
@@ -490,6 +492,13 @@ self.connection_pool._pragmas = self._sqlite_pragmas
 **Issue:** Cursors are not explicitly closed, relying on garbage collection.
 
 **Recommendation:** Explicitly close cursors or use context managers.
+
+**Resolution:** Added explicit cursor closing with try-finally blocks in `_crud.py`:
+- `_core_get_sync()`: Cursor closed after fetchall
+- `_core_exists_sync()`: Cursor closed after fetchall
+- `delete()`: All three cursor operations now properly closed
+- `filter()`: Cursor closed after fetchall
+All 72 database tests pass (49 sync + 23 async).
 
 ---
 
@@ -575,7 +584,7 @@ if not key or not key.startswith(self.KEY_PREFIX):
 
 ---
 
-### 31. Path Traversal in Database Name
+### 31. Path Traversal in Database Name - **[FIXED 2025-11-28]**
 
 **File:** `src/localvectordb_server/_dbmanager.py`
 **Lines:** 1026-1045
@@ -588,6 +597,16 @@ invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']
 ```
 
 **Recommendation:** Add '..' validation, block null bytes and control characters.
+
+**Resolution:** Comprehensive security enhancements to `_validate_database_name()`:
+- Added null byte (`\x00`) detection
+- Added control character rejection (ASCII 0-31)
+- Added path traversal sequence (`..`) validation
+- Added hidden file indicator (`.` prefix) check
+- Added Unicode path separator detection (U+2215, U+2044, U+29F8, U+FF0F, U+FF3C)
+- Added NFKC Unicode normalization check to detect homoglyph attacks
+- Expanded Windows reserved names (COM1-9, LPT1-9)
+- Added whitelist character validation (`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 ---
 
@@ -1118,11 +1137,11 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 | Issue | Description | Files | Status |
 |-------|-------------|-------|--------|
 | CSRF Protection | Implement Flask-WTF CSRF | `inspector.py` | PENDING |
-| Path Traversal | Validate and canonicalize all paths | `_dbmanager.py`, CLI files | PENDING (backup.py done) |
+| ~~Path Traversal~~ | ~~Validate and canonicalize all paths~~ | ~~`_dbmanager.py`~~, CLI files | **FIXED** (_dbmanager.py done, CLI files pending) |
 | Session Security | Remove raw API key storage | `inspector.py` | PENDING |
 | ~~Type Confusion~~ | ~~Fix datetime converter return type~~ | ~~`core.py`~~ | **FIXED** |
 | Parsing Timeouts | Add timeout limits to extractors | All extractor files | PENDING |
-| ~~Resource Cleanup~~ | ~~Use context managers consistently~~ | ~~`backup.py`, `_crud.py`~~ | **FIXED** (backup.py) |
+| ~~Resource Cleanup~~ | ~~Use context managers consistently~~ | ~~`backup.py`~~, ~~`_crud.py`~~ | **FIXED** (backup.py and _crud.py done) |
 
 ### P2 - Fix Soon After Release
 

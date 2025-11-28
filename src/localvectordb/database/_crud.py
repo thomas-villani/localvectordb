@@ -216,7 +216,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
         # Use shared business logic helpers
         sql, params = self._build_get_documents_sql(requested_ids)
         cursor = self._sync_executor.execute(conn, sql, params)
-        rows = self._sync_executor.fetchall(cursor)
+        try:
+            rows = self._sync_executor.fetchall(cursor)
+        finally:
+            cursor.close()
 
         # Validate all documents were found using shared logic
         found_ids = {row['id'] for row in rows}
@@ -279,7 +282,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """Core logic for checking if documents exist (sync version)"""
         sql, params = self._build_exists_sql(ids_list)
         cursor = self._sync_executor.execute(conn, sql, params)
-        rows = self._sync_executor.fetchall(cursor)
+        try:
+            rows = self._sync_executor.fetchall(cursor)
+        finally:
+            cursor.close()
         return self._process_exists_results(rows, ids_list)
 
     async def _core_exists_async(self, conn, ids_list: List[str]) -> List[bool]:
@@ -329,11 +335,16 @@ class CrudMixin(LocalVectorDBBase, ABC):
             faiss_ids_to_remove: List[int] = []
             with self.connection_pool.get_connection() as conn:
                 placeholders = ','.join(['?'] * len(ids))
+
+                # Collect chunk FAISS IDs
                 cursor = conn.execute(
                     f'SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
                     ids,
                 )
-                faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                try:
+                    faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                finally:
+                    cursor.close()
 
                 # Also collect metadata embedding FAISS IDs
                 # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
@@ -342,9 +353,17 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
                     ids,
                 )
-                faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                try:
+                    faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                finally:
+                    cursor.close()
+
+                # Delete documents
                 cursor = conn.execute(f'DELETE FROM documents WHERE id IN ({placeholders})', ids)
-                deleted_count = cursor.rowcount
+                try:
+                    deleted_count = cursor.rowcount
+                finally:
+                    cursor.close()
                 conn.commit()
             if deleted_count == 0:
                 if len(ids) == 1:
@@ -552,7 +571,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
         with self.connection_pool.get_connection() as conn:
             cursor = conn.execute(sql, params)
-            rows = cursor.fetchall()
+            try:
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
             return self._construct_documents_from_rows(rows)
 
     # -------------
