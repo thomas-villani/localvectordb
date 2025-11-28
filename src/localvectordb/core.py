@@ -62,14 +62,26 @@ def _adapt_datetime_with_tz(dt) -> str:
     return dt.isoformat()
 
 
-def _convert_datetime_with_tz(dt) -> datetime:
+def _convert_datetime_with_tz(dt) -> Optional[datetime]:
+    """
+    Convert a SQLite timestamp bytes value to a Python datetime.
+
+    Returns None if the value cannot be parsed as a valid ISO8601 datetime,
+    which can happen when SQLite type detection is overly aggressive.
+    This maintains type consistency (always Optional[datetime]) rather than
+    silently returning a string on parse failure.
+    """
     s = dt.decode("utf-8")
     try:
         return parse_iso8601(s)
     except ValueError:
-        # If it's not a valid datetime string, just return the original string
-        # This can happen when SQLite type detection is overly aggressive
-        return s
+        # Log a warning for debugging - this indicates a schema/data mismatch
+        logger.warning(
+            "Failed to parse timestamp value '%s' as datetime. "
+            "This may indicate SQLite type detection mismatch. Returning None.",
+            s
+        )
+        return None
 
 
 def _adapt_json(json_data) -> str:

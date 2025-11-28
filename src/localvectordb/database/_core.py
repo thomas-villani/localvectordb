@@ -201,8 +201,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # State
         self._next_doc_id = self._load_next_doc_id()
-        self._async_id_lock: Optional[asyncio.Lock] = asyncio.Lock()
-        self._sync_id_lock: Optional[threading.Lock] = threading.Lock()
+        # Single lock for ID generation to prevent race conditions between sync and async paths.
+        # Using threading.Lock for both since the critical section is minimal (integer increment).
+        self._id_lock: threading.Lock = threading.Lock()
 
         # Save config including SQLite tuning
         self._save_config()
@@ -713,14 +714,21 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             return (1.0 / similarity) - 1.0
 
     def _generate_doc_id(self) -> str:
-        with self._sync_id_lock:
+        """Generate a unique document ID with thread-safe locking."""
+        with self._id_lock:
             doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)
             self._next_doc_id += 1
             return doc_id
 
     async def _generate_doc_id_async(self) -> str:
-        """Async-safe version of _generate_doc_id with proper locking."""
-        async with self._async_id_lock:
+        """
+        Async version of _generate_doc_id.
+
+        Uses the same threading.Lock as the sync version to prevent race conditions
+        between concurrent sync and async ID generation. The lock is held only for
+        an integer increment, so blocking the event loop is negligible.
+        """
+        with self._id_lock:
             doc_id = self.doc_id_pattern.format(idx=self._next_doc_id)
             self._next_doc_id += 1
             return doc_id
