@@ -16,6 +16,8 @@
 | 2025-11-27 | #5 | XXE (XML External Entity) Attack Vulnerability | FIXED - Added defusedxml validation before parsing, enforces file size limits, uses safe html.parser |
 | 2025-11-27 | #6 | Billion Laughs / XML Bomb Attack | FIXED - defusedxml blocks entity expansion attacks, added MAX_XML_SIZE_BYTES limit (10 MB) |
 | 2025-11-27 | #7 | Path Traversal in Backup Archive Extraction | FIXED - Added Windows path detection, UNC paths, null bytes, control chars, path length limits (4096) |
+| 2025-11-27 | #10 | No File Size Limits in Extractors | FIXED - Added configurable MAX_FILE_SIZE_BYTES (100 MB default) to BaseExtractor with check in extract_text() |
+| 2025-11-27 | #15 | Unclosed Resources in Error Paths | FIXED - Converted backup.py SQLite connections to use context managers (with statements) |
 
 ---
 
@@ -234,7 +236,7 @@ def update_from_dict(self, update_dict, raise_errors: bool = False):
 
 ---
 
-### 10. No File Size Limits in Extractors
+### 10. No File Size Limits in Extractors - **[FIXED 2025-11-27]**
 
 **Files:** All extractor files
 **Severity:** CRITICAL
@@ -251,6 +253,8 @@ def update_from_dict(self, update_dict, raise_errors: bool = False):
 - Add configurable maximum file size (e.g., 100MB default)
 - Check file size before processing
 - Consider streaming parsers for large files
+
+**Resolution:** Added `MAX_FILE_SIZE_BYTES` constant (100 MB default) to `extractors/__init__.py`. The `BaseExtractor` class now accepts an optional `max_file_size_bytes` parameter in `__init__()` and performs file size validation in the `extract_text()` method before processing. Files exceeding the limit are rejected with an appropriate error message. This protection applies to all extractors that inherit from `BaseExtractor`.
 
 ---
 
@@ -321,7 +325,7 @@ self._sync_id_lock: Optional[threading.Lock] = threading.Lock()
 
 ---
 
-### 15. Unclosed Resources in Error Paths
+### 15. Unclosed Resources in Error Paths - **[FIXED 2025-11-27]**
 
 **File:** `src/localvectordb/backup.py`
 **Lines:** 536-593, 646-651
@@ -340,6 +344,8 @@ try:
 with sqlite3.connect(self.database_path) as source_conn, \
      sqlite3.connect(backup_db_path) as backup_conn:
 ```
+
+**Resolution:** Converted both `_backup_sqlite_database()` and `_get_current_pragma_settings()` methods to use context managers (`with` statements) for SQLite connections. This ensures connections are always properly closed, even if exceptions occur during setup or operations.
 
 ---
 
@@ -1056,7 +1062,7 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 |-------|-------------|-------|--------|
 | SQL Injection | Parameterize or quote all dynamic SQL identifiers | `_filters.py`, `_schema.py`, `_crud.py`, `routes.py` | PENDING |
 | ~~XXE Protection~~ | ~~Add defusedxml, disable external entities~~ | ~~`web_extractors.py`~~ | **FIXED** |
-| File Size Limits | Add configurable limits to all extractors | All extractor files | PENDING (XML done) |
+| ~~File Size Limits~~ | ~~Add configurable limits to all extractors~~ | ~~All extractor files~~ | **FIXED** |
 | ZIP Bomb Protection | Add decompression limits | `office_extractors.py`, `other_extractors.py` | PENDING |
 | ~~Connection Pool Race~~ | ~~Hold locks during entire check-use sequence~~ | ~~`_pools.py`~~ | **VERIFIED OK** |
 | ~~ID Generation Race~~ | ~~Unify async/sync ID generation~~ | ~~`_core.py`~~ | **FIXED** |
@@ -1072,7 +1078,7 @@ return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 | Session Security | Remove raw API key storage | `inspector.py` | PENDING |
 | ~~Type Confusion~~ | ~~Fix datetime converter return type~~ | ~~`core.py`~~ | **FIXED** |
 | Parsing Timeouts | Add timeout limits to extractors | All extractor files | PENDING |
-| Resource Cleanup | Use context managers consistently | `backup.py`, `_crud.py` | PENDING |
+| ~~Resource Cleanup~~ | ~~Use context managers consistently~~ | ~~`backup.py`, `_crud.py`~~ | **FIXED** (backup.py) |
 
 ### P2 - Fix Soon After Release
 

@@ -532,11 +532,11 @@ class BackupManager:
         """Backup SQLite database using SQLite's backup API with optimization pragmas."""
         backup_db_path = temp_dir / f"{self.database_name}.sqlite"
 
-        # Use SQLite's backup API for consistent backup
-        source_conn = sqlite3.connect(self.database_path)
-        backup_conn = sqlite3.connect(backup_db_path)
+        # Use context managers to ensure connections are always closed,
+        # even if exceptions occur during connection setup
+        with sqlite3.connect(self.database_path) as source_conn, \
+             sqlite3.connect(backup_db_path) as backup_conn:
 
-        try:
             # Store original pragmas from source
             original_pragmas = {}
             pragma_queries = [
@@ -573,8 +573,7 @@ class BackupManager:
                     pass  # Best effort
 
             # Perform the backup
-            with source_conn:
-                source_conn.backup(backup_conn)
+            source_conn.backup(backup_conn)
 
             logger.debug(f"SQLite database backed up to: {backup_db_path}")
 
@@ -588,55 +587,49 @@ class BackupManager:
                 except sqlite3.Error:
                     pass  # Best effort restoration
 
-        finally:
-            source_conn.close()
-            backup_conn.close()
-
     def _get_current_pragma_settings(self) -> Dict[str, Any]:
         """Get current pragma settings from the database for backup metadata."""
         pragma_settings = {}
 
         try:
-            conn = sqlite3.connect(self.database_path)
+            # Use context manager to ensure connection is always closed
+            with sqlite3.connect(self.database_path) as conn:
+                # Query common pragma settings
+                pragma_queries = [
+                    ("synchronous", "PRAGMA synchronous"),
+                    ("journal_mode", "PRAGMA journal_mode"),
+                    ("cache_size", "PRAGMA cache_size"),
+                    ("wal_autocheckpoint", "PRAGMA wal_autocheckpoint"),
+                    ("mmap_size", "PRAGMA mmap_size"),
+                    ("temp_store", "PRAGMA temp_store"),
+                    ("foreign_keys", "PRAGMA foreign_keys"),
+                    ("busy_timeout", "PRAGMA busy_timeout")
+                ]
 
-            # Query common pragma settings
-            pragma_queries = [
-                ("synchronous", "PRAGMA synchronous"),
-                ("journal_mode", "PRAGMA journal_mode"),
-                ("cache_size", "PRAGMA cache_size"),
-                ("wal_autocheckpoint", "PRAGMA wal_autocheckpoint"),
-                ("mmap_size", "PRAGMA mmap_size"),
-                ("temp_store", "PRAGMA temp_store"),
-                ("foreign_keys", "PRAGMA foreign_keys"),
-                ("busy_timeout", "PRAGMA busy_timeout")
-            ]
+                for pragma_name, pragma_query in pragma_queries:
+                    try:
+                        result = conn.execute(pragma_query).fetchone()
+                        if result:
+                            pragma_settings[pragma_name] = result[0]
+                    except sqlite3.Error:
+                        pass  # Skip unsupported pragmas
 
-            for pragma_name, pragma_query in pragma_queries:
+                # Also try to get profile and overrides from config table if it exists
                 try:
-                    result = conn.execute(pragma_query).fetchone()
-                    if result:
-                        pragma_settings[pragma_name] = result[0]
+                    config_result = conn.execute(
+                        "SELECT key, value FROM config WHERE key IN ('sqlite_profile', 'sqlite_pragma_overrides')"
+                    ).fetchall()
+
+                    for key, value in config_result:
+                        if key == 'sqlite_profile':
+                            pragma_settings['profile'] = value
+                        elif key == 'sqlite_pragma_overrides':
+                            try:
+                                pragma_settings['overrides'] = json.loads(value)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                 except sqlite3.Error:
-                    pass  # Skip unsupported pragmas
-
-            # Also try to get profile and overrides from config table if it exists
-            try:
-                config_result = conn.execute(
-                    "SELECT key, value FROM config WHERE key IN ('sqlite_profile', 'sqlite_pragma_overrides')"
-                ).fetchall()
-
-                for key, value in config_result:
-                    if key == 'sqlite_profile':
-                        pragma_settings['profile'] = value
-                    elif key == 'sqlite_pragma_overrides':
-                        try:
-                            pragma_settings['overrides'] = json.loads(value)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-            except sqlite3.Error:
-                pass  # Config table may not exist
-
-            conn.close()
+                    pass  # Config table may not exist
 
         except Exception as e:
             logger.debug(f"Failed to get pragma settings: {e}")

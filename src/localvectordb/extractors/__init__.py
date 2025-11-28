@@ -24,6 +24,10 @@ from localvectordb.core import MetadataField
 
 logger = logging.getLogger(__name__)
 
+# Maximum file size for extraction (100 MB default)
+# This prevents DoS attacks via memory exhaustion from extremely large files
+MAX_FILE_SIZE_BYTES: int = 100 * 1024 * 1024
+
 
 class ExtractionResult:
     """
@@ -61,13 +65,28 @@ class BaseExtractor(ABC):
     Abstract base class for file content extractors.
     """
 
-    def __init__(self):
+    def __init__(self, max_file_size_bytes: Optional[int] = None):
+        """
+        Initialize the extractor.
+
+        Parameters
+        ----------
+        max_file_size_bytes : Optional[int]
+            Maximum file size in bytes. If None, uses the module default MAX_FILE_SIZE_BYTES.
+            Set to 0 to disable file size checking (not recommended for production).
+        """
         self._is_available = self._check_availability()
         self.name = self.__class__.__name__
+        self._max_file_size = max_file_size_bytes if max_file_size_bytes is not None else MAX_FILE_SIZE_BYTES
 
     @property
     def available(self) -> bool:
         return self._is_available
+
+    @property
+    def max_file_size_bytes(self) -> int:
+        """Maximum file size this extractor will process."""
+        return self._max_file_size
 
     @property
     @abstractmethod
@@ -197,6 +216,21 @@ class BaseExtractor(ABC):
                 error=f"File type not supported by {self.name}"
             )
 
+        # Check file size limit to prevent DoS via memory exhaustion
+        file_size = len(file_content)
+        if self._max_file_size > 0 and file_size > self._max_file_size:
+            size_mb = file_size / (1024 * 1024)
+            limit_mb = self._max_file_size / (1024 * 1024)
+            logger.warning(
+                f"File '{filename}' rejected: size {size_mb:.2f} MB exceeds limit of {limit_mb:.2f} MB"
+            )
+            return ExtractionResult(
+                text="",
+                success=False,
+                method=self.name,
+                error=f"File size ({size_mb:.2f} MB) exceeds maximum allowed size ({limit_mb:.2f} MB)"
+            )
+
         try:
             return self._extract_text_impl(file_content, filename, mimetype, **kwargs)
         except Exception as e:
@@ -216,7 +250,8 @@ class BaseExtractor(ABC):
             'supported_extensions': self.supported_extensions,
             'supported_mimetypes': self.supported_mimetypes,
             'required_packages': self.required_packages,
-            'priority': self.priority
+            'priority': self.priority,
+            'max_file_size_bytes': self._max_file_size
         }
 
 
