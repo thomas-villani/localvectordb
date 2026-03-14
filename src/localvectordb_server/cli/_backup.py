@@ -20,7 +20,7 @@ Provides command-line interface for backup operations including:
 - Point-in-time recovery operations
 """
 
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import Path
 
 import click
@@ -33,8 +33,8 @@ from localvectordb.backup import (
     IncrementalBackupManager,
     PointInTimeRecoveryManager,
 )
-from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
 from localvectordb.utils import parse_iso8601
+from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
 
 
 @click.group('backup')
@@ -181,7 +181,7 @@ def create_backup(
         else:
             click.secho(f"✗ Backup failed: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @backup_group.command('list')
@@ -314,7 +314,7 @@ def list_backups(ctx, database, type, limit, output_json, location):
         else:
             click.secho(f"Error listing backups: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @backup_group.command('restore')
@@ -453,7 +453,7 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
         else:
             click.secho(f"✗ Restore failed: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @backup_group.command('verify')
@@ -550,7 +550,7 @@ def verify_backup(backup_id, location, output_json):
         else:
             click.secho(f"✗ Verification error: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @backup_group.command('cleanup')
@@ -658,7 +658,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
         else:
             click.secho(f"✗ Cleanup failed: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @backup_group.command('pitr')
@@ -710,7 +710,7 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
                 print_json_output({'success': False, 'error': error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
-            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR) from None
 
         backup_location = Path(location) if location else Path("./backups")
         to_location = Path(to_location)
@@ -802,4 +802,4 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
         else:
             click.secho(f"✗ Point-in-time recovery error: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e

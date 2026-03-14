@@ -81,7 +81,7 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
             raise ValidationError(
                 f"Invalid field name: {e}",
                 field=f"metadata_schema.{field_name}"
-            )
+            ) from e
 
         try:
             if isinstance(field_config, str):
@@ -92,7 +92,7 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
                     raise ValidationError(
                         f"Invalid field type '{field_config}': {e}",
                         field=f"metadata_schema.{field_name}.type"
-                    )
+                    ) from e
                 parsed_schema[field_name] = MetadataField(type=field_type)
 
             elif isinstance(field_config, dict):
@@ -109,7 +109,7 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
                     raise ValidationError(
                         f"Invalid field type '{field_config['type']}': {e}",
                         field=f"metadata_schema.{field_name}.type"
-                    )
+                    ) from e
 
                 # Validate boolean fields
                 indexed = field_config.get('indexed', False)
@@ -150,6 +150,6 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
             raise ValidationError(
                 f"Error parsing field configuration: {e}",
                 field=f"metadata_schema.{field_name}"
-            )
+            ) from e
 
     return parsed_schema

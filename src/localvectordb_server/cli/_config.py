@@ -189,10 +189,10 @@ def get_config_value(ctx, key, format):
 
     except ValueError as e:
         click.secho(f"Error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1)
+        raise click.exceptions.Exit(1) from e
     except Exception as e:
         click.secho(f"Unexpected error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1)
+        raise click.exceptions.Exit(1) from e
 
 
 @config_group.command('set')
@@ -268,10 +268,10 @@ def set_config_value(ctx, key, value, dry_run, force):
 
     except ValueError as e:
         click.secho(f"Error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1)
+        raise click.exceptions.Exit(1) from e
     except Exception as e:
         click.secho(f"Unexpected error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1)
+        raise click.exceptions.Exit(1) from e
 
 
 @config_group.command('init')
@@ -601,7 +601,7 @@ def _configure_redis_registry(config, redis_url):
 
     except Exception as e:
         click.secho(f"Invalid Redis URL: {e}", fg="red")
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 def _configure_file_registry(config):

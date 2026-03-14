@@ -38,7 +38,7 @@ try:
 except ImportError:
     _FLASK_LIMITER_AVAILABLE = False
     Limiter = None
-    get_remote_address = lambda: None
+    def get_remote_address(): return None
 
 try:
     from flask_cors import CORS
@@ -292,7 +292,7 @@ def create_app(
         logger.info("Database manager initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database manager: {e}", exc_info=True)
-        raise ConfigurationError(f"Database manager initialization failed: {e}")
+        raise ConfigurationError(f"Database manager initialization failed: {e}") from e
 
     app.key_manager = KeyManager(
         _config.server.security.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db"))

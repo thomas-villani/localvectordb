@@ -149,7 +149,7 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
         db.set_sqlite_tuning(profile, overrides, persist=not no_persist)
 
         # Show updated config
-        new_config = db.get_sqlite_tuning()
+        _new_config = db.get_sqlite_tuning()
         db.close()
 
         click.echo(f"\nApplied SQLite tuning profile '{click.style(profile, fg='green')}' to '{database}'")
@@ -209,7 +209,8 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
         db.close()
 
         click.echo(
-            f" Set pragma '{click.style(pragma_key, fg='cyan')}' = '{click.style(str(parsed_value), fg='yellow')}' for '{database}'")
+            f" Set pragma '{click.style(pragma_key, fg='cyan')}'"
+            f" = '{click.style(str(parsed_value), fg='yellow')}' for '{database}'")
 
         if not no_persist:
             click.echo(" Setting persisted to database")

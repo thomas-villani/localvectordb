@@ -56,9 +56,9 @@ def serve(mode, config, databases_root, databases_map, log_level):
             mapping = json.loads(databases_map)
             env_format = ",".join(f"{k}={v}" for k, v in mapping.items())
             os.environ['LVDB_MCP_DATABASES_MAP'] = env_format
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             click.echo("Error: Invalid JSON for databases-map", err=True)
-            raise click.Abort()
+            raise click.Abort() from e
 
     # Configure logging (to stderr so it doesn't interfere with stdio)
     logging.basicConfig(
@@ -121,7 +121,7 @@ def status(config):
 
     except Exception as e:
         click.echo(f"Error checking status: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 @mcp_commands.command()
@@ -172,7 +172,7 @@ def test(mode, config):
 
     except Exception as e:
         click.echo(f"Test failed: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 @mcp_commands.command()

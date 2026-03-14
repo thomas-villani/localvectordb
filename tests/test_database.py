@@ -398,7 +398,6 @@ class TestLocalVectorDBInsert:
                 result = mock_db.insert("Test doc", similarity_threshold=0.95)
 
             # Check that pipeline was called with similarity threshold
-            args = mock_pipeline.call_args[0]
             # similarity_threshold should be in position or kwargs
             assert result == ["doc_1"]
             mock_pipeline.assert_called_once()
@@ -508,7 +507,7 @@ class TestLocalVectorDBRetrieval:
 
         with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
             with pytest.raises(DocumentNotFoundError):
-                result = mock_db.get("nonexistent")
+                mock_db.get("nonexistent")
 
     def test_exists_single_document(self, mock_db):
         """Test checking if single document exists."""
@@ -623,7 +622,7 @@ class TestLocalVectorDBDeletion:
 
         with patch.object(mock_db.connection_pool, 'get_connection', return_value=mock_pooled):
             with pytest.raises(DocumentNotFoundError):
-                result = mock_db.delete("nonexistent")
+                mock_db.delete("nonexistent")
 
 
 class TestLocalVectorDBUpdate:
@@ -1577,7 +1576,8 @@ class TestMultiColumnEmbedding:
 
                 # Add column embedding
                 conn.execute(
-                    "INSERT INTO column_embeddings (document_id, field_name, chunk_index, faiss_id) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO column_embeddings (document_id, field_name, chunk_index, faiss_id)"
+                    " VALUES (?, ?, ?, ?)",
                     ("doc_1", "title", 0, 0)
                 )
                 conn.commit()
@@ -1618,8 +1618,8 @@ class TestChunkBatchAccumulator:
 
     def test_accumulator_basic_flow(self):
         """Test basic accumulation and distribution of embeddings."""
-        from localvectordb.database._ingest import ChunkBatchAccumulator
         from localvectordb.core import Chunk, ChunkPosition
+        from localvectordb.database._ingest import ChunkBatchAccumulator
 
         accumulator = ChunkBatchAccumulator(batch_size=5, embedding_dimension=3)
 
@@ -1671,8 +1671,8 @@ class TestChunkBatchAccumulator:
 
     def test_accumulator_batch_when_full(self):
         """Test that accumulator triggers embedding when batch size is reached."""
-        from localvectordb.database._ingest import ChunkBatchAccumulator
         from localvectordb.core import Chunk, ChunkPosition
+        from localvectordb.database._ingest import ChunkBatchAccumulator
 
         # Small batch size for testing
         accumulator = ChunkBatchAccumulator(batch_size=2, embedding_dimension=3)

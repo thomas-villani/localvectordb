@@ -605,7 +605,7 @@ class DatabaseSchema:
         try:
             validate_sql_identifier(field_name)
         except ValueError as e:
-            raise ValueError(f"Cannot add unsafe field name '{field_name}': {str(e)}")
+            raise ValueError(f"Cannot add unsafe field name '{field_name}': {str(e)}") from e
 
     def _get_sqlite_type_mapping(self, field_def: MetadataField) -> str:
         """Get SQLite type for metadata field (pure business logic)"""
@@ -717,7 +717,7 @@ class DatabaseSchema:
             try:
                 validate_sql_identifier(field_name)
             except ValueError as e:
-                raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
+                raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}") from e
 
             if field_name.lower() in self.BASE_COLUMNS:
                 raise ValueError(
@@ -772,7 +772,7 @@ class DatabaseSchema:
             try:
                 validate_sql_identifier(field_name)
             except ValueError as e:
-                raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
+                raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}") from e
 
             if field_name.lower() in self.BASE_COLUMNS:
                 raise ValueError(
@@ -916,7 +916,9 @@ class DatabaseSchema:
                 populated_info = self._populate_field_defaults(conn, field_name, field_def)
                 if populated_info['rows_updated'] > 0:
                     logger.info(
-                        f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
+                        f"Populated default values for {populated_info['rows_updated']} "
+                        f"existing documents in column '{field_name}'"
+                    )
 
             # Create index if requested
             if field_def.indexed:
@@ -1101,7 +1103,7 @@ class DatabaseSchema:
                         try:
                             validate_sql_identifier(field_name)
                         except ValueError as e:
-                            raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}")
+                            raise ValueError(f"Invalid metadata field name '{field_name}': {str(e)}") from e
 
                         if field_name.lower() in self.BASE_COLUMNS:
                             raise ValueError(
@@ -1320,7 +1322,7 @@ class DatabaseSchema:
                                             if current_field and getattr(current_field, 'fts_enabled', False):
                                                 fts_table_name = f'fts_{field_name}'
                                                 try:
-                                                    # Drop FTS triggers (trigger names are derived from validated field_name)
+                                                    # Drop FTS triggers (names derived from validated field_name)
                                                     conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_insert')
                                                     conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_update')
                                                     conn.execute(f'DROP TRIGGER IF EXISTS fts_{field_name}_delete')
@@ -1361,7 +1363,9 @@ class DatabaseSchema:
                                             f"Column data may still exist in the table."
                                         )
                             except Exception as e:
-                                changes['errors'].append(f"Failed to remove field '{field_name}' from schema: {str(e)}")
+                                changes['errors'].append(
+                                    f"Failed to remove field '{field_name}' from schema: {str(e)}"
+                                )
 
                     conn.commit()
 
@@ -1625,7 +1629,9 @@ class DatabaseSchema:
                 populated_info = await self._populate_field_defaults_async(conn, field_name, field_def)
                 if populated_info and populated_info['rows_updated'] > 0:
                     logger.info(
-                        f"Populated default values for {populated_info['rows_updated']} existing documents in column '{field_name}'")
+                        f"Populated default values for {populated_info['rows_updated']} "
+                        f"existing documents in column '{field_name}'"
+                    )
 
             # Create index if requested
             if field_def.indexed:
@@ -2032,7 +2038,9 @@ def get_common_metadata_schemas(
             "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
         },
         "research_papers": {
-            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True, fts_enabled=True),
+            "title": MetadataField(
+                type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True, fts_enabled=True
+            ),
             "authors": MetadataField(type=MetadataFieldType.JSON, indexed=False),
             "abstract": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True,
                                       fts_enabled=True),

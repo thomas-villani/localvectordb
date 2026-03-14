@@ -7,18 +7,15 @@ internal logic, data flow, error handling, and edge cases.
 
 import asyncio
 import hashlib
-import queue
 import threading
-import time
-from typing import Any, Dict, List, Optional, Tuple
-from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
 
 from localvectordb import LocalVectorDB
-from localvectordb.chunking import Chunk, PositionTrackingChunker
-from localvectordb.core import Document, MetadataField, ChunkPosition
+from localvectordb.chunking import Chunk
+from localvectordb.core import ChunkPosition, MetadataField
 from localvectordb.embeddings import MockEmbeddings
 
 
@@ -213,13 +210,6 @@ class TestMultiThreadedPipeline:
                   position=ChunkPosition(start=0, end=14, line=1, column=1, end_line=1, end_column=14),
                   content_hash=hashlib.sha256("only one chunk".encode()).hexdigest()),
         ]
-
-        chunks_to_remove = []
-        faiss_ids_to_remove = []
-
-        def capture_removals(conn, doc_ids, chunk_indices_to_remove, faiss_ids):
-            chunks_to_remove.extend(chunk_indices_to_remove)
-            faiss_ids_to_remove.extend(faiss_ids)
 
         with patch.object(db, '_fetch_existing_chunks_batch', return_value=existing_chunks_fixture), \
              patch.object(db.chunker, 'chunk', return_value=mock_chunks), \
@@ -434,7 +424,7 @@ class TestAsyncPipeline:
              patch.object(db, '_database_stage', side_effect=track_database), \
              patch.object(db, '_fetch_existing_chunks_batch_async', return_value={}):
 
-            result = await db._async_pipeline_process(
+            await db._async_pipeline_process(
                 documents=sample_documents,
                 metadata_batch=sample_metadata,
                 ids=["doc_1", "doc_2", "doc_3"],

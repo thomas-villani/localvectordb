@@ -586,6 +586,6 @@ def shell(ctx):
 
     except Exception as e:
         click.secho(f"Fatal error: {str(e)}", fg="bright_red")
-        raise click.Abort()
+        raise click.Abort() from e
     finally:
         db.close()

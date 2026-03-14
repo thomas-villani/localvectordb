@@ -246,7 +246,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             return changes
         except Exception as e:
             logger.error(f"Failed to update metadata schema: {e}")
-            raise DatabaseError(f"Schema update failed: {str(e)}")
+            raise DatabaseError(f"Schema update failed: {str(e)}") from e
 
     async def update_metadata_schema_async(
             self,
@@ -355,12 +355,14 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             if self.async_connection_pool is None:
                 self.async_connection_pool = AsyncConnectionPool(self.db_path, self.async_max_connections)
             async with self.async_connection_pool.get_connection_context() as conn:
-                changes = await self.schema.update_metadata_schema_async(new_schema, conn, drop_columns, column_mapping)
+                changes = await self.schema.update_metadata_schema_async(
+                    new_schema, conn, drop_columns, column_mapping
+                )
             self._metadata_schema = new_schema.copy()
             return changes
         except Exception as e:
             logger.error(f"Failed to update metadata schema (async): {e}")
-            raise DatabaseError(f"Schema update failed: {str(e)}")
+            raise DatabaseError(f"Schema update failed: {str(e)}") from e
 
     #############################
     # Metadata Embeddings       #
@@ -383,7 +385,9 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                     changed_fields[field_name] = field_def
         return changed_fields
 
-    def _track_column_embedding(self, conn, document_id: str, field_name: str, chunk_index: int, faiss_id: int) -> None:
+    def _track_column_embedding(
+            self, conn, document_id: str, field_name: str, chunk_index: int, faiss_id: int
+    ) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO column_embeddings

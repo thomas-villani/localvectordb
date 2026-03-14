@@ -24,7 +24,6 @@ from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.versioning import VersionManager
 
-
 # IMPORTANT: Sample migration classes are now created dynamically in fixtures to avoid
 # module loading conflicts when tests run in the full suite. Previously, these were
 # defined as module-level classes, but this caused issues when tests ran in different

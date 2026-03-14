@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import aiosqlite
 import psutil
@@ -174,7 +174,9 @@ SqliteProfile = Literal["balanced", "fast_ingest", "read_optimized", "durable", 
 def is_valid_sqlite_pragma_profile(profile: SqliteProfile) -> bool:
     return profile in SQLITE_PRAGMA_PROFILES
 
-def get_sqlite_pragma_profile(profile: SqliteProfile, *, default: Optional[SqliteProfile] = None) -> SQLitePragmaProfile:
+def get_sqlite_pragma_profile(
+        profile: SqliteProfile, *, default: Optional[SqliteProfile] = None
+) -> SQLitePragmaProfile:
     return SQLITE_PRAGMA_PROFILES.get(profile, SQLITE_PRAGMA_PROFILES.get(default) if default is not None else default)
 
 # Safe pragma values that don't require quotes
@@ -509,7 +511,8 @@ class AutoTuner:
             reasoning.append("Strict WAL settings for real-time processing")
 
         # Platform-specific adjustments
-        if system.os_type == "Darwin" and workload.durability_level in [DurabilityLevel.CRITICAL, DurabilityLevel.HIGH]:
+        if (system.os_type == "Darwin"
+                and workload.durability_level in [DurabilityLevel.CRITICAL, DurabilityLevel.HIGH]):
             pragma_overrides["fullfsync"] = "ON"
             reasoning.append("Enabled fullfsync for macOS durability")
 

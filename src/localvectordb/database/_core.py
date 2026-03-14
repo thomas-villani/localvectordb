@@ -42,12 +42,12 @@ from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteL
 from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import Chunk, MetadataField
+from localvectordb.database._faiss_utils import build_id_lookup
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
 from localvectordb.sqlite_tuning import SqliteProfile, get_sqlite_pragma_profile, is_valid_sqlite_pragma_profile
 from localvectordb.utils import get_system_version
-from localvectordb.database._faiss_utils import get_faiss_external_ids, build_id_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     """
 
     def __init__(
-            self, name: str, base_path: Union[str, Path] = ".lvdb", *, metadata_schema: Optional[Dict[str, Any]] = None,
+            self, name: str, base_path: Union[str, Path] = ".lvdb", *,
+            metadata_schema: Optional[Dict[str, Any]] = None,
             doc_id_pattern: str = "doc_{idx}", embedding_provider: str = "ollama",
             embedding_model: str = "nomic-embed-text", embedding_config: Optional[Dict[str, Any]] = None,
             chunking_method: Union[str, Any] = "sentences", chunk_size: int = 500, chunk_overlap: int = 1,
@@ -127,7 +128,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Threading
         self._read_write_lock: ReadWriteLock = ReadWriteLock()
-        self._faiss_lock: ReadWriteLock = ReadWriteLock()  # ReadWrite lock for FAISS operations to allow concurrent reads
+        # ReadWrite lock for FAISS operations to allow concurrent reads
+        self._faiss_lock: ReadWriteLock = ReadWriteLock()
 
         # Initialize SQLite tuning configuration
         profile = get_sqlite_pragma_profile(sqlite_profile, default="balanced")
@@ -371,7 +373,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             try:
                 loaded_index = faiss.read_index(str(self.index_path))
             except RuntimeError as e:
-                raise DatabaseError(f"Error loading faiss index: {str(e)}")
+                raise DatabaseError(f"Error loading faiss index: {str(e)}") from e
             if hasattr(loaded_index, 'id_map'):
                 self.index = loaded_index
                 logger.info(f"Loaded existing FAISS IndexIDMap2 with {self.index.ntotal} vectors")
@@ -389,7 +391,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                                             faiss_index_lsh_bits or self.embedding_dimension * 2)
             else:
                 raise ValueError(
-                    "Invalid faiss index for LocalVectorDB. Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
+                    "Invalid faiss index for LocalVectorDB. "
+                    "Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH"
+                )
             self.index = faiss.IndexIDMap2(base_index)
             logger.info(f"Created new FAISS IndexIDMap2 with dimension {self.embedding_dimension}")
         if enable_gpu:
@@ -488,7 +492,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     # All direct reconstructs succeeded
                     result = np.array(embeddings)
                     logger.debug(
-                        f"Successfully reconstructed {len(embeddings)} embeddings using direct IndexIDMap2 reconstruct")
+                        f"Successfully reconstructed {len(embeddings)} embeddings "
+                        f"using direct IndexIDMap2 reconstruct"
+                    )
                     return result
         except Exception as e:
             logger.debug(f"Direct IndexIDMap2 reconstruction not available: {e}")

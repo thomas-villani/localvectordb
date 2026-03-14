@@ -10,13 +10,10 @@ This module tests advanced search capabilities including:
 
 import shutil
 import tempfile
-from pathlib import Path
-from typing import Dict, List
 
-import numpy as np
 import pytest
 
-from localvectordb.core import Document, MetadataField, MetadataFieldType, QueryResult
+from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database import LocalVectorDB
 
 
@@ -51,11 +48,26 @@ def search_db():
 
     # Add documents with multiple chunks
     documents = [
-        "Machine learning is transforming technology. Deep learning models are powerful. Neural networks learn patterns. AI systems improve continuously.",
-        "Vector databases store embeddings efficiently. They enable semantic search. FAISS provides fast similarity search. LocalVectorDB combines SQLite and FAISS.",
-        "Natural language processing helps computers understand text. NLP powers chatbots. Language models generate human-like text. Transformers revolutionized NLP.",
-        "Data science extracts insights from data. Statistics guide decision making. Visualization reveals patterns. Python dominates data science.",
-        "Cloud computing provides scalable infrastructure. AWS leads the market. Kubernetes orchestrates containers. DevOps practices streamline deployment.",
+        (
+            "Machine learning is transforming technology. Deep learning models are powerful."
+            " Neural networks learn patterns. AI systems improve continuously."
+        ),
+        (
+            "Vector databases store embeddings efficiently. They enable semantic search."
+            " FAISS provides fast similarity search. LocalVectorDB combines SQLite and FAISS."
+        ),
+        (
+            "Natural language processing helps computers understand text. NLP powers chatbots."
+            " Language models generate human-like text. Transformers revolutionized NLP."
+        ),
+        (
+            "Data science extracts insights from data. Statistics guide decision making."
+            " Visualization reveals patterns. Python dominates data science."
+        ),
+        (
+            "Cloud computing provides scalable infrastructure. AWS leads the market."
+            " Kubernetes orchestrates containers. DevOps practices streamline deployment."
+        ),
     ]
 
     metadata = [

@@ -92,19 +92,19 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
                     click.secho("⚠ Ollama is installed but the service is not running", fg="yellow")
                     click.secho("  To start Ollama service, run: ollama serve", fg="blue")
                     click.secho("  Or disable this check with --disable-ollama-check", fg="blue")
-                    raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
+                    raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR) from None
 
             except OllamaNotFoundError as e:
                 click.secho(f"✗ Ollama installation check failed: {e}", fg="red")
                 click.secho("  Install Ollama from: https://ollama.ai/download", fg="blue")
                 click.secho("  Or disable this check with --disable-ollama-check", fg="blue")
                 click.secho("  Or set environment variable: LVDB_DISABLE_OLLAMA_CHECK=true", fg="blue")
-                raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
+                raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR) from e
             except Exception as e:
                 click.secho(f"✗ Ollama check failed with unexpected error: {e}", fg="red")
                 click.secho("  You can disable this check with --disable-ollama-check", fg="blue")
                 click.secho("  Or set environment variable: LVDB_DISABLE_OLLAMA_CHECK=true", fg="blue")
-                raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR)
+                raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR) from e
 
         # Run the Flask app with final config values
         app.run(
@@ -115,10 +115,10 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
 
     except ConfigurationError as e:
         click.secho(f"Configuration error: {e}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_CONFIGURATION_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_CONFIGURATION_ERROR) from e
     except Exception as e:
         click.secho(f"Error: {e}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @click.command('list')
@@ -260,7 +260,7 @@ def create_vector_database(
 
     except Exception as e:
         click.secho(f"Error creating database: {str(repr(e))}", fg='bright_red', err=True)
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @click.command('delete')

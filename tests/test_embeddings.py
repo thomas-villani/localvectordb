@@ -176,7 +176,7 @@ class TestOllamaEmbeddings:
 
         provider = OllamaEmbeddings("test-model")
         with pytest.raises(OllamaNotFoundError):
-            result = provider.validate_model()
+            provider.validate_model()
 
     @patch('httpx.AsyncClient')
     @pytest.mark.asyncio
@@ -335,7 +335,7 @@ class TestOpenAIEmbeddings:
         assert provider.validate_model() is True
 
         with pytest.raises(ValueError):
-            provider = OpenAIEmbeddings("unknown-model", api_key="test")
+            OpenAIEmbeddings("unknown-model", api_key="test")
 
     def test_get_dimension_known_model(self):
         """Test getting dimension for known models."""

@@ -11,11 +11,14 @@
 
 import json
 import os
-from typing import Any, Union, get_type_hints
+from typing import TYPE_CHECKING, Any, Union, get_type_hints
 
 import click
 
 from localvectordb import LocalVectorDB
+
+if TYPE_CHECKING:
+    from localvectordb_server.config import Config
 
 EXIT_CODE_SUCCESS = 0
 EXIT_CODE_ERROR = 1
@@ -196,7 +199,7 @@ def set_nested_value(config: "Config", key_path: str, value_str: str) -> None:
             else:
                 metadata_schema[schema_field] = MetadataField(type=MetadataFieldType(field_config))
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            raise ValueError(f"Invalid metadata field configuration: {e}")
+            raise ValueError(f"Invalid metadata field configuration: {e}") from e
 
         section_obj.default_metadata_schema = metadata_schema
         return
@@ -236,7 +239,7 @@ def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_na
         hint = hints[attr_name]
         # Handle Optional[T] (Union[T, None])
         if hasattr(hint, '__origin__') and hint.__origin__ is Union:
-            non_none_types = [arg for arg in hint.__args__ if arg != type(None)]
+            non_none_types = [arg for arg in hint.__args__ if arg is not type(None)]
             if non_none_types:
                 target_type = non_none_types[0]
 
@@ -245,29 +248,29 @@ def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_na
         return None
 
     # Boolean conversion
-    if target_type == bool:
+    if target_type is bool:
         return value_str.lower() in ['true', 'yes', '1', 'on', 'y']
 
     # Integer conversion
-    if target_type == int:
+    if target_type is int:
         try:
             return int(value_str)
-        except ValueError:
-            raise ValueError(f"Cannot convert '{value_str}' to integer")
+        except ValueError as e:
+            raise ValueError(f"Cannot convert '{value_str}' to integer") from e
 
     # Float conversion
-    if target_type == float:
+    if target_type is float:
         try:
             return float(value_str)
-        except ValueError:
-            raise ValueError(f"Cannot convert '{value_str}' to float")
+        except ValueError as e:
+            raise ValueError(f"Cannot convert '{value_str}' to float") from e
 
     # String conversion (default)
-    if target_type == str:
+    if target_type is str:
         return value_str
 
     # List conversion
-    if target_type == list or (hasattr(target_type, '__origin__') and target_type.__origin__ == list):
+    if target_type is list or (hasattr(target_type, '__origin__') and target_type.__origin__ is list):
         # Try JSON first
         if value_str.startswith('[') and value_str.endswith(']'):
             try:
@@ -282,11 +285,11 @@ def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_na
             return [value_str.strip().strip('"\'')]
 
     # Dict conversion
-    if target_type == dict or (hasattr(target_type, '__origin__') and target_type.__origin__ == dict):
+    if target_type is dict or (hasattr(target_type, '__origin__') and target_type.__origin__ is dict):
         try:
             return json.loads(value_str)
-        except json.JSONDecodeError:
-            raise ValueError(f"Cannot convert '{value_str}' to dict. Expected JSON format.")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Cannot convert '{value_str}' to dict. Expected JSON format.") from e
 
     # For other types, try JSON parsing first, then string
     try:

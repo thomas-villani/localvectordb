@@ -200,10 +200,13 @@ from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
 from localvectordb.factory import VectorDB
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.query_builder import QueryBuilder
-from localvectordb._schema import get_common_metadata_schemas
+from localvectordb.sqlite_tuning import (
+                                         SqliteProfile,
+                                         get_profile_description,
+                                         get_sqlite_pragma_profile,
+                                         is_valid_sqlite_pragma_profile,
+)
 from localvectordb.versioning import VersionManager
-from localvectordb.sqlite_tuning import (SqliteProfile, get_sqlite_pragma_profile,
-                                         get_profile_description, is_valid_sqlite_pragma_profile)
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",
@@ -213,3 +216,10 @@ __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVector
            "ExtractorRegistry", "sqlite_tuning", "SqliteProfile", "get_profile_description",
            "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile",
            "get_common_metadata_schemas"]
+
+
+def __getattr__(name):
+    if name == "get_common_metadata_schemas":
+        from localvectordb._schema import get_common_metadata_schemas
+        return get_common_metadata_schemas
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

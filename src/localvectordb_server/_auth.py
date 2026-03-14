@@ -78,7 +78,9 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
                 permission_level=permission_level.value,
                 key_id=key_id
             )
-            logger.debug(f"Token validated against database keys with permission: {permission_level.value}, key_id: {key_id}")
+            logger.debug(
+                f"Token validated against database keys with permission: {permission_level.value}, key_id: {key_id}"
+            )
         else:
             security_logger.log_auth_attempt(
                 success=False,
@@ -380,7 +382,7 @@ def _require_permission(required_permission: PermissionLevel):
                     endpoint=request.endpoint,
                     auth_header_preview=auth_header[:20] + "..." if len(auth_header) > 20 else auth_header
                 )
-                raise Unauthorized("Invalid Authorization header format. Expected: Bearer <token>")
+                raise Unauthorized("Invalid Authorization header format. Expected: Bearer <token>") from None
 
             if auth_type.lower() != "bearer":
                 security_logger.log_auth_attempt(
@@ -410,7 +412,10 @@ def _require_permission(required_permission: PermissionLevel):
             if required_permission == PermissionLevel.READ_WRITE and permission_level == PermissionLevel.READ_ONLY:
                 security_logger.log_auth_attempt(
                     success=False,
-                    reason=f"Insufficient permissions: requires {required_permission.value}, has {permission_level.value}",
+                    reason=(
+                        f"Insufficient permissions: requires {required_permission.value},"
+                        f" has {permission_level.value}"
+                    ),
                     endpoint=request.endpoint,
                     token_prefix=_mask_token(token),
                     required_permission=required_permission.value,

@@ -15,11 +15,11 @@ This module contains the foundational classes and data structures for the new
 document-first architecture.
 """
 from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import sqlite3
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -425,7 +425,8 @@ class QueryResult:
         )
 
 
-# TODO: create a class to handle list of QueryResult with composable subfiltering options, but still acting like a list.
+# TODO: create a class to handle list of QueryResult with composable
+#   subfiltering options, but still acting like a list.
 #   This would allow for further processing like `.semantic_filter` and `.filter` and .limit, etc.
 #   And also fancier stuff like converting to a numpy array of embeddings
 #

@@ -66,11 +66,8 @@ class HTMLExtractor(BaseExtractor):
         }
 
     def _check_availability(self) -> bool:
-        try:
-            from bs4 import BeautifulSoup
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("bs4") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -324,8 +321,8 @@ class XMLExtractor(BaseExtractor):
             )
 
         try:
-            from bs4 import BeautifulSoup
             import defusedxml.ElementTree as DefusedET
+            from bs4 import BeautifulSoup
 
             # Decode XML content
             try:

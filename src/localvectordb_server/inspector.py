@@ -79,7 +79,8 @@ def require_inspector_auth(required_permission=PermissionLevel.READ_ONLY):
                             return redirect(url_for('inspector.login'))
 
                         # Check if user has required permission
-                        if required_permission == PermissionLevel.READ_WRITE and permission_level == PermissionLevel.READ_ONLY:
+                        if (required_permission == PermissionLevel.READ_WRITE
+                                and permission_level == PermissionLevel.READ_ONLY):
                             flash('Insufficient permissions. This action requires write access.', 'error')
                             return redirect(url_for('inspector.dashboard'))
 

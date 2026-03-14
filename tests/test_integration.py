@@ -792,7 +792,10 @@ class TestLocalVectorDBIntegration:
                 # Simulate adding documents over time
                 documents = [
                     {
-                        'content': "Project specification for the new AI system. This document outlines requirements and architecture.",
+                        'content': (
+                            "Project specification for the new AI system."
+                            " This document outlines requirements and architecture."
+                        ),
                         'metadata': {
                             'title': "AI System Spec",
                             'author': "Alice Johnson",
@@ -802,7 +805,10 @@ class TestLocalVectorDBIntegration:
                         }
                     },
                     {
-                        'content': "Meeting notes from AI project kickoff. Discussed timeline and resource allocation.",
+                        'content': (
+                            "Meeting notes from AI project kickoff."
+                            " Discussed timeline and resource allocation."
+                        ),
                         'metadata': {
                             'title': "AI Project Kickoff Notes",
                             'author': "Bob Smith",
@@ -812,7 +818,10 @@ class TestLocalVectorDBIntegration:
                         }
                     },
                     {
-                        'content': "Technical design document for machine learning pipeline. Includes data flow and model architecture.",
+                        'content': (
+                            "Technical design document for machine learning pipeline."
+                            " Includes data flow and model architecture."
+                        ),
                         'metadata': {
                             'title': "ML Pipeline Design",
                             'author': "Charlie Brown",
@@ -927,7 +936,10 @@ class TestLocalVectorDBIntegration:
                 # Mix of different content types and lengths
                 mixed_documents = [
                     "Short note.",  # Very short
-                    "This is a medium-length document with several sentences. It should be chunked appropriately based on the configured chunk size.",
+                    (
+                        "This is a medium-length document with several sentences."
+                        " It should be chunked appropriately based on the configured chunk size."
+                    ),
                     # Medium
                     " ".join([f"This is sentence {i} in a very long document." for i in range(100)]),  # Very long
                     "",  # Empty (edge case)

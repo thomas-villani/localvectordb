@@ -35,9 +35,9 @@ class TestAsyncInitialization:
     async def test_create_new_database_async_operations(self, temp_dir, sample_metadata_schema):
         """Test creating a new database and performing basic async operations."""
         with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as _mock_chunker, \
+                patch('faiss.IndexFlatL2') as _mock_faiss, \
+                patch('faiss.IndexIDMap2') as _mock_faiss_idmap:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -52,7 +52,7 @@ class TestAsyncInitialization:
                 Mock(content="chunk1", tokens=5, index=0, position=Mock(start=0, end=6)),
                 Mock(content="chunk2", tokens=5, index=1, position=Mock(start=7, end=13))
             ]
-            mock_chunker.return_value = mock_chunker_instance
+            _mock_chunker.return_value = mock_chunker_instance
 
             # Create database
             db = LocalVectorDB(
@@ -71,9 +71,9 @@ class TestAsyncInitialization:
     async def test_in_memory_database_async(self, sample_metadata_schema):
         """Test creating an in-memory database with async operations."""
         with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as mock_chunker, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
+                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as _mock_chunker, \
+                patch('faiss.IndexFlatL2') as _mock_faiss, \
+                patch('faiss.IndexIDMap2') as _mock_faiss_idmap:
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -85,7 +85,7 @@ class TestAsyncInitialization:
             mock_chunker_instance.chunk.return_value = [
                 Mock(content="test chunk", tokens=2, index=0, position=Mock(start=0, end=10), content_hash="test_hash")
             ]
-            mock_chunker.return_value = mock_chunker_instance
+            _mock_chunker.return_value = mock_chunker_instance
 
             # Create in-memory database
             db = LocalVectorDB(
@@ -467,7 +467,7 @@ class TestAsyncDeletion:
         assert len(all_docs) > 0
 
         doc_to_delete = all_docs[0].id
-        result = await db.delete_async(doc_to_delete)
+        await db.delete_async(doc_to_delete)
 
         # Verify document was deleted
         remaining_docs = await db.filter_async({})
@@ -490,7 +490,7 @@ class TestAsyncDeletion:
 
         # Delete first two documents
         doc_ids = [all_docs[0].id, all_docs[1].id]
-        result = await db.delete_async(doc_ids)
+        await db.delete_async(doc_ids)
 
         # Verify documents were deleted
         remaining_docs = await db.filter_async({})

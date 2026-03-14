@@ -70,7 +70,11 @@ class DatabaseVersion:
     def _parse_version(self, version: str) -> None:
         """Parse version string into components"""
         # Support semantic versioning: MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
-        pattern = r'^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+        pattern = (
+            r'^(\d+)\.(\d+)\.(\d+)'
+            r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
+            r'(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+        )
         match = re.match(pattern, version)
 
         if not match:

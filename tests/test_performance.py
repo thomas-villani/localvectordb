@@ -154,7 +154,7 @@ class TestDatabasePerformance:
 
             # Perform multiple queries
             for _ in range(20):
-                results = perf_db.query("test query", k=k)
+                perf_db.query("test query", k=k)
 
             end_time = time.time()
             avg_query_time = (end_time - start_time) / 20
@@ -274,7 +274,7 @@ class TestChunkingPerformance:
             doc = " ".join([f"This is sentence {i}." for i in range(size)])
 
             start_time = time.time()
-            chunks = chunker.chunk(doc)
+            chunker.chunk(doc)
             end_time = time.time()
 
             chunk_time = end_time - start_time
@@ -301,7 +301,7 @@ class TestChunkingPerformance:
             chunker = ChunkerFactory.create_chunker('sentences', max_tokens=50, overlap=overlap)
 
             start_time = time.time()
-            chunks = chunker.chunk(doc)
+            chunker.chunk(doc)
             end_time = time.time()
 
             chunk_time = end_time - start_time
@@ -380,7 +380,7 @@ class TestEmbeddingPerformance:
 
         for _ in range(num_iterations):
             start_time = time.time()
-            embeddings = provider.embed_sync(texts)
+            provider.embed_sync(texts)
             end_time = time.time()
             times.append(end_time - start_time)
 

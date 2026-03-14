@@ -68,8 +68,6 @@ def temp_dirs():
 @pytest.fixture
 def sample_database(temp_dirs):
     """Create a sample LocalVectorDB for testing."""
-    db_path = temp_dirs['db'] / "test.sqlite"
-
     # Create database with sample data
     metadata_schema = {
         'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -254,7 +252,7 @@ class TestBackupManager:
             old_time = datetime.now(UTC) - timedelta(days=35)
             mock_datetime.now.return_value = old_time
             mock_datetime.UTC = UTC
-            old_backup_id = backup_manager.create_backup(BackupType.FULL)
+            _old_backup_id = backup_manager.create_backup(BackupType.FULL)
 
             # Create recent backup
             recent_time = datetime.now(UTC) - timedelta(days=5)
@@ -408,7 +406,7 @@ class TestPointInTimeRecovery:
     def test_validate_recovery_timeline(self, pitr_manager, sample_database):
         """Test recovery timeline validation."""
         # Create valid backup chain
-        full_backup_id = pitr_manager.backup_manager.create_backup(BackupType.FULL)
+        _full_backup_id = pitr_manager.backup_manager.create_backup(BackupType.FULL)
 
         validation_result = pitr_manager.validate_recovery_timeline()
 
@@ -469,7 +467,7 @@ class TestBackupConfiguration:
         backup_id = manager.create_backup(BackupType.FULL)
 
         # Restore backup
-        restore_path = manager.restore_backup(
+        manager.restore_backup(
             backup_id,
             temp_dirs['restore'],
             overwrite_existing=True
@@ -555,7 +553,7 @@ class TestIntegration:
         assert backups[0].backup_id == backup_id
 
         # Restore backup
-        restore_path = manager.restore_backup(
+        manager.restore_backup(
             backup_id,
             temp_dirs['restore'],
             overwrite_existing=True

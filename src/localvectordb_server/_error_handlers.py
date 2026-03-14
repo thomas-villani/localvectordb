@@ -282,8 +282,8 @@ def validate_pagination_params(page: Optional[int] = None, limit: Optional[int] 
     try:
         page = int(page) if page is not None else 1
         limit = int(limit) if limit is not None else 100
-    except (ValueError, TypeError):
-        raise ValidationError("Pagination parameters must be integers")
+    except (ValueError, TypeError) as e:
+        raise ValidationError("Pagination parameters must be integers") from e
 
     if page < 1:
         raise ValidationError("Page number must be >= 1", field="page", value=page)

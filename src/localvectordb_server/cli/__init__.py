@@ -145,14 +145,14 @@ def cli(ctx, config, db_folder):
     ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path, 'db_folder': db_folder}
 
 
-from localvectordb_server.cli._auth import auth
-from localvectordb_server.cli._backup import backup_group
-from localvectordb_server.cli._basic import create_vector_database, delete_database, list_databases, serve
-from localvectordb_server.cli._config import config_group
-from localvectordb_server.cli._db import db_group
-from localvectordb_server.cli._mcp import mcp_commands
-from localvectordb_server.cli._migration import migrate_group
-from localvectordb_server.cli._tuning import maintenance_group, tuning_group
+from localvectordb_server.cli._auth import auth  # noqa: E402
+from localvectordb_server.cli._backup import backup_group  # noqa: E402
+from localvectordb_server.cli._basic import create_vector_database, delete_database, list_databases, serve  # noqa: E402
+from localvectordb_server.cli._config import config_group  # noqa: E402
+from localvectordb_server.cli._db import db_group  # noqa: E402
+from localvectordb_server.cli._mcp import mcp_commands  # noqa: E402
+from localvectordb_server.cli._migration import migrate_group  # noqa: E402
+from localvectordb_server.cli._tuning import maintenance_group, tuning_group  # noqa: E402
 
 cli.add_command(serve)
 cli.add_command(create_vector_database)

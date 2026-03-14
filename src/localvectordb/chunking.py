@@ -340,9 +340,6 @@ class TokenChunker(PositionTrackingChunker):
             start_pos = self._estimate_position(text, tokens, i)
             end_pos = min(start_pos + len(chunk_text), len(text))
 
-            # Adjust to actual character boundaries
-            actual_chunk_text = text[start_pos:end_pos]
-
             chunk = self._create_chunk(text, start_pos, end_pos, chunk_index)
             chunks.append(chunk)
             chunk_index += 1

@@ -125,7 +125,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
         return_type : Literal['documents', 'chunks', 'context', 'enriched']
-            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context
+            Whether to return full documents, individual chunks,
+            chunks with context, or enriched chunks with intra-document context
         k : int
             Maximum number of results to return
         score_threshold : float
@@ -192,11 +193,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         with self._read_write_lock.read_lock():
             if search_type == 'vector':
-                return self._vector_search(query, return_type, k, score_threshold, filters, context_window,
-                                           semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+                return self._vector_search(
+                    query, return_type, k, score_threshold, filters, context_window,
+                    semantic_dedup_threshold, document_scoring_method, document_scoring_options
+                )
             elif search_type == 'keyword':
-                return self._keyword_search(query, return_type, k, score_threshold, filters, context_window,
-                                            semantic_dedup_threshold, document_scoring_method, document_scoring_options)
+                return self._keyword_search(
+                    query, return_type, k, score_threshold, filters, context_window,
+                    semantic_dedup_threshold, document_scoring_method, document_scoring_options
+                )
             elif search_type == 'hybrid':
                 return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight,
                                            context_window, semantic_dedup_threshold, document_scoring_method,
@@ -475,7 +480,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 raise ValueError(f"Expected chunk ids (e.g. doc_1:1), found: {cid}")
             chunk_list.append((doc_id, chunk_idx))
         placeholders = ",".join(["(?,?)"] * len(chunk_list))
-        query_str = f"""SELECT faiss_id, document_id, chunk_index FROM chunks WHERE (document_id, chunk_index) IN ({placeholders})"""
+        query_str = (
+            f"SELECT faiss_id, document_id, chunk_index FROM chunks "
+            f"WHERE (document_id, chunk_index) IN ({placeholders})"
+        )
         params = [item for pair in chunk_list for item in pair]
         with self._read_write_lock.read_lock():
             with self.connection_pool.get_connection() as conn:
@@ -922,7 +930,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     method_metadata["standard_deviation"] = std_dev
                     method_metadata["median"] = median_score
                     method_metadata["above_median_ratio"] = above_median_ratio
-                    final_score = best_score * best_weight + mean_score * mean_weight + consistency * consistency_weight + above_median_ratio * coverage_weight
+                    final_score = (
+                        best_score * best_weight + mean_score * mean_weight
+                        + consistency * consistency_weight + above_median_ratio * coverage_weight
+                    )
                     final_score = min(1.0, final_score)
             elif method == "robust_mean":
                 if len(scores) == 1:
@@ -1190,7 +1201,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform, by default 'hybrid'
         return_type : Literal['documents', 'chunks', 'context', 'enriched']
-            Whether to return full documents, individual chunks, chunks with context, or enriched chunks with intra-document context, by default 'documents'
+            Whether to return full documents, individual chunks,
+            chunks with context, or enriched chunks with intra-document context,
+            by default 'documents'
         k : int
             Maximum number of results to return, by default 10
         score_threshold : float
@@ -1404,8 +1417,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                                                                               semantic_dedup_threshold)
         if score_threshold > 0.0:
             combined_results = [r for r in combined_results if r.score >= score_threshold]
-        final_results = await self._process_search_results_async(combined_results, return_type, document_scoring_method,
-                                                                 document_scoring_options, context_window)
+        final_results = await self._process_search_results_async(
+            combined_results, return_type, document_scoring_method,
+            document_scoring_options, context_window
+        )
         return final_results[:k]
 
     async def _get_chunks_by_faiss_ids_async(self, faiss_ids: List[int]) -> List[Dict[str, Any]]:
@@ -1785,7 +1800,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     relevant_chunks.add(chunk_index)
                     similarity_scores[chunk_index] = max(similarity_scores.get(chunk_index, 0), 1.0)
 
-                    def calc_sims():
+                    def calc_sims(
+                        doc_chunks=doc_chunks, chunk_index=chunk_index,
+                        faiss_id_to_embedding=faiss_id_to_embedding,
+                        target_embedding=target_embedding,
+                    ):
                         sims = []
                         import numpy as _np
                         for other_chunk_idx, other_chunk in doc_chunks.items():

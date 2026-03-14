@@ -17,7 +17,7 @@ from typing import List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
-from localvectordb.extractors import BaseExtractor, ExtractionResult, validate_zip_safety, ZipBombError
+from localvectordb.extractors import BaseExtractor, ExtractionResult, ZipBombError, validate_zip_safety
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +54,8 @@ class RTFExtractor(BaseExtractor):
         }
 
     def _check_availability(self) -> bool:
-        try:
-            import striprtf
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("striprtf") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -156,11 +153,8 @@ class EPubExtractor(BaseExtractor):
         }
 
     def _check_availability(self) -> bool:
-        try:
-            import ebooklib
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("ebooklib") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -235,15 +229,15 @@ class EPubExtractor(BaseExtractor):
                 # Get metadata from book
                 book_metadata = {}
                 try:
+                    title_meta = book.get_metadata('DC', 'title')
+                    author_meta = book.get_metadata('DC', 'creator')
+                    lang_meta = book.get_metadata('DC', 'language')
                     book_metadata = {
-                        'title': book.get_metadata('DC', 'title')[0][0] if book.get_metadata('DC',
-                                                                                             'title') else 'Unknown',
-                        'author': book.get_metadata('DC', 'creator')[0][0] if book.get_metadata('DC',
-                                                                                                'creator') else 'Unknown',
-                        'language': book.get_metadata('DC', 'language')[0][0] if book.get_metadata('DC',
-                                                                                                   'language') else 'Unknown'
+                        'title': title_meta[0][0] if title_meta else 'Unknown',
+                        'author': author_meta[0][0] if author_meta else 'Unknown',
+                        'language': lang_meta[0][0] if lang_meta else 'Unknown',
                     }
-                except:
+                except Exception:
                     pass
 
                 metadata = {

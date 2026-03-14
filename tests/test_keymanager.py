@@ -211,7 +211,7 @@ class TestKeyManagerInitialization:
         db_path = temp_dir / "test_keys.db"
 
         with patch('localvectordb_server.keymanager.bcrypt'):
-            manager = KeyManager(str(db_path))
+            _manager = KeyManager(str(db_path))
 
         assert db_path.exists()
 
@@ -229,7 +229,7 @@ class TestKeyManagerInitialization:
         nested_path = temp_dir / "nested" / "path" / "keys.db"
 
         with patch('localvectordb_server.keymanager.bcrypt'):
-            manager = KeyManager(str(nested_path))
+            _manager = KeyManager(str(nested_path))
 
         assert nested_path.exists()
         assert nested_path.parent.exists()
@@ -239,7 +239,7 @@ class TestKeyManagerInitialization:
         db_path = temp_dir / "test_keys.db"
 
         with patch('localvectordb_server.keymanager.bcrypt'):
-            manager = KeyManager(str(db_path))
+            _manager = KeyManager(str(db_path))
 
         with sqlite3.connect(db_path) as conn:
             cursor = conn.execute("SELECT version FROM schema_version")
@@ -427,7 +427,7 @@ class TestKeyManagerRetrieval:
         manager, mock_bcrypt = mock_key_manager
 
         # Create a key that will be expired
-        expired_key = manager.create_key(
+        _expired_key = manager.create_key(
             description="Expired Key",
             expires_days=-10
         )
@@ -596,13 +596,13 @@ class TestKeyManagerStats:
         active_key = manager.create_key(description="Active Key")
 
         # Expired key
-        expired_key = manager.create_key(
+        _expired_key = manager.create_key(
             description="Expired Key",
             expires_days=-10  # Already expired
         )
 
         # Expiring soon key
-        expiring_key = manager.create_key(
+        _expiring_key = manager.create_key(
             description="Expiring Soon",
             expires_days=3  # Expires in 3 days
         )
@@ -682,7 +682,7 @@ class TestKeyManagerErrorHandling:
 
         with patch('localvectordb_server.keymanager.bcrypt'):
             # This should raise an exception during database operations
-            with pytest.raises(Exception):
+            with pytest.raises((PermissionError, sqlite3.OperationalError, OSError)):
                 manager = KeyManager(str(db_path))
                 # Try to create a key, which should fail
                 manager.create_key(description="Test")

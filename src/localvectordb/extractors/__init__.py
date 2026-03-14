@@ -128,7 +128,7 @@ def validate_zip_safety(
             )
 
     except zipfile.BadZipFile as e:
-        raise ValueError(f"Invalid ZIP archive: {e}")
+        raise ValueError(f"Invalid ZIP archive: {e}") from e
 
 
 class ExtractionResult:

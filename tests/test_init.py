@@ -302,13 +302,13 @@ class TestDocumentation:
 
         # Should be able to get help without errors
         try:
-            help_text = help(LocalVectorDB)
+            help(LocalVectorDB)
             # help() returns None but prints to stdout
         except Exception as e:
             pytest.fail(f"help() failed for LocalVectorDB: {e}")
 
         try:
-            help_text = help(VectorDB)
+            help(VectorDB)
         except Exception as e:
             pytest.fail(f"help() failed for VectorDB: {e}")
 
@@ -342,7 +342,7 @@ class TestPackageStructure:
         """Test that there are no circular import issues."""
         # Import everything to check for circular dependencies
         try:
-            from localvectordb import (
+            from localvectordb import (  # noqa: F401
                 ChunkerFactory,
                 EmbeddingRegistry,
                 LocalVectorDB,

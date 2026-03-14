@@ -32,7 +32,6 @@ from localvectordb_server.config import Config
 from localvectordb_server.keymanager import KeyManager
 from localvectordb_server.routes import api
 
-
 # EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 
 
@@ -395,7 +394,7 @@ class TestAuthenticationFlow:
         # Get key before request
         key_id = next(iter(integration_app.key_manager.list_keys())).id
         key_before = integration_app.key_manager.get_key(key_id)
-        original_last_used = key_before.last_used
+        _original_last_used = key_before.last_used
 
         # Make authenticated request
         response = integration_client.get('/api/v1/databases', headers=valid_auth_headers)
@@ -497,7 +496,6 @@ class TestDatabaseLifecycle:
         assert response.status_code == 200
         result = json.loads(response.data)
         assert len(result["ids"]) == 2
-        doc_ids = result["ids"]
 
         # Query documents
         query_data = {
@@ -634,8 +632,8 @@ class TestMultiDatabaseOperations:
     def test_database_isolation(self, integration_client, integration_app, valid_auth_headers):
         """Test that databases are properly isolated."""
         # Create two databases
-        db1 = integration_app.db_manager.create_db("isolation_db1")
-        db2 = integration_app.db_manager.create_db("isolation_db2")
+        _db1 = integration_app.db_manager.create_db("isolation_db1")
+        _db2 = integration_app.db_manager.create_db("isolation_db2")
 
         # Add document to first database
         doc_data = {"documents": ["Document only in db1"]}
@@ -795,7 +793,7 @@ class TestCompleteWorkflow:
     def test_complete_document_management_workflow(self, integration_client, integration_app, valid_auth_headers):
         """Test a complete document management workflow."""
         # 1. Create database
-        db = integration_app.db_manager.create_db(
+        _db = integration_app.db_manager.create_db(
             "workflow_test_db",
             metadata_schema={
                 'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
@@ -859,7 +857,7 @@ class TestCompleteWorkflow:
     def test_workflow_with_key_rotation(self, integration_client, integration_app, valid_auth_headers):
         """Test workflow that includes key rotation."""
         # Create initial database
-        db = integration_app.db_manager.create_db("rotation_test_db")
+        _db = integration_app.db_manager.create_db("rotation_test_db")
 
         # Add some documents with original key
         doc_data = {"documents": ["Document with original key"]}

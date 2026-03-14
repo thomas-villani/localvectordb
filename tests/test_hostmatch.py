@@ -17,12 +17,12 @@ parsing and pattern matching with wildcard support.
 """
 
 from localvectordb_server.utils.hostmatch import (
-    parse_host,
-    normalize_hostname,
     is_valid_hostname,
     match_host_pattern,
+    normalize_hostname,
+    parse_host,
     validate_host_against_patterns,
-    validate_trusted_host_patterns
+    validate_trusted_host_patterns,
 )
 
 

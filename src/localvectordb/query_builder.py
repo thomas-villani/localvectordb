@@ -1062,7 +1062,7 @@ class QueryExecutor:
             if field == "score":
                 results.sort(key=lambda x: x.score, reverse=reverse)
             else:
-                def sort_key(result):
+                def sort_key(result, field=field, reverse=reverse):
                     value = result.metadata.get(field)
                     if value is None:
                         return float('-inf') if reverse else float('inf')

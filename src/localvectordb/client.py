@@ -132,6 +132,7 @@ import httpx
 import numpy as np
 
 from localvectordb.core import (
+    Chunk,
     Document,
     DocumentScoringMethod,
     MetadataField,
@@ -687,7 +688,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 last_exception = e
 
                 if attempt == self.max_retries:
-                    raise ConnectionError(f"Failed to connect after {self.max_retries + 1} attempts: {e}")
+                    raise ConnectionError(f"Failed to connect after {self.max_retries + 1} attempts: {e}") from e
 
                 # Wait before retry
                 delay = self.retry_delay * (2 ** attempt)
@@ -744,7 +745,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 return response.json()
             except ValueError as e:
                 logger.warning(f"Failed to parse successful response as JSON: {e}")
-                raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}")
+                raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}") from e
 
         # Try to parse error response as JSON with fallback to text
         error_type, error_msg = self._normalize_error_response(response)
@@ -2320,7 +2321,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 last_exception = e
 
                 if attempt == self.max_retries:
-                    raise ConnectionError(f"Failed to connect after {self.max_retries + 1} attempts: {e}")
+                    raise ConnectionError(f"Failed to connect after {self.max_retries + 1} attempts: {e}") from e
 
                 # Wait before retry
                 delay = self.retry_delay * (2 ** attempt)

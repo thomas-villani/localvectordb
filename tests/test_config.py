@@ -365,7 +365,7 @@ class TestConfig:
     def test_from_dict_empty(self):
         """Test creating config from empty dict."""
         with pytest.raises(ConfigurationError):
-            config = Config.from_dict({})
+            Config.from_dict({})
 
     def test_from_dict_with_data(self):
         """Test creating config from dict with data."""
@@ -769,7 +769,7 @@ class TestConfigErrorHandling:
         """Test environment variable conversion with invalid JSON."""
         with patch.dict(os.environ, {"LVDB_DATABASE_DEFAULT_METADATA_SCHEMA": "invalid json"}, clear=True):
             # Should not raise error, but return empty dict for invalid JSON
-            config = Config.from_env()
+            _config = Config.from_env()
             # The conversion should handle the error gracefully
 
 

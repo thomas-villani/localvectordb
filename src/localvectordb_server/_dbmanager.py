@@ -23,7 +23,7 @@ import weakref
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from cachelib import DynamoDbCache, FileSystemCache, MemcachedCache, MongoDbCache, RedisCache, SimpleCache, UWSGICache
 
@@ -32,6 +32,9 @@ from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
 from localvectordb_server._error_handlers import APIError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance
 from localvectordb_server.config import DatabaseSettings, EmbeddingSettings
+
+if TYPE_CHECKING:
+    from localvectordb.database import LocalVectorDB
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
@@ -106,7 +109,7 @@ class CrossPlatformFileLock:
             logger.error(f"Failed to acquire lock {self.lock_file}: {e}")
             self._cleanup()
             if blocking:
-                raise DatabaseRegistryError(f"Failed to acquire lock: {e}")
+                raise DatabaseRegistryError(f"Failed to acquire lock: {e}") from e
             return False
 
     def _acquire_windows(self, blocking: bool) -> bool:
@@ -125,7 +128,7 @@ class CrossPlatformFileLock:
                     return False
 
                 if time.time() - start_time > self.timeout:
-                    raise DatabaseRegistryError(f"Lock acquisition timeout after {self.timeout}s")
+                    raise DatabaseRegistryError(f"Lock acquisition timeout after {self.timeout}s") from None
 
                 time.sleep(0.1)
 
@@ -142,7 +145,7 @@ class CrossPlatformFileLock:
                         return True
                     except (OSError, IOError):
                         if time.time() - start_time > self.timeout:
-                            raise DatabaseRegistryError(f"Lock acquisition timeout after {self.timeout}s")
+                            raise DatabaseRegistryError(f"Lock acquisition timeout after {self.timeout}s") from None
                         time.sleep(0.1)
             else:
                 self.fcntl.flock(self.file_handle.fileno(), self.fcntl.LOCK_EX | self.fcntl.LOCK_NB)
@@ -153,7 +156,7 @@ class CrossPlatformFileLock:
         except (OSError, IOError) as e:
             if not blocking:
                 return False
-            raise DatabaseRegistryError(f"Failed to acquire Unix lock: {e}")
+            raise DatabaseRegistryError(f"Failed to acquire Unix lock: {e}") from e
 
     def release(self):
         """Release the file lock"""
@@ -298,7 +301,7 @@ class DatabaseRegistry:
 
         except Exception as e:
             logger.error(f"Failed to register database '{name}': {e}")
-            raise DatabaseRegistryError(f"Failed to register database: {e}")
+            raise DatabaseRegistryError(f"Failed to register database: {e}") from e
 
     def unregister_database(self, name: str) -> None:
         """Unregister a database"""
@@ -322,7 +325,7 @@ class DatabaseRegistry:
 
         except Exception as e:
             logger.error(f"Failed to unregister database '{name}': {e}")
-            raise DatabaseRegistryError(f"Failed to unregister database: {e}")
+            raise DatabaseRegistryError(f"Failed to unregister database: {e}") from e
 
     def list_databases(self) -> List[str]:
         """List all registered databases"""
@@ -379,7 +382,7 @@ class DatabaseRegistry:
 
         except Exception as e:
             logger.error(f"Failed to update metadata for database '{name}': {e}")
-            raise DatabaseRegistryError(f"Failed to update metadata: {e}")
+            raise DatabaseRegistryError(f"Failed to update metadata: {e}") from e
 
 
 class DatabaseManager:
@@ -447,7 +450,7 @@ class DatabaseManager:
             # logger.info(f"Database directory ready: {db_path}")
         except Exception as e:
             # logger.error(f"Failed to create database directory {db_path}: {e}")
-            raise DatabaseError(f"Cannot create database directory: {e}")
+            raise DatabaseError(f"Cannot create database directory: {e}") from e
 
         # Start background services
         self._start_background_services()
@@ -752,7 +755,7 @@ class DatabaseManager:
                                 "provider": embedding_config.provider,
                                 "model": embedding_config.model
                             }
-                        )
+                        ) from e
                     else:
                         raise APIError(
                             message=f"Failed to create database: {str(e)}",
@@ -760,7 +763,7 @@ class DatabaseManager:
                             status_code=500,
                             recoverable=False,
                             details={"original_error": str(e)}
-                        )
+                        ) from e
 
     @log_performance("get_database")
     def get_db(self, name: str) -> "LocalVectorDB":
@@ -833,7 +836,7 @@ class DatabaseManager:
                     logger.info(f"Successfully loaded database: {name}")
                     return db
 
-                except DatabaseNotFoundError:
+                except DatabaseNotFoundError as e:
                     # Database was in registry but not on filesystem
                     logger.warning(f"Database '{name}' in registry but not found on filesystem")
                     self.registry.unregister_database(name)
@@ -842,7 +845,7 @@ class DatabaseManager:
                         error_code="DATABASE_NOT_FOUND",
                         status_code=404,
                         recoverable=True
-                    )
+                    ) from e
                 except Exception as e:
                     db_logger.log_error("load_database_failed", e, database_name=name)
                     self._record_error(name, e)
@@ -853,7 +856,7 @@ class DatabaseManager:
                         status_code=500,
                         recoverable=False,
                         details={"original_error": str(e)}
-                    )
+                    ) from e
 
     def list_databases(self) -> List[str]:
         """List all available databases from shared registry with enhanced error handling"""
@@ -884,7 +887,7 @@ class DatabaseManager:
                 status_code=500,
                 recoverable=False,
                 details={"original_error": str(e)}
-            )
+            ) from e
 
     def delete_database(self, name: str) -> bool:
         """Delete a database with coordination and enhanced error handling"""
@@ -1021,7 +1024,7 @@ class DatabaseManager:
                 status_code=503,
                 recoverable=True,
                 details={"provider": provider, "model": model}
-            )
+            ) from e
 
     def _validate_database_name(self, name: str) -> bool:
         """
@@ -1213,7 +1216,7 @@ class DatabaseManager:
         with self.lock:
             unhealthy_dbs = []
 
-            for name, (db, last_access) in self.databases.items():
+            for name, (db, _last_access) in self.databases.items():
                 try:
                     if not self._check_database_health(db):
                         unhealthy_dbs.append(name)

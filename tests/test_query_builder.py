@@ -25,7 +25,6 @@ from localvectordb.query_builder import (
     SimilarityMetric,
 )
 
-
 # EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 
 
@@ -666,7 +665,7 @@ class TestQueryBuilderAsyncDetection:
         mock_db.query = mock_query
         mock_db.is_async_database.return_value = True
 
-        builder = QueryBuilder(mock_db)
+        _builder = QueryBuilder(mock_db)
         # QueryBuilder doesn't have is_async_database method, it's on the db
         assert mock_db.is_async_database() is True
 
@@ -675,7 +674,7 @@ class TestQueryBuilderAsyncDetection:
         mock_db = Mock()
         mock_db.is_async_database.return_value = True
 
-        builder = QueryBuilder(mock_db)
+        _builder = QueryBuilder(mock_db)
         # QueryBuilder doesn't have is_async_database method, it's on the db
         assert mock_db.is_async_database() is True
 
@@ -685,7 +684,7 @@ class TestQueryBuilderAsyncDetection:
         mock_db.is_async_database.return_value = False
         mock_db.query = Mock()  # Regular sync method
 
-        builder = QueryBuilder(mock_db)
+        _builder = QueryBuilder(mock_db)
         # QueryBuilder doesn't have is_async_database method, it's on the db
         assert mock_db.is_async_database() is False
 
@@ -726,7 +725,7 @@ class TestQueryExecutor:
             mock_executor.execute.return_value = []
             mock_executor_class.return_value = mock_executor
 
-            results = query.execute()
+            query.execute()
 
             mock_executor_class.assert_called_once_with(query)
             mock_executor.execute.assert_called_once()
@@ -740,7 +739,7 @@ class TestQueryExecutor:
             mock_executor.execute.return_value = []
             mock_executor_class.return_value = mock_executor
 
-            results = query.execute()
+            query.execute()
 
             mock_executor.execute.assert_called_once()
 
@@ -1283,7 +1282,7 @@ class TestQueryExecutorExecution:
                   .offset(2))
         executor = QueryExecutor(builder)
 
-        results = executor._execute_search_query()
+        executor._execute_search_query()
 
         # Verify filters were combined correctly
         expected_filters = {"category": "AI", "rating": {"$gt": 4.0}}
@@ -1303,8 +1302,8 @@ class TestQueryExecutorExecution:
 
     def test_execute_filter_only_query(self, mock_db):
         """Test filter-only query execution."""
-        from localvectordb.query_builder import QueryExecutor
         from localvectordb.core import Document
+        from localvectordb.query_builder import QueryExecutor
 
         # Setup mock documents response
         mock_docs = [
@@ -1525,7 +1524,7 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_count(self, mock_db, sample_aggregation_results):
         """Test count aggregation calculation."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1537,7 +1536,7 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_sum(self, mock_db, sample_aggregation_results):
         """Test sum aggregation calculation."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1549,7 +1548,7 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_avg(self, mock_db, sample_aggregation_results):
         """Test average aggregation calculation."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1562,7 +1561,7 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_min_max(self, mock_db, sample_aggregation_results):
         """Test min and max aggregation calculations."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1578,8 +1577,9 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_std_var(self, mock_db, sample_aggregation_results):
         """Test standard deviation and variance calculations."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
         import statistics
+
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1599,7 +1599,7 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_score_field(self, mock_db, sample_aggregation_results):
         """Test aggregation on score field."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1612,7 +1612,7 @@ class TestQueryExecutorAggregations:
 
     def test_calculate_aggregation_empty_values(self, mock_db):
         """Test aggregation with no valid values."""
-        from localvectordb.query_builder import QueryExecutor, AggregationClause
+        from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         # Results without the target field
         results = [
@@ -1755,7 +1755,6 @@ class TestQueryExecutorReranking:
     @pytest.fixture(scope="function")
     def sample_reranking_results(self):
         """Create sample results for reranking testing."""
-        from datetime import datetime, timezone
         return [
             QueryResult(
                 id="doc1", score=0.9, type="document", content="Recent content",
@@ -1815,8 +1814,9 @@ class TestQueryExecutorReranking:
 
     def test_apply_reranking_recency_with_datetime_objects(self, mock_db):
         """Test recency reranking with datetime objects in metadata."""
-        from localvectordb.query_builder import QueryExecutor
         from datetime import datetime
+
+        from localvectordb.query_builder import QueryExecutor
 
         # Create results with datetime objects instead of strings
         results_with_datetime = [
@@ -1981,7 +1981,7 @@ class TestQueryExecutorReranking:
         assert results == sample_reranking_results
 
 
-class TestSemanticFilter:
+class TestSemanticFilterFunctionality:
     """Test SemanticFilter functionality."""
 
     @pytest.fixture(scope="function")
@@ -2110,8 +2110,9 @@ class TestSemanticFilter:
 
     def test_calculate_similarity_cosine(self):
         """Test cosine similarity calculation."""
-        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
         import numpy as np
+
+        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
 
         filter_obj = SemanticFilter("field", "concept", 0.8, SimilarityMetric.COSINE)
 
@@ -2129,8 +2130,9 @@ class TestSemanticFilter:
 
     def test_calculate_similarity_dot_product(self):
         """Test dot product similarity calculation."""
-        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
         import numpy as np
+
+        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
 
         filter_obj = SemanticFilter("field", "concept", 0.8, SimilarityMetric.DOT_PRODUCT)
 
@@ -2142,8 +2144,9 @@ class TestSemanticFilter:
 
     def test_calculate_similarity_euclidean(self):
         """Test euclidean similarity calculation."""
-        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
         import numpy as np
+
+        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
 
         filter_obj = SemanticFilter("field", "concept", 0.8, SimilarityMetric.EUCLIDEAN)
 
@@ -2163,8 +2166,9 @@ class TestSemanticFilter:
 
     def test_calculate_similarity_manhattan(self):
         """Test manhattan similarity calculation."""
-        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
         import numpy as np
+
+        from localvectordb.query_builder import SemanticFilter, SimilarityMetric
 
         filter_obj = SemanticFilter("field", "concept", 0.8, SimilarityMetric.MANHATTAN)
 
@@ -2177,8 +2181,9 @@ class TestSemanticFilter:
 
     def test_calculate_similarity_unsupported_metric(self):
         """Test unsupported similarity metric raises error."""
-        from localvectordb.query_builder import SemanticFilter
         import numpy as np
+
+        from localvectordb.query_builder import SemanticFilter
 
         # Create filter with invalid metric (hack the enum)
         filter_obj = SemanticFilter("field", "concept", 0.8)
@@ -2539,7 +2544,7 @@ class TestQueryExecutorIntegrationEnhancements:
 
         # Mock comprehensive query results
         def mock_query(**kwargs):
-            query_text = kwargs.get('query', '')
+            _query_text = kwargs.get('query', '')
             filters = kwargs.get('filters', {})
 
             # Simulate search results based on query

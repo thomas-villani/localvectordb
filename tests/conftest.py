@@ -271,10 +271,16 @@ def sample_documents():
     """Sample documents for testing."""
     return [
         "The quick brown fox jumps over the lazy dog. This is a test document.",
-        "Machine learning is a subset of artificial intelligence. It enables computers to learn without being explicitly programmed.",
+        (
+            "Machine learning is a subset of artificial intelligence."
+            " It enables computers to learn without being explicitly programmed."
+        ),
         "Python is a high-level programming language. It's known for its simplicity and readability.",
         "Vector databases store and retrieve high-dimensional vectors efficiently. They enable semantic search.",
-        "Natural language processing involves computational linguistics and machine learning to understand human language."
+        (
+            "Natural language processing involves computational linguistics"
+            " and machine learning to understand human language."
+        )
     ]
 
 
@@ -284,7 +290,10 @@ def sample_metadata():
     return [
         {"author": "John Doe", "category": "test", "rating": 4.5, "active": True, "tags": ["sample", "test"]},
         {"author": "Jane Smith", "category": "ai", "rating": 5.0, "active": True, "tags": ["ml", "ai"]},
-        {"author": "Bob Johnson", "category": "programming", "rating": 4.0, "active": True, "tags": ["python", "code"]},
+        {
+            "author": "Bob Johnson", "category": "programming",
+            "rating": 4.0, "active": True, "tags": ["python", "code"],
+        },
         {"author": "Alice Brown", "category": "database", "rating": 4.8, "active": True, "tags": ["vector", "search"]},
         {"author": "Charlie Wilson", "category": "ai", "rating": 4.2, "active": False, "tags": ["nlp", "linguistics"]}
     ]
@@ -306,7 +315,9 @@ def create_test_chunk(content: str = "Test chunk", index: int = 0, start: int = 
     end = start + len(content)
     return Chunk(
         content=content,
-        position=ChunkPosition(start=start, end=end, line=1, column=start + 1, end_line=1, end_column=len(content) + 1),
+        position=ChunkPosition(
+            start=start, end=end, line=1, column=start + 1, end_line=1, end_column=len(content) + 1
+        ),
         tokens=len(content.split()),
         index=index,
         faiss_id=index

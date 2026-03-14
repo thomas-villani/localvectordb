@@ -101,7 +101,7 @@ def show_db_info(ctx):
 
     except Exception as e:
         click.secho(f"Error reading database info: {str(repr(e))}", fg='bright_red', err=True)
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @db_group.command('stats')
@@ -200,9 +200,9 @@ def search(
     if metadata_filter:
         try:
             filter_dict = json.loads(metadata_filter)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             click.secho("Error: Metadata filter must be valid JSON", fg='red', err=True)
-            raise click.Abort()
+            raise click.Abort() from e
 
     db = ctx.obj["db"]
 
@@ -224,7 +224,7 @@ def search(
         )
     except Exception as e:
         click.secho(f"Search error: {str(e)}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
     if not results:
         click.secho("No results found.", fg="red", err=True)
@@ -509,7 +509,7 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
 
     except Exception as e:
         click.secho(f"Error retrieving document: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @db_group.command('update')
@@ -705,7 +705,7 @@ def show_schema(ctx, format, output):
 
     except Exception as e:
         click.secho(f"Error retrieving schema: {str(e)}", fg='bright_red')
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @schema_group.command('update')
@@ -813,7 +813,7 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
             new_schema = parse_metadata_schema(schema_data)
         except ValidationError as e:
             click.secho(f"Error: {e}", fg='bright_red')
-            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
         # Show current schema for comparison
         if verbose:
@@ -927,19 +927,19 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
 
     except json.JSONDecodeError as e:
         click.secho(f"Error: Invalid JSON format: {str(e)}", fg='bright_red')
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     except KeyError as e:
         click.secho(f"Error: Missing required field in schema: {str(e)}", fg='bright_red')
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     except ValueError as e:
         click.secho(f"Error: {str(e)}", fg='bright_red')
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     except Exception as e:
         click.secho(f"Error: Unexpected error during schema update: {str(e)}", fg='bright_red')
         if verbose:
             import traceback
             click.echo(traceback.format_exc())
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @schema_group.command('export')
@@ -1021,7 +1021,7 @@ def export_schema(ctx, output, format, include_data):
 
     except Exception as e:
         click.secho(f"Error exporting schema: {str(e)}", fg='bright_red')
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 # Helper function to add to the existing CLI utilities section
@@ -1072,6 +1072,6 @@ def _validate_mapping_format(mapping_data):
 
 
 # Add the shell command!
-from localvectordb_server.cli._shell import shell
+from localvectordb_server.cli._shell import shell  # noqa: E402
 
 db_group.add_command(shell)

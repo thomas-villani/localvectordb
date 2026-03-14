@@ -179,7 +179,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     query_parts.append(f"WHERE {where_clause}")
                     params.extend(filter_params)
             except Exception as e:
-                raise MetadataFilterError(f"Error building filter query: {str(e)}")
+                raise MetadataFilterError(f"Error building filter query: {str(e)}") from e
 
         if order_by:
             try:
@@ -189,7 +189,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 order_by_clause = filter_builder.build_order_by_clause(order_by, valid_columns)
                 query_parts.append(order_by_clause)
             except Exception as e:
-                raise MetadataFilterError(f"Error building ORDER BY clause: {str(e)}")
+                raise MetadataFilterError(f"Error building ORDER BY clause: {str(e)}") from e
 
         if limit:
             if not isinstance(limit, int) or limit <= 0:
@@ -432,7 +432,8 @@ class CrudMixin(LocalVectorDBBase, ABC):
                             if new_field_embeddings:
                                 self._store_metadata_embeddings(conn, doc_id, new_field_embeddings)
                                 logger.debug(
-                                    f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}"
+                                    f"Updated embeddings for {len(new_field_embeddings)} "
+                                    f"metadata fields in document {doc_id}"
                                 )
                         set_clauses = ['"updated_at" = ?']
                         values = [datetime.now(UTC)]
@@ -838,7 +839,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
                         if new_field_embeddings:
                             await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
                             logger.debug(
-                                f"Updated embeddings for {len(new_field_embeddings)} metadata fields in document {doc_id}")
+                                f"Updated embeddings for {len(new_field_embeddings)} "
+                                f"metadata fields in document {doc_id}"
+                            )
                     set_clauses = ['"updated_at" = ?']
                     values = [datetime.now(UTC)]
                     for field_name, value in updated_metadata.items():

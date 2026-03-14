@@ -235,7 +235,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.LocalVectorDB') as mock_local:
             mock_local.return_value = Mock()
 
-            db = VectorDB(
+            VectorDB(
                 "my_docs",
                 temp_dir,
                 metadata_schema=metadata_schema,
@@ -261,7 +261,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
             mock_remote.return_value = Mock()
 
-            db = VectorDB(
+            VectorDB(
                 "my_docs",
                 "http://localhost:5000",
                 api_key="your_api_key",
@@ -298,7 +298,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.LocalVectorDB') as mock_local:
             mock_local.return_value = Mock()
 
-            local_db = create_database(use_remote=False)
+            _local_db = create_database(use_remote=False)
 
             mock_local.assert_called_once_with(
                 name="my_database",
@@ -312,7 +312,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
             mock_remote.return_value = Mock()
 
-            remote_db = create_database(use_remote=True)
+            _remote_db = create_database(use_remote=True)
 
             mock_remote.assert_called_once_with(
                 name="my_database",
@@ -327,7 +327,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.LocalVectorDB') as mock_local:
             mock_local.return_value = Mock()
 
-            db = VectorDB("test_db", "./local")
+            VectorDB("test_db", "./local")
 
             mock_local.assert_called_once_with(
                 name="test_db",
@@ -345,7 +345,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.LocalVectorDB') as mock_local:
             mock_local.return_value = Mock()
 
-            db = VectorDB(
+            VectorDB(
                 name="comprehensive_db",
                 base_path=temp_dir,
                 metadata_schema=metadata_schema,
@@ -388,7 +388,7 @@ class TestVectorDBFactory:
         with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
             mock_remote.return_value = Mock()
 
-            db = VectorDB(
+            VectorDB(
                 name="comprehensive_remote_db",
                 base_path="https://api.vectordb.com",
                 api_key="secret-api-key",
@@ -434,7 +434,7 @@ class TestFactoryDocstringExamples:
             mock_local.return_value = Mock()
 
             # Example from docstring
-            db = VectorDB(
+            VectorDB(
                 "my_docs",
                 temp_dir,
                 metadata_schema={
@@ -456,7 +456,7 @@ class TestFactoryDocstringExamples:
             mock_remote.return_value = Mock()
 
             # Example from docstring
-            db = VectorDB(
+            VectorDB(
                 "my_docs",
                 "http://localhost:5000",
                 api_key="your_api_key",
@@ -493,13 +493,13 @@ class TestFactoryDocstringExamples:
         # Test local creation
         with patch('localvectordb.factory.LocalVectorDB') as mock_local:
             mock_local.return_value = Mock()
-            local_db = create_database(use_remote=False)
+            _local_db = create_database(use_remote=False)
             assert mock_local.called
 
         # Test remote creation
         with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
             mock_remote.return_value = Mock()
-            remote_db = create_database(use_remote=True)
+            _remote_db = create_database(use_remote=True)
             assert mock_remote.called
 
 

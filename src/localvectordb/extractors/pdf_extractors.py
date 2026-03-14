@@ -57,11 +57,8 @@ class PDFPlumberExtractor(BaseExtractor):
         return _PDF_METADATA_SCHEMA
 
     def _check_availability(self) -> bool:
-        try:
-            import pdfplumber
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("pdfplumber") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -160,11 +157,8 @@ class PyPDFExtractor(BaseExtractor):
         return _PDF_METADATA_SCHEMA
 
     def _check_availability(self) -> bool:
-        try:
-            import pypdf
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("pypdf") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs

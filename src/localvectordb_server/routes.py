@@ -140,14 +140,14 @@ def create_database():
             try:
                 db_config.update_from_dict(database_settings)
             except Exception as e:
-                raise ValidationError(f"Invalid database configuration: {str(e)}")
+                raise ValidationError(f"Invalid database configuration: {str(e)}") from e
 
         if "embedding" in data:
             embedding_settings = data["embedding"]
             try:
                 embedding_config.update_from_dict(embedding_settings)
             except Exception as e:
-                raise ValidationError(f"Invalid embedding configuration: {str(e)}")
+                raise ValidationError(f"Invalid embedding configuration: {str(e)}") from e
 
         # Create database
         db_logger.log_query("create_database", database_name=name)
@@ -597,13 +597,13 @@ def get_document(db_name, doc_id):
             doc = db.get(doc_id)
             return jsonify(serialize_document(doc))
 
-        except DocumentNotFoundError:
+        except DocumentNotFoundError as e:
             raise APIError(
                 message=f"Document '{doc_id}' not found in database '{db_name}'",
                 error_code="DOCUMENT_NOT_FOUND",
                 status_code=404,
                 recoverable=True
-            )
+            ) from e
         except Exception as e:
             db_logger.log_error("get_document", e, database_name=db_name, document_id=doc_id)
             raise
@@ -1516,7 +1516,7 @@ def filter_documents(db_name):
                         f"Invalid ORDER BY clause: {str(e)}",
                         field="order_by",
                         value=order_by
-                    )
+                    ) from e
 
             db_logger.log_query("filter_documents",
                                 database_name=db_name,
@@ -1788,7 +1788,7 @@ def get_embeddings():
                 status_code=503,
                 recoverable=True,
                 details={"provider": provider, "model": model}
-            )
+            ) from e
 
 
 @api.route("/api/v1/<db_name>/upload", methods=["POST"])
@@ -1868,8 +1868,8 @@ def upload_files(db_name):
         if metadata_json:
             try:
                 base_metadata = json.loads(metadata_json)
-            except json.JSONDecodeError:
-                raise ValidationError("Invalid JSON in metadata field", field="metadata")
+            except json.JSONDecodeError as e:
+                raise ValidationError("Invalid JSON in metadata field", field="metadata") from e
 
             if isinstance(base_metadata, list):
                 if len(base_metadata) == 1:
@@ -2179,7 +2179,7 @@ def extract_preview():
                 message=f"Preview extraction failed: {str(e)}",
                 error_code="EXTRACTION_PREVIEW_FAILED",
                 status_code=500
-            )
+            ) from e
 
 
 # Add this route to routes.py after the other database management routes
@@ -2206,7 +2206,7 @@ def update_metadata_schema(db_name):
         try:
             new_schema = parse_metadata_schema(data['metadata_schema'])
         except Exception as e:
-            raise ValidationError(f"Invalid metadata schema: {str(e)}", field="metadata_schema")
+            raise ValidationError(f"Invalid metadata schema: {str(e)}", field="metadata_schema") from e
 
         if not new_schema:
             raise ValidationError("Metadata schema cannot be empty", field="metadata_schema")

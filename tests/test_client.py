@@ -304,7 +304,7 @@ class TestRemoteVectorDBDocumentOperations:
         mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(DocumentNotFoundError):
-            result = mock_db.get("nonexistent")
+            mock_db.get("nonexistent")
 
     def test_exists_documents(self, mock_httpx_client, mock_db):
         """Test checking document existence."""

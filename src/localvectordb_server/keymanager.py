@@ -89,9 +89,9 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Dict, Generator, List, Optional
 
-from localvectordb.utils import parse_iso8601
-
 import bcrypt
+
+from localvectordb.utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
 
@@ -430,8 +430,8 @@ class KeyManager:
         # Store in database
         with self._get_connection() as conn:
             conn.execute("""
-                INSERT INTO api_keys
-                (id, key_hash, key_fingerprint, description, created_at, expires_at, created_by, active, permission_level)
+                INSERT INTO api_keys (id, key_hash, key_fingerprint,
+                description, created_at, expires_at, created_by, active, permission_level)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 key_id, key_hash, key_fingerprint, description, created_at.isoformat(),

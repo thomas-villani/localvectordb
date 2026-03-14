@@ -69,7 +69,7 @@ class EmbeddingProvider(ABC):
                 return await self._embed_batch_impl(texts, batch_size, progress_callback)
             except Exception as e:
                 if not self._should_retry(e, attempt):
-                    raise EmbeddingError(f"Error retrieving embeddings: {str(e)}")
+                    raise EmbeddingError(f"Error retrieving embeddings: {str(e)}") from e
 
                 if attempt < self.max_retries:
                     delay = self.retry_delay * (2 ** attempt)  # Exponential backoff
@@ -407,12 +407,14 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         return final_embeddings
 
     @abstractmethod
-    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> \
-    List[List[float]]:
+    async def _embed_single_batch(
+        self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
+    ) -> List[List[float]]:
         """Embed a batch using asynchronous httpx client.
 
         The async httpx client is passed in as the `client` kwarg."""
         pass
+
 
 class OllamaEmbeddings(HTTPEmbeddingProvider):
     """Ollama embedding provider.
@@ -500,7 +502,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             return False
         except (httpx.ConnectError, TimeoutError, ConnectionError, httpx.RequestError) as e:
             logger.error(f"Could not connect to Ollama service: {str(e)}")
-            raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}")
+            raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}") from e
 
     def _get_model_dimension_sync(self) -> int:
         """
@@ -541,8 +543,9 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             self._dimension = dimension
         return self._dimension
 
-    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> \
-    List[List[float]]:
+    async def _embed_single_batch(
+        self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
+    ) -> List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
         if client is None:
             # Use context manager to ensure proper AsyncClient cleanup
@@ -693,8 +696,9 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
-    async def _embed_single_batch(self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any) -> \
-    List[List[float]]:
+    async def _embed_single_batch(
+        self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
+    ) -> List[List[float]]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -825,7 +829,9 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         )
         if not self.api_key:
             raise ValueError(
-                "Google AI (Gemini) API key is required. Set api_key or one of: GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY")
+                "Google AI (Gemini) API key is required. "
+                "Set api_key or one of: GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY"
+            )
 
         # API base URL (v1beta as in public docs)
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
@@ -1037,8 +1043,12 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
 
     Additional keyword arguments are passed through to the Jina Embeddings API request body, for example:
       - embedding_type: str, default "float" (other options: "base64", "binary", "ubinary")
-      - task: str, e.g., for v4: "retrieval.query" | "retrieval.passage" | "text-matching" | "code.query" | "code.passage"
-              for code models: "nl2code.query" | "nl2code.passage" | "code2code.query" | "code2code.passage" | "code2nl.query" | "code2nl.passage" | "code2completion.query" | "code2completion.passage" | "qa.query" | "qa.passage"
+      - task: str, e.g., for v4: "retrieval.query" | "retrieval.passage" |
+              "text-matching" | "code.query" | "code.passage";
+              for code models: "nl2code.query" | "nl2code.passage" |
+              "code2code.query" | "code2code.passage" | "code2nl.query" |
+              "code2nl.passage" | "code2completion.query" |
+              "code2completion.passage" | "qa.query" | "qa.passage"
       - dimensions: int, to truncate output embeddings to this size
       - truncate: bool
       - late_chunking: bool (v4)

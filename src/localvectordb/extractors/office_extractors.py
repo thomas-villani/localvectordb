@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
-from localvectordb.extractors import BaseExtractor, ExtractionResult, validate_zip_safety, ZipBombError
+from localvectordb.extractors import BaseExtractor, ExtractionResult, ZipBombError, validate_zip_safety
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,8 @@ class DocxExtractor(BaseExtractor):
         }
 
     def _check_availability(self) -> bool:
-        try:
-            import docx
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("docx") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -189,11 +186,8 @@ class PptxExtractor(BaseExtractor):
         }
 
     def _check_availability(self) -> bool:
-        try:
-            import pptx
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("pptx") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -330,11 +324,8 @@ class XlsxExtractor(BaseExtractor):
         }
 
     def _check_availability(self) -> bool:
-        try:
-            import openpyxl
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("openpyxl") is not None
 
     def _extract_text_impl(
             self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
@@ -382,7 +373,7 @@ class XlsxExtractor(BaseExtractor):
                         continue
 
                     # Extract data row by row
-                    for row_num, row in enumerate(sheet.iter_rows(values_only=True), 1):
+                    for _row_num, row in enumerate(sheet.iter_rows(values_only=True), 1):
                         row_data = []
 
                         for cell_value in row:

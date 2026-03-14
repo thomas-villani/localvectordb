@@ -90,7 +90,7 @@ class ChunkBatchAccumulator:
         self.pending_docs[doc_key] = (chunk_data, len(texts), [None] * len(texts))
 
         # Add each text to the batch
-        for local_idx, (text, chunk) in enumerate(zip(texts, chunks)):
+        for local_idx, (text, chunk) in enumerate(zip(texts, chunks, strict=False)):
             self.pending_texts.append(text)
             self.pending_entries.append((chunk_data, local_idx, chunk))
 
@@ -167,15 +167,15 @@ class ChunkBatchAccumulator:
             All remaining completed chunk_data dicts
         """
         # Assign embeddings
-        for i, (chunk_data, local_idx, chunk) in enumerate(entries):
+        for i, (chunk_data, local_idx, _chunk) in enumerate(entries):
             doc_key = id(chunk_data)
             if doc_key in self.pending_docs:
-                doc_data, num_pending, embedding_list = self.pending_docs[doc_key]
+                doc_data, _num_pending, embedding_list = self.pending_docs[doc_key]
                 embedding_list[local_idx] = embeddings[i]
 
         # Collect all completed documents
         completed_docs = []
-        for doc_key, (doc_data, num_pending, embedding_list) in list(self.pending_docs.items()):
+        for doc_key, (doc_data, _num_pending, embedding_list) in list(self.pending_docs.items()):
             if all(e is not None for e in embedding_list):
                 doc_data['new_embeddings'] = np.array(embedding_list, dtype=np.float32)
                 for chunk in doc_data.get('chunks_needing_embedding', []):
@@ -189,7 +189,9 @@ class ChunkBatchAccumulator:
 class PipelineMixin(LocalVectorDBBase, ABC):
 
     # Pure business logic helpers for DRY elimination
-    def _build_documents_bulk_insert_sql(self, mode: Literal["insert", "replace"] = "replace") -> tuple[str, List[str]]:
+    def _build_documents_bulk_insert_sql(
+            self, mode: Literal["insert", "replace"] = "replace"
+    ) -> tuple[str, List[str]]:
         """Build SQL for bulk document insertion (pure business logic)"""
         base_columns = self.schema.BASE_COLUMNS.copy()
         metadata_columns = list(self.metadata_schema.keys())
@@ -223,7 +225,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if not documents_data:
             return []
 
-        _, all_columns = self._build_documents_bulk_insert_sql()
+        _, _all_columns = self._build_documents_bulk_insert_sql()
         metadata_columns = list(self.metadata_schema.keys())
         bulk_data = []
         current_time = datetime.now(UTC)
@@ -235,7 +237,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if doc_ids:
                 placeholders = ','.join(['?' for _ in doc_ids])
                 try:
-                    cursor = conn.execute(f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})", doc_ids)
+                    cursor = conn.execute(
+                        f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})", doc_ids
+                    )
                     for doc_id, created_at_str in cursor.fetchall():
                         if created_at_str:
                             # Parse the ISO format timestamp back to datetime
@@ -250,8 +254,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 existing_created_at[doc_id] = current_time
                 except Exception as e:
                     # Log warning but continue - fallback to current time for all
-                    import logging
-                    logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to fetch existing created_at values: {e}")
 
         for doc_id, content, content_hash, metadata in documents_data:
@@ -291,7 +293,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if not documents_data:
             return []
 
-        _, all_columns = self._build_documents_bulk_insert_sql()
+        _, _all_columns = self._build_documents_bulk_insert_sql()
         metadata_columns = list(self.metadata_schema.keys())
         bulk_data = []
         current_time = datetime.now(UTC)
@@ -303,8 +305,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if doc_ids:
                 placeholders = ','.join(['?' for _ in doc_ids])
                 try:
-                    cursor = await conn.execute(f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})",
-                                                doc_ids)
+                    cursor = await conn.execute(
+                        f"SELECT id, created_at FROM documents WHERE id IN ({placeholders})",
+                        doc_ids
+                    )
                     rows = await cursor.fetchall()
                     for doc_id, created_at_str in rows:
                         if created_at_str:
@@ -320,8 +324,6 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 existing_created_at[doc_id] = current_time
                 except Exception as e:
                     # Log warning but continue - fallback to current time for all
-                    import logging
-                    logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to fetch existing created_at values: {e}")
 
         for doc_id, content, content_hash, metadata in documents_data:
@@ -809,7 +811,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     chunk.content_hash = chunk.calculate_content_hash()
                 if chunk.index != i:
                     logger.warning(
-                        f"Chunk index mismatch in document {doc_id}: expected {i}, got {chunk.index}. Correcting index."
+                        f"Chunk index mismatch in document {doc_id}: "
+                        f"expected {i}, got {chunk.index}. Correcting index."
                     )
                     chunk.index = i
                 normalized_chunks.append(chunk)
@@ -1148,7 +1151,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             for w in workers:
                 w.join(timeout=self.pipeline_worker_timeout)
                 if w.is_alive():
-                    logger.warning(f"Worker {w.name} did not exit within {self.pipeline_worker_timeout} seconds, may be blocked")
+                    logger.warning(
+                        f"Worker {w.name} did not exit within "
+                        f"{self.pipeline_worker_timeout} seconds, may be blocked"
+                    )
         return processed_ids
 
     def _process_from_chunks_pipeline(
@@ -1340,7 +1346,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             for w in workers:
                 w.join(timeout=self.pipeline_worker_timeout)
                 if w.is_alive():
-                    logger.warning(f"Worker {w.name} did not exit within {self.pipeline_worker_timeout} seconds, may be blocked")
+                    logger.warning(
+                        f"Worker {w.name} did not exit within "
+                        f"{self.pipeline_worker_timeout} seconds, may be blocked"
+                    )
         return processed_ids
 
     def _fetch_existing_chunks_batch(self, doc_ids: List[str]):

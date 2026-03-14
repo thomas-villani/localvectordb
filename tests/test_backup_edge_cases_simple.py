@@ -190,7 +190,7 @@ class TestCompressionAlgorithms:
             faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
             backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
-            backup_id = backup_manager.create_backup(BackupType.FULL)
+            _backup_id = backup_manager.create_backup(BackupType.FULL)
 
             # Get backup file size
             backup_files = list(algo_backup_dir.glob("*.lvdb-backup"))
@@ -310,8 +310,8 @@ class TestBackupConfiguration:
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create multiple backups
-        backup_id1 = backup_manager.create_backup(BackupType.FULL)
-        backup_id2 = backup_manager.create_backup(BackupType.FULL)
+        _backup_id1 = backup_manager.create_backup(BackupType.FULL)
+        _backup_id2 = backup_manager.create_backup(BackupType.FULL)
 
         # Should have both backups
         backups = backup_manager.list_backups()
@@ -374,7 +374,7 @@ class TestBackupPaths:
         # Create nested backup path that doesn't exist
         nested_backup_path = temp_backup_dirs['base'] / "deep" / "nested" / "backup"
 
-        backup_config = BackupConfig(backup_location=nested_backup_path)
+        _backup_config = BackupConfig(backup_location=nested_backup_path)
 
         # Should create the directory automatically
         assert nested_backup_path.exists()
@@ -423,7 +423,7 @@ class TestBackupEdgeCases:
 
         # Create multiple backups rapidly
         backup_ids = []
-        for i in range(3):
+        for _i in range(3):
             backup_id = backup_manager.create_backup(BackupType.FULL)
             backup_ids.append(backup_id)
 

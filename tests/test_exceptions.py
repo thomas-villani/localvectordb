@@ -355,7 +355,7 @@ class TestExceptionUsagePractices:
         exc = DatabaseNotFoundError(message)
 
         # Verify context is preserved in error message
-        for key, value in context.items():
+        for _key, value in context.items():
             assert str(value) in str(exc)
 
     def test_nested_exception_handling(self):

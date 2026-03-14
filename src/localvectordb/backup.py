@@ -41,8 +41,9 @@ import faiss
 import numpy as np
 
 from localvectordb.versioning import VersionManager
-from .utils import parse_iso8601
+
 from .database._faiss_utils import get_faiss_external_ids
+from .utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
 

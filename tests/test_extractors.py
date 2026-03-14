@@ -2,15 +2,12 @@
 Tests for localvectordb.extractors module.
 """
 
-import io
-import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
-from localvectordb.core import MetadataFieldType
 from localvectordb.extractors import (
     BaseExtractor,
     ExtractionResult,
@@ -18,9 +15,9 @@ from localvectordb.extractors import (
     get_extractor_registry,
     get_supported_formats,
 )
-from localvectordb.extractors.office_extractors import DocxExtractor, PptxExtractor, XlsxExtractor
-from localvectordb.extractors.other_extractors import EPubExtractor, RTFExtractor
-from localvectordb.extractors.pdf_extractors import PDFPlumberExtractor, PyPDFExtractor
+from localvectordb.extractors.office_extractors import DocxExtractor
+from localvectordb.extractors.other_extractors import RTFExtractor
+from localvectordb.extractors.pdf_extractors import PDFPlumberExtractor
 from localvectordb.extractors.text_extractors import TextFallbackExtractor, TextFileExtractor
 from localvectordb.extractors.web_extractors import HTMLExtractor, XMLExtractor
 
@@ -659,7 +656,7 @@ class TestExtractorIntegration:
     def test_multiple_extractors_priority(self):
         """Test that extractors are tried in priority order."""
         # Create a file that could be handled by multiple extractors
-        content = TestSampleFiles.create_sample_text("# Markdown content\\nThis could be text or markdown.")
+        _content = TestSampleFiles.create_sample_text("# Markdown content\\nThis could be text or markdown.")
 
         extractors = ExtractorRegistry.get_extractors_for_file("test.md")
 
@@ -686,7 +683,6 @@ class TestExtractorIntegration:
         assert isinstance(formats, dict)
 
         # Check that at least some common formats are present
-        common_formats = ['txt', 'html', 'xml']
         available_formats = list(formats.keys())
 
         # At least some should be available

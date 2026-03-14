@@ -151,6 +151,8 @@ replace = "release = '{new_version}"
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "B", "I"]
 ignore = []
 

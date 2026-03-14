@@ -71,7 +71,7 @@ class MCPManager:
                     )
                 except Exception as e:
                     logger.error(f"Failed to connect to database '{name}': {e}")
-                    raise DatabaseNotFoundError(f"Database '{name}' not found at {db_path}")
+                    raise DatabaseNotFoundError(f"Database '{name}' not found at {db_path}") from e
 
             return self.databases[name]
 
@@ -165,7 +165,7 @@ class MCPManager:
 
 
 # Create lifespan context manager for initialization
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager  # noqa: E402
 
 
 @asynccontextmanager
@@ -203,7 +203,7 @@ async def lifespan(mcp):
 
             # Register the tool with MCP using the decorator
             if not tool_info['registered']:
-                decorated_func = mcp.tool()(tool_info['function'])
+                mcp.tool()(tool_info['function'])
                 # The tool is now registered with MCP
                 tool_info['registered'] = True
                 registered_count += 1
@@ -293,8 +293,10 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
             "name": db.name,
             "stats": stats,
             "config": {
-                "embedding_provider": db.embedding_provider.provider_name if hasattr(db,
-                                                                                     'embedding_provider') else "unknown",
+                "embedding_provider": (
+                    db.embedding_provider.provider_name
+                    if hasattr(db, 'embedding_provider') else "unknown"
+                ),
                 "embedding_model": db.embedding_provider.model if hasattr(db, 'embedding_provider') else "unknown",
                 "embedding_dimension": db.embedding_dimension if hasattr(db, 'embedding_dimension') else None,
                 "chunking_method": db.chunking_method if hasattr(db, 'chunking_method') else "unknown",

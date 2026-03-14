@@ -109,7 +109,7 @@ def create_api_key(ctx, description, expires_days, created_by, permission_level,
 
     except Exception as e:
         click.secho(f"Error creating API key: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command('list-keys')
@@ -180,7 +180,8 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
 
             # Table header
             click.secho(
-                f"{'ID':<20} {'Description':<25} {'Permission':<12} {'Status':<10} {'Created':<12} {'Expires':<12} {'Last Used':<12}",
+                f"{'ID':<20} {'Description':<25} {'Permission':<12} {'Status':<10}"
+                f" {'Created':<12} {'Expires':<12} {'Last Used':<12}",
                 fg="cyan")
             click.secho("-" * 135, fg="cyan")
 
@@ -218,11 +219,12 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
                     perm_display = click.style(perm_display, fg="green")
 
                 click.echo(
-                    f"{key.id:<20} {desc:<25} {perm_display:<22} {status:<20} {created:<12} {expires:<22} {last_used:<12}")
+                    f"{key.id:<20} {desc:<25} {perm_display:<22} {status:<20}"
+                    f" {created:<12} {expires:<22} {last_used:<12}")
 
     except Exception as e:
         click.secho(f"Error listing API keys: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command('revoke-key')
@@ -282,7 +284,7 @@ def revoke_api_key(ctx, key_id, confirm):
 
     except Exception as e:
         click.secho(f"Error revoking API key: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command('rotate-key')
@@ -368,7 +370,7 @@ def rotate_api_key(ctx, key_id, output):
 
     except Exception as e:
         click.secho(f"Error rotating API key: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command('prune-expired')
@@ -441,7 +443,7 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
 
     except Exception as e:
         click.secho(f"Error pruning expired keys: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command('key-info')
@@ -535,7 +537,7 @@ def show_key_info(ctx, key_id, output):
 
     except Exception as e:
         click.secho(f"Error getting key info: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command('status')
@@ -610,4 +612,4 @@ def auth_status(ctx, output):
 
     except Exception as e:
         click.secho(f"Error reading auth status: {str(e)}", fg="bright_red")
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e

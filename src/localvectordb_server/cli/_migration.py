@@ -22,16 +22,15 @@ These commands focus on evolving the metadata schema using LocalVectorDB's
 built-in DatabaseSchema functionality rather than raw SQL operations.
 """
 
-from datetime import datetime
 from pathlib import Path
 
 import click
 
 from localvectordb.backup import BackupConfig, BackupManager
 from localvectordb.migration import MigrationEngine
+from localvectordb.utils import parse_iso8601
 from localvectordb.versioning import DatabaseVersion
 from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
-from localvectordb.utils import parse_iso8601
 
 
 @click.group('migrate')
@@ -155,7 +154,7 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
         else:
             click.secho(f"✗ Error getting migration status: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @migrate_group.command('apply')
@@ -284,7 +283,7 @@ def apply_migrations(
         else:
             click.secho(f"✗ Migration error: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @migrate_group.command('rollback')
@@ -329,9 +328,9 @@ def rollback_migrations(
         # Validate target version format
         try:
             DatabaseVersion(target_version)
-        except ValueError:
+        except ValueError as e:
             click.secho(f"✗ Invalid target version format: {target_version}", fg="red", err=True)
-            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
         # Set up database paths
         db_path = Path(db_folder) / f"{database_name}.sqlite"
@@ -419,7 +418,7 @@ def rollback_migrations(
         else:
             click.secho(f"✗ Rollback error: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @migrate_group.command('create')
@@ -465,7 +464,7 @@ def create_migration(description, version, migrations_dir, template, output_json
                 print_json_output({'success': False, 'error': error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
-            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR) from None
 
         # Set up migrations directory
         if not migrations_dir:
@@ -523,7 +522,7 @@ def create_migration(description, version, migrations_dir, template, output_json
         else:
             click.secho(f"✗ Migration creation failed: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @migrate_group.command('list')
@@ -628,4 +627,4 @@ def list_migrations(migrations_dir, show_dependencies, output_json):
         else:
             click.secho(f"✗ Error listing migrations: {e}", fg="red", err=True)
 
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e

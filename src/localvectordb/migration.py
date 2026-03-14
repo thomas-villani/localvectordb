@@ -333,7 +333,7 @@ class MigrationEngine:
 
             # Find Migration class in the module
             migration_class = None
-            for name, obj in inspect.getmembers(module):
+            for _name, obj in inspect.getmembers(module):
                 if (inspect.isclass(obj) and
                         issubclass(obj, Migration) and
                         obj != Migration):
@@ -662,7 +662,6 @@ class MigrationEngine:
 
         # Get applied migrations in reverse order
         applied_migrations = self.get_applied_migrations()
-        applied_versions = [m['version'] for m in applied_migrations]
 
         # Find target version index
         try:
@@ -885,7 +884,7 @@ class MigrationEngine:
         try:
             DatabaseVersion(version)
         except ValueError as e:
-            raise ValueError(f"Invalid version format: {e}")
+            raise ValueError(f"Invalid version format: {e}") from e
 
         # Create filename
         safe_description = "".join(c if c.isalnum() or c in "_-" else "_" for c in description.lower())
