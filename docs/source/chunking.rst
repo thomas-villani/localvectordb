@@ -164,6 +164,87 @@ Fine-grained chunking at character level.
 
 **Best for**: Non-Western languages, specialized text processing
 
+Custom Chunking Methods
+-----------------------
+
+You can create your own chunking strategy by subclassing ``PositionTrackingChunker`` and
+registering it with the ``ChunkerFactory``.
+
+Creating a Custom Chunker
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Implement the ``chunk()`` method, which must return a list of ``Chunk`` objects with accurate
+position tracking. Use the helper methods from the base class (``count_tokens``,
+``_create_chunk``, ``_calculate_line_column``) to stay consistent with built-in chunkers.
+
+.. code-block:: python
+
+   from localvectordb.chunking import PositionTrackingChunker, ChunkerFactory
+   from localvectordb.core import Chunk
+   from typing import List
+
+   class RegexChunker(PositionTrackingChunker):
+       """Split text at a custom regex pattern."""
+
+       def __init__(self, max_tokens: int = 500, overlap: int = 0, pattern: str = r"\n---\n"):
+           super().__init__(max_tokens, overlap)
+           import re
+           self.pattern = re.compile(pattern)
+
+       def chunk(self, text: str) -> List[Chunk]:
+           if not text.strip():
+               return []
+
+           parts = self.pattern.split(text)
+           chunks = []
+           pos = 0
+           for i, part in enumerate(parts):
+               start = text.index(part, pos)
+               end = start + len(part)
+               chunk = self._create_chunk(text, start, end, i)
+               chunks.append(chunk)
+               pos = end
+
+           # Ensure all chunks respect max_tokens limit
+           return self._ensure_chunks_within_limit(chunks, text)
+
+Registering with ChunkerFactory
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There are two ways to use a custom chunker.
+
+**Option 1 -- Add to the factory registry** so it can be referenced by name:
+
+.. code-block:: python
+
+   # Register once at startup
+   ChunkerFactory.CHUNKERS["regex"] = RegexChunker
+
+   # Now use it by name when creating a database
+   db = VectorDB(
+       "my_db",
+       chunking_method="regex",
+       chunk_size=400,
+   )
+
+   # Or create the chunker directly
+   chunker = ChunkerFactory.create_chunker("regex", max_tokens=400)
+
+**Option 2 -- Pass the class directly** to ``create_chunker``:
+
+.. code-block:: python
+
+   # No registration needed
+   chunker = ChunkerFactory.create_chunker(RegexChunker, max_tokens=400)
+   chunks = chunker.chunk("Part one\n---\nPart two\n---\nPart three")
+
+You can list all registered chunking methods at any time:
+
+.. code-block:: python
+
+   print(ChunkerFactory.list_methods())
+   # ['sentences', 'tokens', 'words', 'lines', 'characters', 'paragraphs', 'sections', 'code-blocks', 'regex']
+
 Advanced Chunking Configuration
 -------------------------------
 

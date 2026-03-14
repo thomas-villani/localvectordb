@@ -1355,7 +1355,7 @@ def query_multi_column(db_name):
                                   field="return_type")
 
         validate_field_type(data, "k", int)
-        # TODO: Make this a configuration param maximum instead.
+        # Upper bound is hardcoded; could be made configurable via server settings.
         if k < 1 or k > 1000:
             raise ValidationError("k must be between 1 and 1000", field="k", value=k)
 

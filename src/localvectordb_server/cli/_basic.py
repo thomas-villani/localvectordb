@@ -168,7 +168,7 @@ def list_databases(ctx, details):
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
-# TODO: expand to allow a json file/str input for schema
+# Schema input currently uses CLI options only; JSON file/string input may be added later.
 @click.command('create')
 @click.argument('name')
 @click.option('--embedding-model', default=None, type=str, help='Embedding model to use')

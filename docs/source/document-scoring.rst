@@ -115,3 +115,83 @@ Choosing a Method
 * **Data has outliers or noise**: Use ``"robust_mean"``
 * **Want balance of peak and consistent relevance**: Use ``"percentile"``
 * **Conservative scoring**: Use ``"harmonic_mean"`` or ``"geometric_mean"``
+
+How Raw Scores Are Computed
+---------------------------
+
+Before document-level aggregation is applied, each chunk receives a raw similarity
+score between 0.0 and 1.0. The normalization depends on the search type.
+
+Vector Search
+~~~~~~~~~~~~~
+
+FAISS returns raw distances which are converted to similarity scores by
+``_distance_to_similarity``:
+
+* **Inner Product (IP) index**: ``similarity = (distance + 1) / 2``, clamped to [0, 1].
+  Assumes normalized embeddings where inner product ranges from -1 to 1.
+* **L2 index**: ``similarity = 1 / (1 + distance)``. Larger distances map to lower
+  similarity, approaching 0 for very distant vectors.
+
+Keyword Search
+~~~~~~~~~~~~~~
+
+Keyword search uses SQLite FTS5 with the BM25 ranking function. FTS5 BM25 scores are
+negative values where more negative means a better match. These are converted to
+similarity scores using an exponential mapping:
+
+.. code-block:: text
+
+   similarity = 1.0 - min(1.0, exp(rank))
+
+This produces scores in [0, 1] where better BM25 matches yield higher similarity.
+
+Hybrid Search
+~~~~~~~~~~~~~
+
+Hybrid search runs vector and keyword searches independently, then merges the results
+with a weighted linear combination:
+
+.. code-block:: text
+
+   final_score = vector_weight * vector_score + (1 - vector_weight) * keyword_score
+
+The ``vector_weight`` parameter (default 0.7) controls the balance. Chunks appearing
+in only one result set receive 0.0 for the missing component. The merged scores are
+then filtered by ``score_threshold`` and passed to document-level aggregation.
+
+Using Scoring Methods via the Server API
+-----------------------------------------
+
+All search endpoints accept ``document_scoring_method`` and ``document_scoring_options``
+in the request body. These parameters are forwarded directly to the local database's
+``query()`` method.
+
+.. code-block:: bash
+
+   # Unified query endpoint
+   curl -X POST http://localhost:8000/api/v1/my_db/query \
+     -H "Content-Type: application/json" \
+     -d '{
+       "query": "machine learning",
+       "search_type": "hybrid",
+       "return_type": "documents",
+       "k": 10,
+       "score_threshold": 0.3,
+       "vector_weight": 0.7,
+       "document_scoring_method": "statistical",
+       "document_scoring_options": {
+         "best_weight": 0.5,
+         "mean_weight": 0.3,
+         "consistency_weight": 0.1,
+         "coverage_weight": 0.1
+       }
+     }'
+
+The convenience endpoints (``/search/vector``, ``/search/keyword``, ``/search/hybrid``)
+also accept these parameters with the same schema.
+
+.. note::
+   ``document_scoring_method`` and ``document_scoring_options`` only take effect when
+   ``return_type`` is ``"documents"``. For chunk-level return types (``"chunks"``,
+   ``"context"``, ``"enriched"``), raw chunk scores are returned directly.

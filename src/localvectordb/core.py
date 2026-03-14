@@ -425,10 +425,8 @@ class QueryResult:
         )
 
 
-# TODO: create a class to handle list of QueryResult with composable
-#   subfiltering options, but still acting like a list.
-#   This would allow for further processing like `.semantic_filter` and `.filter` and .limit, etc.
-#   And also fancier stuff like converting to a numpy array of embeddings
+# Future: QueryResultList class with composable subfiltering (.filter, .limit, etc.)
+# and conversion utilities (e.g., numpy array of embeddings).
 #
 # class QueryResultList(UserList):
 #

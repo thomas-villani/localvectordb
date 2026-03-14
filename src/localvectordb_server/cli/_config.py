@@ -550,7 +550,7 @@ def _interactive_config_init(format, output):
     )
     config.embedding.provider = provider
 
-    # TODO: update dynamically
+    # Model prompts are provider-specific; new providers need a branch here.
     if provider == 'ollama':
         model = click.prompt("Ollama model", default="nomic-embed-text")
         config.embedding.model = model

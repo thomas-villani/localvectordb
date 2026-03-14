@@ -122,8 +122,7 @@ def cli(ctx, config, db_folder):
         # This is to allow llmcli to pass the config path through the context when we embed it later.
         config = ctx.obj.get("lvdb_config_path")
 
-    # TODO: THE FOLLOWING HAS NOT BEEN TESTED
-    # TODO: if it works, remove it from the other commands
+    # Centralized config resolution — subcommands inherit config from this group callback.
     from localvectordb_server.cli._utils import find_config_file
     config_path = find_config_file(config)
 

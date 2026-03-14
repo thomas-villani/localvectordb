@@ -392,6 +392,60 @@ Quality Considerations
 Advanced Configuration
 ----------------------
 
+``embedding_config`` Reference
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``embedding_config`` dictionary is passed as keyword arguments to the embedding provider's
+constructor. All providers inherit a set of common parameters from the base ``EmbeddingProvider`` class,
+plus provider-specific options.
+
+**Common parameters (all providers):**
+
+.. code-block:: python
+
+   embedding_config={
+       "timeout": 90,                  # Request timeout in seconds (default: 90, Ollama default: 300)
+       "max_retries": 3,               # Number of retries on failure (default: 3)
+       "retry_delay": 1.0,             # Initial retry delay in seconds, with exponential backoff (default: 1.0)
+       "max_concurrent_requests": 5,   # Max parallel batch requests (default: 5, Ollama default: 3)
+   }
+
+**Provider-specific parameters:**
+
++------------------+-------------------------------+----------------------------------------------------------+
+| Provider         | Parameter                     | Description                                              |
++==================+===============================+==========================================================+
+| Ollama           | ``base_url``                  | Ollama server URL (default: ``$OLLAMA_URL`` or           |
+|                  |                               | ``http://localhost:11434``)                              |
++------------------+-------------------------------+----------------------------------------------------------+
+| OpenAI           | ``api_key``                   | API key (default: ``$OPENAI_API_KEY``). Prefix with      |
+|                  |                               | ``$`` to read from a custom env var, e.g. ``$MY_KEY``   |
++------------------+-------------------------------+----------------------------------------------------------+
+| OpenAI           | ``base_url``                  | API base URL for OpenAI-compatible endpoints             |
++------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI           | ``api_key``                   | API key (default: ``$JINA_API_KEY``)                     |
++------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI           | ``task``                      | Task-specific optimization (see JinaAI section above)    |
++------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI           | ``requested_dimensions``      | Truncate output to N dimensions                          |
++------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI           | ``truncate``                  | Whether to truncate long inputs (bool)                   |
++------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI           | ``late_chunking``             | Enable late chunking (bool)                              |
++------------------+-------------------------------+----------------------------------------------------------+
+| Google AI        | ``api_key``                   | API key (default: ``$GEMINI_API_KEY`` or                 |
+|                  |                               | ``$GOOGLE_API_KEY``)                                     |
++------------------+-------------------------------+----------------------------------------------------------+
+| Google AI        | ``task_type``                 | Task-specific optimization (see Google AI section above) |
++------------------+-------------------------------+----------------------------------------------------------+
+| Google AI        | ``requested_dimensions``      | Output size (128-3072)                                   |
++------------------+-------------------------------+----------------------------------------------------------+
+| Google AI        | ``normalize``                 | L2-normalize output vectors (bool)                       |
++------------------+-------------------------------+----------------------------------------------------------+
+
+Retry behavior uses exponential backoff: the delay after attempt *n* is ``retry_delay * 2^n`` seconds.
+Retries are triggered by network errors, timeouts, HTTP 429 (rate limit), and 5xx server errors.
+
 Batch Processing
 ^^^^^^^^^^^^^^^^
 

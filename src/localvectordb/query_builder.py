@@ -1093,8 +1093,8 @@ class QueryExecutor:
                 alias = agg.alias or f"{agg.function}_{agg.field}"
                 aggregation_data[alias] = agg_value
 
-            # TODO: is this a sensible way to aggregate?
-            #   Should probably make a special AggregatedQueryResult.
+            # Aggregation results are packed into QueryResult metadata.
+            # A dedicated AggregatedQueryResult type could improve clarity.
             # Create result for this group
             if self.builder._group_by:
                 group_metadata = dict(zip(self.builder._group_by,
@@ -1222,7 +1222,7 @@ class QueryExecutor:
             return value <= target
         return False
 
-    # TODO: to implement AI-based reranking.
+    # Currently supports rule-based reranking; AI-based reranking may be added in the future.
     def _apply_reranking(self, results: List[QueryResult]) -> List[QueryResult]:
         """Apply reranking based on configuration."""
         if not self.builder._rerank_config:

@@ -892,7 +892,7 @@ class DatabaseManager:
     def delete_database(self, name: str) -> bool:
         """Delete a database with coordination and enhanced error handling"""
 
-        # TODO: raise error instead?
+        # Returning False for a non-existent database is intentional (idempotent delete).
         if not self.registry.database_exists(name):
             return False
 
