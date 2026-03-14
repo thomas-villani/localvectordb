@@ -238,6 +238,69 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
     """
 
+    # Tokenizer for truncation - initialized lazily
+    _tokenizer = None
+
+    @classmethod
+    def _get_tokenizer(cls):
+        """Get or create the tokenizer for truncation."""
+        if cls._tokenizer is None:
+            import tiktoken
+            cls._tokenizer = tiktoken.get_encoding("cl100k_base")
+        return cls._tokenizer
+
+    @property
+    def max_input_tokens(self) -> Optional[int]:
+        """Maximum input tokens per text. Override in subclasses.
+
+        Returns None if no limit is enforced at the provider level.
+        """
+        return None
+
+    def _truncate_to_token_limit(self, text: str, max_tokens: int) -> str:
+        """Truncate text to fit within the token limit.
+
+        Args:
+            text: Text to truncate
+            max_tokens: Maximum tokens allowed
+
+        Returns:
+            Truncated text that fits within the token limit
+        """
+        tokenizer = self._get_tokenizer()
+        tokens = tokenizer.encode(text)
+        if len(tokens) <= max_tokens:
+            return text
+
+        truncated_tokens = tokens[:max_tokens]
+        return tokenizer.decode(truncated_tokens)
+
+    def _validate_and_truncate_texts(self, texts: List[str]) -> List[str]:
+        """Validate texts and truncate any that exceed max_input_tokens.
+
+        This is a defensive safeguard - chunking should prevent oversized texts,
+        but if any slip through, we truncate them with a warning.
+        """
+        max_tokens = self.max_input_tokens
+        if max_tokens is None:
+            return texts
+
+        tokenizer = self._get_tokenizer()
+        validated_texts = []
+
+        for i, text in enumerate(texts):
+            token_count = len(tokenizer.encode(text))
+            if token_count > max_tokens:
+                logger.warning(
+                    f"Text at index {i} exceeds max_input_tokens ({token_count} > {max_tokens}). "
+                    f"Truncating to fit. Consider adjusting your chunking configuration."
+                )
+                validated_texts.append(self._truncate_to_token_limit(text, max_tokens))
+            else:
+                validated_texts.append(text)
+
+        return validated_texts
+
     def __init__(self,
                  model: str,
                  *,
@@ -280,6 +343,9 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         """
         if not texts:
             return np.array([]).reshape(0, self.get_dimension())
+
+        # Validate and truncate any texts that exceed max_input_tokens
+        texts = self._validate_and_truncate_texts(texts)
 
         batch_size = batch_size or self.max_batch_size
         if batch_size > self.max_batch_size:
@@ -578,11 +644,20 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             "text-embedding-3-large": 3072,
         }
 
+        # Model max input token limits
+        # OpenAI embedding models support 8191 tokens max
+        self._model_max_tokens = {
+            "text-embedding-ada-002": 8191,
+            "text-embedding-3-small": 8191,
+            "text-embedding-3-large": 8191,
+        }
+
         if model not in self._model_dimensions:
             raise ValueError("Currently the only supported OpenAI embedding models are: "
                              f"{', '.join(self._model_dimensions.keys())}")
 
         self._dimension = self._model_dimensions[model]
+        self._max_input_tokens = self._model_max_tokens[model]
 
     @property
     def provider_name(self) -> str:
@@ -591,6 +666,11 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
     @property
     def max_batch_size(self) -> int:
         return 1000  # OpenAI's batch size limit
+
+    @property
+    def max_input_tokens(self) -> int:
+        """Maximum input tokens per text for this model."""
+        return self._max_input_tokens
 
     def validate_model(self) -> bool:
         """Check if the model exists"""
@@ -632,13 +712,19 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                     },
                     timeout=self.timeout
                 )
-                response.raise_for_status()
+
+                # Check for errors and extract OpenAI error message before raise_for_status
+                if not response.is_success:
+                    try:
+                        error_data = response.json()
+                        if "error" in error_data:
+                            error_msg = error_data['error'].get('message', str(error_data['error']))
+                            raise RuntimeError(f"OpenAI error: {error_msg}")
+                    except (ValueError, KeyError, TypeError):
+                        pass  # JSON parsing failed, fall through to raise_for_status
+                    response.raise_for_status()
 
                 data = response.json()
-
-                if "error" in data:
-                    raise RuntimeError(f"OpenAI error: {data['error']['message']}")
-
                 embeddings = [item["embedding"] for item in data["data"]]
                 return embeddings
         else:
@@ -652,13 +738,19 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                 },
                 timeout=self.timeout
             )
-            response.raise_for_status()
+
+            # Check for errors and extract OpenAI error message before raise_for_status
+            if not response.is_success:
+                try:
+                    error_data = response.json()
+                    if "error" in error_data:
+                        error_msg = error_data['error'].get('message', str(error_data['error']))
+                        raise RuntimeError(f"OpenAI error: {error_msg}")
+                except (ValueError, KeyError, TypeError):
+                    pass  # JSON parsing failed, fall through to raise_for_status
+                response.raise_for_status()
 
             data = response.json()
-
-            if "error" in data:
-                raise RuntimeError(f"OpenAI error: {data['error']['message']}")
-
             embeddings = [item["embedding"] for item in data["data"]]
             return embeddings
 

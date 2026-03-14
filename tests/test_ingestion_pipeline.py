@@ -773,7 +773,12 @@ class TestEdgeCasesAndErrors:
             assert result == ["doc1"]
 
     def test_embedding_provider_partial_failure(self, mock_db_with_pipeline):
-        """Test handling when embedding provider fails partway through."""
+        """Test handling when embedding provider fails partway through.
+
+        With batch_size=100 and short documents that produce ~1 chunk each,
+        the first batch should succeed and the second batch should fail.
+        Documents whose chunks were fully embedded should be returned.
+        """
         db = mock_db_with_pipeline
 
         call_count = 0
@@ -789,21 +794,23 @@ class TestEdgeCasesAndErrors:
              patch.object(db, '_fetch_existing_chunks_batch', return_value={}), \
              mock_database_operations(db):
 
-            # Process multiple documents to trigger multiple embed calls
-            documents = ["doc1 " * 20, "doc2 " * 20]  # Long enough to create chunks
+            # Use short documents that produce exactly 1 chunk each (< chunk_size of 20)
+            # This ensures each document is "complete" after its single chunk is embedded
+            documents = ["doc1 content", "doc2 content"]
 
             # Worker errors are logged but don't propagate to main thread
             result = db._process_with_pipeline(
                 documents=documents,
                 metadata_batch=[{}, {}],
                 ids=["id1", "id2"],
-                batch_size=10,
+                batch_size=1,  # Each chunk is embedded separately
                 similarity_threshold=None,
                 mode="upsert"
             )
 
-            # Pipeline processes first document before failing on second
-            # So should return the first document ID that was successfully processed
+            # First document's single chunk is embedded successfully (call 1)
+            # Second document's chunk fails (call 2)
+            # So only the first document should be returned
             assert result == ["id1"]
 
     def test_queue_overflow_handling(self, mock_db_with_pipeline):

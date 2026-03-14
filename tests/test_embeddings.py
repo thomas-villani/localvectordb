@@ -389,9 +389,10 @@ class TestOpenAIEmbeddings:
     @patch('httpx.AsyncClient')
     @pytest.mark.asyncio
     async def test_embed_batch_openai_error(self, mock_client_class):
-        """Test OpenAI API error handling."""
+        """Test OpenAI API error handling when response contains error JSON."""
         mock_client = Mock()
         mock_response = Mock()
+        mock_response.is_success = False
         mock_response.json.return_value = {
             "error": {"message": "Invalid API key"}
         }
@@ -404,6 +405,95 @@ class TestOpenAIEmbeddings:
 
         with pytest.raises(RuntimeError, match="OpenAI error: Invalid API key"):
             await provider.embed_batch(["test"])
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_openai_error_token_limit(self, mock_client_class):
+        """Test OpenAI API error handling preserves token limit error message."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.is_success = False
+        mock_response.json.return_value = {
+            "error": {
+                "message": "This model's maximum context length is 8192 tokens, however you requested 12431 tokens",
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded"
+            }
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
+
+        with pytest.raises(RuntimeError, match="maximum context length is 8192 tokens"):
+            await provider.embed_batch(["test"])
+
+    @patch('httpx.AsyncClient')
+    @pytest.mark.asyncio
+    async def test_embed_batch_openai_error_fallback_to_http_error(self, mock_client_class):
+        """Test OpenAI API error falls back to HTTP error when JSON parsing fails."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.is_success = False
+        mock_response.status_code = 400  # Must be an int for _should_retry check
+        mock_response.json.side_effect = ValueError("Invalid JSON")
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
+            "Bad Request", request=Mock(), response=mock_response
+        ))
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
+
+        # 400 errors are not retried, so it should raise EmbeddingError
+        from localvectordb.exceptions import EmbeddingError
+        with pytest.raises(EmbeddingError, match="Bad Request"):
+            await provider.embed_batch(["test"])
+
+    def test_max_input_tokens_property(self):
+        """Test that OpenAI provider has max_input_tokens property."""
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
+        assert provider.max_input_tokens == 8191
+
+        provider2 = OpenAIEmbeddings("text-embedding-3-small", api_key="test-key")
+        assert provider2.max_input_tokens == 8191
+
+    def test_truncate_to_token_limit(self):
+        """Test text truncation to fit within token limit."""
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
+
+        # Create a simple text
+        text = "Hello world, this is a test of truncation."
+
+        # Truncate to a very small limit
+        truncated = provider._truncate_to_token_limit(text, 5)
+
+        # Should be shorter than original
+        tokenizer = provider._get_tokenizer()
+        assert len(tokenizer.encode(truncated)) <= 5
+
+    def test_validate_and_truncate_texts(self):
+        """Test that oversized texts are truncated with warning."""
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key")
+
+        # Create a very long text that exceeds max_input_tokens
+        # Generate text with ~10000 tokens (each word is roughly 1 token)
+        long_text = " ".join(["word"] * 10000)
+        short_text = "short text"
+
+        texts = [short_text, long_text]
+
+        validated = provider._validate_and_truncate_texts(texts)
+
+        # Short text should be unchanged
+        assert validated[0] == short_text
+
+        # Long text should be truncated
+        tokenizer = provider._get_tokenizer()
+        assert len(tokenizer.encode(validated[1])) <= provider.max_input_tokens
 
 
 @pytest.mark.unit

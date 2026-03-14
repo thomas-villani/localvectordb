@@ -21,6 +21,7 @@ Classes:
     BackupConfig: Configuration for backup operations
 """
 
+import gc
 import hashlib
 import json
 import logging
@@ -532,10 +533,14 @@ class BackupManager:
         """Backup SQLite database using SQLite's backup API with optimization pragmas."""
         backup_db_path = temp_dir / f"{self.database_name}.sqlite"
 
-        # Use context managers to ensure connections are always closed,
-        # even if exceptions occur during connection setup
-        with sqlite3.connect(self.database_path) as source_conn, \
-             sqlite3.connect(backup_db_path) as backup_conn:
+        # NOTE: On Windows, sqlite3 context managers don't properly release file handles,
+        # causing PermissionError when cleaning up temp directories. We use explicit
+        # close() calls and gc.collect() to ensure handles are released.
+        source_conn = None
+        backup_conn = None
+        try:
+            source_conn = sqlite3.connect(self.database_path)
+            backup_conn = sqlite3.connect(backup_db_path)
 
             # Store original pragmas from source
             original_pragmas = {}
@@ -586,6 +591,14 @@ class BackupManager:
                         source_conn.execute(f"PRAGMA {key} = {value}")
                 except sqlite3.Error:
                     pass  # Best effort restoration
+        finally:
+            # Explicitly close connections to release file handles on Windows
+            if backup_conn is not None:
+                backup_conn.close()
+            if source_conn is not None:
+                source_conn.close()
+            # Force garbage collection to release any lingering file handles
+            gc.collect()
 
     def _get_current_pragma_settings(self) -> Dict[str, Any]:
         """Get current pragma settings from the database for backup metadata."""

@@ -1610,3 +1610,135 @@ class TestMultiColumnEmbedding:
                     assert callable(db._search_metadata_field)
 
             db.close()
+
+
+@pytest.mark.unit
+class TestChunkBatchAccumulator:
+    """Test the ChunkBatchAccumulator class for cross-document batching."""
+
+    def test_accumulator_basic_flow(self):
+        """Test basic accumulation and distribution of embeddings."""
+        from localvectordb.database._ingest import ChunkBatchAccumulator
+        from localvectordb.core import Chunk, ChunkPosition
+
+        accumulator = ChunkBatchAccumulator(batch_size=5, embedding_dimension=3)
+
+        # Create mock chunk_data for two documents
+        chunk1 = Chunk(
+            content="text1",
+            position=ChunkPosition(start=0, end=5, line=1, column=1, end_line=1, end_column=6),
+            tokens=1,
+            index=0
+        )
+        chunk2 = Chunk(
+            content="text2",
+            position=ChunkPosition(start=0, end=5, line=1, column=1, end_line=1, end_column=6),
+            tokens=1,
+            index=0
+        )
+
+        chunk_data1 = {
+            'doc_id': 'doc1',
+            'chunk_texts_for_embedding': ['text1'],
+            'chunks_needing_embedding': [chunk1],
+        }
+        chunk_data2 = {
+            'doc_id': 'doc2',
+            'chunk_texts_for_embedding': ['text2'],
+            'chunks_needing_embedding': [chunk2],
+        }
+
+        # Add documents - not enough for a batch
+        accumulator.add_document(chunk_data1)
+        assert not accumulator.should_embed()
+        assert accumulator.has_pending()
+
+        accumulator.add_document(chunk_data2)
+        assert not accumulator.should_embed()  # Still only 2 texts, need 5
+
+        # Flush remaining
+        remaining_texts, remaining_entries = accumulator.flush()
+        assert len(remaining_texts) == 2
+        assert remaining_texts == ['text1', 'text2']
+
+        # Simulate embedding result
+        embeddings = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+        completed_docs = accumulator.finalize_flush(embeddings, remaining_entries)
+
+        assert len(completed_docs) == 2
+        assert 'new_embeddings' in completed_docs[0]
+        assert 'new_embeddings' in completed_docs[1]
+
+    def test_accumulator_batch_when_full(self):
+        """Test that accumulator triggers embedding when batch size is reached."""
+        from localvectordb.database._ingest import ChunkBatchAccumulator
+        from localvectordb.core import Chunk, ChunkPosition
+
+        # Small batch size for testing
+        accumulator = ChunkBatchAccumulator(batch_size=2, embedding_dimension=3)
+
+        # Create two documents with one chunk each
+        chunk1 = Chunk(
+            content="text1",
+            position=ChunkPosition(start=0, end=5, line=1, column=1, end_line=1, end_column=6),
+            tokens=1,
+            index=0
+        )
+        chunk2 = Chunk(
+            content="text2",
+            position=ChunkPosition(start=0, end=5, line=1, column=1, end_line=1, end_column=6),
+            tokens=1,
+            index=0
+        )
+
+        chunk_data1 = {
+            'doc_id': 'doc1',
+            'chunk_texts_for_embedding': ['text1'],
+            'chunks_needing_embedding': [chunk1],
+        }
+        chunk_data2 = {
+            'doc_id': 'doc2',
+            'chunk_texts_for_embedding': ['text2'],
+            'chunks_needing_embedding': [chunk2],
+        }
+
+        # Add first document
+        accumulator.add_document(chunk_data1)
+        assert not accumulator.should_embed()
+
+        # Add second document - now we should have batch_size texts
+        accumulator.add_document(chunk_data2)
+        assert accumulator.should_embed()
+
+        # Get batch and distribute embeddings
+        batch_texts = accumulator.get_batch_texts()
+        assert len(batch_texts) == 2
+
+        embeddings = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+        completed_docs = accumulator.distribute_embeddings(embeddings)
+
+        # Both documents should be complete
+        assert len(completed_docs) == 2
+
+        # Accumulator should be empty now
+        assert not accumulator.has_pending()
+
+    def test_accumulator_empty_document(self):
+        """Test that documents with no chunks to embed are handled correctly."""
+        from localvectordb.database._ingest import ChunkBatchAccumulator
+
+        accumulator = ChunkBatchAccumulator(batch_size=10, embedding_dimension=3)
+
+        # Document with no chunks to embed
+        chunk_data = {
+            'doc_id': 'doc1',
+            'chunk_texts_for_embedding': [],
+            'chunks_needing_embedding': [],
+        }
+
+        accumulator.add_document(chunk_data)
+
+        # Document should be immediately marked as complete
+        assert 'new_embeddings' in chunk_data
+        assert chunk_data['new_embeddings'].shape == (0, 3)
+        assert not accumulator.has_pending()

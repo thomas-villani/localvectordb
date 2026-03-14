@@ -398,9 +398,9 @@ class TestDatabaseSchema:
         field = MetadataField(type=MetadataFieldType.TEXT, indexed=True)
         schema._add_metadata_column(mock_conn, 'author', field)
 
-        # Should add column and create index
+        # Should add column and create index (field name is quoted for SQL injection protection)
         calls = [str(call) for call in mock_conn.execute.call_args_list]
-        assert any('ALTER TABLE documents ADD COLUMN author' in call for call in calls)
+        assert any('ALTER TABLE documents ADD COLUMN "author"' in call for call in calls)
         assert any('CREATE INDEX' in call and 'author' in call for call in calls)
 
     @patch('sqlite3.connect')

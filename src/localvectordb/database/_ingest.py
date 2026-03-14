@@ -40,6 +40,152 @@ from localvectordb.utils import parse_iso8601
 logger = logging.getLogger(__name__)
 
 
+class ChunkBatchAccumulator:
+    """Accumulates chunks across documents for efficient cross-document batching.
+
+    This class collects chunks from multiple documents and batches them together
+    for embedding, significantly reducing API calls when processing many small documents.
+
+    The accumulator tracks which embeddings belong to which documents so they can
+    be correctly distributed after batch embedding.
+    """
+
+    def __init__(self, batch_size: int, embedding_dimension: int):
+        """Initialize the accumulator.
+
+        Args:
+            batch_size: Target batch size for embedding calls
+            embedding_dimension: Dimension of embedding vectors
+        """
+        self.batch_size = batch_size
+        self.embedding_dimension = embedding_dimension
+
+        # Pending texts to embed
+        self.pending_texts: List[str] = []
+
+        # Mapping: [(chunk_data_ref, local_chunk_index, chunk_object), ...]
+        # Parallel to pending_texts
+        self.pending_entries: List[Tuple[dict, int, Chunk]] = []
+
+        # Documents waiting for their embeddings
+        # {id(chunk_data): (chunk_data, num_chunks_pending, embeddings_list)}
+        self.pending_docs: Dict[int, Tuple[dict, int, List[Optional[np.ndarray]]]] = {}
+
+    def add_document(self, chunk_data: dict) -> None:
+        """Add a document's chunks to the accumulator.
+
+        Args:
+            chunk_data: Document data dict containing chunks_needing_embedding and chunk_texts_for_embedding
+        """
+        texts = chunk_data.get('chunk_texts_for_embedding', [])
+        chunks = chunk_data.get('chunks_needing_embedding', [])
+
+        if not texts:
+            # No chunks to embed, mark as ready immediately
+            chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
+            return
+
+        # Track this document's pending embeddings
+        doc_key = id(chunk_data)
+        self.pending_docs[doc_key] = (chunk_data, len(texts), [None] * len(texts))
+
+        # Add each text to the batch
+        for local_idx, (text, chunk) in enumerate(zip(texts, chunks)):
+            self.pending_texts.append(text)
+            self.pending_entries.append((chunk_data, local_idx, chunk))
+
+    def should_embed(self) -> bool:
+        """Check if we have enough texts to justify an embedding call."""
+        return len(self.pending_texts) >= self.batch_size
+
+    def has_pending(self) -> bool:
+        """Check if there are any pending texts."""
+        return len(self.pending_texts) > 0
+
+    def get_batch_texts(self) -> List[str]:
+        """Get texts for the next batch (up to batch_size)."""
+        return self.pending_texts[:self.batch_size]
+
+    def distribute_embeddings(self, embeddings: np.ndarray) -> List[dict]:
+        """Distribute embeddings to their source documents.
+
+        Args:
+            embeddings: Array of embeddings corresponding to get_batch_texts()
+
+        Returns:
+            List of chunk_data dicts that are now complete (all embeddings assigned)
+        """
+        batch_count = min(len(embeddings), self.batch_size, len(self.pending_texts))
+        completed_docs = []
+
+        for i in range(batch_count):
+            chunk_data, local_idx, chunk = self.pending_entries[i]
+            doc_key = id(chunk_data)
+
+            if doc_key in self.pending_docs:
+                doc_data, num_pending, embedding_list = self.pending_docs[doc_key]
+                embedding_list[local_idx] = embeddings[i]
+
+                # Check if all embeddings for this document are ready
+                if all(e is not None for e in embedding_list):
+                    # Stack embeddings into array
+                    doc_data['new_embeddings'] = np.array(embedding_list, dtype=np.float32)
+
+                    # Clear faiss_id for chunks needing embedding
+                    for chunk in doc_data.get('chunks_needing_embedding', []):
+                        chunk.faiss_id = None
+
+                    completed_docs.append(doc_data)
+                    del self.pending_docs[doc_key]
+
+        # Remove processed entries
+        self.pending_texts = self.pending_texts[batch_count:]
+        self.pending_entries = self.pending_entries[batch_count:]
+
+        return completed_docs
+
+    def flush(self) -> Tuple[List[str], List[Tuple[dict, int, Chunk]]]:
+        """Get all remaining pending texts and entries for final embedding.
+
+        Returns:
+            Tuple of (remaining_texts, remaining_entries)
+        """
+        texts = self.pending_texts
+        entries = self.pending_entries
+        self.pending_texts = []
+        self.pending_entries = []
+        return texts, entries
+
+    def finalize_flush(self, embeddings: np.ndarray, entries: List[Tuple[dict, int, Chunk]]) -> List[dict]:
+        """Finalize embeddings from a flush operation.
+
+        Args:
+            embeddings: Embeddings for flushed texts
+            entries: The entries returned from flush()
+
+        Returns:
+            All remaining completed chunk_data dicts
+        """
+        # Assign embeddings
+        for i, (chunk_data, local_idx, chunk) in enumerate(entries):
+            doc_key = id(chunk_data)
+            if doc_key in self.pending_docs:
+                doc_data, num_pending, embedding_list = self.pending_docs[doc_key]
+                embedding_list[local_idx] = embeddings[i]
+
+        # Collect all completed documents
+        completed_docs = []
+        for doc_key, (doc_data, num_pending, embedding_list) in list(self.pending_docs.items()):
+            if all(e is not None for e in embedding_list):
+                doc_data['new_embeddings'] = np.array(embedding_list, dtype=np.float32)
+                for chunk in doc_data.get('chunks_needing_embedding', []):
+                    chunk.faiss_id = None
+                completed_docs.append(doc_data)
+                del self.pending_docs[doc_key]
+
+        return completed_docs
+
+
 class PipelineMixin(LocalVectorDBBase, ABC):
 
     # Pure business logic helpers for DRY elimination
@@ -871,29 +1017,62 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         def embedding_worker():
             try:
                 embedding_enabled_fields = self._get_embedding_enabled_fields()
+                accumulator = ChunkBatchAccumulator(batch_size, self.embedding_dimension)
+
+                # Helper to process completed documents
+                def process_completed_docs(completed_docs: List[dict]) -> None:
+                    for doc_data in completed_docs:
+                        if embedding_enabled_fields:
+                            metadata = doc_data['metadata']
+                            field_embeddings = self._generate_metadata_embeddings(
+                                metadata, embedding_enabled_fields, batch_size
+                            )
+                            doc_data['field_embeddings'] = field_embeddings
+                        else:
+                            doc_data['field_embeddings'] = {}
+                        embedding_queue.put(doc_data)
+
                 while True:
                     chunk_data = chunk_queue.get()
+
                     if chunk_data is None:
+                        # Flush remaining documents
+                        if accumulator.has_pending():
+                            remaining_texts, remaining_entries = accumulator.flush()
+                            if remaining_texts:
+                                embeddings = self.embedding_provider.embed_sync(remaining_texts, batch_size)
+                                completed_docs = accumulator.finalize_flush(embeddings, remaining_entries)
+                                process_completed_docs(completed_docs)
+
                         embedding_queue.put(None)
                         break
-                    chunk_texts = chunk_data['chunk_texts_for_embedding']
-                    chunks_needing_embedding = chunk_data['chunks_needing_embedding']
-                    if chunk_texts:
-                        embeddings = self.embedding_provider.embed_sync(chunk_texts, batch_size)
-                        chunk_data['new_embeddings'] = embeddings
-                        for chunk in chunks_needing_embedding:
-                            chunk.faiss_id = None
-                    else:
-                        chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
-                    if embedding_enabled_fields:
-                        metadata = chunk_data['metadata']
-                        field_embeddings = self._generate_metadata_embeddings(metadata, embedding_enabled_fields,
-                                                                              batch_size)
-                        chunk_data['field_embeddings'] = field_embeddings
-                    else:
-                        chunk_data['field_embeddings'] = {}
-                    embedding_queue.put(chunk_data)
+
+                    # Add document to accumulator
+                    accumulator.add_document(chunk_data)
+
+                    # If document had no chunks to embed, it's already complete
+                    if 'new_embeddings' in chunk_data:
+                        if embedding_enabled_fields:
+                            metadata = chunk_data['metadata']
+                            field_embeddings = self._generate_metadata_embeddings(
+                                metadata, embedding_enabled_fields, batch_size
+                            )
+                            chunk_data['field_embeddings'] = field_embeddings
+                        else:
+                            chunk_data['field_embeddings'] = {}
+                        embedding_queue.put(chunk_data)
+                        chunk_queue.task_done()
+                        continue
+
+                    # Embed if we have enough texts for a batch
+                    while accumulator.should_embed():
+                        batch_texts = accumulator.get_batch_texts()
+                        embeddings = self.embedding_provider.embed_sync(batch_texts, batch_size)
+                        completed_docs = accumulator.distribute_embeddings(embeddings)
+                        process_completed_docs(completed_docs)
+
                     chunk_queue.task_done()
+
             except Exception as e:
                 logger.error(f"Embedding worker error: {e}")
                 embedding_queue.put(None)
@@ -1036,29 +1215,62 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         def embedding_worker():
             try:
                 embedding_enabled_fields = self._get_embedding_enabled_fields()
+                accumulator = ChunkBatchAccumulator(batch_size, self.embedding_dimension)
+
+                # Helper to process completed documents
+                def process_completed_docs(completed_docs: List[dict]) -> None:
+                    for doc_data in completed_docs:
+                        if embedding_enabled_fields:
+                            metadata = doc_data['metadata']
+                            field_embeddings = self._generate_metadata_embeddings(
+                                metadata, embedding_enabled_fields, batch_size
+                            )
+                            doc_data['field_embeddings'] = field_embeddings
+                        else:
+                            doc_data['field_embeddings'] = {}
+                        result_queue.put(doc_data)
+
                 while True:
                     chunk_data = embedding_queue.get()
+
                     if chunk_data is None:
+                        # Flush remaining documents
+                        if accumulator.has_pending():
+                            remaining_texts, remaining_entries = accumulator.flush()
+                            if remaining_texts:
+                                embeddings = self.embedding_provider.embed_sync(remaining_texts, batch_size)
+                                completed_docs = accumulator.finalize_flush(embeddings, remaining_entries)
+                                process_completed_docs(completed_docs)
+
                         result_queue.put(None)
                         break
-                    chunk_texts = chunk_data['chunk_texts_for_embedding']
-                    chunks_needing_embedding = chunk_data['chunks_needing_embedding']
-                    if chunk_texts:
-                        embeddings = self.embedding_provider.embed_sync(chunk_texts, batch_size)
-                        chunk_data['new_embeddings'] = embeddings
-                        for chunk in chunks_needing_embedding:
-                            chunk.faiss_id = None
-                    else:
-                        chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
-                    if embedding_enabled_fields:
-                        metadata = chunk_data['metadata']
-                        field_embeddings = self._generate_metadata_embeddings(metadata, embedding_enabled_fields,
-                                                                              batch_size)
-                        chunk_data['field_embeddings'] = field_embeddings
-                    else:
-                        chunk_data['field_embeddings'] = {}
-                    result_queue.put(chunk_data)
+
+                    # Add document to accumulator
+                    accumulator.add_document(chunk_data)
+
+                    # If document had no chunks to embed, it's already complete
+                    if 'new_embeddings' in chunk_data:
+                        if embedding_enabled_fields:
+                            metadata = chunk_data['metadata']
+                            field_embeddings = self._generate_metadata_embeddings(
+                                metadata, embedding_enabled_fields, batch_size
+                            )
+                            chunk_data['field_embeddings'] = field_embeddings
+                        else:
+                            chunk_data['field_embeddings'] = {}
+                        result_queue.put(chunk_data)
+                        embedding_queue.task_done()
+                        continue
+
+                    # Embed if we have enough texts for a batch
+                    while accumulator.should_embed():
+                        batch_texts = accumulator.get_batch_texts()
+                        embeddings = self.embedding_provider.embed_sync(batch_texts, batch_size)
+                        completed_docs = accumulator.distribute_embeddings(embeddings)
+                        process_completed_docs(completed_docs)
+
                     embedding_queue.task_done()
+
             except Exception as e:
                 logger.error(f"Embedding worker error: {e}")
                 result_queue.put(None)
@@ -1230,6 +1442,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 new_ids.append(i)
         ids = new_ids
         self._validate_metadata_batch(metadata)
+        batch_size = batch_size or self.batch_size
         result_ids = await self._async_pipeline_process(
             documents, metadata, ids, batch_size, similarity_threshold, max_concurrent_chunks,
             max_concurrent_embeddings, mode="upsert"
@@ -1396,6 +1609,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 normalized_chunks_by_document[doc_id] = normalized_chunks
         if not normalized_chunks_by_document:
             return []
+        batch_size = batch_size or self.batch_size
         result_ids = await self._async_process_from_chunks_pipeline(
             normalized_chunks_by_document,
             metadata_batch,
@@ -1479,6 +1693,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         docs_to_process = [item[0] for item in docs_to_insert]
         meta_to_process = [item[1] for item in docs_to_insert]
         ids_to_process = [item[2] for item in docs_to_insert]
+        batch_size = batch_size or self.batch_size
         result_ids = await self._async_pipeline_process(
             docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, max_concurrent_chunks,
             max_concurrent_embeddings, mode="insert"
@@ -1670,6 +1885,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 normalized_chunks_by_document[doc_id] = normalized_chunks
         if not normalized_chunks_by_document:
             return []
+        batch_size = batch_size or self.batch_size
         result_ids = await self._async_process_from_chunks_pipeline(
             normalized_chunks_by_document,
             metadata_to_insert,
@@ -1780,25 +1996,45 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             embedding_semaphore: asyncio.Semaphore
     ) -> None:
         try:
+            embedding_enabled_fields = self._get_embedding_enabled_fields()
+            accumulator = ChunkBatchAccumulator(batch_size, self.embedding_dimension)
+
+            # Helper to process completed documents
+            async def process_completed_docs(completed_docs: List[dict]) -> None:
+                for doc_data in completed_docs:
+                    if embedding_enabled_fields:
+                        metadata = doc_data['metadata']
+                        field_embeddings = await self._generate_metadata_embeddings_async(
+                            metadata, embedding_enabled_fields, batch_size
+                        )
+                        doc_data['field_embeddings'] = field_embeddings
+                    else:
+                        doc_data['field_embeddings'] = {}
+                    await embedding_queue.put(doc_data)
+
             while True:
                 chunk_data = await chunk_queue.get()
+
                 if chunk_data is None:
+                    # Flush remaining documents
+                    async with embedding_semaphore:
+                        if accumulator.has_pending():
+                            remaining_texts, remaining_entries = accumulator.flush()
+                            if remaining_texts:
+                                embeddings = await self.embedding_provider.embed_batch(
+                                    remaining_texts, batch_size
+                                )
+                                completed_docs = accumulator.finalize_flush(embeddings, remaining_entries)
+                                await process_completed_docs(completed_docs)
+
                     await embedding_queue.put(None)
                     break
 
-                # Process embeddings with proper async concurrency control
-                async with embedding_semaphore:
-                    chunk_texts_for_embedding = chunk_data['chunk_texts_for_embedding']
-                    if chunk_texts_for_embedding:
-                        new_embeddings = await self.embedding_provider.embed_batch(
-                            chunk_texts_for_embedding, batch_size
-                        )
-                        chunk_data['new_embeddings'] = new_embeddings
-                    else:
-                        chunk_data['new_embeddings'] = np.array([]).reshape(0, self.embedding_dimension)
+                # Add document to accumulator
+                accumulator.add_document(chunk_data)
 
-                    # Generate metadata embeddings if needed
-                    embedding_enabled_fields = self._get_embedding_enabled_fields()
+                # If document had no chunks to embed, it's already complete
+                if 'new_embeddings' in chunk_data:
                     if embedding_enabled_fields:
                         metadata = chunk_data['metadata']
                         field_embeddings = await self._generate_metadata_embeddings_async(
@@ -1807,9 +2043,20 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         chunk_data['field_embeddings'] = field_embeddings
                     else:
                         chunk_data['field_embeddings'] = {}
+                    await embedding_queue.put(chunk_data)
+                    chunk_queue.task_done()
+                    continue
 
-                await embedding_queue.put(chunk_data)
+                # Embed if we have enough texts for a batch
+                async with embedding_semaphore:
+                    while accumulator.should_embed():
+                        batch_texts = accumulator.get_batch_texts()
+                        embeddings = await self.embedding_provider.embed_batch(batch_texts, batch_size)
+                        completed_docs = accumulator.distribute_embeddings(embeddings)
+                        await process_completed_docs(completed_docs)
+
                 chunk_queue.task_done()
+
         except Exception as e:
             logger.error(f"Async embedding stage error: {e}")
             await embedding_queue.put(None)

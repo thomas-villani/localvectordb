@@ -92,6 +92,61 @@ class TestPositionTrackingChunker:
         assert chunk.index == 1
         assert chunk.tokens == 4  # Mock returns word count
 
+    def test_ensure_chunks_within_limit_no_oversized(self):
+        """Test that _ensure_chunks_within_limit passes through valid chunks."""
+
+        class TestChunker(PositionTrackingChunker):
+            def chunk(self, text):
+                return []
+
+        chunker = TestChunker(max_tokens=100)
+        text = "Hello world. This is a test."
+
+        # Create chunks that are within the limit
+        chunk1 = chunker._create_chunk(text, 0, 12, 0)  # "Hello world."
+        chunk2 = chunker._create_chunk(text, 13, 28, 1)  # "This is a test."
+
+        chunks = [chunk1, chunk2]
+        result = chunker._ensure_chunks_within_limit(chunks, text)
+
+        # All chunks should pass through unchanged
+        assert len(result) == 2
+        assert result[0].content == "Hello world."
+        assert result[1].content == "This is a test."
+
+    def test_ensure_chunks_within_limit_splits_oversized(self):
+        """Test that _ensure_chunks_within_limit splits oversized chunks."""
+
+        class TestChunker(PositionTrackingChunker):
+            def chunk(self, text):
+                return []
+
+        # Use a very small max_tokens to force splitting
+        chunker = TestChunker(max_tokens=3)
+
+        # Create a text that will produce a chunk exceeding 3 tokens
+        text = "This is a long text that exceeds the limit."
+
+        # Create a chunk that exceeds the limit
+        chunk = chunker._create_chunk(text, 0, len(text), 0)
+
+        # The chunk should have more than 3 tokens
+        assert chunk.tokens > 3
+
+        # Ensure chunks within limit should split it
+        result = chunker._ensure_chunks_within_limit([chunk], text)
+
+        # Should have multiple chunks now
+        assert len(result) > 1
+
+        # All resulting chunks should be within the limit
+        for c in result:
+            assert c.tokens <= chunker.max_tokens or len(c.content) == 1  # Single char edge case
+
+        # Indices should be renumbered sequentially
+        for i, c in enumerate(result):
+            assert c.index == i
+
 
 @pytest.mark.unit
 @pytest.mark.chunking

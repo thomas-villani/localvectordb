@@ -79,6 +79,66 @@ class PositionTrackingChunker(ABC):
             index=index
         )
 
+    def _ensure_chunks_within_limit(self, chunks: List[Chunk], text: str) -> List[Chunk]:
+        """Validate all chunks are within max_tokens limit, splitting oversized ones.
+
+        This is a defensive safeguard to ensure no chunk exceeds max_tokens,
+        regardless of the chunking strategy used. If any chunk exceeds the limit,
+        it is split using character-level chunking.
+
+        Args:
+            chunks: List of chunks to validate
+            text: Original text (for position recalculation if needed)
+
+        Returns:
+            List of chunks, all within max_tokens limit
+        """
+        result = []
+        for chunk in chunks:
+            if chunk.tokens <= self.max_tokens:
+                result.append(chunk)
+            else:
+                # Split oversized chunk using CharChunker
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Chunk {chunk.index} exceeds max_tokens ({chunk.tokens} > {self.max_tokens}). "
+                    f"Splitting with CharChunker."
+                )
+
+                # Create a CharChunker with the same max_tokens
+                char_chunker = CharChunker(self.max_tokens, overlap=0)
+                sub_chunks = char_chunker.chunk(chunk.content)
+
+                # Adjust positions and indices for sub-chunks
+                base_start = chunk.position.start
+                base_index = chunk.index
+                for i, sub_chunk in enumerate(sub_chunks):
+                    # Recalculate positions relative to original text
+                    new_start = base_start + sub_chunk.position.start
+                    new_end = base_start + sub_chunk.position.end
+                    line, column = self._calculate_line_column(text, new_start)
+                    end_line, end_column = self._calculate_line_column(text, new_end)
+
+                    sub_chunk.position = ChunkPosition(
+                        start=new_start,
+                        end=new_end,
+                        line=line,
+                        column=column,
+                        end_line=end_line,
+                        end_column=end_column
+                    )
+                    # Note: index will need to be renumbered by caller if needed
+                    sub_chunk.index = base_index + i
+
+                result.extend(sub_chunks)
+
+        # Renumber indices to be sequential
+        for i, chunk in enumerate(result):
+            chunk.index = i
+
+        return result
+
 
 class SentenceChunker(PositionTrackingChunker):
     """Chunk by sentences while preserving boundaries"""
@@ -145,7 +205,7 @@ class SentenceChunker(PositionTrackingChunker):
                     overlap_count = min(self.overlap, sentences_processed - 1)
                     i = start_idx + max(1, sentences_processed - overlap_count)
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
     def _split_into_sentences(self, text: str) -> List[Tuple[int, int, str]]:
         """Split text into sentences with positions"""
@@ -291,7 +351,7 @@ class TokenChunker(PositionTrackingChunker):
             if end_pos >= len(text):
                 break
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
     def _estimate_position(self, text: str, all_tokens: List[int], token_index: int) -> int:
         """Estimate character position from token index"""
@@ -378,7 +438,7 @@ class WordChunker(PositionTrackingChunker):
                     # Ensure we always make progress (at least 1 word forward)
                     i = start_idx + max(1, words_processed - overlap_count)
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
 
 class LineChunker(PositionTrackingChunker):
@@ -449,7 +509,7 @@ class LineChunker(PositionTrackingChunker):
                     overlap_count = min(self.overlap, lines_processed - 1)
                     i = start_idx + max(1, lines_processed - overlap_count)
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
     def _split_line_by_words(
             self,
@@ -583,7 +643,7 @@ class ParagraphChunker(PositionTrackingChunker):
                     overlap_count = min(self.overlap, paragraphs_processed - 1)
                     i = start_idx + max(1, paragraphs_processed - overlap_count)
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
     def _split_into_paragraphs(self, text: str) -> List[Tuple[int, int, str]]:
         """Split text into paragraphs with positions"""
@@ -785,7 +845,7 @@ class SectionChunker(PositionTrackingChunker):
                 # Shouldn't happen, but safeguard against infinite loop
                 current_pos = min(current_pos + 1, len(text))
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
     def _split_into_sections(self, text: str) -> List[Tuple[int, int, str, int]]:
         """Split text into sections based on headers"""
@@ -879,7 +939,7 @@ class CodeBlockChunker(PositionTrackingChunker):
         # Create chunks from code blocks
         chunks = self._create_chunks_from_blocks(text, lines, blocks)
 
-        return chunks
+        return self._ensure_chunks_within_limit(chunks, text)
 
     def _detect_language(self, text: str) -> str:
         """Detect programming language from code patterns"""

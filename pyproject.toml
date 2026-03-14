@@ -1,6 +1,6 @@
 [project]
 name = "localvectordb"
-version = "1.0.0"
+version = "1.0.0a1"
 description = "A lightweight vector database using SQLite, FAISS and pluggable embedding providers, including Ollama and OpenAI"
 readme = "README.md"
 authors = [
