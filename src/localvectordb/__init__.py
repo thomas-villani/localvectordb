@@ -187,10 +187,7 @@ Dependencies
 
 License
 -------
-Creative Commons Attribution-NonCommercial 4.0 International License.
-Not for commercial use without explicit permission.
-
-Contact: thomas.villani@gmail.com
+MIT License. See LICENSE file for details.
 """
 
 from localvectordb.backup import BackupManager, IncrementalBackupManager, PointInTimeRecoveryManager
@@ -203,6 +200,7 @@ from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
 from localvectordb.factory import VectorDB
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.query_builder import QueryBuilder
+from localvectordb._schema import get_common_metadata_schemas
 from localvectordb.versioning import VersionManager
 from localvectordb.sqlite_tuning import (SqliteProfile, get_sqlite_pragma_profile,
                                          get_profile_description, is_valid_sqlite_pragma_profile)
@@ -213,4 +211,5 @@ __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVector
            "migration", "Migration", "MigrationEngine",
            "versioning", "VersionManager", "QueryBuilder", "query_builder", "extractors", "get_extractor_registry",
            "ExtractorRegistry", "sqlite_tuning", "SqliteProfile", "get_profile_description",
-           "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile"]
+           "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile",
+           "get_common_metadata_schemas"]

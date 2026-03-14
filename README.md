@@ -2,7 +2,7 @@
 
 A high-performance, document-first vector database with SQLite + FAISS backend, featuring intelligent chunking, unified search, and optional HTTP server.
 
-[![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ✨ Features
 
@@ -45,7 +45,7 @@ pip install localvectordb
 pip install localvectordb[server]
 
 # For all file extraction formats (optional)
-pip install localvectordb[server,extraction]
+pip install localvectordb[server,file-extraction]
 ```
 
 ### Basic Usage
@@ -422,7 +422,7 @@ response = requests.post(
 ```dockerfile
 FROM python:3.12-slim
 
-RUN pip install localvectordb[server,extraction]
+RUN pip install localvectordb[server,file-extraction]
 
 COPY config.toml /app/config.toml
 WORKDIR /app
@@ -458,7 +458,7 @@ export OPENAI_API_KEY="your-openai-key"  # if using OpenAI
 
 ```python
 from localvectordb import VectorDB
-from localvectordb._schema import get_common_metadata_schemas
+from localvectordb import get_common_metadata_schemas
 
 # Use predefined research paper schema
 schema = get_common_metadata_schemas("research_papers")
@@ -522,11 +522,11 @@ results = db.query("async def", search_type="keyword")
 ### Development Setup
 
 ```bash
-git clone https://github.com/yourusername/localvectordb.git
+git clone https://github.com/thomas-villani/localvectordb.git
 cd localvectordb
 
 # Install in development mode
-pip install -e ".[server,extraction,dev]"
+pip install -e ".[dev]"
 
 # Run tests
 pytest
@@ -537,12 +537,11 @@ lvdb serve --debug
 
 ## 📄 License
 
-This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🆘 Support
 
-- 📖 **Documentation**: [Full documentation](https://localvectordb.readthedocs.io)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/thoams-villani/localvectordb/issues)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/thomas-villani/localvectordb/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/thomas-villani/localvectordb/discussions)
 - 📧 **Contact**: thomas.villani@gmail.com
 

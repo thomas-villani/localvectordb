@@ -61,7 +61,7 @@ From Source
 ^^^^^^^^^^^
 .. code-block:: bash
 
-   git clone https://github.com/your-org/localvectordb.git
+   git clone https://github.com/thomas-villani/localvectordb.git
    cd localvectordb
    pip install -e .[dev]
 
@@ -202,5 +202,4 @@ Common Issues
 
 Getting Help
 ^^^^^^^^^^^^
-- **Documentation**: https://localvectordb.readthedocs.io
-- **GitHub Issues**: https://github.com/your-org/localvectordb/issues
+- **GitHub Issues**: https://github.com/thomas-villani/localvectordb/issues

@@ -179,7 +179,7 @@ HTML Structure (index.html)
            <footer class="footer">
                <p>
                    Built with
-                   <a href="https://github.com/yourrepo/localvectordb" target="_blank">LocalVectorDB</a>
+                   <a href="https://github.com/thomas-villani/localvectordb" target="_blank">LocalVectorDB</a>
                    • Search powered by AI embeddings
                </p>
            </footer>
