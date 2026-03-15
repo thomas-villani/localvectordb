@@ -325,6 +325,67 @@ class Chunk:
 
 
 @dataclass
+class SectionBoundary:
+    """Boundary information for a detected section in a document.
+
+    Used during ingestion to track where sections start and end in the original text.
+    """
+    index: int
+    heading: Optional[str]
+    heading_level: Optional[int]
+    start_pos: int
+    end_pos: int
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class Section:
+    """A section within a document, grouping multiple chunks.
+
+    Sections are an overlay on top of existing chunking. They provide
+    a mid-level abstraction between documents and chunks for hierarchical
+    retrieval.
+    """
+    index: int
+    heading: Optional[str]
+    heading_level: Optional[int]
+    start_pos: int
+    end_pos: int
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    content_hash: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    faiss_id: Optional[int] = None
+    chunks: Optional[List[Chunk]] = None
+
+    def __post_init__(self) -> None:
+        if self.content_hash is None and self.start_pos is not None and self.end_pos is not None:
+            # Content hash will be calculated from actual text during ingestion
+            pass
+
+    @classmethod
+    def from_boundary(cls, boundary: SectionBoundary, content_hash: str,
+                      faiss_id: Optional[int] = None,
+                      chunks: Optional[List[Chunk]] = None) -> "Section":
+        """Create a Section from a SectionBoundary."""
+        return cls(
+            index=boundary.index,
+            heading=boundary.heading,
+            heading_level=boundary.heading_level,
+            start_pos=boundary.start_pos,
+            end_pos=boundary.end_pos,
+            start_line=boundary.start_line,
+            end_line=boundary.end_line,
+            content_hash=content_hash,
+            metadata=boundary.metadata,
+            faiss_id=faiss_id,
+            chunks=chunks,
+        )
+
+
+@dataclass
 class Document:
     """A document in the vector database"""
     id: str
@@ -334,6 +395,7 @@ class Document:
     updated_at: Optional[datetime] = None
     content_hash: Optional[str] = None
     chunks: Optional[List[Chunk]] = None
+    sections: Optional[List[Section]] = None
 
     def __post_init__(self) -> None:
         if self.content_hash is None:
@@ -379,7 +441,7 @@ class QueryResult:
     """Result from a search query"""
     id: str
     score: float  # Normalized 0-1, higher=better
-    type: Literal['document', 'chunk', 'context', 'enriched', 'group', 'aggregation']
+    type: Literal['document', 'chunk', 'section', 'context', 'enriched', 'group', 'aggregation']
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -411,8 +473,11 @@ class QueryResult:
             position = ChunkPosition.from_dict(data["position"])
 
         q_type = data.get("type", "document")
-        if q_type not in ("document", "chunk", "context", "enriched", "group", "aggregation"):
-            raise ValueError("`type` must be 'document', 'chunk', 'context', 'enriched', 'group', or 'aggregation'")
+        valid_types = ("document", "chunk", "section", "context", "enriched", "group", "aggregation")
+        if q_type not in valid_types:
+            raise ValueError(
+                f"`type` must be one of {valid_types}"
+            )
 
         return cls(
             id=data["id"],

@@ -46,6 +46,8 @@ from localvectordb.database._faiss_utils import build_id_lookup
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
+from localvectordb.section_detection import SectionDetector
+from localvectordb.section_metadata import SectionMetadataExtractor, resolve_extractors
 from localvectordb.sqlite_tuning import SqliteProfile, get_sqlite_pragma_profile, is_valid_sqlite_pragma_profile
 from localvectordb.utils import get_system_version
 
@@ -73,7 +75,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             create_if_not_exists: bool = True,
             sqlite_profile: SqliteProfile = "balanced",
             sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
-            pipeline_worker_timeout: float = 300.0
+            pipeline_worker_timeout: float = 300.0,
+            # Hierarchical embedding parameters
+            hierarchical_embeddings: bool = False,
+            section_pattern: str = r'^(#{1,6})\s+(.+)$',
+            section_metadata_extractors: Optional[List[Union[str, SectionMetadataExtractor]]] = None,
     ):
 
         super().__init__(name, base_path, metadata_schema=metadata_schema, doc_id_pattern=doc_id_pattern,
@@ -85,6 +91,15 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                          connection_pool_size=connection_pool_size, create_if_not_exists=create_if_not_exists,
                          sqlite_profile=sqlite_profile, sqlite_pragma_overrides=sqlite_pragma_overrides)
         self.name = name
+        # Hierarchical embeddings
+        self._hierarchical_embeddings = hierarchical_embeddings
+        self._section_pattern = section_pattern
+        self._section_detector: Optional[SectionDetector] = None
+        self._section_metadata_extractors: List[SectionMetadataExtractor] = []
+        self.section_index: Optional[faiss.IndexIDMap2] = None
+        self.document_index: Optional[faiss.IndexIDMap2] = None
+        self.section_index_path: Optional[Path] = None
+        self.document_index_path: Optional[Path] = None
         self._original_memory_request = (name == ":memory:" or base_path == ":memory:")
 
         if self._original_memory_request:
@@ -194,6 +209,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # FAISS
         self._init_faiss_index(enable_gpu, faiss_index_type, faiss_index_hnsw_flat_neighbors, faiss_index_lsh_bits)
+
+        # Hierarchical embeddings: section and document FAISS indices
+        self._init_hierarchical(hierarchical_embeddings, section_pattern, section_metadata_extractors)
 
         # How many items allowed on the processing queues.
         self.pipeline_queue_size: int = 3
@@ -416,6 +434,106 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.warning(f"Failed to check GPU availability: {e}. Falling back to CPU.")
 
+    # Hierarchical FAISS index initialization and management
+    def _init_hierarchical(
+            self, hierarchical_embeddings: bool,
+            section_pattern: str,
+            section_metadata_extractors: Optional[List] = None,
+    ) -> None:
+        """Initialize hierarchical embedding indices if enabled."""
+        # Load from saved config if available
+        with self.connection_pool.get_connection() as conn:
+            loaded = self._load_config(conn)
+            if loaded:
+                saved_hier = loaded.get('hierarchical_embeddings', '')
+                if saved_hier.lower() == 'true':
+                    self._hierarchical_embeddings = True
+                    self._section_pattern = loaded.get('section_pattern', section_pattern)
+
+        if not self._hierarchical_embeddings:
+            return
+
+        self._section_detector = SectionDetector(self._section_pattern)
+        self._section_metadata_extractors = resolve_extractors(section_metadata_extractors)
+
+        # Set up index paths
+        if self.base_path is not None:
+            self.section_index_path = self.base_path / f"{self.name}_sections.faiss"
+            self.document_index_path = self.base_path / f"{self.name}_documents.faiss"
+
+        # Load or create section index
+        if self.section_index_path and self.section_index_path.exists():
+            try:
+                self.section_index = faiss.read_index(str(self.section_index_path))
+                logger.info(f"Loaded section FAISS index with {self.section_index.ntotal} vectors")
+            except Exception as e:
+                logger.warning(f"Failed to load section FAISS index: {e}, creating new")
+                self.section_index = self._create_flat_index()
+        else:
+            self.section_index = self._create_flat_index()
+            logger.info("Created new section FAISS index")
+
+        # Load or create document index
+        if self.document_index_path and self.document_index_path.exists():
+            try:
+                self.document_index = faiss.read_index(str(self.document_index_path))
+                logger.info(f"Loaded document FAISS index with {self.document_index.ntotal} vectors")
+            except Exception as e:
+                logger.warning(f"Failed to load document FAISS index: {e}, creating new")
+                self.document_index = self._create_flat_index()
+        else:
+            self.document_index = self._create_flat_index()
+            logger.info("Created new document FAISS index")
+
+    def _create_flat_index(self) -> faiss.IndexIDMap2:
+        """Create a new IndexFlatL2 wrapped in IndexIDMap2."""
+        base = faiss.IndexFlatL2(self.embedding_dimension)
+        return faiss.IndexIDMap2(base)
+
+    @property
+    def hierarchical_embeddings(self) -> bool:
+        return self._hierarchical_embeddings
+
+    def _add_vectors_to_section_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
+        """Add vectors to the section FAISS index."""
+        if self.section_index is None or len(embeddings) == 0:
+            return
+        with self._faiss_lock.write_lock():
+            self.section_index.add_with_ids(
+                embeddings.astype(np.float32), faiss_ids.astype(np.int64)
+            )
+
+    def _add_vectors_to_document_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
+        """Add vectors to the document FAISS index."""
+        if self.document_index is None or len(embeddings) == 0:
+            return
+        with self._faiss_lock.write_lock():
+            self.document_index.add_with_ids(
+                embeddings.astype(np.float32), faiss_ids.astype(np.int64)
+            )
+
+    def _remove_section_vectors(self, faiss_ids: List[int]) -> None:
+        """Remove vectors from the section FAISS index."""
+        if not faiss_ids or self.section_index is None or not hasattr(self.section_index, 'remove_ids'):
+            return
+        try:
+            with self._faiss_lock.write_lock():
+                ids_array = np.array(faiss_ids, dtype=np.int64)
+                self.section_index.remove_ids(ids_array)
+        except Exception as e:
+            logger.warning(f"Failed to remove section vectors from FAISS: {e}")
+
+    def _remove_document_vectors(self, faiss_ids: List[int]) -> None:
+        """Remove vectors from the document FAISS index."""
+        if not faiss_ids or self.document_index is None or not hasattr(self.document_index, 'remove_ids'):
+            return
+        try:
+            with self._faiss_lock.write_lock():
+                ids_array = np.array(faiss_ids, dtype=np.int64)
+                self.document_index.remove_ids(ids_array)
+        except Exception as e:
+            logger.warning(f"Failed to remove document vectors from FAISS: {e}")
+
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
             return
@@ -613,6 +731,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             'doc_id_pattern': self.doc_id_pattern,
             'fts_enabled': str(self.fts_enabled),
             'version': get_system_version(),
+            'hierarchical_embeddings': str(self._hierarchical_embeddings),
+            'section_pattern': self._section_pattern,
         }
         with self.connection_pool.get_connection() as conn:
             for key, value in config.items():
@@ -755,6 +875,13 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             else:
                 faiss.write_index(self.index, str(self.index_path))
 
+        # Save hierarchical FAISS indices
+        if self._hierarchical_embeddings and not self.is_memory_only:
+            if self.section_index is not None and self.section_index.ntotal > 0 and self.section_index_path:
+                faiss.write_index(self.section_index, str(self.section_index_path))
+            if self.document_index is not None and self.document_index.ntotal > 0 and self.document_index_path:
+                faiss.write_index(self.document_index, str(self.document_index_path))
+
     def save(self):
         with self._read_write_lock.write_lock():
             self._save_internal()
@@ -797,10 +924,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         with self.connection_pool.get_connection() as conn:
             doc_count = conn.execute('SELECT COUNT(*) FROM documents').fetchone()[0]
             chunk_count = conn.execute('SELECT COUNT(*) FROM chunks').fetchone()[0]
+            section_count = conn.execute('SELECT COUNT(*) FROM sections').fetchone()[0]
             index_size = self.index.ntotal if hasattr(self.index, 'ntotal') else 0
-            return {
+            stats = {
                 'documents': doc_count,
                 'chunks': chunk_count,
+                'sections': section_count,
                 'index_vectors': index_size,
                 'embedding_dimension': self.embedding_dimension,
                 'embedding_provider': self.embedding_provider.provider_name,
@@ -809,7 +938,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 'chunk_size': self.chunk_size,
                 'chunk_overlap': self.chunk_overlap,
                 'fts_enabled': self.fts_enabled,
+                'hierarchical_embeddings': self._hierarchical_embeddings,
             }
+            if self._hierarchical_embeddings:
+                stats['section_index_vectors'] = self.section_index.ntotal if self.section_index else 0
+                stats['document_index_vectors'] = self.document_index.ntotal if self.document_index else 0
+            return stats
 
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
         """

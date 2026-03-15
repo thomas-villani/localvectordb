@@ -1062,10 +1062,11 @@ class TestLocalVectorDBProperties:
         """Test stats property."""
         mock_conn = create_mock_connection()
 
-        # Mock document count and chunk count
+        # Mock document count, chunk count, and section count
         mock_conn.execute.return_value.fetchone.side_effect = [
             [50],  # document count
-            [200]  # chunk count
+            [200],  # chunk count
+            [10],  # section count
         ]
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
@@ -1074,6 +1075,7 @@ class TestLocalVectorDBProperties:
 
         assert stats['documents'] == 50
         assert stats['chunks'] == 200
+        assert stats['sections'] == 10
         assert stats['index_vectors'] == 100
         assert stats['embedding_dimension'] == 384
         assert stats['embedding_provider'] == "test_provider"

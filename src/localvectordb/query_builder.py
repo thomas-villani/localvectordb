@@ -263,7 +263,8 @@ class QueryBuilder:
         self._semantic_filters: List[SemanticFilter] = []
         self._search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
         self._vector_weight: float = 0.7
-        self._return_type: Literal["documents", "chunks", "context"] = "documents"
+        self._return_type: Literal["documents", "chunks", "sections", "context"] = "documents"
+        self._search_level: Literal["chunks", "sections", "documents"] = "chunks"
         self._limit: int = 10
         self._offset: int = 0
         self._order_by: List[tuple[str, str]] = []  # (field, direction)
@@ -286,6 +287,7 @@ class QueryBuilder:
         new_builder._search_type = self._search_type
         new_builder._vector_weight = self._vector_weight
         new_builder._return_type = self._return_type
+        new_builder._search_level = self._search_level
         new_builder._limit = self._limit
         new_builder._offset = self._offset
         new_builder._order_by = self._order_by.copy()
@@ -517,6 +519,26 @@ class QueryBuilder:
         """Return individual chunks in results with position information."""
         builder = self.clone()
         builder._return_type = "chunks"
+        return builder
+
+    def sections(self) -> "QueryBuilder":
+        """Return section-level results (requires hierarchical_embeddings)."""
+        builder = self.clone()
+        builder._return_type = "sections"
+        return builder
+
+    def search_level(self, level: str) -> "QueryBuilder":
+        """Set the FAISS index to search ('chunks', 'sections', or 'documents').
+
+        Parameters
+        ----------
+        level : str
+            Which FAISS index to search.
+        """
+        if level not in ("chunks", "sections", "documents"):
+            raise ValueError("`level` must be 'chunks', 'sections', or 'documents'")
+        builder = self.clone()
+        builder._search_level = level
         return builder
 
     def context(self, window_size: int = 2) -> "QueryBuilder":
@@ -967,6 +989,7 @@ class QueryExecutor:
             query=clause.query,
             search_type=clause.search_type,
             return_type=self.builder._return_type,
+            search_level=self.builder._search_level,
             k=self.builder._limit + self.builder._offset,
             score_threshold=clause.score_threshold or 0.0,
             filters=filters,
@@ -1493,6 +1516,7 @@ class AsyncQueryExecutor:
             query=clause.query,
             search_type=clause.search_type,
             return_type=self.builder._return_type,
+            search_level=self.builder._search_level,
             k=self.builder._limit + self.builder._offset,
             score_threshold=clause.score_threshold or 0.0,
             filters=filters,

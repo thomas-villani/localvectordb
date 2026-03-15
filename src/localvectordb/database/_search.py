@@ -106,7 +106,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
     def query(
             self, query: str, *,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'sections', 'context', 'enriched'] = 'documents',
+            search_level: Literal['chunks', 'sections', 'documents'] = 'chunks',
             k: int = 10, score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
             vector_weight: float = 0.7,
@@ -192,22 +193,41 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with normalized scores
         """
         with self._read_write_lock.read_lock():
+            # Hierarchical search levels
+            if search_level in ('sections', 'documents') and self._hierarchical_embeddings:
+                return self._hierarchical_search(
+                    query, search_level=search_level, return_type=return_type,
+                    k=k, score_threshold=score_threshold, filters=filters,
+                    document_scoring_method=document_scoring_method,
+                    document_scoring_options=document_scoring_options,
+                )
+
             if search_type == 'vector':
-                return self._vector_search(
-                    query, return_type, k, score_threshold, filters, context_window,
+                results = self._vector_search(
+                    query, return_type if return_type != 'sections' else 'chunks',
+                    k, score_threshold, filters, context_window,
                     semantic_dedup_threshold, document_scoring_method, document_scoring_options
                 )
             elif search_type == 'keyword':
-                return self._keyword_search(
-                    query, return_type, k, score_threshold, filters, context_window,
+                results = self._keyword_search(
+                    query, return_type if return_type != 'sections' else 'chunks',
+                    k, score_threshold, filters, context_window,
                     semantic_dedup_threshold, document_scoring_method, document_scoring_options
                 )
             elif search_type == 'hybrid':
-                return self._hybrid_search(query, return_type, k, score_threshold, filters, vector_weight,
-                                           context_window, semantic_dedup_threshold, document_scoring_method,
-                                           document_scoring_options)
+                results = self._hybrid_search(
+                    query, return_type if return_type != 'sections' else 'chunks',
+                    k, score_threshold, filters, vector_weight,
+                    context_window, semantic_dedup_threshold, document_scoring_method,
+                    document_scoring_options)
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
+
+            # Post-process: if return_type='sections', group chunk results by section
+            if return_type == 'sections' and self._hierarchical_embeddings:
+                return self._assemble_section_results(results, k)
+
+            return results
 
     # ---------------
     # Vector (sync)
@@ -457,6 +477,235 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ----------------------------
     # Embeddings access + dedup
     # ----------------------------
+    # ---------------------------
+    # Hierarchical search methods
+    # ---------------------------
+    def _hierarchical_search(
+            self, query: str, *, search_level: str, return_type: str,
+            k: int, score_threshold: float, filters: Optional[Dict[str, Any]],
+            document_scoring_method: DocumentScoringMethod = "frequency_boost",
+            document_scoring_options: Optional[dict] = None,
+    ) -> List[QueryResult]:
+        """Search using section or document FAISS indices."""
+        query_embeddings = self.embedding_provider.embed_sync([query])
+        query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
+
+        if search_level == 'sections':
+            return self._section_level_search(
+                query_embedding, return_type, k, score_threshold, filters
+            )
+        elif search_level == 'documents':
+            return self._document_level_search(
+                query_embedding, return_type, k, score_threshold, filters
+            )
+        return []
+
+    def _section_level_search(
+            self, query_embedding: np.ndarray, return_type: str,
+            k: int, score_threshold: float, filters: Optional[Dict[str, Any]],
+    ) -> List[QueryResult]:
+        """Search the section FAISS index."""
+        if self.section_index is None or self.section_index.ntotal == 0:
+            return []
+
+        initial_k = min(k * 2, self.section_index.ntotal)
+        with self._faiss_lock.read_lock():
+            distances, indices = self.section_index.search(query_embedding, initial_k)
+
+        valid_results = []
+        for dist, idx in zip(distances[0], indices[0], strict=False):
+            if idx == -1:
+                continue
+            score = self._distance_to_similarity(float(dist))
+            if score < score_threshold:
+                continue
+            valid_results.append((int(idx), score))
+
+        if not valid_results:
+            return []
+
+        # Look up sections by faiss_id
+        faiss_ids = [r[0] for r in valid_results]
+        results = []
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ','.join(['?'] * len(faiss_ids))
+            cursor = conn.execute(f'''
+                SELECT s.*, d.content as doc_content, d.id as doc_id
+                FROM sections s
+                JOIN documents d ON s.document_id = d.id
+                WHERE s.faiss_id IN ({placeholders})
+            ''', faiss_ids)
+            faiss_to_section = {}
+            doc_ids_to_fetch = set()
+            for row in cursor.fetchall():
+                faiss_to_section[row['faiss_id']] = row
+                doc_ids_to_fetch.add(row['doc_id'])
+
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+
+            for faiss_id, score in valid_results:
+                row = faiss_to_section.get(faiss_id)
+                if not row:
+                    continue
+                doc_metadata = doc_metadata_batch.get(row['doc_id'], {})
+                if filters and not matches_metadata_filter(doc_metadata, filters):
+                    continue
+
+                section_text = row['doc_content'][row['start_pos']:row['end_pos']]
+                section_metadata = dict(doc_metadata)
+                section_metadata['section_heading'] = row['heading']
+                section_metadata['section_level'] = row['heading_level']
+                section_metadata['section_index'] = row['section_index']
+
+                # Parse section-specific metadata
+                if row['metadata']:
+                    try:
+                        import json
+                        raw = row['metadata']
+                        section_meta = json.loads(raw) if isinstance(raw, str) else raw
+                        section_metadata.update(section_meta)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                result = QueryResult(
+                    id=f"{row['document_id']}:section:{row['section_index']}",
+                    score=score,
+                    type='section',
+                    content=section_text,
+                    metadata=section_metadata,
+                    document_id=row['document_id'],
+                    position=ChunkPosition(
+                        start=row['start_pos'], end=row['end_pos'],
+                        line=row['start_line'] or 1, column=1,
+                        end_line=row['end_line'] or 1, end_column=1,
+                    ),
+                )
+                results.append(result)
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results[:k]
+
+    def _document_level_search(
+            self, query_embedding: np.ndarray, return_type: str,
+            k: int, score_threshold: float, filters: Optional[Dict[str, Any]],
+    ) -> List[QueryResult]:
+        """Search the document FAISS index."""
+        if self.document_index is None or self.document_index.ntotal == 0:
+            return []
+
+        initial_k = min(k * 2, self.document_index.ntotal)
+        with self._faiss_lock.read_lock():
+            distances, indices = self.document_index.search(query_embedding, initial_k)
+
+        valid_results = []
+        for dist, idx in zip(distances[0], indices[0], strict=False):
+            if idx == -1:
+                continue
+            score = self._distance_to_similarity(float(dist))
+            if score < score_threshold:
+                continue
+            valid_results.append((int(idx), score))
+
+        if not valid_results:
+            return []
+
+        # Look up documents by doc_faiss_id
+        faiss_ids = [r[0] for r in valid_results]
+        results = []
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ','.join(['?'] * len(faiss_ids))
+            cursor = conn.execute(f'''
+                SELECT id, content, doc_faiss_id
+                FROM documents WHERE doc_faiss_id IN ({placeholders})
+            ''', faiss_ids)
+            faiss_to_doc = {}
+            doc_ids = []
+            for row in cursor.fetchall():
+                faiss_to_doc[row['doc_faiss_id']] = row
+                doc_ids.append(row['id'])
+
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, doc_ids)
+
+            for faiss_id, score in valid_results:
+                row = faiss_to_doc.get(faiss_id)
+                if not row:
+                    continue
+                doc_metadata = doc_metadata_batch.get(row['id'], {})
+                if filters and not matches_metadata_filter(doc_metadata, filters):
+                    continue
+
+                result = QueryResult(
+                    id=row['id'],
+                    score=score,
+                    type='document',
+                    content=row['content'],
+                    metadata=doc_metadata,
+                )
+                results.append(result)
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results[:k]
+
+    def _assemble_section_results(
+            self, chunk_results: List[QueryResult], k: int
+    ) -> List[QueryResult]:
+        """Group chunk results by section and return section-level results."""
+        if not chunk_results:
+            return []
+
+        # Map chunks to their sections
+        doc_chunk_pairs = []
+        for result in chunk_results:
+            if result.type == 'chunk' and result.document_id:
+                _, chunk_idx = self._split_chunk_id(result.id)
+                doc_chunk_pairs.append((result.document_id, chunk_idx, result))
+
+        if not doc_chunk_pairs:
+            return chunk_results[:k]
+
+        # Query sections for these chunks
+        section_results = {}
+        with self.connection_pool.get_connection() as conn:
+            for doc_id, chunk_idx, result in doc_chunk_pairs:
+                cursor = conn.execute('''
+                    SELECT s.*, d.content as doc_content
+                    FROM sections s
+                    JOIN chunks c ON c.section_id = s.id
+                    JOIN documents d ON s.document_id = d.id
+                    WHERE c.document_id = ? AND c.chunk_index = ?
+                ''', (doc_id, chunk_idx))
+                row = cursor.fetchone()
+                if row:
+                    section_key = f"{row['document_id']}:section:{row['section_index']}"
+                    if section_key not in section_results:
+                        section_text = row['doc_content'][row['start_pos']:row['end_pos']]
+                        section_metadata = dict(result.metadata)
+                        section_metadata['section_heading'] = row['heading']
+                        section_metadata['section_level'] = row['heading_level']
+                        section_metadata['section_index'] = row['section_index']
+
+                        section_results[section_key] = QueryResult(
+                            id=section_key,
+                            score=result.score,
+                            type='section',
+                            content=section_text,
+                            metadata=section_metadata,
+                            document_id=row['document_id'],
+                            position=ChunkPosition(
+                                start=row['start_pos'], end=row['end_pos'],
+                                line=row['start_line'] or 1, column=1,
+                                end_line=row['end_line'] or 1, end_column=1,
+                            ),
+                        )
+                    else:
+                        # Update score to best chunk score
+                        if result.score > section_results[section_key].score:
+                            section_results[section_key].score = result.score
+
+        results = list(section_results.values())
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results[:k]
+
     def get_chunk_embeddings(self, chunk_ids: str | List[str]) -> np.ndarray:
         """Returns embeddings for chunks given by `chunk_ids`"
 
@@ -1182,7 +1431,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             self,
             query: str,
             search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
-            return_type: Literal['documents', 'chunks', 'context', 'enriched'] = 'documents',
+            return_type: Literal['documents', 'chunks', 'sections', 'context', 'enriched'] = 'documents',
+            search_level: Literal['chunks', 'sections', 'documents'] = 'chunks',
             k: int = 10, score_threshold: float = 0.0,
             filters: Optional[Dict[str, Any]] = None,
             vector_weight: float = 0.7,
@@ -1231,6 +1481,23 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
+
+        # Hierarchical search levels: delegate to sync for now
+        if search_level in ('sections', 'documents') and self._hierarchical_embeddings:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, lambda: self.query(
+                    query, search_type=search_type, return_type=return_type,
+                    search_level=search_level, k=k, score_threshold=score_threshold,
+                    filters=filters, vector_weight=vector_weight,
+                    context_window=context_window,
+                    semantic_dedup_threshold=semantic_dedup_threshold,
+                    document_scoring_method=document_scoring_method,
+                    document_scoring_options=document_scoring_options,
+                )
+            )
+
         query_embedding = None
         if search_type in ['vector', 'hybrid']:
             query_embedding = (await self.embedding_provider.embed_batch([query]))[0]

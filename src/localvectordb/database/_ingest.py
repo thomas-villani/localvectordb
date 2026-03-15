@@ -35,6 +35,7 @@ from localvectordb.exceptions import (
     DuplicateDocumentIDError,
 )
 from localvectordb.extractors import ExtractorRegistry
+from localvectordb.section_detection import SectionDetector
 from localvectordb.utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
@@ -1010,6 +1011,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         'chunk_indices_to_remove': chunk_indices_to_remove,
                         'faiss_ids_to_remove': faiss_ids_to_remove,
                     }
+                    # Hierarchical: detect sections and assign chunks
+                    if self._hierarchical_embeddings and self._section_detector is not None:
+                        all_chunks = unchanged_chunks + chunks_needing_embedding
+                        section_boundaries = self._section_detector.detect_sections(doc_text)
+                        chunk_to_section_map = SectionDetector.assign_chunks_to_sections(
+                            all_chunks, section_boundaries
+                        )
+                        chunk_data['section_boundaries'] = section_boundaries
+                        chunk_data['chunk_to_section_map'] = chunk_to_section_map
                     chunk_queue.put(chunk_data)
                 chunk_queue.put(None)
             except Exception as e:
@@ -1022,6 +1032,58 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 embedding_enabled_fields = self._get_embedding_enabled_fields()
                 accumulator = ChunkBatchAccumulator(batch_size, self.embedding_dimension)
 
+                # Helper to compute hierarchical centroids
+                def _compute_hierarchical_centroids(doc_data: dict) -> None:
+                    """Compute section and document centroids from chunk embeddings."""
+                    if not self._hierarchical_embeddings:
+                        return
+                    section_boundaries = doc_data.get('section_boundaries')
+                    chunk_to_section_map = doc_data.get('chunk_to_section_map')
+                    if not section_boundaries or not chunk_to_section_map:
+                        return
+
+                    # Gather all chunk embeddings (both new and reused)
+                    unchanged_chunks = doc_data.get('unchanged_chunks', [])
+                    chunks_needing_embedding = doc_data.get('chunks_needing_embedding', [])
+                    new_embeddings = doc_data.get('new_embeddings', np.array([]))
+
+                    # Build chunk_index -> embedding mapping
+                    chunk_embeddings = {}
+                    # Reused chunks: reconstruct from existing FAISS index
+                    if unchanged_chunks:
+                        reused_faiss_ids = [c.faiss_id for c in unchanged_chunks if c.faiss_id is not None]
+                        if reused_faiss_ids:
+                            reused_embs = self._reconstruct_embeddings_batch(reused_faiss_ids)
+                            for i, chunk in enumerate(unchanged_chunks):
+                                if chunk.faiss_id is not None and i < len(reused_embs):
+                                    chunk_embeddings[chunk.index] = reused_embs[i]
+                    # New chunks: use new_embeddings array
+                    if new_embeddings.size > 0:
+                        for i, chunk in enumerate(chunks_needing_embedding):
+                            if i < len(new_embeddings):
+                                chunk_embeddings[chunk.index] = new_embeddings[i]
+
+                    if not chunk_embeddings:
+                        return
+
+                    # Compute section centroids
+                    section_embeddings = []
+                    for section in section_boundaries:
+                        chunk_indices = chunk_to_section_map.get(section.index, [])
+                        vecs = [chunk_embeddings[ci] for ci in chunk_indices if ci in chunk_embeddings]
+                        if vecs:
+                            section_embeddings.append(np.mean(vecs, axis=0))
+                        else:
+                            section_embeddings.append(np.zeros(self.embedding_dimension))
+                    doc_data['section_embeddings'] = np.array(section_embeddings, dtype=np.float32)
+
+                    # Compute document centroid
+                    all_vecs = list(chunk_embeddings.values())
+                    if all_vecs:
+                        doc_data['document_embedding'] = np.mean(all_vecs, axis=0).reshape(1, -1).astype(np.float32)
+                    else:
+                        doc_data['document_embedding'] = np.zeros((1, self.embedding_dimension), dtype=np.float32)
+
                 # Helper to process completed documents
                 def process_completed_docs(completed_docs: List[dict]) -> None:
                     for doc_data in completed_docs:
@@ -1033,6 +1095,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             doc_data['field_embeddings'] = field_embeddings
                         else:
                             doc_data['field_embeddings'] = {}
+                        _compute_hierarchical_centroids(doc_data)
                         embedding_queue.put(doc_data)
 
                 while True:
@@ -1063,6 +1126,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             chunk_data['field_embeddings'] = field_embeddings
                         else:
                             chunk_data['field_embeddings'] = {}
+                        _compute_hierarchical_centroids(chunk_data)
                         embedding_queue.put(chunk_data)
                         chunk_queue.task_done()
                         continue
@@ -1115,12 +1179,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                         conn, chunk_data['doc_id'], chunk_data['chunk_indices_to_remove'],
                                         chunk_data['faiss_ids_to_remove']
                                     )
+                                    # Remove old sections and their FAISS vectors
+                                    if self._hierarchical_embeddings:
+                                        self._remove_sections_for_document(conn, chunk_data['doc_id'])
                                 self._insert_documents_bulk(conn, documents_data, mode=db_mode)
                                 if new_embeddings.size > 0:
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
                                 self._insert_chunks_bulk(conn, chunks_data)
                                 if field_embeddings:
                                     self._store_metadata_embeddings(conn, chunk_data['doc_id'], field_embeddings)
+                                # Hierarchical: store sections and update indices
+                                if self._hierarchical_embeddings:
+                                    self._store_hierarchical_data(conn, chunk_data, all_chunks)
                                 conn.commit()
                             except Exception:
                                 conn.rollback()
@@ -1386,6 +1456,235 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 f"Removed {len(chunk_indices_to_remove)} old chunks and "
                 f"{len(faiss_ids_to_remove)} FAISS vectors for {doc_id}"
             )
+
+    # ------------------
+    # Hierarchical operations
+    # ------------------
+    def _remove_sections_for_document(self, conn, doc_id: str) -> None:
+        """Remove existing sections and their FAISS vectors for a document."""
+        # Get existing section FAISS IDs before deletion
+        cursor = conn.execute(
+            'SELECT faiss_id FROM sections WHERE document_id = ? AND faiss_id IS NOT NULL',
+            (doc_id,)
+        )
+        section_faiss_ids = [row['faiss_id'] for row in cursor.fetchall()]
+        if section_faiss_ids:
+            self._remove_section_vectors(section_faiss_ids)
+
+        # Get document FAISS ID before deletion
+        cursor = conn.execute(
+            'SELECT doc_faiss_id FROM documents WHERE id = ? AND doc_faiss_id IS NOT NULL',
+            (doc_id,)
+        )
+        row = cursor.fetchone()
+        if row and row['doc_faiss_id'] is not None:
+            self._remove_document_vectors([row['doc_faiss_id']])
+
+        # Delete section rows (CASCADE will handle chunk.section_id SET NULL)
+        conn.execute('DELETE FROM sections WHERE document_id = ?', (doc_id,))
+
+    def _store_hierarchical_data(self, conn, chunk_data: dict, all_chunks: List) -> None:
+        """Store sections, section embeddings, and document embedding during ingestion."""
+        import json as _json
+
+        section_boundaries = chunk_data.get('section_boundaries')
+        chunk_to_section_map = chunk_data.get('chunk_to_section_map')
+        section_embeddings = chunk_data.get('section_embeddings')
+        document_embedding = chunk_data.get('document_embedding')
+        doc_id = chunk_data['doc_id']
+        doc_text = chunk_data['doc_text']
+
+        if not section_boundaries:
+            return
+
+        # Run section metadata extractors
+        all_sections_info = [
+            (s.heading, s.heading_level) for s in section_boundaries
+        ]
+        for section in section_boundaries:
+            section_text = doc_text[section.start_pos:section.end_pos]
+            metadata = {}
+            context = {
+                "section_index": section.index,
+                "heading_level": section.heading_level,
+                "all_sections": all_sections_info,
+                "document_id": doc_id,
+            }
+            for extractor in self._section_metadata_extractors:
+                try:
+                    result = extractor.extract(section_text, section.heading, context)
+                    metadata.update(result)
+                except Exception as e:
+                    logger.warning(f"Section metadata extractor '{extractor.name}' failed: {e}")
+            section.metadata = metadata if metadata else None
+
+        # Compute content hashes for sections
+        section_hashes = []
+        for section in section_boundaries:
+            content_hash = hashlib.sha256(
+                doc_text[section.start_pos:section.end_pos].encode('utf-8')
+            ).hexdigest()
+            section_hashes.append(content_hash)
+
+        # Add section embeddings to FAISS index
+        section_faiss_ids = None
+        if section_embeddings is not None and len(section_embeddings) > 0:
+            start_id = self.section_index.ntotal if self.section_index else 0
+            section_faiss_ids = np.arange(start_id, start_id + len(section_embeddings), dtype=np.int64)
+            self._add_vectors_to_section_index(section_embeddings, section_faiss_ids)
+
+        # Insert section rows
+        section_id_map = {}  # section_index -> SQLite row id
+        for i, section in enumerate(section_boundaries):
+            faiss_id = int(section_faiss_ids[i]) if section_faiss_ids is not None else None
+            metadata_json = _json.dumps(section.metadata) if section.metadata else None
+            conn.execute(
+                '''INSERT INTO sections
+                (document_id, section_index, heading, heading_level,
+                 start_pos, end_pos, start_line, end_line,
+                 content_hash, metadata, faiss_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (doc_id, section.index, section.heading, section.heading_level,
+                 section.start_pos, section.end_pos, section.start_line, section.end_line,
+                 section_hashes[i], metadata_json, faiss_id)
+            )
+            # Get the inserted row ID
+            cursor = conn.execute(
+                'SELECT id FROM sections WHERE document_id = ? AND section_index = ?',
+                (doc_id, section.index)
+            )
+            row = cursor.fetchone()
+            if row:
+                section_id_map[section.index] = row['id']
+
+        # Update chunks with section_id FK
+        if chunk_to_section_map and section_id_map:
+            for section_idx, chunk_indices in chunk_to_section_map.items():
+                if section_idx in section_id_map:
+                    section_row_id = section_id_map[section_idx]
+                    for chunk_idx in chunk_indices:
+                        conn.execute(
+                            'UPDATE chunks SET section_id = ? WHERE document_id = ? AND chunk_index = ?',
+                            (section_row_id, doc_id, chunk_idx)
+                        )
+
+        # Add document embedding to FAISS index
+        if document_embedding is not None and document_embedding.size > 0:
+            start_id = self.document_index.ntotal if self.document_index else 0
+            doc_faiss_id = np.array([start_id], dtype=np.int64)
+            self._add_vectors_to_document_index(document_embedding, doc_faiss_id)
+            conn.execute(
+                'UPDATE documents SET doc_faiss_id = ? WHERE id = ?',
+                (int(doc_faiss_id[0]), doc_id)
+            )
+
+    def rebuild_hierarchical_embeddings(self) -> None:
+        """Rebuild section and document FAISS indices from existing data.
+
+        This is useful when opening an existing database with hierarchical_embeddings=True
+        for the first time, or to rebuild after data corruption.
+        """
+        if not self._hierarchical_embeddings:
+            raise ValueError("hierarchical_embeddings must be True to rebuild")
+
+        with self._read_write_lock.write_lock():
+            # Reset indices
+            self.section_index = self._create_flat_index()
+            self.document_index = self._create_flat_index()
+
+            # Clear existing section data
+            with self.connection_pool.get_connection() as conn:
+                conn.execute('DELETE FROM sections')
+                conn.execute('UPDATE chunks SET section_id = NULL')
+                conn.execute('UPDATE documents SET doc_faiss_id = NULL')
+                conn.commit()
+
+            # Iterate all documents
+            with self.connection_pool.get_connection() as conn:
+                cursor = conn.execute('SELECT id, content FROM documents')
+                documents = cursor.fetchall()
+
+            for doc_row in documents:
+                doc_id = doc_row['id']
+                doc_text = doc_row['content']
+
+                # Detect sections
+                section_boundaries = self._section_detector.detect_sections(doc_text)
+
+                # Get existing chunks
+                with self.connection_pool.get_connection() as conn:
+                    cursor = conn.execute(
+                        'SELECT chunk_index, faiss_id, start_pos, end_pos FROM chunks '
+                        'WHERE document_id = ? ORDER BY chunk_index', (doc_id,)
+                    )
+                    chunk_rows = cursor.fetchall()
+
+                if not chunk_rows:
+                    continue
+
+                # Build minimal Chunk objects for assignment
+                from localvectordb.core import Chunk, ChunkPosition
+                chunks = []
+                for row in chunk_rows:
+                    chunk = Chunk(
+                        content="",
+                        position=ChunkPosition(
+                            start=row['start_pos'], end=row['end_pos'],
+                            line=1, column=1, end_line=1, end_column=1
+                        ),
+                        tokens=0, index=row['chunk_index'],
+                        faiss_id=row['faiss_id'],
+                    )
+                    chunks.append(chunk)
+
+                chunk_to_section_map = SectionDetector.assign_chunks_to_sections(
+                    chunks, section_boundaries
+                )
+
+                # Reconstruct chunk embeddings
+                faiss_ids = [c.faiss_id for c in chunks if c.faiss_id is not None]
+                if not faiss_ids:
+                    continue
+                chunk_embeddings_arr = self._reconstruct_embeddings_batch(faiss_ids)
+                fid_to_emb = dict(zip(faiss_ids, chunk_embeddings_arr, strict=False))
+                chunk_idx_to_emb = {}
+                for chunk in chunks:
+                    if chunk.faiss_id in fid_to_emb:
+                        chunk_idx_to_emb[chunk.index] = fid_to_emb[chunk.faiss_id]
+
+                # Build chunk_data dict for _store_hierarchical_data
+                section_embeddings = []
+                for section in section_boundaries:
+                    c_indices = chunk_to_section_map.get(section.index, [])
+                    vecs = [chunk_idx_to_emb[ci] for ci in c_indices if ci in chunk_idx_to_emb]
+                    if vecs:
+                        section_embeddings.append(np.mean(vecs, axis=0))
+                    else:
+                        section_embeddings.append(np.zeros(self.embedding_dimension))
+
+                all_vecs = list(chunk_idx_to_emb.values())
+                doc_embedding = np.mean(all_vecs, axis=0).reshape(1, -1).astype(np.float32) if all_vecs else None
+
+                chunk_data = {
+                    'doc_id': doc_id,
+                    'doc_text': doc_text,
+                    'section_boundaries': section_boundaries,
+                    'chunk_to_section_map': chunk_to_section_map,
+                    'section_embeddings': np.array(section_embeddings, dtype=np.float32),
+                    'document_embedding': doc_embedding,
+                }
+
+                with self.connection_pool.get_connection() as conn:
+                    conn.execute('BEGIN')
+                    try:
+                        self._store_hierarchical_data(conn, chunk_data, chunks)
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+
+            self._save_internal()
+            logger.info("Hierarchical embeddings rebuilt successfully")
 
     # ------------------
     # Public APIs (async)

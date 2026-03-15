@@ -1256,6 +1256,7 @@ class TestQueryExecutorExecution:
             query="machine learning",
             search_type="hybrid",  # Default search type
             return_type="documents",
+            search_level="chunks",  # Default search level
             k=10,  # limit + offset
             score_threshold=0.0,
             filters={},
@@ -1290,6 +1291,7 @@ class TestQueryExecutorExecution:
             query="machine learning",
             search_type="vector",
             return_type="documents",
+            search_level="chunks",
             k=7,  # limit + offset
             score_threshold=0.0,
             filters=expected_filters,

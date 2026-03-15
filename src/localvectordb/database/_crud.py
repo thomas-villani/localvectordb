@@ -358,7 +358,29 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 finally:
                     cursor.close()
 
-                # Delete documents
+                # Collect section and document FAISS IDs for hierarchical indices
+                section_faiss_ids_to_remove: list = []
+                doc_faiss_ids_to_remove: list = []
+                if self._hierarchical_embeddings:
+                    cursor = conn.execute(
+                        f'SELECT faiss_id FROM sections WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
+                        ids,
+                    )
+                    try:
+                        section_faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                    finally:
+                        cursor.close()
+
+                    cursor = conn.execute(
+                        f'SELECT doc_faiss_id FROM documents WHERE id IN ({placeholders}) AND doc_faiss_id IS NOT NULL',
+                        ids,
+                    )
+                    try:
+                        doc_faiss_ids_to_remove.extend([row['doc_faiss_id'] for row in cursor.fetchall()])
+                    finally:
+                        cursor.close()
+
+                # Delete documents (CASCADE deletes chunks, sections)
                 cursor = conn.execute(f'DELETE FROM documents WHERE id IN ({placeholders})', ids)
                 try:
                     deleted_count = cursor.rowcount
@@ -379,6 +401,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     logger.error(f"Failed to remove vectors from FAISS index: {e}")
             elif faiss_ids_to_remove:
                 logger.warning(f"FAISS index doesn't support removal, {len(faiss_ids_to_remove)} vectors orphaned")
+
+            # Remove hierarchical FAISS vectors
+            if self._hierarchical_embeddings:
+                if section_faiss_ids_to_remove:
+                    self._remove_section_vectors(section_faiss_ids_to_remove)
+                if doc_faiss_ids_to_remove:
+                    self._remove_document_vectors(doc_faiss_ids_to_remove)
+
             return deleted_count
 
     def update(self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> bool:

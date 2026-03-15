@@ -206,7 +206,8 @@ class DatabaseSchema:
         content TEXT NOT NULL,
         content_hash TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        doc_faiss_id INTEGER
     )"""
 
     BASE_CHUNKS_SCHEMA = """CREATE TABLE IF NOT EXISTS chunks (
@@ -223,6 +224,7 @@ class DatabaseSchema:
         end_col INTEGER,
         tokens INTEGER NOT NULL,
         faiss_id INTEGER,
+        section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
         FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
         UNIQUE(document_id, chunk_index)
     )"""
@@ -249,6 +251,23 @@ class DatabaseSchema:
         UNIQUE(document_id, field_name, chunk_index)
     )"""
 
+    BASE_SECTIONS_SCHEMA = """CREATE TABLE IF NOT EXISTS sections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT NOT NULL,
+        section_index INTEGER NOT NULL,
+        heading TEXT,
+        heading_level INTEGER,
+        start_pos INTEGER NOT NULL,
+        end_pos INTEGER NOT NULL,
+        start_line INTEGER,
+        end_line INTEGER,
+        content_hash TEXT NOT NULL,
+        metadata JSON,
+        faiss_id INTEGER,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+        UNIQUE(document_id, section_index)
+    )"""
+
     BASE_MIGRATION_LOG_SCHEMA = """CREATE TABLE IF NOT EXISTS migration_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         version TEXT NOT NULL,
@@ -273,6 +292,7 @@ class DatabaseSchema:
     BASE_SCHEMA = {
         "documents": BASE_DOCUMENTS_SCHEMA,
         "chunks": BASE_CHUNKS_SCHEMA,
+        "sections": BASE_SECTIONS_SCHEMA,
         "metadata_schema": BASE_METADATA_SCHEMA,
         "column_embeddings": BASE_COLUMN_EMBEDDINGS_SCHEMA,
         "migration_log": BASE_MIGRATION_LOG_SCHEMA,
@@ -283,13 +303,16 @@ class DatabaseSchema:
         )"""
     }
 
-    # Updated base indexes to include content_hash, column_embeddings, migration_log, and backup_log
+    # Updated base indexes to include content_hash, column_embeddings, migration_log, backup_log, and sections
     BASE_INDEXES = [
         "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)",
         "CREATE INDEX IF NOT EXISTS idx_chunks_faiss_id ON chunks(faiss_id)",
-        "CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash)",  # New index
+        "CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_chunks_section_id ON chunks(section_id)",
         "CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(content_hash)",
         "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sections_document_id ON sections(document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sections_faiss_id ON sections(faiss_id)",
         "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON column_embeddings(document_id, field_name)",
         "CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)",
         "CREATE INDEX IF NOT EXISTS idx_migration_log_version ON migration_log(version)",
@@ -672,6 +695,56 @@ class DatabaseSchema:
             '''
         ]
 
+    def _migrate_hierarchical_columns(self, conn: sqlite3.Connection) -> None:
+        """Add hierarchical embedding columns to existing databases if missing."""
+        # Add section_id to chunks table if missing
+        try:
+            cursor = conn.execute("PRAGMA table_info(chunks)")
+            chunk_columns = {row[1] for row in cursor.fetchall()}
+            if 'section_id' not in chunk_columns:
+                conn.execute(
+                    "ALTER TABLE chunks ADD COLUMN section_id INTEGER "
+                    "REFERENCES sections(id) ON DELETE SET NULL"
+                )
+                logger.info("Added section_id column to chunks table")
+        except Exception as e:
+            logger.debug(f"section_id migration check: {e}")
+
+        # Add doc_faiss_id to documents table if missing
+        try:
+            cursor = conn.execute("PRAGMA table_info(documents)")
+            doc_columns = {row[1] for row in cursor.fetchall()}
+            if 'doc_faiss_id' not in doc_columns:
+                conn.execute("ALTER TABLE documents ADD COLUMN doc_faiss_id INTEGER")
+                logger.info("Added doc_faiss_id column to documents table")
+        except Exception as e:
+            logger.debug(f"doc_faiss_id migration check: {e}")
+
+    async def _migrate_hierarchical_columns_async(self, conn) -> None:
+        """Add hierarchical embedding columns to existing databases if missing (async)."""
+        try:
+            cursor = await conn.execute("PRAGMA table_info(chunks)")
+            rows = await cursor.fetchall()
+            chunk_columns = {row[1] for row in rows}
+            if 'section_id' not in chunk_columns:
+                await conn.execute(
+                    "ALTER TABLE chunks ADD COLUMN section_id INTEGER "
+                    "REFERENCES sections(id) ON DELETE SET NULL"
+                )
+                logger.info("Added section_id column to chunks table")
+        except Exception as e:
+            logger.debug(f"section_id migration check: {e}")
+
+        try:
+            cursor = await conn.execute("PRAGMA table_info(documents)")
+            rows = await cursor.fetchall()
+            doc_columns = {row[1] for row in rows}
+            if 'doc_faiss_id' not in doc_columns:
+                await conn.execute("ALTER TABLE documents ADD COLUMN doc_faiss_id INTEGER")
+                logger.info("Added doc_faiss_id column to documents table")
+        except Exception as e:
+            logger.debug(f"doc_faiss_id migration check: {e}")
+
     def _core_initialize_sync(self, metadata_schema: Optional[Dict[str, MetadataField]], conn: sqlite3.Connection):
         """Core logic for initializing database schema (sync version)"""
         # Enable foreign keys
@@ -681,7 +754,10 @@ class DatabaseSchema:
         for _, ddl in self.BASE_SCHEMA.items():
             self._sync_executor.execute(conn, ddl)
 
-        # Create base indexes
+        # Migrate existing databases to add hierarchical columns
+        self._migrate_hierarchical_columns(conn)
+
+        # Create base indexes (uses IF NOT EXISTS so safe for existing DBs)
         for index_ddl in self.BASE_INDEXES:
             self._sync_executor.execute(conn, index_ddl)
 
@@ -700,6 +776,9 @@ class DatabaseSchema:
         # Create base tables
         for _, ddl in self.BASE_SCHEMA.items():
             await self._async_executor.execute(conn, ddl)
+
+        # Migrate existing databases to add hierarchical columns
+        await self._migrate_hierarchical_columns_async(conn)
 
         # Create base indexes
         for index_ddl in self.BASE_INDEXES:

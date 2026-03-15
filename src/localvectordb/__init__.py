@@ -193,7 +193,7 @@ MIT License. See LICENSE file for details.
 from localvectordb.backup import BackupManager, IncrementalBackupManager, PointInTimeRecoveryManager
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.client import RemoteVectorDB
-from localvectordb.core import MetadataField
+from localvectordb.core import MetadataField, Section, SectionBoundary
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
@@ -209,6 +209,7 @@ from localvectordb.sqlite_tuning import (
 from localvectordb.versioning import VersionManager
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
+           "Section", "SectionBoundary", "section_detection", "section_metadata",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",
            "BackupManager", "IncrementalBackupManager", "PointInTimeRecoveryManager",
            "migration", "Migration", "MigrationEngine",
