@@ -206,6 +206,7 @@ from localvectordb.sqlite_tuning import (
                                          get_sqlite_pragma_profile,
                                          is_valid_sqlite_pragma_profile,
 )
+from localvectordb.validation import FactChecker, FactCheckResult, ClaimResult, Polarity
 from localvectordb.versioning import VersionManager
 
 __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
@@ -216,7 +217,9 @@ __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVector
            "versioning", "VersionManager", "QueryBuilder", "query_builder", "extractors", "get_extractor_registry",
            "ExtractorRegistry", "sqlite_tuning", "SqliteProfile", "get_profile_description",
            "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile",
-           "get_common_metadata_schemas"]
+           "get_common_metadata_schemas",
+           "FactChecker", "FactCheckResult", "ClaimResult", "Polarity",
+           "validation"]
 
 
 def __getattr__(name):
