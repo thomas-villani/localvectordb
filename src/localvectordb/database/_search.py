@@ -114,7 +114,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
             document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: Optional[dict] = None
+            document_scoring_options: Optional[dict] = None,
+            reranker: Optional[Any] = None,
+            reranker_config: Optional[Dict[str, Any]] = None
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -225,7 +227,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
             # Post-process: if return_type='sections', group chunk results by section
             if return_type == 'sections' and self._hierarchical_embeddings:
-                return self._assemble_section_results(results, k)
+                results = self._assemble_section_results(results, k)
+
+            # Apply reranking if configured
+            if reranker is not None:
+                results = reranker.rerank(query, results, top_k=k)
+            elif reranker_config:
+                from localvectordb.reranking import RerankerRegistry
+                _reranker = RerankerRegistry.create_reranker(
+                    reranker_config.get("provider"),
+                    reranker_config.get("model"),
+                    **{kk: v for kk, v in reranker_config.items() if kk not in ("provider", "model")}
+                )
+                results = _reranker.rerank(query, results, top_k=k)
 
             return results
 
@@ -1439,7 +1453,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
             document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: Optional[dict] = None
+            document_scoring_options: Optional[dict] = None,
+            reranker: Optional[Any] = None,
+            reranker_config: Optional[Dict[str, Any]] = None
     ) -> List[QueryResult]:
         """
         Async query the database using vector, keyword, or hybrid search
@@ -1501,10 +1517,24 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_embedding = None
         if search_type in ['vector', 'hybrid']:
             query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
-        return await self._search_with_embedding_async(query, query_embedding, search_type, return_type, k,
-                                                       score_threshold, filters, vector_weight, context_window,
-                                                       semantic_dedup_threshold, document_scoring_method,
-                                                       document_scoring_options)
+        results = await self._search_with_embedding_async(query, query_embedding, search_type, return_type, k,
+                                                          score_threshold, filters, vector_weight, context_window,
+                                                          semantic_dedup_threshold, document_scoring_method,
+                                                          document_scoring_options)
+
+        # Apply reranking if configured
+        if reranker is not None:
+            results = await reranker.rerank_async(query, results, top_k=k)
+        elif reranker_config:
+            from localvectordb.reranking import RerankerRegistry
+            _reranker = RerankerRegistry.create_reranker(
+                reranker_config.get("provider"),
+                reranker_config.get("model"),
+                **{kk: v for kk, v in reranker_config.items() if kk not in ("provider", "model")}
+            )
+            results = await _reranker.rerank_async(query, results, top_k=k)
+
+        return results
 
     async def _search_with_embedding_async(
             self, query: str, query_embedding: Optional[np.ndarray],

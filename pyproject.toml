@@ -26,6 +26,17 @@ dependencies = [
 ollama = "localvectordb.embeddings:OllamaEmbeddings"
 openai = "localvectordb.embeddings:OpenAIEmbeddings"
 mock = "localvectordb.embeddings:MockEmbeddings"
+google = "localvectordb.embeddings:GoogleEmbeddings"
+jina = "localvectordb.embeddings:JinaEmbeddings"
+sentence_transformers = "localvectordb.embeddings:SentenceTransformerEmbeddings"
+huggingface = "localvectordb.embeddings:HuggingFaceInferenceEmbeddings"
+huggingface_local = "localvectordb.embeddings:HuggingFaceLocalEmbeddings"
+
+[project.entry-points."localvectordb.reranker_providers"]
+jina = "localvectordb.reranking:JinaReranker"
+sentence_transformers = "localvectordb.reranking:SentenceTransformersReranker"
+huggingface = "localvectordb.reranking:HuggingFaceReranker"
+mock = "localvectordb.reranking:MockReranker"
 
 [project.entry-points."localvectordb.file_extractors"]
 docx = "localvectordb.extractors.office_extractors:DocxExtractor"
@@ -93,10 +104,19 @@ file-extraction-rtf-epub = [
     "ebooklib>=0.19",
     "striprtf>=0.0.29",
 ]
+sentence-transformers = [
+    "sentence-transformers>=3.0.0",
+    "torch>=2.0.0",
+]
+local-embeddings = [
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+]
 all = [
     "localvectordb[server]",
     "localvectordb[file-extraction]",
-    "localvectordb[mcp]"
+    "localvectordb[mcp]",
+    "localvectordb[sentence-transformers]",
 ]
 dev = [
     "freezegun>=1.5.2",

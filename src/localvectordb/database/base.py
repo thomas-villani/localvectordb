@@ -114,7 +114,9 @@ class BaseVectorDB(ABC):
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
             document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: Optional[dict] = None
+            document_scoring_options: Optional[dict] = None,
+            reranker: Optional[Any] = None,
+            reranker_config: Optional[Dict[str, Any]] = None
     ) -> List[QueryResult]:
         """Unified query interface for all search types."""
         pass
@@ -439,7 +441,9 @@ class BaseVectorDB(ABC):
             context_window: int = 2,
             semantic_dedup_threshold: Optional[float] = None,
             document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: dict = None
+            document_scoring_options: dict = None,
+            reranker: Optional[Any] = None,
+            reranker_config: Optional[Dict[str, Any]] = None
     ) -> List["QueryResult"]:
         """Unified query interface for all search types asynchronously."""
         pass

@@ -661,7 +661,7 @@ class QueryBuilder:
     # Reranking methods
     def rerank(self, method: str, **config) -> "QueryBuilder":
         """Add reranking configuration for result post-processing."""
-        valid_methods = ["relevance", "recency", "diversity", "custom"]
+        valid_methods = ["relevance", "recency", "diversity", "custom", "cross_encoder"]
         if method not in valid_methods:
             raise ValueError(f"rerank method must be one of: {', '.join(valid_methods)}")
 
@@ -676,6 +676,24 @@ class QueryBuilder:
     def rerank_by_diversity(self, field: str, weight: float = 1.0) -> "QueryBuilder":
         """Rerank results to promote diversity in specified field."""
         return self.rerank("diversity", field=field, weight=weight)
+
+    def rerank_by_model(
+            self, provider: str, model: Optional[str] = None, top_k: Optional[int] = None, **config
+    ) -> "QueryBuilder":
+        """Rerank results using a cross-encoder or reranking model.
+
+        Parameters
+        ----------
+        provider : str
+            Reranker provider name (e.g., "sentence_transformers", "jina", "huggingface", "mock").
+        model : str, optional
+            Model name. If None, provider default is used.
+        top_k : int, optional
+            Maximum results to keep after reranking.
+        **config
+            Additional configuration passed to the reranker.
+        """
+        return self.rerank("cross_encoder", provider=provider, model=model, top_k=top_k, **config)
 
     # Debug and validation methods
     def explain(self, detailed: bool = False, return_plan: bool = False) -> Union["QueryBuilder", Dict[str, Any]]:
@@ -1245,7 +1263,6 @@ class QueryExecutor:
             return value <= target
         return False
 
-    # Currently supports rule-based reranking; AI-based reranking may be added in the future.
     def _apply_reranking(self, results: List[QueryResult]) -> List[QueryResult]:
         """Apply reranking based on configuration."""
         if not self.builder._rerank_config:
@@ -1289,6 +1306,26 @@ class QueryExecutor:
                     seen_values.add(field_value)
 
             results.sort(key=lambda x: x.score, reverse=True)
+
+        elif method == "cross_encoder":
+            from localvectordb.reranking import RerankerRegistry
+
+            config = self.builder._rerank_config
+            provider = config.get("provider")
+            model = config.get("model")
+            top_k = config.get("top_k")
+
+            reranker_kwargs = {k: v for k, v in config.items()
+                               if k not in ("method", "provider", "model", "top_k") and v is not None}
+
+            reranker = RerankerRegistry.create_reranker(provider, model, **reranker_kwargs)
+
+            # Extract query text from search clauses
+            query_text = ""
+            if self.builder._search_clauses:
+                query_text = self.builder._search_clauses[0].query
+
+            results = reranker.rerank(query_text, results, top_k=top_k)
 
         return results
 

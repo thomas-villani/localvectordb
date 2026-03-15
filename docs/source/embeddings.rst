@@ -12,6 +12,8 @@ Overview
 - **OpenAI**: Cloud-based embeddings with high quality
 - **JinaAI**: Advanced cloud-based embedding models with more control
 - **Google**: Cloud-based Gemini Embedding
+- **SentenceTransformers**: Local inference with the sentence-transformers library
+- **HuggingFace**: Both Inference API and local transformers models
 - **Custom Providers**: Plugin system for additional providers
 
 Embedding Providers
@@ -243,6 +245,137 @@ Configuration Options:
 - ``normalize``: L2-normalize vectors (recommended for non-3072 outputs)
 - ``task_type``: Task-specific optimization
 
+SentenceTransformers Provider
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Run any SentenceTransformer model locally. Supports Matryoshka dimension truncation.
+
+.. note::
+   Requires the ``sentence-transformers`` optional dependency:
+   ``pip install localvectordb[sentence-transformers]``
+
+Configuration:
+
+.. code-block:: python
+
+   # Basic usage
+   db = VectorDB(
+       "my_db",
+       embedding_provider="sentence_transformers",
+       embedding_model="all-MiniLM-L6-v2"
+   )
+
+   # With Matryoshka dimension truncation
+   db = VectorDB(
+       "my_db",
+       embedding_provider="sentence_transformers",
+       embedding_model="all-MiniLM-L6-v2",
+       embedding_config={
+           "requested_dimensions": 128,  # Truncate to 128 dims
+           "normalize": True,
+           "device": "cuda"  # Use GPU (cpu/cuda/mps/auto)
+       }
+   )
+
+HuggingFace Inference API Provider
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use HuggingFace's hosted Inference API for embedding models.
+
+Setup:
+
+.. code-block:: bash
+
+   export HF_TOKEN=your_huggingface_token
+
+Configuration:
+
+.. code-block:: python
+
+   # Using HuggingFace Inference API
+   db = VectorDB(
+       "my_db",
+       embedding_provider="huggingface",
+       embedding_model="BAAI/bge-small-en-v1.5"
+   )
+
+   # With a custom TEI (Text Embeddings Inference) endpoint
+   db = VectorDB(
+       "my_db",
+       embedding_provider="huggingface",
+       embedding_model="BAAI/bge-small-en-v1.5",
+       embedding_config={
+           "base_url": "http://localhost:8080",  # Custom TEI endpoint
+           "requested_dimensions": 256,
+           "normalize": True
+       }
+   )
+
+HuggingFace Local Provider
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Run HuggingFace transformer models locally with full control over pooling and device.
+
+.. note::
+   Requires the ``local-embeddings`` optional dependency:
+   ``pip install localvectordb[local-embeddings]``
+
+Configuration:
+
+.. code-block:: python
+
+   db = VectorDB(
+       "my_db",
+       embedding_provider="huggingface_local",
+       embedding_model="BAAI/bge-small-en-v1.5",
+       embedding_config={
+           "pooling_strategy": "mean",  # mean, cls, or max
+           "device": "cuda",
+           "normalize": True,
+           "requested_dimensions": 256
+       }
+   )
+
+Matryoshka Dimension Support
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Several providers support `Matryoshka Representation Learning (MRL) <https://arxiv.org/abs/2205.13147>`_,
+which allows you to truncate embeddings to a smaller dimension while preserving most of their quality.
+This reduces storage and speeds up similarity search.
+
+**OpenAI** (``text-embedding-3-small`` and ``text-embedding-3-large`` only):
+
+.. code-block:: python
+
+   # Reduce OpenAI embeddings from 1536 to 256 dimensions
+   db = VectorDB(
+       "my_db",
+       embedding_provider="openai",
+       embedding_model="text-embedding-3-small",
+       embedding_config={
+           "requested_dimensions": 256,
+           "normalize": True
+       }
+   )
+
+**Ollama** (model-dependent):
+
+.. code-block:: python
+
+   # Reduce Ollama embeddings with client-side truncation
+   db = VectorDB(
+       "my_db",
+       embedding_provider="ollama",
+       embedding_model="nomic-embed-text",
+       embedding_config={
+           "requested_dimensions": 256,
+           "normalize": True
+       }
+   )
+
+**SentenceTransformers** and **HuggingFace** providers also support ``requested_dimensions``
+for Matryoshka truncation (see their sections above).
+
 Custom Provider Example
 ^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -388,6 +521,12 @@ Quality Considerations
 +----------------------+----------------------------+------------+-----------+-----------------+
 | Google AI            | gemini-embedding-001       | 3072       | Fast      | Free tier       |
 +----------------------+----------------------------+------------+-----------+-----------------+
+| SentenceTransformers | all-MiniLM-L6-v2           | 384        | Fast      | Free (local)    |
++----------------------+----------------------------+------------+-----------+-----------------+
+| HuggingFace          | BAAI/bge-small-en-v1.5     | 384        | Fast      | Free tier       |
++----------------------+----------------------------+------------+-----------+-----------------+
+| HuggingFace Local    | BAAI/bge-small-en-v1.5     | 384        | Fast      | Free (local)    |
++----------------------+----------------------------+------------+-----------+-----------------+
 
 Advanced Configuration
 ----------------------
@@ -412,36 +551,71 @@ plus provider-specific options.
 
 **Provider-specific parameters:**
 
-+------------------+-------------------------------+----------------------------------------------------------+
-| Provider         | Parameter                     | Description                                              |
-+==================+===============================+==========================================================+
-| Ollama           | ``base_url``                  | Ollama server URL (default: ``$OLLAMA_URL`` or           |
-|                  |                               | ``http://localhost:11434``)                              |
-+------------------+-------------------------------+----------------------------------------------------------+
-| OpenAI           | ``api_key``                   | API key (default: ``$OPENAI_API_KEY``). Prefix with      |
-|                  |                               | ``$`` to read from a custom env var, e.g. ``$MY_KEY``   |
-+------------------+-------------------------------+----------------------------------------------------------+
-| OpenAI           | ``base_url``                  | API base URL for OpenAI-compatible endpoints             |
-+------------------+-------------------------------+----------------------------------------------------------+
-| JinaAI           | ``api_key``                   | API key (default: ``$JINA_API_KEY``)                     |
-+------------------+-------------------------------+----------------------------------------------------------+
-| JinaAI           | ``task``                      | Task-specific optimization (see JinaAI section above)    |
-+------------------+-------------------------------+----------------------------------------------------------+
-| JinaAI           | ``requested_dimensions``      | Truncate output to N dimensions                          |
-+------------------+-------------------------------+----------------------------------------------------------+
-| JinaAI           | ``truncate``                  | Whether to truncate long inputs (bool)                   |
-+------------------+-------------------------------+----------------------------------------------------------+
-| JinaAI           | ``late_chunking``             | Enable late chunking (bool)                              |
-+------------------+-------------------------------+----------------------------------------------------------+
-| Google AI        | ``api_key``                   | API key (default: ``$GEMINI_API_KEY`` or                 |
-|                  |                               | ``$GOOGLE_API_KEY``)                                     |
-+------------------+-------------------------------+----------------------------------------------------------+
-| Google AI        | ``task_type``                 | Task-specific optimization (see Google AI section above) |
-+------------------+-------------------------------+----------------------------------------------------------+
-| Google AI        | ``requested_dimensions``      | Output size (128-3072)                                   |
-+------------------+-------------------------------+----------------------------------------------------------+
-| Google AI        | ``normalize``                 | L2-normalize output vectors (bool)                       |
-+------------------+-------------------------------+----------------------------------------------------------+
++----------------------+-------------------------------+----------------------------------------------------------+
+| Provider             | Parameter                     | Description                                              |
++======================+===============================+==========================================================+
+| Ollama               | ``base_url``                  | Ollama server URL (default: ``$OLLAMA_URL`` or           |
+|                      |                               | ``http://localhost:11434``)                               |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Ollama               | ``requested_dimensions``      | Truncate output to N dims (Matryoshka/MRL)               |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Ollama               | ``normalize``                 | L2-normalize output vectors (bool)                       |
++----------------------+-------------------------------+----------------------------------------------------------+
+| OpenAI               | ``api_key``                   | API key (default: ``$OPENAI_API_KEY``). Prefix with      |
+|                      |                               | ``$`` to read from a custom env var, e.g. ``$MY_KEY``    |
++----------------------+-------------------------------+----------------------------------------------------------+
+| OpenAI               | ``base_url``                  | API base URL for OpenAI-compatible endpoints             |
++----------------------+-------------------------------+----------------------------------------------------------+
+| OpenAI               | ``requested_dimensions``      | Output dims (MRL, v3 models only)                        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| OpenAI               | ``normalize``                 | L2-normalize output vectors (bool)                       |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``api_key``                   | API key (default: ``$JINA_API_KEY``)                     |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``task``                      | Task-specific optimization (see JinaAI section above)    |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``requested_dimensions``      | Truncate output to N dimensions                          |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``truncate``                  | Whether to truncate long inputs (bool)                   |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``late_chunking``             | Enable late chunking (bool)                              |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``api_key``                   | API key (default: ``$GEMINI_API_KEY`` or                 |
+|                      |                               | ``$GOOGLE_API_KEY``)                                     |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``task_type``                 | Task-specific optimization (see Google AI section above) |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``requested_dimensions``      | Output size (128-3072)                                   |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``normalize``                 | L2-normalize output vectors (bool)                       |
++----------------------+-------------------------------+----------------------------------------------------------+
+| SentenceTransformers | ``device``                    | Inference device (cpu/cuda/mps/auto)                     |
++----------------------+-------------------------------+----------------------------------------------------------+
+| SentenceTransformers | ``requested_dimensions``      | Truncate output to N dims (Matryoshka)                   |
++----------------------+-------------------------------+----------------------------------------------------------+
+| SentenceTransformers | ``normalize``                 | L2-normalize output vectors (bool, default: True)        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| SentenceTransformers | ``trust_remote_code``         | Trust remote code when loading model (bool)              |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace          | ``api_key``                   | API key (default: ``$HF_TOKEN`` or                       |
+|                      |                               | ``$HUGGINGFACE_TOKEN``)                                  |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace          | ``base_url``                  | Custom TEI endpoint URL                                  |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace          | ``requested_dimensions``      | Truncate output to N dimensions                          |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace          | ``normalize``                 | L2-normalize output vectors (bool, default: True)        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace Local    | ``device``                    | Inference device (cpu/cuda/mps)                          |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace Local    | ``pooling_strategy``          | Pooling method: mean, cls, or max (default: mean)        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace Local    | ``requested_dimensions``      | Truncate output to N dimensions                          |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace Local    | ``normalize``                 | L2-normalize output vectors (bool, default: True)        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| HuggingFace Local    | ``trust_remote_code``         | Trust remote code when loading model (bool)              |
++----------------------+-------------------------------+----------------------------------------------------------+
 
 Retry behavior uses exponential backoff: the delay after attempt *n* is ``retry_delay * 2^n`` seconds.
 Retries are triggered by network errors, timeouts, HTTP 429 (rate limit), and 5xx server errors.

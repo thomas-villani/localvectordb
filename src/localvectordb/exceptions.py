@@ -62,3 +62,8 @@ class ValidationError(BaseLocalVectorDBException, ValueError):
 
 class ConnectionPoolError(BaseLocalVectorDBException):
     pass
+
+
+class RerankerError(BaseLocalVectorDBException, RuntimeError):
+    """Raised when there's an error in reranking operations."""
+    pass

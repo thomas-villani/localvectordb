@@ -40,6 +40,22 @@ Additional dependencies:
 - Configuration management
 - CLI tools
 
+SentenceTransformers Installation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+For local inference with SentenceTransformer models:
+
+.. code-block:: bash
+
+   pip install localvectordb[sentence-transformers]
+
+Local Embeddings Installation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+For local inference with HuggingFace transformers models:
+
+.. code-block:: bash
+
+   pip install localvectordb[local-embeddings]
+
 Development Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^
 For contributing or advanced usage:

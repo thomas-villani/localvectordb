@@ -3,7 +3,7 @@ Tests for localvectordb.embeddings module.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import numpy as np
@@ -13,10 +13,13 @@ from localvectordb.embeddings import (
     EmbeddingProvider,
     EmbeddingRegistry,
     GoogleEmbeddings,
+    HuggingFaceInferenceEmbeddings,
+    HuggingFaceLocalEmbeddings,
     JinaEmbeddings,
     MockEmbeddings,
     OllamaEmbeddings,
     OpenAIEmbeddings,
+    SentenceTransformerEmbeddings,
     create_embedding_provider,
     embed_texts,
     embed_texts_sync,
@@ -1068,3 +1071,220 @@ class TestEmbeddingSyncWrapper:
 
         assert mock_asyncio_run.called
         assert np.array_equal(result, expected_result)
+
+
+# =========================================================================
+# New embedding provider tests
+# =========================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestSentenceTransformerEmbeddings:
+    """Test SentenceTransformerEmbeddings provider."""
+
+    def test_init(self):
+        provider = SentenceTransformerEmbeddings("all-MiniLM-L6-v2")
+        assert provider.model == "all-MiniLM-L6-v2"
+        assert provider.provider_name == "sentence_transformers"
+        assert provider.max_batch_size == 256
+
+    def test_init_with_requested_dimensions(self):
+        provider = SentenceTransformerEmbeddings("all-MiniLM-L6-v2", requested_dimensions=128)
+        assert provider.get_dimension() == 128
+
+    def test_load_model_import_error(self):
+        provider = SentenceTransformerEmbeddings("all-MiniLM-L6-v2")
+        with patch.dict("sys.modules", {"sentence_transformers": None}):
+            assert provider.validate_model() is False
+
+    @pytest.mark.asyncio
+    async def test_embed_with_mock_model(self):
+        provider = SentenceTransformerEmbeddings("test-model")
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.random.randn(2, 384).astype(np.float32)
+        mock_model.get_sentence_embedding_dimension.return_value = 384
+        provider._model = mock_model
+
+        embeddings = await provider._embed_single_batch(["hello", "world"])
+        assert len(embeddings) == 2
+        assert len(embeddings[0]) == 384
+
+    @pytest.mark.asyncio
+    async def test_embed_with_dimension_truncation(self):
+        provider = SentenceTransformerEmbeddings("test-model", requested_dimensions=128, normalize=True)
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.random.randn(2, 384).astype(np.float32)
+        provider._model = mock_model
+
+        embeddings = await provider._embed_single_batch(["hello", "world"])
+        assert len(embeddings) == 2
+        assert len(embeddings[0]) == 128
+        # Check normalization
+        for emb in embeddings:
+            norm = np.linalg.norm(emb)
+            assert abs(norm - 1.0) < 1e-5
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestHuggingFaceInferenceEmbeddings:
+    """Test HuggingFaceInferenceEmbeddings provider."""
+
+    def test_init(self):
+        provider = HuggingFaceInferenceEmbeddings("BAAI/bge-small-en-v1.5")
+        assert provider.model == "BAAI/bge-small-en-v1.5"
+        assert provider.provider_name == "huggingface"
+        assert provider.max_batch_size == 128
+
+    def test_env_var_api_key(self):
+        with patch.dict("os.environ", {"HF_TOKEN": "test-hf-token"}):
+            provider = HuggingFaceInferenceEmbeddings("test-model")
+            assert provider.api_key == "test-hf-token"
+
+    def test_dollar_env_var(self):
+        with patch.dict("os.environ", {"CUSTOM_KEY": "custom-val"}):
+            provider = HuggingFaceInferenceEmbeddings("test-model", api_key="$CUSTOM_KEY")
+            assert provider.api_key == "custom-val"
+
+    def test_explicit_base_url(self):
+        provider = HuggingFaceInferenceEmbeddings("test-model", base_url="http://custom:8080")
+        assert provider._explicit_base_url is True
+        assert provider.base_url == "http://custom:8080"
+
+    def test_requested_dimensions(self):
+        provider = HuggingFaceInferenceEmbeddings("test-model", requested_dimensions=256)
+        assert provider.get_dimension() == 256
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestHuggingFaceLocalEmbeddings:
+    """Test HuggingFaceLocalEmbeddings provider."""
+
+    def test_init(self):
+        provider = HuggingFaceLocalEmbeddings("BAAI/bge-small-en-v1.5")
+        assert provider.model == "BAAI/bge-small-en-v1.5"
+        assert provider.provider_name == "huggingface_local"
+        assert provider.max_batch_size == 128
+        assert provider.pooling_strategy == "mean"
+
+    def test_init_with_pooling(self):
+        provider = HuggingFaceLocalEmbeddings("test-model", pooling_strategy="cls")
+        assert provider.pooling_strategy == "cls"
+
+    def test_init_with_requested_dimensions(self):
+        provider = HuggingFaceLocalEmbeddings("test-model", requested_dimensions=128)
+        assert provider.get_dimension() == 128
+
+    def test_load_model_import_error(self):
+        provider = HuggingFaceLocalEmbeddings("test-model")
+        with patch.dict("sys.modules", {"transformers": None}):
+            assert provider.validate_model() is False
+
+
+# =========================================================================
+# Matryoshka (MRL) dimension tests
+# =========================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestOpenAIMatryoshka:
+    """Test OpenAI Matryoshka dimension support."""
+
+    def test_requested_dimensions_v3_small(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            provider = OpenAIEmbeddings("text-embedding-3-small", requested_dimensions=256)
+            assert provider.get_dimension() == 256
+
+    def test_requested_dimensions_v3_large(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            provider = OpenAIEmbeddings("text-embedding-3-large", requested_dimensions=1024)
+            assert provider.get_dimension() == 1024
+
+    def test_requested_dimensions_ada_raises(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            with pytest.raises(ValueError, match="does not support the 'dimensions' parameter"):
+                OpenAIEmbeddings("text-embedding-ada-002", requested_dimensions=256)
+
+    def test_default_dimension_unchanged(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            provider = OpenAIEmbeddings("text-embedding-3-small")
+            assert provider.get_dimension() == 1536
+
+    def test_payload_includes_dimensions(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            provider = OpenAIEmbeddings("text-embedding-3-small", requested_dimensions=256)
+            payload = provider._build_openai_payload(["test"])
+            assert payload["dimensions"] == 256
+
+    def test_payload_no_dimensions_when_not_set(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            provider = OpenAIEmbeddings("text-embedding-3-small")
+            payload = provider._build_openai_payload(["test"])
+            assert "dimensions" not in payload
+
+    def test_normalize_postprocessing(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            provider = OpenAIEmbeddings("text-embedding-3-small", normalize=True)
+            embeddings = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+            result = provider._postprocess_embeddings(embeddings)
+            for vec in result:
+                norm = np.linalg.norm(vec)
+                assert abs(norm - 1.0) < 1e-5
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestOllamaMatryoshka:
+    """Test Ollama Matryoshka dimension support."""
+
+    def test_init_with_requested_dimensions(self):
+        provider = OllamaEmbeddings("nomic-embed-text", requested_dimensions=256)
+        assert provider.requested_dimensions == 256
+
+    def test_get_dimension_with_requested(self):
+        provider = OllamaEmbeddings("nomic-embed-text", requested_dimensions=256)
+        provider._dimension = 768  # Simulate native dimension already cached
+        assert provider.get_dimension() == 256
+
+    def test_truncate_and_normalize(self):
+        provider = OllamaEmbeddings("nomic-embed-text", requested_dimensions=3, normalize=True)
+        embeddings = [[1.0, 2.0, 3.0, 4.0, 5.0]]
+        result = provider._truncate_and_normalize(embeddings)
+        assert len(result[0]) == 3
+        norm = np.linalg.norm(result[0])
+        assert abs(norm - 1.0) < 1e-5
+
+    def test_no_truncation_when_not_set(self):
+        provider = OllamaEmbeddings("nomic-embed-text")
+        embeddings = [[1.0, 2.0, 3.0, 4.0, 5.0]]
+        result = provider._truncate_and_normalize(embeddings)
+        assert len(result[0]) == 5
+
+
+# =========================================================================
+# Registry tests for new providers
+# =========================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestNewProviderRegistry:
+    """Test that new providers are properly registered."""
+
+    def test_sentence_transformers_registered(self):
+        assert "sentence_transformers" in EmbeddingRegistry.list()
+        cls = EmbeddingRegistry.get("sentence_transformers")
+        assert cls is SentenceTransformerEmbeddings
+
+    def test_huggingface_registered(self):
+        assert "huggingface" in EmbeddingRegistry.list()
+        cls = EmbeddingRegistry.get("huggingface")
+        assert cls is HuggingFaceInferenceEmbeddings
+
+    def test_huggingface_local_registered(self):
+        assert "huggingface_local" in EmbeddingRegistry.list()
+        cls = EmbeddingRegistry.get("huggingface_local")
+        assert cls is HuggingFaceLocalEmbeddings

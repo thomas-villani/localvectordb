@@ -30,6 +30,7 @@ Submodules
    localvectordb.factory
    localvectordb.migration
    localvectordb.query_builder
+   localvectordb.reranking
    localvectordb.sqlite_tuning
    localvectordb.utils
    localvectordb.versioning

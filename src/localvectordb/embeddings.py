@@ -447,6 +447,8 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             retry_delay: float = 1.0,
             max_concurrent_requests: int = 3,
             base_url: Optional[str] = None,
+            requested_dimensions: Optional[int] = None,
+            normalize: bool = False,
             ) -> None:
         super().__init__(model,
                          timeout=timeout,
@@ -456,6 +458,8 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                          base_url=base_url)
         effective_base_url = base_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.base_url = (effective_base_url or "http://localhost:11434").rstrip('/')
+        self.requested_dimensions = requested_dimensions
+        self.normalize = normalize
         self._validated = False
 
     @property
@@ -541,22 +545,41 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         if self._dimension is None:
             dimension = self._get_model_dimension_sync()
             self._dimension = dimension
+        if self.requested_dimensions is not None:
+            return self.requested_dimensions
         return self._dimension
+
+    def _truncate_and_normalize(self, embeddings: List[List[float]]) -> List[List[float]]:
+        """Apply Matryoshka dimension truncation and optional normalization."""
+        if self.requested_dimensions is None and not self.normalize:
+            return embeddings
+        result = []
+        for emb in embeddings:
+            vec = np.array(emb, dtype=np.float32)
+            if self.requested_dimensions is not None and len(vec) > self.requested_dimensions:
+                vec = vec[:self.requested_dimensions]
+            if self.normalize:
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+            result.append(vec.tolist())
+        return result
 
     async def _embed_single_batch(
         self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
     ) -> List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
+        request_json: Dict[str, Any] = {
+            "model": self.model,
+            "input": texts,
+            "truncate": True,
+        }
+
         if client is None:
-            # Use context manager to ensure proper AsyncClient cleanup
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.base_url}/api/embed",
-                    json={
-                        "model": self.model,
-                        "input": texts,
-                        "truncate": True
-                    },
+                    json=request_json,
                     timeout=self.timeout
                 )
                 response.raise_for_status()
@@ -569,16 +592,11 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                 if not embeddings:
                     raise RuntimeError("No embeddings returned from Ollama")
 
-                return embeddings  # type: ignore[no-any-return]
+                return self._truncate_and_normalize(embeddings)
         else:
-            # Use provided client
             response = await client.post(
                 f"{self.base_url}/api/embed",
-                json={
-                    "model": self.model,
-                    "input": texts,
-                    "truncate": True
-                },
+                json=request_json,
                 timeout=self.timeout
             )
             response.raise_for_status()
@@ -591,7 +609,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             if not embeddings:
                 raise RuntimeError("No embeddings returned from Ollama")
 
-            return embeddings  # type: ignore[no-any-return]
+            return self._truncate_and_normalize(embeddings)
 
 
 class OpenAIEmbeddings(HTTPEmbeddingProvider):
@@ -615,6 +633,9 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         How many requests to make concurrently to the OpenAI server.
     """
 
+    # Models that support Matryoshka Representation Learning (MRL) dimensions parameter
+    _MRL_SUPPORTED_MODELS = {"text-embedding-3-small", "text-embedding-3-large"}
+
     def __init__(
             self,
             model: str,
@@ -625,6 +646,8 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             max_concurrent_requests: int = 5,
             api_key: Optional[str] = None,
             base_url: Optional[str] = None,
+            requested_dimensions: Optional[int] = None,
+            normalize: bool = False,
             ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay,
                          max_concurrent_requests=max_concurrent_requests,
@@ -659,7 +682,20 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             raise ValueError("Currently the only supported OpenAI embedding models are: "
                              f"{', '.join(self._model_dimensions.keys())}")
 
-        self._dimension = self._model_dimensions[model]
+        # Matryoshka dimension support
+        self.requested_dimensions = requested_dimensions
+        self.normalize = normalize
+
+        if requested_dimensions is not None:
+            if model not in self._MRL_SUPPORTED_MODELS:
+                raise ValueError(
+                    f"Model '{model}' does not support the 'dimensions' parameter. "
+                    f"Only {', '.join(sorted(self._MRL_SUPPORTED_MODELS))} support Matryoshka dimensions."
+                )
+            self._dimension = requested_dimensions
+        else:
+            self._dimension = self._model_dimensions[model]
+
         self._max_input_tokens = self._model_max_tokens[model]
 
     @property
@@ -696,6 +732,29 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             # Should never get here.
             raise ValueError("Unknown model.")
 
+    def _build_openai_payload(self, texts: List[str]) -> Dict[str, Any]:
+        """Build the OpenAI API request payload."""
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": texts,
+        }
+        if self.requested_dimensions is not None:
+            payload["dimensions"] = self.requested_dimensions
+        return payload
+
+    def _postprocess_embeddings(self, embeddings: List[List[float]]) -> List[List[float]]:
+        """Apply optional L2 normalization to embeddings."""
+        if not self.normalize:
+            return embeddings
+        result = []
+        for emb in embeddings:
+            vec = np.array(emb, dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            result.append(vec.tolist())
+        return result
+
     async def _embed_single_batch(
         self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
     ) -> List[List[float]]:
@@ -703,21 +762,17 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        payload = self._build_openai_payload(texts)
 
         if client is None:
-            # Use context manager to ensure proper AsyncClient cleanup
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://api.openai.com/v1/embeddings",
                     headers=headers,
-                    json={
-                        "model": self.model,
-                        "input": texts
-                    },
+                    json=payload,
                     timeout=self.timeout
                 )
 
-                # Check for errors and extract OpenAI error message before raise_for_status
                 if not response.is_success:
                     try:
                         error_data = response.json()
@@ -725,25 +780,20 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                             error_msg = error_data['error'].get('message', str(error_data['error']))
                             raise RuntimeError(f"OpenAI error: {error_msg}")
                     except (ValueError, KeyError, TypeError):
-                        pass  # JSON parsing failed, fall through to raise_for_status
+                        pass
                     response.raise_for_status()
 
                 data = response.json()
                 embeddings = [item["embedding"] for item in data["data"]]
-                return embeddings
+                return self._postprocess_embeddings(embeddings)
         else:
-            # Use provided client
             response = await client.post(
                 "https://api.openai.com/v1/embeddings",
                 headers=headers,
-                json={
-                    "model": self.model,
-                    "input": texts
-                },
+                json=payload,
                 timeout=self.timeout
             )
 
-            # Check for errors and extract OpenAI error message before raise_for_status
             if not response.is_success:
                 try:
                     error_data = response.json()
@@ -751,12 +801,12 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                         error_msg = error_data['error'].get('message', str(error_data['error']))
                         raise RuntimeError(f"OpenAI error: {error_msg}")
                 except (ValueError, KeyError, TypeError):
-                    pass  # JSON parsing failed, fall through to raise_for_status
+                    pass
                 response.raise_for_status()
 
             data = response.json()
             embeddings = [item["embedding"] for item in data["data"]]
-            return embeddings
+            return self._postprocess_embeddings(embeddings)
 
 
 class GoogleEmbeddings(HTTPEmbeddingProvider):
@@ -1300,6 +1350,374 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         return embeddings
 
 
+class SentenceTransformerEmbeddings(EmbeddingProvider):
+    """SentenceTransformers embedding provider for local inference.
+
+    Parameters
+    ----------
+    model : str
+        The SentenceTransformer model name (e.g., "all-MiniLM-L6-v2").
+    device : str, optional
+        Device for inference (cpu/cuda/mps/auto). Default: auto-detect.
+    normalize : bool
+        Whether to L2-normalize embeddings. Default: True.
+    requested_dimensions : int, optional
+        Truncate embeddings to this dimension (Matryoshka support).
+    trust_remote_code : bool
+        Whether to trust remote code when loading models. Default: False.
+    """
+
+    def __init__(
+            self,
+            model: str,
+            *,
+            device: Optional[str] = None,
+            normalize: bool = True,
+            requested_dimensions: Optional[int] = None,
+            trust_remote_code: bool = False,
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            **kwargs: Any
+    ) -> None:
+        super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay, **kwargs)
+        self.device = device
+        self.normalize_embeddings = normalize
+        self.requested_dimensions = requested_dimensions
+        self.trust_remote_code = trust_remote_code
+        self._model = None
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise ImportError(
+                "sentence-transformers is required for SentenceTransformerEmbeddings. "
+                "Install it with: pip install sentence-transformers"
+            ) from e
+        kwargs = {}
+        if self.device is not None:
+            kwargs["device"] = self.device
+        if self.trust_remote_code:
+            kwargs["trust_remote_code"] = True
+        self._model = SentenceTransformer(self.model, **kwargs)
+        return self._model
+
+    @property
+    def provider_name(self) -> str:
+        return "sentence_transformers"
+
+    @property
+    def max_batch_size(self) -> int:
+        return 256
+
+    def validate_model(self) -> bool:
+        try:
+            self._load_model()
+            return True
+        except Exception:
+            return False
+
+    def get_dimension(self) -> int:
+        if self.requested_dimensions is not None:
+            return self.requested_dimensions
+        if self._dimension is not None:
+            return self._dimension
+        model = self._load_model()
+        self._dimension = model.get_sentence_embedding_dimension()
+        return self._dimension
+
+    async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
+        model = self._load_model()
+        embeddings_np = model.encode(
+            texts,
+            normalize_embeddings=self.normalize_embeddings,
+            convert_to_numpy=True,
+        )
+        if self.requested_dimensions is not None and embeddings_np.shape[1] > self.requested_dimensions:
+            embeddings_np = embeddings_np[:, :self.requested_dimensions]
+            if self.normalize_embeddings:
+                norms = np.linalg.norm(embeddings_np, axis=1, keepdims=True)
+                norms = np.where(norms > 0, norms, 1.0)
+                embeddings_np = embeddings_np / norms
+        return embeddings_np.tolist()
+
+
+class HuggingFaceInferenceEmbeddings(HTTPEmbeddingProvider):
+    """HuggingFace Inference API embedding provider.
+
+    Parameters
+    ----------
+    model : str
+        HuggingFace model ID (e.g., "BAAI/bge-small-en-v1.5").
+    api_key : str, optional
+        API key. Falls back to HF_TOKEN / HUGGINGFACE_TOKEN env vars.
+    base_url : str, optional
+        Base URL. Default: https://api-inference.huggingface.co
+    normalize : bool
+        Whether to L2-normalize embeddings. Default: True.
+    requested_dimensions : int, optional
+        Truncate embeddings to this dimension.
+    """
+
+    def __init__(
+            self,
+            model: str,
+            *,
+            api_key: Optional[str] = None,
+            base_url: Optional[str] = None,
+            normalize: bool = True,
+            requested_dimensions: Optional[int] = None,
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            max_concurrent_requests: int = 5,
+            **kwargs: Any
+    ) -> None:
+        super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay,
+                         max_concurrent_requests=max_concurrent_requests, base_url=base_url, **kwargs)
+
+        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
+            api_key = os.getenv(api_key[1:])
+
+        self.api_key = api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+        self._explicit_base_url = base_url is not None
+        self.base_url = (base_url or "https://api-inference.huggingface.co").rstrip("/")
+        self.normalize_embeddings = normalize
+        self.requested_dimensions = requested_dimensions
+
+    @property
+    def provider_name(self) -> str:
+        return "huggingface"
+
+    @property
+    def max_batch_size(self) -> int:
+        return 128
+
+    def validate_model(self) -> bool:
+        return True
+
+    def get_dimension(self) -> int:
+        if self.requested_dimensions is not None:
+            return self.requested_dimensions
+        if self._dimension is not None:
+            return self._dimension
+        # Probe with a test call
+        self._dimension = self._probe_dimension()
+        return self._dimension
+
+    def _probe_dimension(self) -> int:
+        """Probe the API to determine embedding dimension."""
+        import httpx as _httpx
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        if self._explicit_base_url:
+            url = f"{self.base_url}/embed"
+            payload = {"inputs": ["dimension probe"]}
+        else:
+            url = f"{self.base_url}/models/{self.model}"
+            payload = {"inputs": ["dimension probe"]}
+
+        with _httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        if isinstance(data, list) and len(data) > 0:
+            if isinstance(data[0], list):
+                return len(data[0])
+            elif isinstance(data[0], dict) and "embedding" in data[0]:
+                return len(data[0]["embedding"])
+        raise ValueError("Could not determine embedding dimension from API response")
+
+    def _postprocess(self, embeddings: List[List[float]]) -> List[List[float]]:
+        """Apply optional dimension truncation and normalization."""
+        if self.requested_dimensions is None and not self.normalize_embeddings:
+            return embeddings
+        result = []
+        for emb in embeddings:
+            vec = np.array(emb, dtype=np.float32)
+            if self.requested_dimensions is not None and len(vec) > self.requested_dimensions:
+                vec = vec[:self.requested_dimensions]
+            if self.normalize_embeddings:
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+            result.append(vec.tolist())
+        return result
+
+    async def _embed_single_batch(
+            self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
+    ) -> List[List[float]]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        if self._explicit_base_url:
+            url = f"{self.base_url}/embed"
+            payload = {"inputs": texts}
+        else:
+            url = f"{self.base_url}/models/{self.model}"
+            payload = {"inputs": texts}
+
+        if client is None:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+                data = response.json()
+        else:
+            response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+
+        # Parse response: HF Inference API returns [[float, ...], ...]
+        if isinstance(data, list) and len(data) > 0:
+            if isinstance(data[0], list):
+                return self._postprocess(data)
+            elif isinstance(data[0], dict) and "embedding" in data[0]:
+                embeddings = [item["embedding"] for item in data]
+                return self._postprocess(embeddings)
+
+        raise RuntimeError(f"Unexpected response format from HuggingFace API: {type(data)}")
+
+
+class HuggingFaceLocalEmbeddings(EmbeddingProvider):
+    """Local HuggingFace transformers embedding provider.
+
+    Parameters
+    ----------
+    model : str
+        HuggingFace model ID (e.g., "BAAI/bge-small-en-v1.5").
+    device : str, optional
+        Device for inference (cpu/cuda/mps). Default: auto-detect.
+    normalize : bool
+        Whether to L2-normalize embeddings. Default: True.
+    requested_dimensions : int, optional
+        Truncate embeddings to this dimension.
+    trust_remote_code : bool
+        Whether to trust remote code. Default: False.
+    pooling_strategy : str
+        Pooling strategy: "mean", "cls", or "max". Default: "mean".
+    """
+
+    def __init__(
+            self,
+            model: str,
+            *,
+            device: Optional[str] = None,
+            normalize: bool = True,
+            requested_dimensions: Optional[int] = None,
+            trust_remote_code: bool = False,
+            pooling_strategy: str = "mean",
+            timeout: int = 90,
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+            **kwargs: Any
+    ) -> None:
+        super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay, **kwargs)
+        self.device_name = device
+        self.normalize_embeddings = normalize
+        self.requested_dimensions = requested_dimensions
+        self.trust_remote_code = trust_remote_code
+        self.pooling_strategy = pooling_strategy
+        self._tokenizer = None
+        self._transformer_model = None
+
+    def _load_model(self):
+        if self._transformer_model is not None:
+            return self._tokenizer, self._transformer_model
+        try:
+            import torch  # noqa: F401
+            from transformers import AutoModel, AutoTokenizer
+        except ImportError as e:
+            raise ImportError(
+                "transformers and torch are required for HuggingFaceLocalEmbeddings. "
+                "Install them with: pip install transformers torch"
+            ) from e
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.model, trust_remote_code=self.trust_remote_code
+        )
+        self._transformer_model = AutoModel.from_pretrained(
+            self.model, trust_remote_code=self.trust_remote_code
+        )
+        if self.device_name:
+            import torch
+            device = torch.device(self.device_name)
+            self._transformer_model = self._transformer_model.to(device)
+        self._transformer_model.eval()
+        return self._tokenizer, self._transformer_model
+
+    @property
+    def provider_name(self) -> str:
+        return "huggingface_local"
+
+    @property
+    def max_batch_size(self) -> int:
+        return 128
+
+    def validate_model(self) -> bool:
+        try:
+            self._load_model()
+            return True
+        except Exception:
+            return False
+
+    def get_dimension(self) -> int:
+        if self.requested_dimensions is not None:
+            return self.requested_dimensions
+        if self._dimension is not None:
+            return self._dimension
+        _, model = self._load_model()
+        self._dimension = model.config.hidden_size
+        return self._dimension
+
+    def _pool(self, token_embeddings, attention_mask):
+        """Apply pooling strategy to token embeddings."""
+        import torch
+
+        if self.pooling_strategy == "cls":
+            return token_embeddings[:, 0, :]
+        elif self.pooling_strategy == "max":
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            token_embeddings[input_mask_expanded == 0] = -1e9
+            return torch.max(token_embeddings, 1)[0]
+        else:  # mean pooling (default)
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
+                input_mask_expanded.sum(1), min=1e-9
+            )
+
+    async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
+        import torch
+
+        tokenizer, model = self._load_model()
+        encoded = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+
+        if self.device_name:
+            device = torch.device(self.device_name)
+            encoded = {k: v.to(device) for k, v in encoded.items()}
+
+        with torch.no_grad():
+            outputs = model(**encoded)
+
+        embeddings = self._pool(outputs.last_hidden_state, encoded["attention_mask"])
+
+        # Truncate if requested
+        if self.requested_dimensions is not None and embeddings.shape[1] > self.requested_dimensions:
+            embeddings = embeddings[:, :self.requested_dimensions]
+
+        # Normalize if requested
+        if self.normalize_embeddings:
+            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+
+        return embeddings.cpu().numpy().tolist()
+
+
 class MockEmbeddings(EmbeddingProvider):
     """Mock embedding provider for testing"""
 
@@ -1418,6 +1836,9 @@ EmbeddingRegistry.register("openai", OpenAIEmbeddings)
 EmbeddingRegistry.register("mock", MockEmbeddings)
 EmbeddingRegistry.register("google", GoogleEmbeddings)
 EmbeddingRegistry.register("jina", JinaEmbeddings)
+EmbeddingRegistry.register("sentence_transformers", SentenceTransformerEmbeddings)
+EmbeddingRegistry.register("huggingface", HuggingFaceInferenceEmbeddings)
+EmbeddingRegistry.register("huggingface_local", HuggingFaceLocalEmbeddings)
 
 
 # Convenience functions

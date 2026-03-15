@@ -200,16 +200,18 @@ from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
 from localvectordb.factory import VectorDB
 from localvectordb.migration import Migration, MigrationEngine
 from localvectordb.query_builder import QueryBuilder
+from localvectordb.reranking import RerankerRegistry
 from localvectordb.sqlite_tuning import (
-                                         SqliteProfile,
-                                         get_profile_description,
-                                         get_sqlite_pragma_profile,
-                                         is_valid_sqlite_pragma_profile,
+    SqliteProfile,
+    get_profile_description,
+    get_sqlite_pragma_profile,
+    is_valid_sqlite_pragma_profile,
 )
-from localvectordb.validation import FactChecker, FactCheckResult, ClaimResult, Polarity
+from localvectordb.validation import ClaimResult, FactChecker, FactCheckResult, Polarity
 from localvectordb.versioning import VersionManager
 
-__all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVectorDB", "VectorDB", "MetadataField",
+__all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RerankerRegistry",
+           "RemoteVectorDB", "VectorDB", "MetadataField",
            "Section", "SectionBoundary", "section_detection", "section_metadata",
            "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",
            "BackupManager", "IncrementalBackupManager", "PointInTimeRecoveryManager",
@@ -219,7 +221,7 @@ __all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RemoteVector
            "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile",
            "get_common_metadata_schemas",
            "FactChecker", "FactCheckResult", "ClaimResult", "Polarity",
-           "validation"]
+           "validation", "reranking"]
 
 
 def __getattr__(name):

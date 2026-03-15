@@ -288,6 +288,69 @@ Rerank results using different strategies:
        .execute()
    )
 
+Cross-Encoder Reranking
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Use a cross-encoder or reranking model to re-score results for higher relevance. Cross-encoders
+evaluate query-document pairs jointly, producing more accurate relevance scores than bi-encoder
+(embedding) similarity alone.
+
+.. code-block:: python
+
+   # Rerank using a local cross-encoder model (requires sentence-transformers)
+   results = (
+       db.query_builder()
+       .search("machine learning optimization")
+       .rerank_by_model(
+           provider="sentence_transformers",
+           model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+           top_k=10
+       )
+       .execute()
+   )
+
+   # Rerank using Jina AI reranker API
+   results = (
+       db.query_builder()
+       .search("neural network architectures")
+       .rerank_by_model(
+           provider="jina",
+           model="jina-reranker-v2-base-multilingual",
+           top_k=5
+       )
+       .execute()
+   )
+
+   # Rerank using HuggingFace Inference API
+   results = (
+       db.query_builder()
+       .search("deep learning")
+       .rerank_by_model(
+           provider="huggingface",
+           model="BAAI/bge-reranker-v2-m3"
+       )
+       .execute()
+   )
+
+Cross-encoder reranking can also be applied directly via the ``query()`` method:
+
+.. code-block:: python
+
+   # Using reranker_config dict
+   results = db.query(
+       "machine learning",
+       reranker_config={
+           "provider": "mock",
+           "model": "mock-reranker"
+       }
+   )
+
+   # Or pass a reranker instance
+   from localvectordb.reranking import create_reranker
+
+   reranker = create_reranker("sentence_transformers")
+   results = db.query("machine learning", reranker=reranker)
+
 Advanced Reranking Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
