@@ -690,17 +690,17 @@ Installation Requirements
 
 .. code-block:: bash
 
-   pip install localvectordb-server
+   pip install localvectordb[server]
 
 **With File Extraction Support**:
 
 .. code-block:: bash
 
    # Standard file extraction capabilities
-   pip install localvectordb-server[file-extraction]
+   pip install localvectordb[file-extraction]
 
    # For only .docx, .pptx, and .xlsx support
-   pip install localvectordb-server[file-extraction-office]
+   pip install localvectordb[file-extraction-office]
 
    # Manual installation of specific extractors
    pip install PyPDF2 python-docx python-pptx openpyxl striprtf beautifulsoup4

@@ -55,8 +55,6 @@ Includes:
 - Code quality tools
 - All optional dependencies
 
-.. todo: update github link
-
 From Source
 ^^^^^^^^^^^
 .. code-block:: bash
@@ -197,8 +195,6 @@ Common Issues
    # Ensure proper permissions
    chmod 755 /path/to/database/directory
 
-
-.. todo: Update this
 
 Getting Help
 ^^^^^^^^^^^^

@@ -19,7 +19,7 @@ Understanding the Plugin Architecture
 ======================================
 
 LocalVectorDB uses a plugin-based architecture for embedding providers. All embedding plugins must implement the
-``BaseEmbeddingProvider`` interface, which defines the contract for:
+``EmbeddingProvider`` interface, which defines the contract for:
 
 * Model validation and dimension retrieval
 * Synchronous and asynchronous embedding generation
@@ -52,7 +52,7 @@ First, let's look at the base class we need to implement. Based on the codebase,
    import numpy as np
    from typing import List, Union, Optional, Any, Dict
 
-   class BaseEmbeddingProvider(ABC):
+   class EmbeddingProvider(ABC):
        """
        Abstract base class for embedding providers.
        All custom embedding providers must inherit from this class.
@@ -351,7 +351,7 @@ Now we need to register our custom provider with LocalVectorDB's embedding regis
            return HuggingFaceEmbeddingProvider(model=model, **kwargs)
 
        # Register the provider
-       EmbeddingRegistry.register_provider("huggingface", create_huggingface_provider)
+       EmbeddingRegistry.register("huggingface", create_huggingface_provider)
 
        logger.info("Hugging Face embedding provider registered successfully")
 

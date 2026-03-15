@@ -1,0 +1,1001 @@
+"""
+Tests for localvectordb_server.mcp module.
+
+Tests the MCP (Model Context Protocol) server implementation including:
+- MCPConfig configuration handling
+- MCPManager database operations
+- Tool registration via TOOL_REGISTRY
+- Individual tool functions (business logic)
+- Error handling for invalid inputs and missing databases
+"""
+
+import asyncio
+import textwrap
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from localvectordb.exceptions import DatabaseNotFoundError, DocumentNotFoundError
+from localvectordb_server.mcp.config import MCPConfig
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _run(coro):
+    """Run an async coroutine synchronously."""
+    return asyncio.run(coro)
+
+
+def _make_config(**overrides):
+    """Create an MCPConfig with sensible test defaults."""
+    kwargs = {
+        "mode": "read-write",
+        "databases_root": "/tmp/test_dbs",
+    }
+    kwargs.update(overrides)
+    return MCPConfig(**kwargs)
+
+
+def _make_document(doc_id="doc1", content="hello world", metadata=None):
+    """Create a lightweight mock document."""
+    doc = SimpleNamespace(
+        id=doc_id,
+        content=content,
+        metadata=metadata or {},
+        created_at=datetime(2025, 1, 1, 12, 0, 0),
+        updated_at=datetime(2025, 6, 1, 12, 0, 0),
+        content_hash="abc123",
+    )
+    return doc
+
+
+def _make_query_result(
+    result_id="r1", score=0.95, content="result text", result_type="document",
+    document_id=None, position=None, metadata=None,
+):
+    """Create a lightweight mock query result."""
+    r = SimpleNamespace(
+        id=result_id,
+        score=score,
+        type=result_type,
+        content=content,
+        metadata=metadata or {},
+        document_id=document_id,
+        position=position,
+    )
+    return r
+
+
+# ---------------------------------------------------------------------------
+# MCPConfig tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestMCPConfig:
+    """Tests for MCPConfig dataclass and its class methods."""
+
+    def test_default_values(self):
+        config = MCPConfig()
+        assert config.mode == "read-only"
+        assert config.databases_root == "./databases"
+        assert config.databases_map == {}
+        assert "embedding_provider" in config.db_defaults
+        assert config.log_level == "INFO"
+
+    def test_check_write_permission_readonly(self):
+        config = MCPConfig(mode="read-only")
+        with pytest.raises(PermissionError, match="not allowed in read-only mode"):
+            config.check_write_permission("create_database")
+
+    def test_check_write_permission_readwrite(self):
+        config = MCPConfig(mode="read-write")
+        # Should not raise
+        config.check_write_permission("create_database")
+
+    def test_get_database_path_explicit_mapping(self):
+        config = MCPConfig(databases_map={"mydb": "/custom/path"})
+        assert config.get_database_path("mydb") == "/custom/path"
+
+    def test_get_database_path_default_root(self):
+        config = MCPConfig(databases_root="/default/root")
+        path = config.get_database_path("unknown_db")
+        # Should resolve to the absolute form of databases_root
+        assert "default" in path and "root" in path
+
+    def test_get_enabled_tools_readonly(self):
+        config = MCPConfig(mode="read-only")
+        tools = config.get_enabled_tools()
+        assert "list_databases" in tools
+        assert "query_database" in tools
+        # Write tools should NOT be present
+        assert "create_database" not in tools
+        assert "upsert_documents" not in tools
+
+    def test_get_enabled_tools_readwrite(self):
+        config = MCPConfig(mode="read-write")
+        tools = config.get_enabled_tools()
+        assert "list_databases" in tools
+        assert "create_database" in tools
+        assert "upsert_documents" in tools
+        assert "delete_document" in tools
+
+    def test_from_env_mode(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_MODE", "read-write")
+        config = MCPConfig.from_env()
+        assert config.mode == "read-write"
+
+    def test_from_env_invalid_mode_ignored(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_MODE", "invalid-mode")
+        config = MCPConfig.from_env()
+        assert config.mode == "read-only"  # default
+
+    def test_from_env_databases_root(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_DATABASES_ROOT", "/my/dbs")
+        config = MCPConfig.from_env()
+        assert config.databases_root == "/my/dbs"
+
+    def test_from_env_databases_map(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_DATABASES_MAP", "db1=/path/one,db2=http://remote:8000")
+        config = MCPConfig.from_env()
+        assert config.databases_map["db1"] == "/path/one"
+        assert config.databases_map["db2"] == "http://remote:8000"
+
+    def test_from_env_embedding_provider(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_EMBEDDING_PROVIDER", "openai")
+        config = MCPConfig.from_env()
+        assert config.db_defaults["embedding_provider"] == "openai"
+
+    def test_from_env_embedding_model(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_EMBEDDING_MODEL", "text-embedding-3-small")
+        config = MCPConfig.from_env()
+        assert config.db_defaults["embedding_model"] == "text-embedding-3-small"
+
+    def test_from_env_chunk_size(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_CHUNK_SIZE", "1000")
+        config = MCPConfig.from_env()
+        assert config.db_defaults["chunk_size"] == 1000
+
+    def test_from_env_chunk_size_invalid(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_CHUNK_SIZE", "not_a_number")
+        config = MCPConfig.from_env()
+        # Should fall back to default
+        assert config.db_defaults["chunk_size"] == 500
+
+    def test_from_env_log_level(self, monkeypatch):
+        monkeypatch.setenv("LVDB_MCP_LOG_LEVEL", "debug")
+        config = MCPConfig.from_env()
+        assert config.log_level == "DEBUG"
+
+    def test_from_file(self, tmp_path):
+        toml_content = textwrap.dedent("""\
+            [mcp]
+            mode = "read-write"
+            log_level = "DEBUG"
+            max_concurrent_operations = 5
+
+            [databases]
+            root = "/data/dbs"
+            map = {mydb = "/data/mydb"}
+
+            [defaults]
+            embedding_provider = "openai"
+            embedding_model = "text-embedding-ada-002"
+        """)
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(toml_content)
+
+        config = MCPConfig.from_file(str(config_file))
+        assert config.mode == "read-write"
+        assert config.log_level == "DEBUG"
+        assert config.max_concurrent_operations == 5
+        assert config.databases_root == "/data/dbs"
+        assert config.databases_map["mydb"] == "/data/mydb"
+        assert config.db_defaults["embedding_provider"] == "openai"
+
+    def test_from_file_not_found(self):
+        with pytest.raises(FileNotFoundError):
+            MCPConfig.from_file("/nonexistent/config.toml")
+
+    def test_load_defaults(self, monkeypatch):
+        """load() with no file falls back to from_env()."""
+        monkeypatch.delenv("LVDB_MCP_CONFIG", raising=False)
+        monkeypatch.delenv("LVDB_MCP_MODE", raising=False)
+        config = MCPConfig.load()
+        assert config.mode == "read-only"
+
+    def test_load_with_env_config_file(self, monkeypatch, tmp_path):
+        toml_content = textwrap.dedent("""\
+            [mcp]
+            mode = "read-write"
+        """)
+        config_file = tmp_path / "env_config.toml"
+        config_file.write_text(toml_content)
+        monkeypatch.setenv("LVDB_MCP_CONFIG", str(config_file))
+        config = MCPConfig.load()
+        assert config.mode == "read-write"
+
+
+# ---------------------------------------------------------------------------
+# TOOL_REGISTRY tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestToolRegistry:
+    """Verify the TOOL_REGISTRY is properly populated."""
+
+    def test_registry_populated(self):
+        from localvectordb_server.mcp.server import TOOL_REGISTRY
+
+        assert len(TOOL_REGISTRY) > 0
+
+    def test_read_only_tools_registered(self):
+        from localvectordb_server.mcp.server import TOOL_REGISTRY
+
+        expected_read_tools = [
+            "list_databases",
+            "get_database_info",
+            "query_database",
+            "filter_documents",
+            "get_document",
+            "check_documents_exist",
+            "get_metadata_schema",
+            "get_system_info",
+        ]
+        for tool_name in expected_read_tools:
+            assert tool_name in TOOL_REGISTRY, f"Missing read tool: {tool_name}"
+            assert TOOL_REGISTRY[tool_name]["read_only"] is True
+
+    def test_write_tools_registered(self):
+        from localvectordb_server.mcp.server import TOOL_REGISTRY
+
+        expected_write_tools = [
+            "create_database",
+            "delete_database",
+            "upsert_documents",
+            "update_document",
+            "delete_document",
+            "update_metadata_schema",
+        ]
+        for tool_name in expected_write_tools:
+            assert tool_name in TOOL_REGISTRY, f"Missing write tool: {tool_name}"
+            assert TOOL_REGISTRY[tool_name]["read_only"] is False
+
+    def test_registry_entries_have_function(self):
+        from localvectordb_server.mcp.server import TOOL_REGISTRY
+
+        for name, info in TOOL_REGISTRY.items():
+            assert callable(info["function"]), f"Tool {name} function not callable"
+            assert "read_only" in info
+            assert "registered" in info
+
+
+# ---------------------------------------------------------------------------
+# MCPManager tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestMCPManager:
+    """Tests for the MCPManager class."""
+
+    def test_init(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config()
+        manager = MCPManager(config)
+        assert manager.config is config
+        assert manager.databases == {}
+
+    def test_list_databases_explicit_map(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config(
+            databases_map={"alpha": "/a", "beta": "/b"},
+            databases_root="/nonexistent",
+        )
+        manager = MCPManager(config)
+        result = _run(manager.list_databases())
+        assert "alpha" in result
+        assert "beta" in result
+
+    def test_list_databases_from_root(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        # Create fake .sqlite files
+        (tmp_path / "docs.sqlite").touch()
+        (tmp_path / "notes.sqlite").touch()
+
+        config = _make_config(databases_root=str(tmp_path))
+        manager = MCPManager(config)
+        result = _run(manager.list_databases())
+        assert "docs" in result
+        assert "notes" in result
+
+    def test_get_database_caches_instance(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config()
+        manager = MCPManager(config)
+
+        mock_db = MagicMock()
+        with patch("localvectordb_server.mcp.server.VectorDB", return_value=mock_db):
+            db1 = _run(manager.get_database("testdb"))
+            db2 = _run(manager.get_database("testdb"))
+            assert db1 is db2  # cached
+
+    def test_get_database_not_found_raises(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config()
+        manager = MCPManager(config)
+
+        with patch(
+            "localvectordb_server.mcp.server.VectorDB",
+            side_effect=Exception("no such db"),
+        ):
+            with pytest.raises(DatabaseNotFoundError):
+                _run(manager.get_database("missing"))
+
+    def test_delete_database_removes_from_cache(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config(mode="read-write", databases_root=str(tmp_path))
+        manager = MCPManager(config)
+
+        mock_db = MagicMock()
+        mock_db.close = MagicMock()
+        manager.databases["mydb"] = mock_db
+
+        _run(manager.delete_database("mydb"))
+        assert "mydb" not in manager.databases
+        mock_db.close.assert_called_once()
+
+    def test_create_database_read_only_denied(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config(mode="read-only")
+        manager = MCPManager(config)
+
+        with pytest.raises(PermissionError):
+            _run(manager.create_database("newdb"))
+
+    def test_create_database_success(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config(mode="read-write", databases_root=str(tmp_path))
+        manager = MCPManager(config)
+
+        mock_db = MagicMock()
+        with patch("localvectordb_server.mcp.server.VectorDB", return_value=mock_db):
+            result = _run(manager.create_database("newdb"))
+            assert result is mock_db
+            assert "newdb" in manager.databases
+
+    def test_cleanup(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config()
+        manager = MCPManager(config)
+
+        mock_db1 = MagicMock()
+        mock_db2 = MagicMock()
+        manager.databases = {"a": mock_db1, "b": mock_db2}
+
+        _run(manager.cleanup())
+        mock_db1.close.assert_called_once()
+        mock_db2.close.assert_called_once()
+        assert manager.databases == {}
+
+
+# ---------------------------------------------------------------------------
+# Tool function tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def mcp_manager_fixture():
+    """Set up a mock MCPManager as the global mcp_manager for tool tests."""
+    import localvectordb_server.mcp.server as srv
+
+    config = _make_config(mode="read-write")
+    manager = MagicMock()
+    manager.config = config
+    manager.databases = {}
+
+    original = srv.mcp_manager
+    srv.mcp_manager = manager
+    yield manager
+    srv.mcp_manager = original
+
+
+@pytest.mark.unit
+class TestListDatabasesTool:
+    def test_returns_databases(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import list_databases
+
+        mcp_manager_fixture.list_databases = AsyncMock(return_value=["db1", "db2"])
+        result = _run(list_databases())
+        assert result["databases"] == ["db1", "db2"]
+        assert result["count"] == 2
+        assert result["mode"] == "read-write"
+
+    def test_handles_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import list_databases
+
+        mcp_manager_fixture.list_databases = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        result = _run(list_databases())
+        assert "error" in result
+        assert "boom" in result["error"]
+
+
+@pytest.mark.unit
+class TestGetDatabaseInfoTool:
+    def test_returns_info(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_database_info
+
+        mock_db = MagicMock()
+        mock_db.name = "testdb"
+        mock_db.get_stats.return_value = {"documents": 10, "chunks": 50}
+        mock_db.embedding_provider.provider_name = "ollama"
+        mock_db.embedding_provider.model = "nomic-embed-text"
+        mock_db.embedding_dimension = 768
+        mock_db.chunking_method = "sentences"
+        mock_db.chunk_size = 500
+        mock_db.chunk_overlap = 50
+        mock_db.fts_enabled = True
+        mock_db.metadata_schema = None
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_database_info("testdb"))
+
+        assert result["name"] == "testdb"
+        assert result["stats"]["documents"] == 10
+        assert result["config"]["embedding_provider"] == "ollama"
+        assert result["config"]["embedding_dimension"] == 768
+
+    def test_database_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_database_info
+
+        mcp_manager_fixture.get_database = AsyncMock(
+            side_effect=DatabaseNotFoundError("not found")
+        )
+        result = _run(get_database_info("missing"))
+        assert result["error_code"] == "DATABASE_NOT_FOUND"
+
+
+@pytest.mark.unit
+class TestQueryDatabaseTool:
+    def test_basic_query(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import query_database
+
+        mock_result = _make_query_result(
+            result_id="r1", score=0.9, content="match"
+        )
+        mock_db = MagicMock()
+        mock_db.query.return_value = [mock_result]
+        # Ensure it uses sync path
+        del mock_db.query_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(query_database("testdb", "search text"))
+        assert result["total_results"] == 1
+        assert result["results"][0]["id"] == "r1"
+        assert result["results"][0]["score"] == 0.9
+        assert result["search_type"] == "hybrid"
+
+    def test_query_with_position(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import query_database
+
+        position = SimpleNamespace(index=0, total=3, start_char=0, end_char=100)
+        mock_result = _make_query_result(
+            document_id="doc1", position=position
+        )
+        mock_db = MagicMock()
+        mock_db.query.return_value = [mock_result]
+        del mock_db.query_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(query_database("testdb", "query"))
+        assert result["results"][0]["document_id"] == "doc1"
+        assert result["results"][0]["position"]["index"] == 0
+        assert result["results"][0]["position"]["total"] == 3
+
+    def test_query_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import query_database
+
+        mock_result = _make_query_result()
+        mock_db = MagicMock()
+        mock_db.query_async = AsyncMock(return_value=[mock_result])
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(query_database("testdb", "query", search_type="vector"))
+        assert result["search_type"] == "vector"
+        assert result["total_results"] == 1
+
+    def test_query_database_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import query_database
+
+        mcp_manager_fixture.get_database = AsyncMock(
+            side_effect=DatabaseNotFoundError("no db")
+        )
+        result = _run(query_database("missing", "query"))
+        assert result["error_code"] == "DATABASE_NOT_FOUND"
+
+    def test_query_unexpected_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import query_database
+
+        mcp_manager_fixture.get_database = AsyncMock(
+            side_effect=RuntimeError("unexpected")
+        )
+        result = _run(query_database("testdb", "query"))
+        assert "error" in result
+        assert result["error_type"] == "RuntimeError"
+
+
+@pytest.mark.unit
+class TestFilterDocumentsTool:
+    def test_basic_filter(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import filter_documents
+
+        mock_doc = _make_document(doc_id="d1", content="filtered")
+        mock_db = MagicMock()
+        mock_db.filter.return_value = [mock_doc]
+        del mock_db.filter_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(filter_documents("testdb", {"category": "test"}))
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "d1"
+        assert result["filters"] == {"category": "test"}
+
+    def test_filter_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import filter_documents
+
+        mock_doc = _make_document()
+        mock_db = MagicMock()
+        mock_db.filter_async = AsyncMock(return_value=[mock_doc])
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(filter_documents("testdb", {"x": 1}, limit=50, offset=10))
+        assert result["count"] == 1
+        mock_db.filter_async.assert_called_once_with(
+            where={"x": 1}, limit=50, offset=10
+        )
+
+    def test_filter_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import filter_documents
+
+        mcp_manager_fixture.get_database = AsyncMock(
+            side_effect=RuntimeError("fail")
+        )
+        result = _run(filter_documents("testdb", {}))
+        assert "error" in result
+
+
+@pytest.mark.unit
+class TestGetDocumentTool:
+    def test_get_existing_document(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_doc = _make_document(doc_id="doc1", content="hello")
+        mock_db = MagicMock()
+        mock_db.get.return_value = mock_doc
+        del mock_db.get_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1"))
+        assert result["id"] == "doc1"
+        assert result["content"] == "hello"
+        assert result["content_hash"] == "abc123"
+
+    def test_get_nonexistent_document(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = None
+        del mock_db.get_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "missing_id"))
+        assert result["error_code"] == "DOCUMENT_NOT_FOUND"
+
+    def test_get_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_doc = _make_document()
+        mock_db = MagicMock()
+        mock_db.get_async = AsyncMock(return_value=mock_doc)
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1"))
+        assert result["id"] == "doc1"
+
+
+@pytest.mark.unit
+class TestCheckDocumentsExistTool:
+    def test_check_existing_documents(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import check_documents_exist
+
+        mock_db = MagicMock()
+        mock_db.exists.return_value = {"d1": True, "d2": False}
+        del mock_db.exists_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(check_documents_exist("testdb", ["d1", "d2"]))
+        assert result["exists"]["d1"] is True
+        assert result["exists"]["d2"] is False
+        assert result["total_checked"] == 2
+        assert result["total_found"] == 1
+
+    def test_check_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import check_documents_exist
+
+        mock_db = MagicMock()
+        mock_db.exists_async = AsyncMock(return_value={"d1": True})
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(check_documents_exist("testdb", ["d1"]))
+        assert result["total_found"] == 1
+
+    def test_check_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import check_documents_exist
+
+        mcp_manager_fixture.get_database = AsyncMock(
+            side_effect=RuntimeError("fail")
+        )
+        result = _run(check_documents_exist("testdb", ["d1"]))
+        assert "error" in result
+
+
+@pytest.mark.unit
+class TestGetMetadataSchemaTool:
+    def test_schema_present(self, mcp_manager_fixture):
+        from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb_server.mcp.server import get_metadata_schema
+
+        field = MetadataField(type=MetadataFieldType.TEXT, indexed=True, required=False)
+        mock_db = MagicMock()
+        mock_db.metadata_schema = {"title": field}
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_metadata_schema("testdb"))
+        assert "title" in result["schema"]
+        assert result["schema"]["title"]["type"] == "text"
+        assert result["schema"]["title"]["indexed"] is True
+
+    def test_schema_absent(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_metadata_schema
+
+        mock_db = MagicMock()
+        mock_db.metadata_schema = None
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_metadata_schema("testdb"))
+        assert result["schema"] == {}
+        assert "message" in result
+
+
+@pytest.mark.unit
+class TestGetSystemInfoTool:
+    def test_returns_system_info(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_system_info
+
+        mcp_manager_fixture.list_databases = AsyncMock(return_value=["a", "b"])
+
+        with patch(
+            "localvectordb_server.mcp.server.get_system_version",
+            return_value="1.0.0",
+        ), patch(
+            "localvectordb_server.mcp.server.EmbeddingRegistry"
+        ) as mock_registry:
+            mock_registry.list.return_value = ["ollama", "openai"]
+            result = _run(get_system_info())
+
+        assert result["version"] == "1.0.0"
+        assert result["mode"] == "read-write"
+        assert result["databases_count"] == 2
+        assert result["available_providers"] == ["ollama", "openai"]
+
+    def test_handles_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_system_info
+
+        mcp_manager_fixture.list_databases = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        with patch(
+            "localvectordb_server.mcp.server.get_system_version",
+            return_value="1.0.0",
+        ), patch(
+            "localvectordb_server.mcp.server.EmbeddingRegistry"
+        ) as mock_registry:
+            mock_registry.list.return_value = []
+            result = _run(get_system_info())
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Write tool tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestCreateDatabaseTool:
+    def test_create_success(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import create_database
+
+        mock_db = MagicMock()
+        mock_db.name = "newdb"
+        mcp_manager_fixture.create_database = AsyncMock(return_value=mock_db)
+
+        result = _run(create_database("newdb"))
+        assert result["status"] == "success"
+        assert "newdb" in result["message"]
+
+    def test_create_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import create_database
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(create_database("newdb"))
+        assert result["error_code"] == "PERMISSION_DENIED"
+
+    def test_create_with_params(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import create_database
+
+        mock_db = MagicMock()
+        mock_db.name = "custom"
+        mcp_manager_fixture.create_database = AsyncMock(return_value=mock_db)
+
+        result = _run(create_database(
+            "custom",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-small",
+            chunk_size=1000,
+        ))
+        assert result["status"] == "success"
+        assert result["config"]["embedding_provider"] == "openai"
+        assert result["config"]["embedding_model"] == "text-embedding-3-small"
+        assert result["config"]["chunk_size"] == 1000
+
+    def test_create_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import create_database
+
+        mcp_manager_fixture.create_database = AsyncMock(
+            side_effect=RuntimeError("disk full")
+        )
+        result = _run(create_database("newdb"))
+        assert "error" in result
+        assert "disk full" in result["error"]
+
+
+@pytest.mark.unit
+class TestDeleteDatabaseTool:
+    def test_delete_success(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_database
+
+        mcp_manager_fixture.delete_database = AsyncMock()
+        result = _run(delete_database("olddb"))
+        assert result["status"] == "success"
+
+    def test_delete_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_database
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(delete_database("olddb"))
+        assert result["error_code"] == "PERMISSION_DENIED"
+
+
+@pytest.mark.unit
+class TestUpsertDocumentsTool:
+    def test_upsert_single_document(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["id1"]
+        del mock_db.upsert_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(upsert_documents("testdb", "single doc"))
+        assert result["status"] == "success"
+        assert result["ids"] == ["id1"]
+        # Verify the string was wrapped in a list
+        mock_db.upsert.assert_called_once()
+        call_kwargs = mock_db.upsert.call_args
+        assert call_kwargs.kwargs["documents"] == ["single doc"]
+
+    def test_upsert_multiple_documents(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["id1", "id2"]
+        del mock_db.upsert_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(upsert_documents(
+            "testdb",
+            ["doc one", "doc two"],
+            metadata=[{"a": 1}, {"a": 2}],
+            ids=["id1", "id2"],
+        ))
+        assert result["status"] == "success"
+        assert len(result["ids"]) == 2
+
+    def test_upsert_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mock_db = MagicMock()
+        mock_db.upsert_async = AsyncMock(return_value=["id1"])
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(upsert_documents("testdb", "doc"))
+        assert result["status"] == "success"
+
+    def test_upsert_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(upsert_documents("testdb", "doc"))
+        assert result["error_code"] == "PERMISSION_DENIED"
+
+    def test_upsert_normalizes_single_metadata(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["id1"]
+        del mock_db.upsert_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(upsert_documents(
+            "testdb", "doc", metadata={"key": "val"}, ids="single_id"
+        ))
+        assert result["status"] == "success"
+        call_kwargs = mock_db.upsert.call_args.kwargs
+        assert call_kwargs["metadata"] == [{"key": "val"}]
+        assert call_kwargs["ids"] == ["single_id"]
+
+
+@pytest.mark.unit
+class TestUpdateDocumentTool:
+    def test_update_success(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_document
+
+        mock_db = MagicMock()
+        del mock_db.update_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(update_document("testdb", "doc1", content="new text"))
+        assert result["status"] == "success"
+        mock_db.update.assert_called_once_with(
+            doc_id="doc1", content="new text", metadata=None
+        )
+
+    def test_update_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_document
+
+        mock_db = MagicMock()
+        mock_db.update_async = AsyncMock()
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(update_document("testdb", "doc1", metadata={"x": 1}))
+        assert result["status"] == "success"
+
+    def test_update_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_document
+
+        mock_db = MagicMock()
+        mock_db.update.side_effect = DocumentNotFoundError("not found", missing_ids=["doc1"])
+        del mock_db.update_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(update_document("testdb", "doc1", content="new"))
+        assert result["error_code"] == "DOCUMENT_NOT_FOUND"
+
+    def test_update_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_document
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(update_document("testdb", "doc1", content="x"))
+        assert result["error_code"] == "PERMISSION_DENIED"
+
+
+@pytest.mark.unit
+class TestDeleteDocumentTool:
+    def test_delete_success(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_document
+
+        mock_db = MagicMock()
+        mock_db.delete.return_value = 1
+        del mock_db.delete_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(delete_document("testdb", "doc1"))
+        assert result["status"] == "success"
+        assert result["deleted_count"] == 1
+
+    def test_delete_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_document
+
+        mock_db = MagicMock()
+        mock_db.delete.return_value = 0
+        del mock_db.delete_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(delete_document("testdb", "missing"))
+        assert result["error_code"] == "DOCUMENT_NOT_FOUND"
+
+    def test_delete_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_document
+
+        mock_db = MagicMock()
+        mock_db.delete_async = AsyncMock(return_value=1)
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(delete_document("testdb", "doc1"))
+        assert result["status"] == "success"
+
+    def test_delete_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_document
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(delete_document("testdb", "doc1"))
+        assert result["error_code"] == "PERMISSION_DENIED"
+
+
+@pytest.mark.unit
+class TestUpdateMetadataSchemaTool:
+    def test_update_success(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_metadata_schema
+
+        mock_db = MagicMock()
+        mock_db.update_metadata_schema = MagicMock()
+        del mock_db.update_metadata_schema_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        with patch(
+            "localvectordb_server.mcp.server.parse_metadata_schema",
+            return_value={"title": MagicMock()},
+        ):
+            result = _run(update_metadata_schema("testdb", {"title": "text"}))
+        assert result["status"] == "success"
+
+    def test_update_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_metadata_schema
+
+        mock_db = MagicMock()
+        mock_db.update_metadata_schema_async = AsyncMock()
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        with patch(
+            "localvectordb_server.mcp.server.parse_metadata_schema",
+            return_value={"title": MagicMock()},
+        ):
+            result = _run(update_metadata_schema("testdb", {"title": "text"}))
+        assert result["status"] == "success"
+
+    def test_update_not_supported(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_metadata_schema
+
+        mock_db = MagicMock(spec=[])  # empty spec -> no attributes
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        with patch(
+            "localvectordb_server.mcp.server.parse_metadata_schema",
+            return_value={},
+        ):
+            result = _run(update_metadata_schema("testdb", {}))
+        assert result["error_code"] == "NOT_SUPPORTED"
+
+    def test_update_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_metadata_schema
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(update_metadata_schema("testdb", {"x": "text"}))
+        assert result["error_code"] == "PERMISSION_DENIED"

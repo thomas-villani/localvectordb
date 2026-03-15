@@ -656,8 +656,6 @@ Here's how to tie everything together:
        main()
 
 
-.. TODO: combine it altogether for here
-
 Complete Example Script
 ========================
 

@@ -996,7 +996,7 @@ Database URI Support
 
 RemoteVectorDB supports URI-based connections::
 
-    from localvectordb import from_uri
+    from localvectordb.factory import from_uri
 
     # Local database
     db = from_uri("lvdb:///path/to/databases/mydb")
