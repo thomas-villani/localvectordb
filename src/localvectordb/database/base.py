@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 if TYPE_CHECKING:
+    from localvectordb.cursor import QueryCursor
     from localvectordb.query_builder import QueryBuilder
 
 import aiosqlite
@@ -115,6 +116,52 @@ class BaseVectorDB(ABC):
     ) -> List[QueryResult]:
         """Unified query interface for all search types."""
         pass
+
+    def query_cursor(
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        batch_size: int = 50,
+        cursor_ttl: float = 300.0,
+    ) -> "QueryCursor":
+        """Create a QueryCursor for streaming results with lazy hydration."""
+        raise NotImplementedError("Subclass must implement query_cursor")
+
+    async def query_cursor_async(
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        batch_size: int = 50,
+        cursor_ttl: float = 300.0,
+    ) -> "QueryCursor":
+        """Create a QueryCursor for async streaming results with lazy hydration."""
+        raise NotImplementedError("Subclass must implement query_cursor_async")
 
     @abstractmethod
     def filter(

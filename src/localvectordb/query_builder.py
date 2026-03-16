@@ -80,6 +80,7 @@ import numpy as np
 
 from localvectordb._filters import FILTER_OPERATORS
 from localvectordb.core import Document, DocumentScoringMethod, QueryResult
+from localvectordb.cursor import QueryCursor
 from localvectordb.database.base import BaseVectorDB
 from localvectordb.utils import parse_iso8601
 
@@ -853,16 +854,57 @@ class QueryBuilder:
             executor = AsyncQueryExecutor(self)
             return await executor.execute()
 
-    def stream(self, batch_size: int = 100) -> Iterator[List[QueryResult]]:
-        """Stream results in batches."""
+    def cursor(self, batch_size: int = 50, cursor_ttl: float = 300.0) -> "QueryCursor":
+        """
+        Create a QueryCursor for this query configuration.
+
+        The cursor performs FAISS/FTS search once and lazily loads
+        content/metadata from SQLite in batches as you iterate.
+
+        Parameters
+        ----------
+        batch_size : int
+            Default number of results per batch (default 50).
+        cursor_ttl : float
+            Cursor time-to-live in seconds (default 300).
+
+        Returns
+        -------
+        QueryCursor
+        """
         executor = QueryExecutor(self)
-        return executor.stream(batch_size)
+        return executor.cursor(batch_size=batch_size, cursor_ttl=cursor_ttl)
+
+    async def cursor_async(self, batch_size: int = 50, cursor_ttl: float = 300.0) -> "QueryCursor":
+        """
+        Create a QueryCursor asynchronously.
+
+        Parameters
+        ----------
+        batch_size : int
+            Default number of results per batch (default 50).
+        cursor_ttl : float
+            Cursor time-to-live in seconds (default 300).
+
+        Returns
+        -------
+        QueryCursor
+        """
+        executor = AsyncQueryExecutor(self)
+        return await executor.cursor(batch_size=batch_size, cursor_ttl=cursor_ttl)
+
+    def stream(self, batch_size: int = 100) -> Iterator[List[QueryResult]]:
+        """Stream results in batches using a cursor (single FAISS/FTS search)."""
+        c = self.cursor(batch_size=batch_size)
+        with c:
+            yield from c.stream(batch_size)
 
     async def stream_async(self, batch_size: int = 100):
-        """Stream results in batches asynchronously."""
-        executor = AsyncQueryExecutor(self)
-        async for batch in executor.stream(batch_size):
-            yield batch
+        """Stream results in batches asynchronously using a cursor."""
+        c = await self.cursor_async(batch_size=batch_size)
+        async with c:
+            async for batch in c.stream_async(batch_size):
+                yield batch
 
     def count(self) -> int:
         """Get count of matching results without returning them."""
@@ -1378,33 +1420,36 @@ class QueryExecutor(_QueryExecutorBase):
                 results = self._execute_filter_only_query()
                 return len(results)
 
+    def cursor(self, batch_size: int = 50, cursor_ttl: float = 300.0) -> "QueryCursor":
+        """Create a QueryCursor by delegating to db.query_cursor()."""
+        if not self.builder._search_clauses:
+            raise ValueError("cursor() requires a search clause; use .search() first")
+
+        clause = self.builder._search_clauses[0]
+        filters = self._combine_exact_filters()
+
+        return self.db.query_cursor(
+            query=clause.query,
+            search_type=clause.search_type,
+            return_type=self.builder._return_type,
+            search_level=self.builder._search_level,
+            k=self.builder._limit + self.builder._offset,
+            score_threshold=clause.score_threshold or 0.0,
+            filters=filters,
+            vector_weight=self.builder._vector_weight,
+            context_window=self.builder._context_window,
+            semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
+            document_scoring_method=self.builder._document_scoring_method,
+            document_scoring_options=self.builder._document_scoring_options,
+            batch_size=batch_size,
+            cursor_ttl=cursor_ttl,
+        )
+
     def stream(self, batch_size: int = 100) -> Iterator[List[QueryResult]]:
-        """Stream results in batches."""
-        original_limit = self.builder._limit
-        original_offset = self.builder._offset
-        current_offset = original_offset
-
-        try:
-            while True:
-                batch_builder = self.builder.clone()
-                batch_builder._limit = min(batch_size, original_limit - (current_offset - original_offset))
-                batch_builder._offset = current_offset
-
-                batch_executor = QueryExecutor(batch_builder)
-                batch_results = batch_executor.execute()
-
-                if not batch_results:
-                    break
-
-                yield batch_results
-                current_offset += len(batch_results)
-
-                if current_offset - original_offset >= original_limit:
-                    break
-
-        except Exception as e:
-            logger.error(f"Error during streaming: {e}")
-            raise
+        """Stream results in batches using a cursor (single FAISS/FTS search)."""
+        c = self.cursor(batch_size=batch_size)
+        with c:
+            yield from c.stream(batch_size)
 
     def _generate_execution_plan(self) -> Dict[str, Any]:
         """Generate execution plan for explain functionality."""
@@ -1647,32 +1692,36 @@ class AsyncQueryExecutor(_QueryExecutorBase):
             filters = self._combine_exact_filters()
             return await self.db.count_async(filters)
 
+    async def cursor(self, batch_size: int = 50, cursor_ttl: float = 300.0) -> "QueryCursor":
+        """Create a QueryCursor asynchronously by delegating to db.query_cursor_async()."""
+        if not self.builder._search_clauses:
+            raise ValueError("cursor() requires a search clause; use .search() first")
+
+        clause = self.builder._search_clauses[0]
+        filters = self._combine_exact_filters()
+
+        return await self.db.query_cursor_async(
+            query=clause.query,
+            search_type=clause.search_type,
+            return_type=self.builder._return_type,
+            search_level=self.builder._search_level,
+            k=self.builder._limit + self.builder._offset,
+            score_threshold=clause.score_threshold or 0.0,
+            filters=filters,
+            vector_weight=self.builder._vector_weight,
+            context_window=self.builder._context_window,
+            semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
+            document_scoring_method=self.builder._document_scoring_method,
+            document_scoring_options=self.builder._document_scoring_options,
+            batch_size=batch_size,
+            cursor_ttl=cursor_ttl,
+        )
+
     async def stream(self, batch_size: int = 100):
-        """Stream results in batches asynchronously."""
-        original_limit = self.builder._limit
-        original_offset = self.builder._offset
-        current_offset = original_offset
-
-        try:
-            while True:
-                batch_builder = self.builder.clone()
-                batch_builder._limit = min(batch_size, original_limit - (current_offset - original_offset))
-                batch_builder._offset = current_offset
-
-                batch_executor = AsyncQueryExecutor(batch_builder)
-                batch_results = await batch_executor.execute()
-
-                if not batch_results:
-                    break
-
-                yield batch_results
-                current_offset += len(batch_results)
-
-                if current_offset - original_offset >= original_limit:
-                    break
-
-        except Exception as e:
-            logger.error(f"Error during async streaming: {e}")
-            raise
+        """Stream results in batches asynchronously using a cursor."""
+        c = await self.cursor(batch_size=batch_size)
+        async with c:
+            async for batch in c.stream_async(batch_size):
+                yield batch
 
     # Shared methods inherited from _QueryExecutorBase

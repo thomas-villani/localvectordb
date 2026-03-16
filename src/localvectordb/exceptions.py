@@ -73,3 +73,21 @@ class RerankerError(BaseLocalVectorDBException, RuntimeError):
     """Raised when there's an error in reranking operations."""
 
     pass
+
+
+class CursorError(BaseLocalVectorDBException):
+    """Base class for cursor-related errors."""
+
+    pass
+
+
+class CursorExpiredError(CursorError):
+    """Raised when a cursor has expired or been closed."""
+
+    pass
+
+
+class CursorExhaustedError(CursorError):
+    """Raised when attempting to fetch from an exhausted cursor."""
+
+    pass

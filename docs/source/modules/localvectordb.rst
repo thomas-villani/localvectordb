@@ -26,6 +26,7 @@ Submodules
    localvectordb.chunking
    localvectordb.client
    localvectordb.core
+   localvectordb.cursor
    localvectordb.embeddings
    localvectordb.exceptions
    localvectordb.factory

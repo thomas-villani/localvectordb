@@ -566,14 +566,37 @@ Optimizing Performance
 Streaming Results
 ^^^^^^^^^^^^^^^^^
 
+The ``stream()`` method uses a cursor internally: FAISS/FTS is queried once and results are hydrated from SQLite in
+batches. This is much more efficient than re-executing the full query for each page.
+
 .. code-block:: python
 
-   # Process a large number of results in batches to avoid memory issues
-   query = db.query_builder().filter(is_archived=False)  # Could be many documents
+   # Stream results in batches (single FAISS/FTS search, lazy SQLite loading)
+   query = db.query_builder().search("machine learning").limit(200)
 
-   for batch in query.stream(batch_size=100):  # Process 100 documents at a time
+   for batch in query.stream(batch_size=50):
        for result in batch:
-           print(f"Processing {result.id}")  # Handle each document incrementally
+           print(f"Processing {result.id}")
+
+For more control over the iteration lifecycle, create a ``QueryCursor`` directly:
+
+.. code-block:: python
+
+   # Create a cursor with explicit lifecycle management
+   cursor = (
+       db.query_builder()
+       .hybrid("neural networks", vector_weight=0.7)
+       .filter("year", gte_=2023)
+       .limit(100)
+       .cursor(batch_size=25, cursor_ttl=600.0)
+   )
+
+   with cursor:
+       print(f"Found {cursor.total_candidates} candidates")
+       first_batch = cursor.fetch_batch()
+       remaining = cursor.fetch_all()  # Fetch everything else
+
+See :doc:`streaming` for the full streaming and cursor API reference.
 
 Counting Results
 ^^^^^^^^^^^^^^^^
@@ -594,22 +617,37 @@ Async Support
 
 .. code-block:: python
 
-   # Use async execution for better performance with remote databases
+   # Use async execution for better performance
    results = await (
        db.query_builder()
-       .search("machine learning")  # Find ML-related documents
-       .filter(is_published=True)  # Only include published ones
-       .execute_async()  # Execute asynchronously for non-blocking operation
+       .search("machine learning")
+       .filter(is_published=True)
+       .execute_async()
    )
 
-   # Process large result sets asynchronously in batches
-   query = db.query_builder().filter(category="tech")
-
-   async for batch in query.stream_async(batch_size=50):  # Process in smaller batches
+   # Async streaming with cursor-based batching (single search, lazy hydration)
+   async for batch in (
+       db.query_builder()
+       .search("deep learning")
+       .limit(100)
+       .stream_async(batch_size=25)
+   ):
        for result in batch:
-           await process_result(result)  # Process each result with an async function
+           await process_result(result)
 
-   # Get count asynchronously for non-blocking operation
+   # Async cursor with explicit lifecycle
+   cursor = await (
+       db.query_builder()
+       .hybrid("transformers", vector_weight=0.8)
+       .limit(50)
+       .cursor_async(batch_size=10)
+   )
+
+   async with cursor:
+       async for result in cursor.stream_individual_async():
+           await handle(result)
+
+   # Get count asynchronously
    count = await db.query_builder().filter(year=2024).count_async()
 
 Complex Queries

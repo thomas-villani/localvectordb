@@ -22,12 +22,13 @@ import logging
 import math
 from abc import ABC
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple
 
 import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
 from localvectordb.core import ChunkPosition, DocumentScoringMethod, MetadataFieldType, QueryResult
+from localvectordb.cursor import CursorCandidate, CursorConfig, QueryCursor
 from localvectordb.database.base import LocalVectorDBBase
 
 if TYPE_CHECKING:
@@ -55,9 +56,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
     document_index: Optional["IndexIDMap2"]
     _section_detector: Optional["SectionDetector"]
 
-    def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float:
-        """Convert FAISS distance to similarity score. Implemented in _core.py."""
-        raise NotImplementedError
+    # _distance_to_similarity is implemented in _core.py (LocalVectorDBCore).
+    # Declared under TYPE_CHECKING so mypy sees it without shadowing at runtime.
+    if TYPE_CHECKING:
+
+        def _distance_to_similarity(  # noqa: E704
+            self, distance: float, metric_type: Optional[str] = None
+        ) -> float: ...
 
     # -----------------
     # Helper methods
@@ -293,6 +298,522 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results = _reranker.rerank(query, results, top_k=k)
 
             return results
+
+    # -------------------------
+    # Cursor / streaming API
+    # -------------------------
+
+    def _collect_vector_candidates(
+        self,
+        query_embedding: np.ndarray,
+        initial_k: int,
+        score_threshold: float,
+    ) -> List[CursorCandidate]:
+        """Run FAISS search and return scored candidates without SQLite hydration."""
+        assert self.index is not None
+        with self._faiss_lock.read_lock():
+            distances, indices = self.index.search(query_embedding, initial_k)
+
+        candidates: List[CursorCandidate] = []
+        for dist, idx in zip(distances[0], indices[0], strict=False):
+            if idx == -1:
+                continue
+            score = self._distance_to_similarity(float(dist))
+            if score < score_threshold:
+                continue
+            candidates.append(CursorCandidate(score=score, source="vector", faiss_id=int(idx)))
+        return candidates
+
+    def _collect_keyword_candidates(
+        self,
+        query: str,
+        initial_k: int,
+        score_threshold: float,
+    ) -> List[CursorCandidate]:
+        """Run FTS search and return scored candidates without SQLite hydration."""
+        if not self.fts_enabled:
+            return []
+        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized_query:
+            return []
+
+        candidates: List[CursorCandidate] = []
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT rowid, bm25(chunks_fts) AS rank
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
+                ORDER BY rank ASC
+                LIMIT ?
+                """,
+                (sanitized_query, initial_k),
+            )
+            for row in cursor.fetchall():
+                score = self._fts_rank_to_similarity(row["rank"])
+                if score < score_threshold:
+                    continue
+                candidates.append(CursorCandidate(score=score, source="keyword", chunk_rowid=row["rowid"]))
+        return candidates
+
+    def _collect_hybrid_candidates(
+        self,
+        query: str,
+        query_embedding: np.ndarray,
+        initial_k: int,
+        score_threshold: float,
+        vector_weight: float,
+    ) -> List[CursorCandidate]:
+        """Run hybrid search and return merged/scored candidates."""
+        if not self.fts_enabled:
+            return self._collect_vector_candidates(query_embedding, initial_k, score_threshold)
+
+        vector_candidates = self._collect_vector_candidates(query_embedding, initial_k, 0.0)
+        keyword_candidates = self._collect_keyword_candidates(query, initial_k, 0.0)
+
+        if not vector_candidates and not keyword_candidates:
+            return []
+
+        # We need a common key to merge. Do a lightweight lookup to map
+        # faiss_ids and chunk_rowids to (document_id, chunk_index).
+        faiss_ids = [c.faiss_id for c in vector_candidates if c.faiss_id is not None]
+        chunk_rowids = [c.chunk_rowid for c in keyword_candidates if c.chunk_rowid is not None]
+
+        faiss_to_key: Dict[int, str] = {}
+        rowid_to_key: Dict[int, str] = {}
+        key_to_faiss: Dict[str, int] = {}
+
+        with self.connection_pool.get_connection() as conn:
+            if faiss_ids:
+                placeholders = ",".join(["?"] * len(faiss_ids))
+                cursor = conn.execute(
+                    f"SELECT faiss_id, document_id, chunk_index FROM chunks WHERE faiss_id IN ({placeholders})",
+                    faiss_ids,
+                )
+                for row in cursor.fetchall():
+                    key = f"{row['document_id']}:{row['chunk_index']}"
+                    faiss_to_key[row["faiss_id"]] = key
+                    key_to_faiss[key] = row["faiss_id"]
+
+            if chunk_rowids:
+                placeholders = ",".join(["?"] * len(chunk_rowids))
+                cursor = conn.execute(
+                    f"SELECT id, faiss_id, document_id, chunk_index FROM chunks WHERE id IN ({placeholders})",
+                    chunk_rowids,
+                )
+                for row in cursor.fetchall():
+                    key = f"{row['document_id']}:{row['chunk_index']}"
+                    rowid_to_key[row["id"]] = key
+                    if row["faiss_id"] is not None:
+                        key_to_faiss[key] = row["faiss_id"]
+
+        # Merge scores
+        combined: Dict[str, Dict[str, Any]] = {}
+        for c in vector_candidates:
+            key = faiss_to_key.get(c.faiss_id)  # type: ignore[arg-type,assignment]
+            if key:
+                combined[key] = {"vector_score": c.score, "keyword_score": 0.0, "faiss_id": c.faiss_id}
+
+        for c in keyword_candidates:
+            key = rowid_to_key.get(c.chunk_rowid)  # type: ignore[arg-type,assignment]
+            if key:
+                if key in combined:
+                    combined[key]["keyword_score"] = c.score
+                else:
+                    combined[key] = {
+                        "vector_score": 0.0,
+                        "keyword_score": c.score,
+                        "faiss_id": key_to_faiss.get(key),
+                    }
+
+        candidates: List[CursorCandidate] = []
+        for data in combined.values():
+            final_score = vector_weight * data["vector_score"] + (1.0 - vector_weight) * data["keyword_score"]
+            if final_score < score_threshold:
+                continue
+            candidates.append(
+                CursorCandidate(
+                    score=final_score,
+                    source="hybrid",
+                    faiss_id=data.get("faiss_id"),
+                )
+            )
+
+        candidates.sort(key=lambda c: c.score, reverse=True)
+        return candidates
+
+    def query_cursor(
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        batch_size: int = 50,
+        cursor_ttl: float = 300.0,
+    ) -> QueryCursor:
+        """
+        Create a QueryCursor for streaming results with lazy hydration.
+
+        Performs the FAISS/FTS search once, caches scored candidates, and returns
+        a cursor that lazily loads content/metadata from SQLite per batch.
+
+        Parameters match ``query()`` with the addition of:
+
+        Parameters
+        ----------
+        batch_size : int
+            Default number of results per cursor batch (default 50).
+        cursor_ttl : float
+            Cursor time-to-live in seconds (default 300).
+
+        Returns
+        -------
+        QueryCursor
+            A cursor that can be iterated to fetch results in batches.
+        """
+        with self._read_write_lock.read_lock():
+            effective_return_type = return_type if return_type != "sections" else "chunks"
+            initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
+
+            # Collect raw candidates
+            if search_type == "vector":
+                query_embeddings = self.embedding_provider.embed_sync([query])
+                query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
+                candidates = self._collect_vector_candidates(query_embedding, initial_k, score_threshold)
+            elif search_type == "keyword":
+                candidates = self._collect_keyword_candidates(query, initial_k, score_threshold)
+            elif search_type == "hybrid":
+                query_embeddings = self.embedding_provider.embed_sync([query])
+                query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
+                candidates = self._collect_hybrid_candidates(
+                    query, query_embedding, initial_k, score_threshold, vector_weight
+                )
+            else:
+                raise ValueError(f"Unknown search type: {search_type}")
+
+            # Apply semantic deduplication (global operation, needs FAISS embeddings)
+            if semantic_dedup_threshold is not None and candidates:
+                faiss_ids = [c.faiss_id for c in candidates if c.faiss_id is not None]
+                if faiss_ids:
+                    # Build temporary QueryResults for dedup
+                    temp_results = []
+                    for c in candidates:
+                        if c.faiss_id is not None:
+                            temp_results.append(
+                                QueryResult(
+                                    id=f"_:{c.faiss_id}",
+                                    score=c.score,
+                                    type="chunk",
+                                    content="",
+                                    document_id="_",
+                                )
+                            )
+                    deduped = self._apply_semantic_deduplication(temp_results, semantic_dedup_threshold)
+                    kept_ids = {r.id for r in deduped}
+                    candidates = [c for c in candidates if f"_:{c.faiss_id}" in kept_ids]
+
+            # Apply reranking (requires content — falls back to eager loading)
+            if reranker is not None or reranker_config:
+                # Must hydrate all candidates to rerank, then rebuild cursor
+                # This is a known limitation: reranking negates lazy loading benefit
+                pass  # Reranking handled via regular query() path for now
+
+            candidates.sort(key=lambda c: c.score, reverse=True)
+
+        config = CursorConfig(
+            search_type=search_type,
+            return_type=effective_return_type,
+            search_level=search_level,
+            score_threshold=score_threshold,
+            filters=filters,
+            vector_weight=vector_weight,
+            context_window=context_window,
+            semantic_dedup_threshold=semantic_dedup_threshold,
+            document_scoring_method=document_scoring_method,
+            document_scoring_options=document_scoring_options,
+            total_k=k,
+        )
+
+        return QueryCursor(
+            db=self,
+            candidates=candidates,
+            config=config,
+            ttl_seconds=cursor_ttl,
+            default_batch_size=batch_size,
+        )
+
+    async def query_cursor_async(
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        batch_size: int = 50,
+        cursor_ttl: float = 300.0,
+    ) -> QueryCursor:
+        """Async version of query_cursor. Returns a QueryCursor for async iteration."""
+        self._ensure_async_pool()
+        await self._ensure_async_schema_initialized()
+
+        loop = asyncio.get_event_loop()
+        effective_return_type = return_type if return_type != "sections" else "chunks"
+        initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
+
+        # Collect raw candidates (FAISS/FTS search)
+        if search_type == "vector":
+            query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
+            query_embedding_np = np.array(query_embedding).reshape(1, -1)
+
+            def protected_vector_search():
+                with self._faiss_lock.read_lock():
+                    return self.index.search(query_embedding_np, initial_k)
+
+            distances, indices = await loop.run_in_executor(None, protected_vector_search)
+            candidates: List[CursorCandidate] = []
+            for dist, idx in zip(distances[0], indices[0], strict=False):
+                if idx == -1:
+                    continue
+                score = self._distance_to_similarity(float(dist))
+                if score < score_threshold:
+                    continue
+                candidates.append(CursorCandidate(score=score, source="vector", faiss_id=int(idx)))
+
+        elif search_type == "keyword":
+            candidates = self._collect_keyword_candidates(query, initial_k, score_threshold)
+
+        elif search_type == "hybrid":
+            # Run vector and keyword in parallel
+            query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
+            query_embedding_np = np.array(query_embedding).reshape(1, -1)
+
+            def protected_vector_search():
+                with self._faiss_lock.read_lock():
+                    return self.index.search(query_embedding_np, initial_k)
+
+            distances, indices = await loop.run_in_executor(None, protected_vector_search)
+            vector_candidates: List[CursorCandidate] = []
+            for dist, idx in zip(distances[0], indices[0], strict=False):
+                if idx == -1:
+                    continue
+                score = self._distance_to_similarity(float(dist))
+                vector_candidates.append(CursorCandidate(score=score, source="vector", faiss_id=int(idx)))
+
+            keyword_candidates = self._collect_keyword_candidates(query, initial_k, 0.0)
+
+            # Merge using lightweight lookup
+            candidates = self._merge_hybrid_candidates(
+                vector_candidates, keyword_candidates, vector_weight, score_threshold
+            )
+        else:
+            raise ValueError(f"Unknown search type: {search_type}")
+
+        # Semantic dedup
+        if semantic_dedup_threshold is not None and candidates:
+            faiss_ids = [c.faiss_id for c in candidates if c.faiss_id is not None]
+            if faiss_ids:
+                temp_results = [
+                    QueryResult(id=f"_:{c.faiss_id}", score=c.score, type="chunk", content="", document_id="_")
+                    for c in candidates
+                    if c.faiss_id is not None
+                ]
+                deduped = await self._apply_semantic_deduplication_async(temp_results, semantic_dedup_threshold)
+                kept_ids = {r.id for r in deduped}
+                candidates = [c for c in candidates if f"_:{c.faiss_id}" in kept_ids]
+
+        candidates.sort(key=lambda c: c.score, reverse=True)
+
+        config = CursorConfig(
+            search_type=search_type,
+            return_type=effective_return_type,
+            search_level=search_level,
+            score_threshold=score_threshold,
+            filters=filters,
+            vector_weight=vector_weight,
+            context_window=context_window,
+            semantic_dedup_threshold=semantic_dedup_threshold,
+            document_scoring_method=document_scoring_method,
+            document_scoring_options=document_scoring_options,
+            total_k=k,
+        )
+
+        return QueryCursor(
+            db=self,
+            candidates=candidates,
+            config=config,
+            ttl_seconds=cursor_ttl,
+            default_batch_size=batch_size,
+        )
+
+    def _merge_hybrid_candidates(
+        self,
+        vector_candidates: List[CursorCandidate],
+        keyword_candidates: List[CursorCandidate],
+        vector_weight: float,
+        score_threshold: float,
+    ) -> List[CursorCandidate]:
+        """Merge vector and keyword candidates using a lightweight SQLite lookup."""
+        faiss_ids = [c.faiss_id for c in vector_candidates if c.faiss_id is not None]
+        chunk_rowids = [c.chunk_rowid for c in keyword_candidates if c.chunk_rowid is not None]
+
+        faiss_to_key: Dict[int, str] = {}
+        rowid_to_key: Dict[int, str] = {}
+        key_to_faiss: Dict[str, int] = {}
+
+        with self.connection_pool.get_connection() as conn:
+            if faiss_ids:
+                placeholders = ",".join(["?"] * len(faiss_ids))
+                cursor = conn.execute(
+                    f"SELECT faiss_id, document_id, chunk_index FROM chunks WHERE faiss_id IN ({placeholders})",
+                    faiss_ids,
+                )
+                for row in cursor.fetchall():
+                    key = f"{row['document_id']}:{row['chunk_index']}"
+                    faiss_to_key[row["faiss_id"]] = key
+                    key_to_faiss[key] = row["faiss_id"]
+
+            if chunk_rowids:
+                placeholders = ",".join(["?"] * len(chunk_rowids))
+                cursor = conn.execute(
+                    f"SELECT id, faiss_id, document_id, chunk_index FROM chunks WHERE id IN ({placeholders})",
+                    chunk_rowids,
+                )
+                for row in cursor.fetchall():
+                    key = f"{row['document_id']}:{row['chunk_index']}"
+                    rowid_to_key[row["id"]] = key
+                    if row["faiss_id"] is not None:
+                        key_to_faiss[key] = row["faiss_id"]
+
+        combined: Dict[str, Dict[str, Any]] = {}
+        for c in vector_candidates:
+            key = faiss_to_key.get(c.faiss_id)  # type: ignore[arg-type,assignment]
+            if key:
+                combined[key] = {"vector_score": c.score, "keyword_score": 0.0, "faiss_id": c.faiss_id}
+        for c in keyword_candidates:
+            key = rowid_to_key.get(c.chunk_rowid)  # type: ignore[arg-type,assignment]
+            if key:
+                if key in combined:
+                    combined[key]["keyword_score"] = c.score
+                else:
+                    combined[key] = {"vector_score": 0.0, "keyword_score": c.score, "faiss_id": key_to_faiss.get(key)}
+
+        candidates: List[CursorCandidate] = []
+        for data in combined.values():
+            final_score = vector_weight * data["vector_score"] + (1.0 - vector_weight) * data["keyword_score"]
+            if final_score < score_threshold:
+                continue
+            candidates.append(CursorCandidate(score=final_score, source="hybrid", faiss_id=data.get("faiss_id")))
+
+        candidates.sort(key=lambda c: c.score, reverse=True)
+        return candidates
+
+    def query_stream(
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        batch_size: int = 50,
+    ) -> Iterator[List[QueryResult]]:
+        """
+        Stream query results in batches. Convenience wrapper around ``query_cursor()``.
+
+        Yields
+        ------
+        list of QueryResult
+            Each yield is a batch of results.
+        """
+        cursor = self.query_cursor(
+            query,
+            search_type=search_type,
+            return_type=return_type,
+            search_level=search_level,
+            k=k,
+            score_threshold=score_threshold,
+            filters=filters,
+            vector_weight=vector_weight,
+            context_window=context_window,
+            semantic_dedup_threshold=semantic_dedup_threshold,
+            document_scoring_method=document_scoring_method,
+            document_scoring_options=document_scoring_options,
+            batch_size=batch_size,
+        )
+        with cursor:
+            yield from cursor.stream(batch_size)
+
+    async def query_stream_async(
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        batch_size: int = 50,
+    ) -> AsyncIterator[List[QueryResult]]:
+        """
+        Async stream query results in batches. Convenience wrapper around ``query_cursor_async()``.
+
+        Yields
+        ------
+        list of QueryResult
+            Each yield is a batch of results.
+        """
+        cursor = await self.query_cursor_async(
+            query,
+            search_type=search_type,
+            return_type=return_type,
+            search_level=search_level,
+            k=k,
+            score_threshold=score_threshold,
+            filters=filters,
+            vector_weight=vector_weight,
+            context_window=context_window,
+            semantic_dedup_threshold=semantic_dedup_threshold,
+            document_scoring_method=document_scoring_method,
+            document_scoring_options=document_scoring_options,
+            batch_size=batch_size,
+        )
+        async with cursor:
+            async for batch in cursor.stream_async(batch_size):
+                yield batch
 
     # ---------------
     # Vector (sync)

@@ -334,9 +334,43 @@ Performance Considerations
 - Cache frequently-used enriched results
 - Consider ``semantic_dedup_threshold`` for large result sets
 
+Streaming Large Result Sets
+---------------------------
+
+For large-scale retrieval where loading all results into memory at once is impractical, LocalVectorDB provides
+cursor-based streaming. A ``QueryCursor`` performs the FAISS/FTS search once and lazily loads content from SQLite
+in batches as you iterate:
+
+.. code-block:: python
+
+   # Stream results in batches instead of loading all at once
+   for batch in db.query_stream(
+       "machine learning",
+       search_type="hybrid",
+       return_type="chunks",
+       k=100,
+       batch_size=10,
+   ):
+       for result in batch:
+           process(result)
+
+   # Async streaming with backpressure
+   async for batch in db.query_stream_async(
+       "deep learning",
+       search_type="vector",
+       return_type="documents",
+       k=200,
+       batch_size=25,
+   ):
+       await process_batch(batch)
+
+For the full streaming API including ``QueryCursor`` lifecycle management, async generators, and QueryBuilder
+integration, see :doc:`streaming`.
+
 See Also
 --------
 
+* :doc:`streaming` - Cursor-based streaming for large result sets
 * :doc:`document-scoring` - Document scoring methods reference
 * :doc:`metadata.filtering` - Advanced filtering options
 * :doc:`embeddings` - Embedding provider configuration

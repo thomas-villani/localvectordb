@@ -201,6 +201,7 @@ from localvectordb.core import (
     Section,
     SectionBoundary,
 )
+from localvectordb.cursor import QueryCursor
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
@@ -249,6 +250,7 @@ __all__ = [
     "MigrationEngine",
     "versioning",
     "VersionManager",
+    "QueryCursor",
     "QueryBuilder",
     "query_builder",
     "extractors",

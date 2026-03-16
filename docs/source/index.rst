@@ -31,6 +31,7 @@ scale to distributed deployments without changing your code.
    overview
    client
    query
+   streaming
    embeddings
    chunking
    metadata.filtering

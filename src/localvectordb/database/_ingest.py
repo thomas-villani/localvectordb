@@ -219,17 +219,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """Batch size for processing."""
         return self._batch_size
 
-    def _get_faiss_metric_type(self) -> str:
-        """Get the FAISS metric type. Implemented in _core.py."""
-        raise NotImplementedError
+    # _get_faiss_metric_type, _similarity_to_distance, and _remove_section_vectors
+    # are implemented in _core.py (LocalVectorDBCore).
+    # Declared under TYPE_CHECKING so mypy sees them without shadowing at runtime.
+    if TYPE_CHECKING:
 
-    def _similarity_to_distance(self, similarity: float, metric_type: Optional[str] = None) -> float:
-        """Convert similarity to FAISS distance. Implemented in _core.py."""
-        raise NotImplementedError
+        def _get_faiss_metric_type(self) -> str: ...  # noqa: E704
 
-    def _remove_section_vectors(self, faiss_ids: List[int]) -> None:
-        """Remove section vectors from FAISS index. Implemented in _core.py."""
-        raise NotImplementedError
+        def _similarity_to_distance(  # noqa: E704
+            self, similarity: float, metric_type: Optional[str] = None
+        ) -> float: ...
+
+        def _remove_section_vectors(self, faiss_ids: List[int]) -> None: ...  # noqa: E704
 
     def _remove_document_vectors(self, faiss_ids: List[int]) -> None:
         """Remove document vectors from FAISS index. Implemented in _core.py."""

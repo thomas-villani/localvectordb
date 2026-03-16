@@ -738,19 +738,23 @@ class TestQueryExecutor:
             mock_executor.count.assert_called_once()
 
     def test_stream(self, builder):
-        """Test stream functionality."""
+        """Test stream functionality delegates to cursor."""
         query = builder.search("test")
 
         with patch("localvectordb.query_builder.QueryExecutor") as mock_executor_class:
+            mock_cursor = Mock()
+            mock_cursor.stream.return_value = iter([[]])
+            mock_cursor.__enter__ = Mock(return_value=mock_cursor)
+            mock_cursor.__exit__ = Mock(return_value=False)
+
             mock_executor = Mock()
-            mock_stream = Mock()
-            mock_executor.stream.return_value = mock_stream
+            mock_executor.cursor.return_value = mock_cursor
             mock_executor_class.return_value = mock_executor
 
-            stream = query.stream(batch_size=50)
+            list(query.stream(batch_size=50))
 
-            assert stream is mock_stream
-            mock_executor.stream.assert_called_once_with(50)
+            mock_executor.cursor.assert_called_once_with(batch_size=50, cursor_ttl=300.0)
+            mock_cursor.stream.assert_called_once_with(50)
 
 
 class TestAsyncQueryExecutor:
@@ -812,16 +816,21 @@ class TestAsyncQueryExecutor:
 
     @pytest.mark.asyncio
     async def test_stream_async(self, builder):
-        """Test async stream functionality."""
+        """Test async stream functionality delegates to cursor."""
         query = builder.search("test")
 
         with patch("localvectordb.query_builder.AsyncQueryExecutor") as mock_executor_class:
-            mock_executor = Mock()
+            mock_cursor = Mock()
 
-            async def mock_stream(batch_size):
+            async def mock_stream_async(batch_size):
                 yield []
 
-            mock_executor.stream = mock_stream
+            mock_cursor.stream_async = mock_stream_async
+            mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+            mock_cursor.__aexit__ = AsyncMock(return_value=False)
+
+            mock_executor = Mock()
+            mock_executor.cursor = AsyncMock(return_value=mock_cursor)
             mock_executor_class.return_value = mock_executor
 
             async for batch in query.stream_async(batch_size=25):
@@ -2431,8 +2440,20 @@ class TestAsyncQueryExecutorExecution:
 
     @pytest.mark.asyncio
     async def test_stream_async(self, mock_async_db):
-        """Test async streaming."""
+        """Test async streaming delegates to cursor."""
         from localvectordb.query_builder import AsyncQueryExecutor
+
+        expected_results = [QueryResult(id="doc1", score=0.9, type="document", content="Test content", metadata={})]
+
+        mock_cursor = Mock()
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_stream_async(batch_size):
+            yield expected_results
+
+        mock_cursor.stream_async = mock_stream_async
+        mock_async_db.query_cursor_async = AsyncMock(return_value=mock_cursor)
 
         builder = QueryBuilder(mock_async_db).search("test").limit(10)
         executor = AsyncQueryExecutor(builder)
@@ -2818,6 +2839,25 @@ class TestQueryExecutorIntegrationEnhancements:
     def test_streaming_integration(self, comprehensive_mock_db):
         """Test streaming functionality with complex queries."""
         from localvectordb.query_builder import QueryExecutor
+
+        # Create a real cursor with pre-built results
+        expected_results = [
+            QueryResult(id="doc1", score=0.95, type="document", content="AI research", metadata={"year": 2024}),
+            QueryResult(id="doc2", score=0.88, type="document", content="Deep learning", metadata={"year": 2024}),
+            QueryResult(id="doc3", score=0.82, type="document", content="NLP models", metadata={"year": 2023}),
+        ]
+
+        # Mock query_cursor to return a mock cursor that yields expected results
+        mock_cursor = Mock()
+        mock_cursor.__enter__ = Mock(return_value=mock_cursor)
+        mock_cursor.__exit__ = Mock(return_value=False)
+
+        def mock_stream(batch_size):
+            for i in range(0, len(expected_results), batch_size):
+                yield expected_results[i : i + batch_size]
+
+        mock_cursor.stream = mock_stream
+        comprehensive_mock_db.query_cursor = Mock(return_value=mock_cursor)
 
         builder = (
             QueryBuilder(comprehensive_mock_db)
