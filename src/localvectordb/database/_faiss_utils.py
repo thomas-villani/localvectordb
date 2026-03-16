@@ -73,7 +73,7 @@ def safe_get_id_mapping(index: Any) -> Optional[np.ndarray]:
         # Method 1: Standard IndexIDMap2 access pattern
         if hasattr(index, "id_map") and hasattr(index.id_map, "id_map"):
             logger.debug("Using IndexIDMap2 standard access (.id_map.id_map)")
-            external_ids = faiss.vector_to_array(index.id_map.id_map).astype(np.int64)
+            external_ids: np.ndarray[Any, Any] = faiss.vector_to_array(index.id_map.id_map).astype(np.int64)
             return external_ids
 
     except Exception as e:

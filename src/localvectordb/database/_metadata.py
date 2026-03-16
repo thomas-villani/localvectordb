@@ -43,7 +43,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     # Pure business logic helpers for DRY elimination
     def _build_metadata_schema_info(self) -> Dict[str, Any]:
         """Build metadata schema information dictionary (pure business logic)"""
-        info = {
+        info: Dict[str, Any] = {
             "fields": {},
             "field_count": len(self.metadata_schema),
             "indexed_fields": [],
@@ -51,8 +51,11 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             "field_types": {},
         }
         for field_name, field_def in self.metadata_schema.items():
+            field_type_value = (
+                field_def.type.value if isinstance(field_def.type, MetadataFieldType) else str(field_def.type)
+            )
             info["fields"][field_name] = {
-                "type": field_def.type.value,
+                "type": field_type_value,
                 "indexed": field_def.indexed,
                 "required": field_def.required,
                 "default_value": field_def.default_value,
@@ -61,12 +64,12 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 info["indexed_fields"].append(field_name)
             if field_def.required:
                 info["required_fields"].append(field_name)
-            field_type = field_def.type.value
-            info["field_types"][field_type] = info["field_types"].get(field_type, 0) + 1
+            info["field_types"][field_type_value] = info["field_types"].get(field_type_value, 0) + 1
         return info
 
     def _calculate_faiss_ids_for_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
         """Calculate FAISS IDs for embeddings using index state (pure business logic)"""
+        assert self.index is not None
         start_id = self.index.ntotal
         if hasattr(self.index, "add_with_ids"):
             return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
@@ -76,6 +79,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
 
     def _add_embeddings_to_faiss(self, embeddings: np.ndarray) -> np.ndarray:
         """Add embeddings to FAISS index and return actual IDs (pure business logic for FAISS operations)"""
+        assert self.index is not None
         start_id = self.index.ntotal
         if hasattr(self.index, "add_with_ids"):
             ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
@@ -90,7 +94,11 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             for field_name, value in metadata.items():
                 if field_name in self.metadata_schema:
                     field_def = self.metadata_schema[field_name]
-                    if value and not isinstance(value, field_def.type.valid_types()):
+                    if (
+                        value
+                        and isinstance(field_def.type, MetadataFieldType)
+                        and not isinstance(value, field_def.type.valid_types())
+                    ):
                         raise ValueError(
                             f"Metadata field '{field_name}' is type {field_def.type.name}. Found: {type(value)}"
                         )

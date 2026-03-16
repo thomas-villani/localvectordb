@@ -11,7 +11,7 @@
 
 import json
 import os
-from typing import TYPE_CHECKING, Any, Union, get_type_hints
+from typing import TYPE_CHECKING, Any, Optional, Union, get_type_hints
 
 import click
 
@@ -28,7 +28,7 @@ EXIT_CODE_PERMISSION_ERROR = 4
 DEFAULT_CONFIG_FILE = ".lvdb-config"
 
 
-def find_config_file(config_path: str = None) -> str:
+def find_config_file(config_path: Optional[str] = None) -> Optional[str]:
     """Find configuration file in order of precedence"""
     # First check explicit path
     if config_path and os.path.exists(config_path):
@@ -110,7 +110,8 @@ def print_db_stats(db: LocalVectorDB):
             for field_name, field_def in db.metadata_schema.items():
                 indexed = " (indexed)" if field_def.indexed else ""
                 required = " (required)" if field_def.required else ""
-                click.echo(f"  {field_name}: {field_def.type.value}{indexed}{required}")
+                field_type_str = field_def.type.value if hasattr(field_def.type, "value") else str(field_def.type)
+                click.echo(f"  {field_name}: {field_type_str}{indexed}{required}")
 
     except Exception as e:
         click.secho(f"Error retrieving statistics: {str(repr(e))}", fg="bright_red")

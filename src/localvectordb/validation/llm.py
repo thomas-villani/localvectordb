@@ -38,7 +38,7 @@ class AnthropicProvider:
             response = await self._client.messages.create(**kwargs)
         else:
             response = await asyncio.to_thread(self._client.messages.create, **kwargs)
-        return response.content[0].text
+        return str(response.content[0].text)
 
 
 class OpenAIProvider:
@@ -63,7 +63,7 @@ class OpenAIProvider:
             response = await self._client.chat.completions.create(**kwargs)
         else:
             response = await asyncio.to_thread(self._client.chat.completions.create, **kwargs)
-        return response.choices[0].message.content
+        return str(response.choices[0].message.content)
 
 
 class GeminiProvider:
@@ -80,7 +80,7 @@ class GeminiProvider:
             model=self._model,
             contents=prompt,
         )
-        return response.text
+        return str(response.text)
 
 
 def detect_provider(client: Any, model: str | None = None) -> LLMProvider:

@@ -17,7 +17,7 @@ attacks and billion laughs/XML bomb attacks.
 
 import logging
 from copy import copy
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
@@ -100,10 +100,12 @@ class HTMLExtractor(BaseExtractor):
             title_text = title.get_text().strip() if title else None
 
             meta_description = soup.find("meta", attrs={"name": "description"})
-            description = meta_description.get("content") if meta_description else None
+            description = (
+                meta_description.get("content") if meta_description and hasattr(meta_description, "get") else None
+            )
 
             meta_keywords = soup.find("meta", attrs={"name": "keywords"})
-            keywords = meta_keywords.get("content") if meta_keywords else None
+            keywords = meta_keywords.get("content") if meta_keywords and hasattr(meta_keywords, "get") else None
 
             # Remove script and style elements
             for script in soup(["script", "style", "noscript"]):
@@ -292,7 +294,9 @@ class XMLExtractor(BaseExtractor):
             except ImportError:
                 return False
 
-    def _extract_text_impl(self, file_content: bytes, filename: str, mimetype: Optional[str]) -> ExtractionResult:
+    def _extract_text_impl(
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs: Any
+    ) -> ExtractionResult:
         """Extract text from XML files with XXE protection."""
         # Check file size limit to prevent resource exhaustion
         if len(file_content) > MAX_XML_SIZE_BYTES:
@@ -365,13 +369,14 @@ class XMLExtractor(BaseExtractor):
             xml_type = self._detect_xml_type(soup, root_tag)
 
             if xml_type == "rss":
-                return self._extract_rss_content(soup)
+                result: ExtractionResult = self._extract_rss_content(soup)
             elif xml_type == "atom":
-                return self._extract_atom_content(soup)
+                result = self._extract_atom_content(soup)
             elif xml_type == "svg":
-                return self._extract_svg_content(soup)
+                result = self._extract_svg_content(soup)
             else:
-                return self._extract_generic_xml_content(soup, xml_content)
+                result = self._extract_generic_xml_content(soup, xml_content)
+            return result
 
         except Exception as e:
             return ExtractionResult(

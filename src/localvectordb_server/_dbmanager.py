@@ -18,13 +18,15 @@ import atexit
 import json
 import logging
 import os
+import sys
 import threading
 import time
+import types
 import weakref
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import IO, TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from cachelib import DynamoDbCache, FileSystemCache, MemcachedCache, MongoDbCache, RedisCache, SimpleCache, UWSGICache
 
@@ -41,7 +43,7 @@ logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 
 # Global registry to track all DatabaseManager instances for cleanup
-_active_managers = weakref.WeakSet()
+_active_managers: weakref.WeakSet["DatabaseManager"] = weakref.WeakSet()
 _atexit_registered = False
 
 
@@ -76,15 +78,15 @@ class CrossPlatformFileLock:
     """Cross-platform file locking implementation"""
 
     def __init__(self, lock_file: Path, timeout: float = 30.0):
-        import sys
-
         self.lock_file = Path(lock_file)
         self.timeout = timeout
-        self.file_handle = None
+        self.file_handle: Optional[IO[str]] = None
         self._is_locked = False
         self.is_windows = sys.platform == "win32"
 
         # Platform-specific imports
+        self.msvcrt: Optional[types.ModuleType] = None
+        self.fcntl: Optional[types.ModuleType] = None
         if self.is_windows:
             import msvcrt
 
@@ -103,7 +105,7 @@ class CrossPlatformFileLock:
             return True
 
         try:
-            self.file_handle = open(self.lock_file, "w")
+            self.file_handle = open(self.lock_file, "w")  # noqa: SIM115
 
             if self.is_windows:
                 return self._acquire_windows(blocking)
@@ -119,6 +121,8 @@ class CrossPlatformFileLock:
 
     def _acquire_windows(self, blocking: bool) -> bool:
         """Acquire lock on Windows using msvcrt"""
+        assert self.msvcrt is not None
+        assert self.file_handle is not None
         start_time = time.time()
 
         while True:
@@ -139,6 +143,8 @@ class CrossPlatformFileLock:
 
     def _acquire_unix(self, blocking: bool) -> bool:
         """Acquire lock on Unix systems using fcntl"""
+        assert self.fcntl is not None
+        assert self.file_handle is not None
         try:
             if blocking:
                 start_time = time.time()
@@ -170,8 +176,10 @@ class CrossPlatformFileLock:
 
         try:
             if self.is_windows:
+                assert self.msvcrt is not None
                 self.msvcrt.locking(self.file_handle.fileno(), self.msvcrt.LK_UNLCK, 1)
             else:
+                assert self.fcntl is not None
                 self.fcntl.flock(self.file_handle.fileno(), self.fcntl.LOCK_UN)
 
             self._is_locked = False
@@ -351,10 +359,13 @@ class DatabaseRegistry:
                 return None
 
             if isinstance(metadata_json, str):
-                return json.loads(metadata_json)
-            else:
+                result: Dict[str, Any] = json.loads(metadata_json)
+                return result
+            elif isinstance(metadata_json, dict):
                 # Already deserialized
                 return metadata_json
+            else:
+                return None
 
         except Exception as e:
             logger.error(f"Failed to get metadata for database '{name}': {e}")
@@ -481,7 +492,7 @@ class DatabaseManager:
         registry_settings = registry_settings or {}
         logger.info(f"Initializing database registry with type: {registry_type}")
 
-        registry_config_kwargs = {}
+        registry_config_kwargs: Dict[str, Any] = {}
         for key, value in registry_settings.items():
             if isinstance(value, str) and value.startswith("$"):
                 registry_config_kwargs[key] = os.getenv(value[1:])
@@ -489,6 +500,9 @@ class DatabaseManager:
                 registry_config_kwargs[key] = value
 
         # Create cache instance based on type
+        cache_instance: Union[
+            SimpleCache, FileSystemCache, RedisCache, MemcachedCache, UWSGICache, DynamoDbCache, MongoDbCache
+        ]
         if registry_type == "SimpleCache" or registry_type == "memory":
             cache_instance = SimpleCache(**registry_config_kwargs)
         elif registry_type == "FileSystemCache":
@@ -858,7 +872,8 @@ class DatabaseManager:
             if datetime.now(UTC) - self._last_registry_sync > self._registry_sync_interval:
                 self._sync_registry_from_filesystem()
 
-            return self.registry.list_databases()
+            result: List[str] = self.registry.list_databases()
+            return result
         except Exception as e:
             logger.error(f"Failed to list databases from registry: {e}")
             db_logger.log_error("list_databases_failed", e)
@@ -1003,7 +1018,8 @@ class DatabaseManager:
             # Get embeddings
             embeddings = embedding_provider.embed_sync(query_texts)
 
-            return embeddings.tolist()
+            result: List[List[float]] = embeddings.tolist()
+            return result
 
         except Exception as e:
             db_logger.log_error("get_embeddings_failed", e, provider=provider, model=model)

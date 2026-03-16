@@ -346,7 +346,7 @@ class ReadWriteLock:
         self._write_ready = threading.Condition(self._lock)  # Writers wait here
 
     @contextmanager
-    def read_lock(self) -> None:
+    def read_lock(self) -> Generator[None, None, None]:
         """Acquire read lock (multiple readers allowed, unless writer active)"""
         current_thread = threading.current_thread()
 
@@ -372,7 +372,7 @@ class ReadWriteLock:
                     self._write_ready.notify()
 
     @contextmanager
-    def write_lock(self) -> None:
+    def write_lock(self) -> Generator[None, None, None]:
         """Acquire write lock (exclusive, but re-entrant for same thread)"""
         current_thread = threading.current_thread()
 

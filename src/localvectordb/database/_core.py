@@ -63,6 +63,17 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     helpers as closely as possible to preserve behavior.
     """
 
+    # Type declarations for attributes set during __init__
+    connection_pool: ConnectionPool
+    async_connection_pool: Optional[AsyncConnectionPool]
+    schema: DatabaseSchema
+    index: Optional[faiss.IndexIDMap2]
+    _read_write_lock: ReadWriteLock
+    _faiss_lock: ReadWriteLock
+    _metadata_schema: Dict[str, Any]
+    _embedding_provider: EmbeddingProvider
+    _embedding_dimension: int
+
     def __init__(
         self,
         name: str,
@@ -136,7 +147,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         else:
             self.base_path = Path(base_path)
             self.base_path.mkdir(parents=True, exist_ok=True)
-            self.db_path: Union[str, Path] = self.base_path / f"{name}.sqlite"
+            self.db_path = self.base_path / f"{name}.sqlite"
             self.index_path = self.base_path / f"{name}.faiss"
             if not create_if_not_exists and not Path(self.db_path).exists():
                 raise DatabaseNotFoundError(f"Database: {name} in {base_path} could not be found.")
@@ -173,6 +184,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Initialize SQLite tuning configuration
         profile = get_sqlite_pragma_profile(sqlite_profile, default="balanced")
+        assert profile is not None
         pragmas = dict(profile.pragmas)
         if sqlite_pragma_overrides:
             pragmas.update(sqlite_pragma_overrides)
@@ -545,6 +557,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
             return
+        assert self.index is not None
         with self._faiss_lock.write_lock():
             start_faiss_id = self.index.ntotal
             new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
@@ -553,6 +566,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 chunk.faiss_id = int(new_faiss_ids[i])
 
     def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
+        assert self.index is not None
         if not faiss_ids or not hasattr(self.index, "remove_ids"):
             return
         try:
@@ -573,13 +587,14 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
 
+        assert self.index is not None
         with self._faiss_lock.read_lock():
             # Method 1: Try reconstruct_batch if available (for non-wrapped indices)
             if hasattr(self.index, "reconstruct_batch"):
                 try:
                     faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
-                    embeddings = self.index.reconstruct_batch(faiss_ids_array)
-                    return embeddings
+                    result: np.ndarray = self.index.reconstruct_batch(faiss_ids_array)
+                    return result
                 except Exception as e:
                     logger.warning(f"FAISS reconstruct_batch failed, falling back to individual calls: {e}")
 
@@ -600,6 +615,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
 
+        assert self.index is not None
         faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
 
         # Strategy 1: Try direct reconstruction on IndexIDMap2 first
@@ -642,9 +658,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
                 if internal_indices:
                     internal_indices_array = np.array(internal_indices, dtype=np.int64)
-                    embeddings = self.index.index.reconstruct_batch(internal_indices_array)
-                    logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using efficient ID mapping")
-                    return embeddings
+                    batch_result: np.ndarray = self.index.index.reconstruct_batch(internal_indices_array)
+                    logger.debug(
+                        f"Successfully reconstructed {len(batch_result)} embeddings using efficient ID mapping"
+                    )
+                    return batch_result
         except Exception as e:
             logger.debug(f"Efficient ID mapping strategy failed: {e}")
 
@@ -681,9 +699,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         base_index = self.index.index
 
         if hasattr(base_index, "reconstruct_batch"):
-            embeddings = base_index.reconstruct_batch(internal_indices_array)
-            logger.debug(f"Successfully reconstructed {len(embeddings)} embeddings using optimized ID mapping")
-            return embeddings
+            base_result: np.ndarray = base_index.reconstruct_batch(internal_indices_array)
+            logger.debug(f"Successfully reconstructed {len(base_result)} embeddings using optimized ID mapping")
+            return base_result
         else:
             # Fallback: individual calls on base index
             embeddings = []
@@ -699,6 +717,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     def _reconstruct_individual_fallback(self, faiss_ids: List[int]) -> np.ndarray:
         """Fallback method using individual reconstruct calls."""
+        assert self.index is not None
         embeddings = []
         for fid in faiss_ids:
             try:
@@ -825,7 +844,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             # L2 distance: convert using 1/(1+distance)
             return 1.0 / (1.0 + distance)
 
-    def _similarity_to_distance(self, similarity: float, metric_type: str = None) -> float:
+    def _similarity_to_distance(self, similarity: float, metric_type: Optional[str] = None) -> float:
         """Convert similarity threshold to FAISS distance threshold.
 
         Args:
@@ -870,7 +889,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     # Persistence
     def _save_internal(self):
-        if not self.is_memory_only and hasattr(self.index, "ntotal") and self.index.ntotal > 0:
+        if not self.is_memory_only and self.index is not None and self.index.ntotal > 0:
             if hasattr(self.index, "index") and hasattr(self.index.index, "device"):
                 try:
                     cpu_index = faiss.index_gpu_to_cpu(self.index)
@@ -934,7 +953,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
             chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
             section_count = conn.execute("SELECT COUNT(*) FROM sections").fetchone()[0]
-            index_size = self.index.ntotal if hasattr(self.index, "ntotal") else 0
+            index_size = self.index.ntotal if self.index is not None else 0
             stats = {
                 "documents": doc_count,
                 "chunks": chunk_count,
@@ -990,6 +1009,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     async def _ensure_async_schema_initialized(self) -> None:
         if not self.is_memory_only or self._async_schema_initialized:
             return
+        assert self.async_connection_pool is not None
         try:
             async with self.async_connection_pool.get_connection_context() as conn:
                 await conn.execute("SELECT 1 FROM documents LIMIT 1")
@@ -1042,7 +1062,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     def _load_sqlite_tuning(self, config: Dict[str, str]) -> None:
         """Load SQLite tuning configuration from database config."""
-        profile = config.get("sqlite_profile", "balanced")
+        profile: str = config.get("sqlite_profile", "balanced")
         overrides_json = config.get("sqlite_pragma_overrides", "{}")
 
         try:
@@ -1050,11 +1070,16 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         except (json.JSONDecodeError, TypeError):
             overrides = {}
 
-        if is_valid_sqlite_pragma_profile(profile):
-            pragmas = dict(get_sqlite_pragma_profile(profile).pragmas)
+        from typing import cast
+
+        profile_typed = cast(SqliteProfile, profile)
+        if is_valid_sqlite_pragma_profile(profile_typed):
+            profile_obj = get_sqlite_pragma_profile(profile_typed)
+            assert profile_obj is not None
+            pragmas = dict(profile_obj.pragmas)
             pragmas.update(overrides)
 
-            self._sqlite_profile = profile
+            self._sqlite_profile = profile_typed
             self._sqlite_pragma_overrides = overrides
             self._sqlite_pragmas = pragmas
 
@@ -1063,4 +1088,6 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")
             self._sqlite_profile = "balanced"
             self._sqlite_pragma_overrides = {}
-            self._sqlite_pragmas = dict(get_sqlite_pragma_profile("balanced").pragmas)
+            balanced_profile = get_sqlite_pragma_profile("balanced")
+            assert balanced_profile is not None
+            self._sqlite_pragmas = dict(balanced_profile.pragmas)

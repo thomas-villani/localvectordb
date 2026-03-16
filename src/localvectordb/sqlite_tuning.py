@@ -181,7 +181,7 @@ def is_valid_sqlite_pragma_profile(profile: SqliteProfile) -> bool:
 
 def get_sqlite_pragma_profile(
     profile: SqliteProfile, *, default: Optional[SqliteProfile] = None
-) -> SQLitePragmaProfile:
+) -> Optional[SQLitePragmaProfile]:
     return SQLITE_PRAGMA_PROFILES.get(profile, SQLITE_PRAGMA_PROFILES.get(default) if default is not None else default)
 
 
@@ -474,8 +474,8 @@ class AutoTuner:
         TuningRecommendation
             Recommended profile and settings
         """
-        reasoning = []
-        pragma_overrides = {}
+        reasoning: list[str] = []
+        pragma_overrides: dict[str, Any] = {}
 
         # Base profile selection
         if workload.workload_type == WorkloadType.WRITE_HEAVY:

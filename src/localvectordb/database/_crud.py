@@ -90,7 +90,12 @@ def _quote_identifier(name: str) -> str:
 
 
 class CrudMixin(LocalVectorDBBase, ABC):
-    def __init__(self, *args, **kwargs):
+    # Attributes from composed class
+    _hierarchical_embeddings: bool
+    _remove_section_vectors: Any
+    _remove_document_vectors: Any
+
+    def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self._sync_executor = SyncDatabaseExecutor()
         self._async_executor = AsyncDatabaseExecutor()
@@ -273,8 +278,12 @@ class CrudMixin(LocalVectorDBBase, ABC):
         DocumentNotFoundError
             If any requested documents are not found
         """
-        single_id = isinstance(ids, str)
-        requested_ids = [ids] if single_id else ids
+        if isinstance(ids, str):
+            single_id = True
+            requested_ids: List[str] = [ids]
+        else:
+            single_id = False
+            requested_ids = list(ids)
         with self._read_write_lock.read_lock():
             with self.connection_pool.get_connection() as conn:
                 documents = self._core_get_sync(conn, requested_ids)
@@ -313,11 +322,16 @@ class CrudMixin(LocalVectorDBBase, ABC):
         Union[bool, List[bool]]
             Existence status for each ID
         """
-        single_id = isinstance(ids, str)
-        ids_list = [ids] if single_id else ids
-        with self.connection_pool.get_connection() as conn:
-            results = self._core_exists_sync(conn, ids_list)
-        return results[0] if single_id else results
+        if isinstance(ids, str):
+            ids_list: List[str] = [ids]
+            with self.connection_pool.get_connection() as conn:
+                results = self._core_exists_sync(conn, ids_list)
+            return results[0]
+        else:
+            ids_list = list(ids)
+            with self.connection_pool.get_connection() as conn:
+                results = self._core_exists_sync(conn, ids_list)
+            return results
 
     def delete(self, ids: Union[str, List[str]]) -> int:
         """
@@ -396,7 +410,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
                 else:
                     raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
-            if faiss_ids_to_remove and hasattr(self.index, "remove_ids"):
+            if faiss_ids_to_remove and self.index is not None and hasattr(self.index, "remove_ids"):
                 try:
                     ids_array = np.array(faiss_ids_to_remove, dtype=np.int64)
                     self.index.remove_ids(ids_array)
@@ -439,7 +453,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Raised if `doc_id` does not exist.
         """
         with self._read_write_lock.write_lock():
-            existing_doc: Document = self.get(doc_id)
+            existing_doc: Any = self.get(doc_id)
             if not existing_doc:
                 raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found")
             if content is not None:
@@ -470,7 +484,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                                     f"metadata fields in document {doc_id}"
                                 )
                         set_clauses = ['"updated_at" = ?']
-                        values = [datetime.now(UTC)]
+                        values: list[Any] = [datetime.now(UTC)]
                         for field_name, value in updated_metadata.items():
                             if field_name in self.metadata_schema:
                                 # Validate and quote field name to prevent SQL injection
@@ -635,9 +649,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
             If any requested documents are not found
         """
         self._ensure_async_pool()
+        assert self.async_connection_pool is not None
         await self._ensure_async_schema_initialized()
-        single_id = isinstance(ids, str)
-        requested_ids = [ids] if single_id else ids
+        if isinstance(ids, str):
+            single_id = True
+            requested_ids: List[str] = [ids]
+        else:
+            single_id = False
+            requested_ids = list(ids)
         if not requested_ids:
             raise ValueError("`ids` must be provided.")
         async with self.async_connection_pool.get_connection_context() as conn:
@@ -661,6 +680,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Number of documents deleted
         """
         self._ensure_async_pool()
+        assert self.async_connection_pool is not None
         await self._ensure_async_schema_initialized()
         if isinstance(ids, str):
             ids = [ids]
@@ -719,6 +739,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Number of documents matching the criteria
         """
         self._ensure_async_pool()
+        assert self.async_connection_pool is not None
         await self._ensure_async_schema_initialized()
         if filters:
             filter_builder = FilterQueryBuilder(self.metadata_schema)
@@ -747,9 +768,10 @@ class CrudMixin(LocalVectorDBBase, ABC):
             True if document exists, False otherwise
         """
         self._ensure_async_pool()
+        assert self.async_connection_pool is not None
         await self._ensure_async_schema_initialized()
         single = isinstance(ids, str)
-        ids_list = [ids] if single else list(ids)
+        ids_list: List[str] = [ids] if single else list(ids)  # type: ignore[list-item]
         if not ids_list:
             return False if single else []
 
@@ -784,6 +806,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Documents matching the filter criteria
         """
         self._ensure_async_pool()
+        assert self.async_connection_pool is not None
         await self._ensure_async_schema_initialized()
 
         # Use shared business logic for SQL construction
@@ -845,7 +868,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
         - Uses async database operations for better performance
         """
         self._ensure_async_pool()
-        existing_doc: Document = await self.get_async(doc_id)
+        existing_doc: Any = await self.get_async(doc_id)
         if not existing_doc:
             raise DocumentNotFoundError(f"Document {doc_id} not found for update")
         changes_made = False
@@ -865,6 +888,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             updated_metadata.update(metadata)
             await self._validate_metadata_async(updated_metadata)
             changed_embedding_fields = self._get_changed_embedding_fields(existing_doc.metadata, updated_metadata)
+            assert self.async_connection_pool is not None
             async with self.async_connection_pool.get_connection_context() as conn:
                 await conn.execute("BEGIN")
                 try:
@@ -880,7 +904,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                                 f"metadata fields in document {doc_id}"
                             )
                     set_clauses = ['"updated_at" = ?']
-                    values = [datetime.now(UTC)]
+                    values: list[Any] = [datetime.now(UTC)]
                     for field_name, value in updated_metadata.items():
                         if field_name in self.metadata_schema:
                             # Validate and quote field name to prevent SQL injection

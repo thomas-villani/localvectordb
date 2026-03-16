@@ -570,21 +570,21 @@ class Config:
         )
 
     @classmethod
-    def from_file(cls, path: str) -> "Config":
+    def from_file(cls, path: Union[str, Path]) -> "Config":
         """Load configuration from file with v1.0 enhancements."""
-        path = Path(path)
+        file_path = Path(path)
 
-        if not path.exists():
-            raise FileNotFoundError(f"Configuration file not found: {path}")
-        if path.suffix.lower() == ".toml":
-            return cls._from_toml(path)
-        elif path.suffix.lower() == ".json":
-            return cls._from_json(path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {file_path}")
+        if file_path.suffix.lower() == ".toml":
+            return cls._from_toml(file_path)
+        elif file_path.suffix.lower() == ".json":
+            return cls._from_json(file_path)
         else:
-            raise ValueError(f"Unsupported configuration file format: {path.suffix}")
+            raise ValueError(f"Unsupported configuration file format: {file_path.suffix}")
 
     @classmethod
-    def from_dict(cls, data: dict):
+    def from_dict(cls, data: dict) -> "Config":
         """Create config from dictionary with v1.0 support."""
         if not isinstance(data, dict):
             raise TypeError("Configuration `data` must be a dictionary containing configuration data.")
@@ -646,14 +646,14 @@ class Config:
     def _from_toml(cls, path: Path) -> "Config":
         """Load configuration from TOML file."""
         with open(path, "rb") as f:
-            data = tomllib.load(f)
+            data: Dict[str, Any] = tomllib.load(f)
         return cls.from_dict(data)
 
     @classmethod
     def _from_json(cls, path: Path) -> "Config":
         """Load configuration from JSON file."""
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            data: Dict[str, Any] = json.load(f)
         return cls.from_dict(data)
 
     @classmethod
@@ -838,13 +838,14 @@ class Config:
         return value
 
     @classmethod
-    def update_from_dict(cls, config, update_map: dict):
+    def update_from_dict(cls, config: "Config", update_map: dict) -> "Config":
         new_cfg = cls()
 
         for key, values in update_map.items():
             if not isinstance(values, dict):
                 raise ValueError("Expected dict of dicts for `update_from_dict`.")
 
+            cfg_obj: BaseSettings
             if key == "database":
                 cfg_obj = new_cfg.database
             elif key == "embedding":
@@ -920,7 +921,7 @@ class Config:
 
     def _generate_cache_config(self) -> Dict[str, Any]:
         """Generate Flask-Caching compatible configuration based on cache type and settings"""
-        cache_config = {
+        cache_config: Dict[str, Any] = {
             "CACHE_TYPE": "NullCache" if not self.server.cache_enabled else self.server.cache_type,
             "CACHE_DEFAULT_TIMEOUT": self.server.cache_timeout,
         }
@@ -1042,7 +1043,16 @@ class Config:
         """Apply a predefined metadata schema."""
         common_schemas = get_common_metadata_schemas()
         if schema_name in common_schemas:
-            self.database.default_metadata_schema = common_schemas[schema_name]
+            schema_value = common_schemas[schema_name]
+            if isinstance(schema_value, dict):
+                # When called without args, values are dict[str, MetadataField]
+                parsed_schema: Dict[str, MetadataField] = {}
+                for k, v in schema_value.items():
+                    if isinstance(v, MetadataField):
+                        parsed_schema[k] = v
+                self.database.default_metadata_schema = parsed_schema
+            else:
+                raise ConfigurationError(f"Unexpected schema type for '{schema_name}'")
         else:
             available = ", ".join(common_schemas.keys())
             raise ConfigurationError(f"Unknown schema '{schema_name}'. Available: {available}")
@@ -1056,9 +1066,10 @@ class Config:
         result = Config()
 
         # Helper function to merge dataclass fields intelligently
-        def merge_dataclass(base: Any, override: Any, result: Any):
+        def merge_dataclass(base: Any, override: Any, result_obj: Any) -> None:
             # Get default instance for comparison
-            default_instance = type(base)()
+            base_type = type(base)
+            default_instance = base_type()
 
             for key in asdict(override).keys():
                 base_value = getattr(base, key)
@@ -1068,19 +1079,19 @@ class Config:
                     default_value = getattr(default_instance, key)
                 except AttributeError:
                     # Fallback if field doesn't exist in default
-                    setattr(result, key, override_value)
+                    setattr(result_obj, key, override_value)
                     continue
 
                 # Special handling for metadata schema
                 if key == "default_metadata_schema" and isinstance(override_value, dict):
                     if not override_value:
                         # Use base value if override is empty
-                        setattr(result, key, base_value)
+                        setattr(result_obj, key, base_value)
                     else:
                         # Merge schemas - base takes precedence for conflicting keys
                         merged_schema = base_value.copy()
                         merged_schema.update(override_value)
-                        setattr(result, key, merged_schema)
+                        setattr(result_obj, key, merged_schema)
                 # Handle nested dataclasses recursively
                 elif (
                     is_dataclass(base_value)
@@ -1088,28 +1099,29 @@ class Config:
                     and type(base_value) is type(override_value)
                 ):
                     # Create a new instance of the dataclass and recursively merge
-                    nested_result = type(base_value)()
+                    nested_cls: Any = type(base_value)
+                    nested_result = nested_cls()
                     merge_dataclass(base_value, override_value, nested_result)
-                    setattr(result, key, nested_result)
+                    setattr(result_obj, key, nested_result)
                 elif isinstance(override_value, (list, dict)):
                     # For container types, check if they're empty (default)
                     if not override_value:
                         # Use the base value if override is empty
-                        setattr(result, key, base_value)
+                        setattr(result_obj, key, base_value)
                     else:
-                        setattr(result, key, override_value)
+                        setattr(result_obj, key, override_value)
                 else:
                     # Smart merge logic:
                     # - If override is default but base is not default: keep base value
                     # - Otherwise: use override value (either it's non-default, or both are default)
                     try:
                         if override_value == default_value and base_value != default_value:
-                            setattr(result, key, base_value)
+                            setattr(result_obj, key, base_value)
                         else:
-                            setattr(result, key, override_value)
+                            setattr(result_obj, key, override_value)
                     except (TypeError, ValueError):
                         # If comparison fails (e.g., unhashable types), use override
-                        setattr(result, key, override_value)
+                        setattr(result_obj, key, override_value)
 
         # Merge all sections
         merge_dataclass(self.database, other.database, result.database)

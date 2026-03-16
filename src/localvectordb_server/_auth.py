@@ -49,7 +49,7 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
     tuple[bool, PermissionLevel]
         (is_valid, permission_level) - permission_level defaults to READ_WRITE if invalid
     """
-    key_manager = current_app.key_manager
+    key_manager = getattr(current_app, "key_manager", None)
     if not key_manager:
         security_logger.log_auth_attempt(
             success=False, reason="KeyManager not available", token_prefix=_mask_token(token)

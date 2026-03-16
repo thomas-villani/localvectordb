@@ -117,7 +117,7 @@ class FilterQueryBuilder:
             The database metadata schema for validation
         """
         self.metadata_schema = metadata_schema
-        self.params = []
+        self.params: list[Any] = []
         self.param_counter = 0
 
     def _get_next_param_name(self) -> str:
@@ -189,7 +189,7 @@ class FilterQueryBuilder:
                 return MetadataFieldType.TEXT
 
         field_def = self.metadata_schema.get(field)
-        return field_def.type if field_def else None
+        return field_def.type if field_def else None  # type: ignore[return-value]
 
     def _convert_value_for_type(self, value: Any, field_type: MetadataFieldType) -> Any:
         """Convert value to appropriate type for SQL parameter.
@@ -637,22 +637,22 @@ def check_metadata_condition(metadata: dict, field: str, condition: Union[dict, 
 
     # Direct equality comparison
     if not isinstance(condition, dict):
-        return value == condition
+        return bool(value == condition)
 
     # Operator-based comparison
     for op, target in condition.items():
         if op == "$eq":
-            return value == target
+            return bool(value == target)
         elif op == "$ne":
-            return value != target
+            return bool(value != target)
         elif op == "$gt":
-            return value > target if value is not None else False
+            return bool(value > target) if value is not None else False
         elif op == "$lt":
-            return value < target if value is not None else False
+            return bool(value < target) if value is not None else False
         elif op == "$gte":
-            return value >= target if value is not None else False
+            return bool(value >= target) if value is not None else False
         elif op == "$lte":
-            return value <= target if value is not None else False
+            return bool(value <= target) if value is not None else False
         elif op == "$ilike":
             return str(target).lower() in str(value).lower() if value is not None else False
         elif op == "$like":
@@ -666,9 +666,9 @@ def check_metadata_condition(metadata: dict, field: str, condition: Union[dict, 
                 return not all(t in value for t in ([target] if not isinstance(target, list) else target))
             return target not in str(value) if value is not None else True
         elif op == "$exists":
-            return (value is not None) == target
+            return bool((value is not None) == target)
         elif op == "$not_exists":
-            return (value is None) == target
+            return bool((value is None) == target)
         elif op == "$in":
             return value in target if isinstance(target, (list, tuple)) and value is not None else False
         elif op == "$nin":

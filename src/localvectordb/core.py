@@ -69,8 +69,8 @@ Document scoring methods for aggregating chunk scores:
 """
 
 
-def _adapt_datetime_with_tz(dt) -> str:
-    return dt.isoformat()
+def _adapt_datetime_with_tz(dt: datetime) -> str:
+    return str(dt.isoformat())
 
 
 def _convert_datetime_with_tz(dt) -> Optional[datetime]:
@@ -95,12 +95,13 @@ def _convert_datetime_with_tz(dt) -> Optional[datetime]:
         return None
 
 
-def _adapt_json(json_data) -> str:
-    return json.dumps(json_data)
+def _adapt_json(json_data: Any) -> str:
+    return str(json.dumps(json_data))
 
 
-def _convert_json(json_data) -> dict | list:
-    return json.loads(json_data.decode("utf-8"))
+def _convert_json(json_data: bytes) -> dict[Any, Any] | list[Any]:
+    result: dict[Any, Any] | list[Any] = json.loads(json_data.decode("utf-8"))
+    return result
 
 
 sqlite3.register_adapter(datetime, _adapt_datetime_with_tz)
@@ -483,7 +484,7 @@ class QueryResult:
         return None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "QueryResult":
+    def from_dict(cls, data: dict) -> Optional["QueryResult"]:
         """Create a QueryResult from a dictionary response"""
         if not data:
             return None

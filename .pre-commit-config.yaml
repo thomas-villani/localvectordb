@@ -18,15 +18,12 @@ repos:
         args: [-c, pyproject.toml]
         additional_dependencies: ["bandit[toml]"]
 
-  # mypy is run in CI but excluded from pre-commit hooks
-  # due to pre-existing type errors (605 errors in 33 files).
-  # Uncomment once type errors are resolved:
-  # - repo: local
-  #   hooks:
-  #     - id: mypy
-  #       name: mypy
-  #       entry: bash -c '.venv/Scripts/mypy.exe src/'
-  #       language: system
-  #       types: [python]
-  #       files: ^src/
-  #       pass_filenames: false
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: bash -c '.venv/Scripts/mypy.exe src/'
+        language: system
+        types: [python]
+        files: ^src/
+        pass_filenames: false

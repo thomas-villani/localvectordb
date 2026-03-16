@@ -164,7 +164,7 @@ class FactChecker:
             qr = await asyncio.to_thread(
                 db.query,
                 query,
-                search_type=self._search_type,
+                search_type=self._search_type,  # type: ignore[arg-type]
                 return_type="chunks",
                 k=self._top_k * 5,
                 score_threshold=self._similarity_threshold,
@@ -192,7 +192,7 @@ class FactChecker:
             qr = await asyncio.to_thread(
                 db.query,
                 query,
-                search_type=self._search_type,
+                search_type=self._search_type,  # type: ignore[arg-type]
                 return_type="chunks",
                 k=self._top_k,
                 score_threshold=self._similarity_threshold,

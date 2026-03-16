@@ -269,7 +269,7 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
             return text
 
         truncated_tokens = tokens[:max_tokens]
-        return tokenizer.decode(truncated_tokens)
+        return str(tokenizer.decode(truncated_tokens))
 
     def _validate_and_truncate_texts(self, texts: List[str]) -> List[str]:
         """Validate texts and truncate any that exceed max_input_tokens.
@@ -470,6 +470,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         return 64  # Ollama's typical batch size
 
     def _get_model_info(self, force: bool = False) -> List[Dict]:
+        assert self.base_url is not None
         if not self._model_info_cache or not self._model_info_cache.get(self.base_url) or force:
             with httpx.Client() as client:
                 response = client.get(f"{self.base_url}/api/tags", timeout=self.timeout)
@@ -908,7 +909,7 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
             return True
 
         url = f"{self.base_url}/models/{self.model}"
-        headers = {"x-goog-api-key": self.api_key}
+        headers: dict[str, str] = {"x-goog-api-key": self.api_key or ""}
         try:
             with httpx.Client() as client:
                 r = client.get(url, headers=headers, timeout=self.timeout)
@@ -939,8 +940,8 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         with httpx.Client(timeout=self.timeout) as client:
             try:
                 url = f"{self.base_url}/models/{self.model}:embedContent"
-                headers = {
-                    "x-goog-api-key": self.api_key,
+                headers: dict[str, str] = {
+                    "x-goog-api-key": self.api_key or "",
                     "Content-Type": "application/json",
                 }
 
@@ -974,8 +975,8 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
     ) -> List[List[float]]:
         url = f"{self.base_url}/models/{self.model}:embedContent"
-        headers = {
-            "x-goog-api-key": self.api_key,
+        headers: dict[str, str] = {
+            "x-goog-api-key": self.api_key or "",
             "Content-Type": "application/json",
         }
 
@@ -1177,7 +1178,8 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         if model not in self._MODEL_TASKS:
             self.task = None
         else:
-            allowed_tasks = self._MODEL_TASKS.get(model, [])
+            _tasks: Any = self._MODEL_TASKS.get(model)
+            allowed_tasks: list[Any] = list(_tasks) if _tasks is not None else []
             if self.task == "auto":
                 if allowed_tasks:
                     self.task = allowed_tasks[0]
@@ -1421,7 +1423,8 @@ class SentenceTransformerEmbeddings(EmbeddingProvider):
                 norms = np.linalg.norm(embeddings_np, axis=1, keepdims=True)
                 norms = np.where(norms > 0, norms, 1.0)
                 embeddings_np = embeddings_np / norms
-        return embeddings_np.tolist()
+        result: list[list[float]] = embeddings_np.tolist()
+        return result
 
 
 class HuggingFaceInferenceEmbeddings(HTTPEmbeddingProvider):
@@ -1702,7 +1705,8 @@ class HuggingFaceLocalEmbeddings(EmbeddingProvider):
         if self.normalize_embeddings:
             embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
-        return embeddings.cpu().numpy().tolist()
+        result: list[list[float]] = embeddings.cpu().numpy().tolist()
+        return result
 
 
 class MockEmbeddings(EmbeddingProvider):

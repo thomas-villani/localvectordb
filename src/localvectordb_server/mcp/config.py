@@ -19,7 +19,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, cast
 
 
 @dataclass
@@ -112,7 +112,7 @@ class MCPConfig:
         # Mode
         if mode := os.getenv("LVDB_MCP_MODE"):
             if mode in ("read-only", "read-write"):
-                config.mode = mode
+                config.mode = cast(Literal["read-only", "read-write"], mode)
 
         # Database root
         if root := os.getenv("LVDB_MCP_DATABASES_ROOT"):

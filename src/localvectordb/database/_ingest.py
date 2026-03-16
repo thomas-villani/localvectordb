@@ -25,7 +25,7 @@ import threading
 from abc import ABC
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 import aiosqlite
 import numpy as np
@@ -38,6 +38,13 @@ from localvectordb.exceptions import (
 from localvectordb.extractors import ExtractorRegistry
 from localvectordb.section_detection import SectionDetector
 from localvectordb.utils import parse_iso8601
+
+if TYPE_CHECKING:
+    from faiss import IndexIDMap2
+
+    from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
+    from localvectordb._schema import DatabaseSchema
+    from localvectordb.chunking import PositionTrackingChunker
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +196,60 @@ class ChunkBatchAccumulator:
 
 
 class PipelineMixin(LocalVectorDBBase, ABC):
+
+    # Redeclare attributes from LocalVectorDBBase and composed class as non-Optional.
+    # At runtime these are always initialized before any mixin methods are called.
+    _read_write_lock: "ReadWriteLock"
+    connection_pool: "ConnectionPool"
+    async_connection_pool: Optional["AsyncConnectionPool"]
+    index: "IndexIDMap2"
+    schema: "DatabaseSchema"
+    chunker: "PositionTrackingChunker"
+
+    # Declare attributes from the composed class not on LocalVectorDBBase.
+    _hierarchical_embeddings: bool
+    _faiss_lock: "ReadWriteLock"
+    _section_detector: Optional[SectionDetector]
+    _section_metadata_extractors: List[Any]
+    pipeline_worker_timeout: float
+    _batch_size: int
+
+    @property
+    def batch_size(self) -> int:
+        """Batch size for processing."""
+        return self._batch_size
+
+    def _get_faiss_metric_type(self) -> str:
+        """Get the FAISS metric type. Implemented in _core.py."""
+        raise NotImplementedError
+
+    def _similarity_to_distance(self, similarity: float, metric_type: Optional[str] = None) -> float:
+        """Convert similarity to FAISS distance. Implemented in _core.py."""
+        raise NotImplementedError
+
+    def _remove_section_vectors(self, faiss_ids: List[int]) -> None:
+        """Remove section vectors from FAISS index. Implemented in _core.py."""
+        raise NotImplementedError
+
+    def _remove_document_vectors(self, faiss_ids: List[int]) -> None:
+        """Remove document vectors from FAISS index. Implemented in _core.py."""
+        raise NotImplementedError
+
+    def _add_vectors_to_section_index(self, embeddings: np.ndarray, section_ids: np.ndarray) -> None:
+        """Add vectors to section FAISS index. Implemented in _core.py."""
+        raise NotImplementedError
+
+    def _add_vectors_to_document_index(self, embeddings: np.ndarray, doc_ids: np.ndarray) -> None:
+        """Add vectors to document FAISS index. Implemented in _core.py."""
+        raise NotImplementedError
+
+    def _create_flat_index(self) -> Any:
+        """Create a flat FAISS index. Implemented in _core.py."""
+        raise NotImplementedError
+
+    async def _generate_doc_id_async(self) -> str:
+        """Generate a unique document ID asynchronously. Implemented in _core.py."""
+        raise NotImplementedError
 
     # Pure business logic helpers for DRY elimination
     def _build_documents_bulk_insert_sql(self, mode: Literal["insert", "replace"] = "replace") -> tuple[str, List[str]]:
@@ -438,20 +499,20 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        file_paths_list: List[Path] = [Path(p) for p in file_paths]
         if isinstance(metadata, dict):
             metadata = [metadata]
         if isinstance(ids, str):
             ids = [ids]
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(file_paths_list):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(file_paths_list):
             raise ValueError("Number of IDs must match number of files")
         documents = []
         merged_metadata = []
         final_ids = []
         extractor_kwargs = extractor_kwargs or {}
-        for i, file_path in enumerate(file_paths):
+        for i, file_path in enumerate(file_paths_list):
             if not file_path.exists():
                 raise FileNotFoundError(f"File not found: {file_path}")
             file_content = file_path.read_bytes()
@@ -666,18 +727,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        file_paths_list: List[Path] = [Path(p) for p in file_paths]
         if isinstance(metadata, dict):
             metadata = [metadata]
         if isinstance(ids, str):
             ids = [ids]
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(file_paths_list):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(file_paths_list):
             raise ValueError("Number of IDs must match number of files")
         documents, merged_metadata, final_ids = [], [], []
         extractor_kwargs = extractor_kwargs or {}
-        for i, file_path in enumerate(file_paths):
+        for i, file_path in enumerate(file_paths_list):
             if not file_path.exists():
                 raise FileNotFoundError(f"File not found: {file_path}")
             file_content = file_path.read_bytes()
@@ -782,10 +843,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     normalized_chunks_by_document[doc_id] = normalized_chunks
             if not normalized_chunks_by_document:
                 return []
+            effective_batch_size = batch_size or self.batch_size
             result_ids = self._process_from_chunks_pipeline(
                 normalized_chunks_by_document,
                 metadata_to_insert,
-                batch_size,
+                effective_batch_size,
                 similarity_threshold,
                 mode="insert",
             )
@@ -1224,7 +1286,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         ]
         for w in workers:
             w.start()
-        processed_ids = []
+        processed_ids: List[str] = []
         try:
             while len(processed_ids) < total_docs:
                 result = result_queue.get()
@@ -1440,7 +1502,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         for w in workers:
             w.start()
         try:
-            processed_ids = database_worker()
+            db_result: List[str] = database_worker()
         finally:
             # Join workers with timeout to prevent hanging
             for w in workers:
@@ -1450,12 +1512,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         f"Worker {w.name} did not exit within "
                         f"{self.pipeline_worker_timeout} seconds, may be blocked"
                     )
-        return processed_ids
+        return db_result
 
     def _fetch_existing_chunks_batch(self, doc_ids: List[str]):
         if not doc_ids:
             return {}
-        existing = {}
+        existing: Dict[str, Dict[int, Dict[str, Any]]] = {}
         with self.connection_pool.get_connection() as conn:
             placeholders = ",".join(["?"] * len(doc_ids))
             query = f"""SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
@@ -1636,6 +1698,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 doc_text = doc_row["content"]
 
                 # Detect sections
+                assert self._section_detector is not None
                 section_boundaries = self._section_detector.detect_sections(doc_text)
 
                 # Get existing chunks
@@ -1721,10 +1784,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: Optional[int] = None,
+        batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
         max_concurrent_chunks: int = 3,
         max_concurrent_embeddings: int = 2,
+        **kwargs: Any,
     ) -> List[str]:
         """
         Async upsert with pipeline processing for maximum throughput
@@ -1844,14 +1908,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         loop = asyncio.get_event_loop()
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        file_paths_list: List[Path] = [Path(p) for p in file_paths]
         if isinstance(metadata, dict):
             metadata = [metadata]
         if isinstance(ids, str):
             ids = [ids]
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(file_paths_list):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(file_paths_list):
             raise ValueError("Number of IDs must match number of files")
 
         async def extract_file_text(file_path: Path, index: int):
@@ -1867,10 +1931,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
             return await loop.run_in_executor(None, _extract)
 
-        extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
+        extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths_list)]
         extraction_results = await asyncio.gather(*extraction_tasks)
         documents, merged_metadata, final_ids = [], [], []
-        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results, strict=False)):
+        for i, (file_path, extraction_result) in enumerate(zip(file_paths_list, extraction_results, strict=False)):
             documents.append(extraction_result.text)
             doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
             if metadata is not None and i < len(metadata):
@@ -1970,11 +2034,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: Optional[int] = None,
+        batch_size: int = 100,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         max_concurrent_chunks: int = 3,
         max_concurrent_embeddings: int = 2,
+        **kwargs: Any,
     ) -> List[str]:
         """
         Insert new documents into the database with async pipeline
@@ -2106,14 +2171,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         loop = asyncio.get_event_loop()
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        file_paths_list: List[Path] = [Path(p) for p in file_paths]
         if isinstance(metadata, dict):
             metadata = [metadata]
         if isinstance(ids, str):
             ids = [ids]
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(file_paths_list):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(file_paths_list):
             raise ValueError("Number of IDs must match number of files")
 
         async def extract_file_text(file_path: Path, index: int):
@@ -2129,10 +2194,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
             return await loop.run_in_executor(None, _extract)
 
-        extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths)]
+        extraction_tasks = [extract_file_text(file_path, i) for i, file_path in enumerate(file_paths_list)]
         extraction_results = await asyncio.gather(*extraction_tasks)
         documents, merged_metadata, final_ids = [], [], []
-        for i, (file_path, extraction_result) in enumerate(zip(file_paths, extraction_results, strict=False)):
+        for i, (file_path, extraction_result) in enumerate(zip(file_paths_list, extraction_results, strict=False)):
             documents.append(extraction_result.text)
             doc_metadata = extraction_result.metadata.copy() if extraction_result.metadata else {}
             if metadata is not None and i < len(metadata):
@@ -2147,7 +2212,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             documents=documents,
             metadata=merged_metadata,
             ids=final_ids,
-            batch_size=batch_size,
+            batch_size=batch_size or self.batch_size,
             similarity_threshold=similarity_threshold,
             errors=errors,
             max_concurrent_chunks=max_concurrent_chunks,
@@ -2250,6 +2315,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     async def _check_existing_ids_async(self, ids: List[str]) -> set:
         if not ids:
             return set()
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ",".join(["?"] * len(ids))
             cursor = await conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", ids)
@@ -2321,8 +2387,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 tasks.append(task)
 
             # Process completed tasks as they finish and send to next stage
-            for task in asyncio.as_completed(tasks):
-                chunk_data = await task
+            for completed_future in asyncio.as_completed(tasks):
+                chunk_data = await completed_future
                 await chunk_queue.put(chunk_data)
 
             # Signal completion to next stage
@@ -2498,8 +2564,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 tasks.append(task)
 
             # Process completed tasks as they finish and send to next stage
-            for task in asyncio.as_completed(tasks):
-                chunk_data = await task
+            for completed_future in asyncio.as_completed(tasks):
+                chunk_data = await completed_future
                 if chunk_data:
                     await processing_queue.put(chunk_data)
 
@@ -2597,10 +2663,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             logger.error(f"Error comparing chunks for document {doc_id}: {e}")
             return None
 
-    async def _fetch_existing_chunks_batch_async(self, doc_ids: List[str]):
+    async def _fetch_existing_chunks_batch_async(self, doc_ids: List[str]) -> Dict[str, Dict[int, Dict[str, Any]]]:
         if not doc_ids:
             return {}
-        existing = {}
+        existing: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ",".join(["?"] * len(doc_ids))
             query = f"""SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
@@ -2682,7 +2749,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         similarity_threshold: Optional[float],
         mode: Literal["upsert", "insert"] = "upsert",
     ) -> Optional[str]:
-        doc_id = chunk_data["doc_id"]
+        doc_id: str = chunk_data["doc_id"]
         try:
             unchanged_chunks = chunk_data["unchanged_chunks"]
             chunks_needing_embedding = chunk_data["chunks_needing_embedding"]
@@ -2726,6 +2793,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     (chunk_data["doc_id"], chunk_data["doc_text"], chunk_data["content_hash"], chunk_data["metadata"])
                 ]
                 chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
+                assert self.async_connection_pool is not None
                 async with self.async_connection_pool.get_connection_context() as conn:
                     try:
                         await conn.execute("BEGIN")
@@ -2845,6 +2913,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     async def _remove_old_document_data_async(self, doc_ids: List[str]) -> None:
         if not doc_ids:
             return
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ",".join(["?"] * len(doc_ids))
             cursor = await conn.execute(

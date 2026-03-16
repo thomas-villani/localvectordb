@@ -282,9 +282,9 @@ class BackupManager:
         db_version = self.version_manager.get_database_version()
 
         # Calculate checksums for all files in temp directory
-        file_paths = {}
-        checksums = {}
-        total_size = 0
+        file_paths: Dict[str, str] = {}
+        checksums: Dict[str, str] = {}
+        total_size: int = 0
 
         for file_path in temp_dir.iterdir():
             if file_path.is_file():
@@ -340,7 +340,7 @@ class BackupManager:
                 - faiss_id: FAISS vector ID (may be None)
                 - start_pos, end_pos: Character positions in document
         """
-        manifest = {"documents": {}}
+        manifest: Dict[str, Any] = {"documents": {}}
 
         try:
             with sqlite3.connect(db_path) as conn:
@@ -418,7 +418,7 @@ class BackupManager:
             CompressionAlgorithm.NONE: "w",
         }.get(self.config.compression_algorithm, "w")
 
-        with tarfile.open(backup_path, write_mode) as tar:
+        with tarfile.open(backup_path, write_mode) as tar:  # type: ignore[call-overload]
             for file_path in temp_dir.iterdir():
                 if file_path.is_file():
                     tar.add(file_path, arcname=file_path.name)
@@ -541,7 +541,7 @@ class BackupManager:
             backup_conn = sqlite3.connect(backup_db_path)
 
             # Store original pragmas from source
-            original_pragmas = {}
+            original_pragmas: Dict[str, Any] = {}
             pragma_queries = [
                 "PRAGMA synchronous",
                 "PRAGMA journal_mode",
@@ -603,7 +603,7 @@ class BackupManager:
 
     def _get_current_pragma_settings(self) -> Dict[str, Any]:
         """Get current pragma settings from the database for backup metadata."""
-        pragma_settings = {}
+        pragma_settings: Dict[str, Any] = {}
 
         try:
             # Use context manager to ensure connection is always closed
@@ -827,12 +827,12 @@ class BackupManager:
         List[BackupMetadata]
             List of backup metadata objects
         """
-        backups = []
+        backups: List[BackupMetadata] = []
 
         try:
             with sqlite3.connect(self.database_path) as conn:
                 query = "SELECT * FROM backup_log"
-                params = []
+                params: List[str] = []
 
                 if backup_type:
                     query += " WHERE backup_type = ?"
@@ -852,7 +852,7 @@ class BackupManager:
 
         return backups
 
-    def _backup_row_to_metadata(self, row: tuple) -> BackupMetadata:
+    def _backup_row_to_metadata(self, row: tuple[Any, ...]) -> BackupMetadata:
         """Convert database row to BackupMetadata object."""
         (
             backup_id,
@@ -883,7 +883,7 @@ class BackupManager:
 
     def _list_backups_from_filesystem(self, backup_type: Optional[BackupType] = None) -> List[BackupMetadata]:
         """List backups by scanning filesystem (fallback method)."""
-        backups = []
+        backups: List[BackupMetadata] = []
 
         for backup_file in self.config.backup_location.glob("*.lvdb-backup"):
             try:
@@ -1577,7 +1577,9 @@ class IncrementalBackupManager:
         """Ensure database is using WAL mode for incremental backups."""
         with sqlite3.connect(self.database_path) as conn:
             cursor = conn.execute("PRAGMA journal_mode")
-            current_mode = cursor.fetchone()[0]
+            mode_row = cursor.fetchone()
+            assert mode_row is not None
+            current_mode = mode_row[0]
 
             if current_mode.lower() != "wal":
                 logger.info("Enabling WAL mode for incremental backups")
@@ -1621,7 +1623,7 @@ class IncrementalBackupManager:
 
         logger.debug("Using manifest-based diffing for incremental backup")
 
-        changes = {
+        changes: Dict[str, Any] = {
             "has_changes": False,
             "changed_documents": [],
             "deleted_documents": [],
@@ -1673,7 +1675,7 @@ class IncrementalBackupManager:
 
             for row in cursor.fetchall():
                 doc_id, content, content_hash, updated_at = row
-                _changes: list[dict] = changes["changed_documents"]
+                _changes: List[Dict[str, Any]] = changes["changed_documents"]
                 _changes.append(
                     {"id": doc_id, "content": content, "content_hash": content_hash, "updated_at": updated_at}
                 )
@@ -1696,7 +1698,7 @@ class IncrementalBackupManager:
                     doc_ids,
                 )
 
-                chunks_by_doc = defaultdict(list)
+                chunks_by_doc: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
                 for row in cursor.fetchall():
                     doc_id = row[0]
                     chunk_data = {
@@ -1881,7 +1883,7 @@ class IncrementalBackupManager:
                 return
 
             # Create new index with only changed vectors
-            changed_vectors = []
+            changed_vectors: List[Any] = []
             for faiss_id in faiss_ids:
                 try:
                     # Get vector from original index
@@ -1914,7 +1916,7 @@ class IncrementalBackupManager:
     def _create_change_manifest(self, changes: Dict[str, Any], temp_dir: Path, parent_backup_id: str) -> None:
         """Create manifest describing the incremental changes."""
 
-        manifest = {
+        manifest: Dict[str, Any] = {
             "type": "incremental_changes",
             "parent_backup_id": parent_backup_id,
             "parent_timestamp": changes["parent_timestamp"].isoformat(),
@@ -2016,8 +2018,8 @@ class IncrementalBackupManager:
     def _build_backup_chain(self, target_backup_id: str) -> List[BackupMetadata]:
         """Build the chain of backups from full backup to target."""
 
-        chain = []
-        current_backup_id = target_backup_id
+        chain: List[BackupMetadata] = []
+        current_backup_id: Optional[str] = target_backup_id
 
         while current_backup_id:
             backup = self.backup_manager._find_backup_metadata(current_backup_id)
@@ -2125,7 +2127,7 @@ class IncrementalBackupManager:
 
                 if all_chunk_rows:
                     # Collect unique document IDs that need chunk replacement
-                    affected_doc_ids = set()
+                    affected_doc_ids: set[Any] = set()
                     for row in all_chunk_rows:
                         doc_id = row[1]  # document_id is second column
                         affected_doc_ids.add(doc_id)
@@ -2139,7 +2141,7 @@ class IncrementalBackupManager:
                         logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
 
                     # Bulk insert all new chunks
-                    chunk_insert_data = []
+                    chunk_insert_data: List[Any] = []
                     for row in all_chunk_rows:
                         chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
 
@@ -2186,7 +2188,7 @@ class IncrementalBackupManager:
             inc_ids = get_faiss_external_ids(inc_index)
 
             # Reconstruct vectors using external IDs (preferred method for IndexIDMap2)
-            inc_vectors = []
+            inc_vectors: List[Any] = []
             for fid in inc_ids:
                 try:
                     # Try direct reconstruction with external ID first
@@ -2200,7 +2202,7 @@ class IncrementalBackupManager:
                 logger.warning("No vectors could be reconstructed from incremental index")
                 return
 
-            inc_vectors = np.array(inc_vectors, dtype=np.float32)
+            inc_vectors = np.array(inc_vectors, dtype=np.float32)  # type: ignore[assignment]
 
             # Remove old vectors with same IDs and add new ones
             for inc_id in inc_ids:
@@ -2270,7 +2272,7 @@ class PointInTimeRecoveryManager:
         # Get all backups sorted by creation time
         backups = self.backup_manager.list_backups()
 
-        recovery_points = []
+        recovery_points: List[Dict[str, Any]] = []
         for backup in backups:
             recovery_points.append(
                 {
@@ -2454,8 +2456,8 @@ class PointInTimeRecoveryManager:
         logger.info("Validating recovery timeline")
 
         timeline = self.get_recovery_timeline()
-        issues = []
-        warnings = []
+        issues: List[str] = []
+        warnings: List[str] = []
 
         # Check for gaps in the timeline
         full_backups = [p for p in timeline if p["backup_type"] == "full"]
@@ -2497,7 +2499,7 @@ class PointInTimeRecoveryManager:
                     )
 
         # Calculate recovery window
-        recovery_window = None
+        recovery_window: Optional[Dict[str, Any]] = None
         if timeline:
             earliest = min(p["timestamp"] for p in timeline)
             latest = max(p["timestamp"] for p in timeline)
@@ -2546,8 +2548,8 @@ class PointInTimeRecoveryManager:
         full_backups.sort(key=lambda x: x["timestamp"], reverse=True)  # Newest first
 
         # Determine which backups to delete
-        backups_to_delete = []
-        backups_to_keep = []
+        backups_to_delete: List[Dict[str, Any]] = []
+        backups_to_keep: List[Dict[str, Any]] = []
 
         # Always keep the most recent full backups
         recent_full_backups = full_backups[:keep_full_backups]
@@ -2580,7 +2582,7 @@ class PointInTimeRecoveryManager:
                 backups_to_keep.append(backup)
 
         deleted_count = 0
-        deletion_errors = []
+        deletion_errors: List[str] = []
 
         if not dry_run:
             for backup in backups_to_delete:
@@ -2630,7 +2632,7 @@ class PointInTimeRecoveryManager:
         before_points = [p for p in timeline if p["timestamp"] <= target_timestamp]
         after_points = [p for p in timeline if p["timestamp"] > target_timestamp]
 
-        recommendations = []
+        recommendations: List[Dict[str, Any]] = []
 
         if before_points:
             closest_before = max(before_points, key=lambda x: x["timestamp"])

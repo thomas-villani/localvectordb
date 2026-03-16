@@ -72,7 +72,7 @@ class APIError(Exception):
 class ValidationError(APIError):
     """Error for input validation failures"""
 
-    def __init__(self, message: str, field: str = None, value: Any = None, **kwargs):
+    def __init__(self, message: str, field: Optional[str] = None, value: Any = None, **kwargs: Any):
         details = kwargs.pop("details", {})
         if field:
             details["field"] = field
@@ -109,13 +109,14 @@ def standardize_error_response(
 
     # Handle HTTP exceptions from Werkzeug
     if isinstance(error, HTTPException):
+        status_code = error.code if error.code is not None else 500
         api_error = APIError(
             message=error.description or str(error),
-            error_code=f"HTTP_{error.code}",
-            status_code=error.code,
-            recoverable=error.code < 500,
+            error_code=f"HTTP_{status_code}",
+            status_code=status_code,
+            recoverable=status_code < 500,
         )
-        return api_error.to_dict(), error.code
+        return api_error.to_dict(), status_code
 
     # Handle LocalVectorDB exceptions
     if isinstance(error, DatabaseNotFoundError):
@@ -219,7 +220,9 @@ def validate_required_fields(data: Dict[str, Any], required_fields: list) -> Non
         )
 
 
-def validate_field_type(data: Dict[str, Any], field: str, expected_type: type, required: bool = False) -> None:
+def validate_field_type(
+    data: Dict[str, Any], field: str, expected_type: "type | tuple[type, ...]", required: bool = False
+) -> None:
     """Validate field type in request data"""
     if field not in data:
         if required:

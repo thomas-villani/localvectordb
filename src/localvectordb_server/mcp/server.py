@@ -45,7 +45,7 @@ class MCPManager:
 
     def __init__(self, config: MCPConfig):
         self.config = config
-        self.databases = {}  # Cache for database instances
+        self.databases: Dict[str, Any] = {}  # Cache for database instances
         self._lock = asyncio.Lock()
 
     async def get_database(self, name: str):
@@ -78,7 +78,7 @@ class MCPManager:
 
     async def list_databases(self) -> List[str]:
         """List available databases"""
-        databases = []
+        databases: List[str] = []
 
         # Add explicitly mapped databases
         databases.extend(self.config.databases_map.keys())
@@ -230,6 +230,13 @@ def register_tool(name: str, read_only: bool = True):
     return decorator
 
 
+def _get_manager() -> "MCPManager":
+    """Get the MCP manager instance, raising if not initialized."""
+    if mcp_manager is None:
+        raise RuntimeError("MCP manager not initialized")
+    return mcp_manager
+
+
 def register_mcp_tool(func):
     """Helper to register a function as an MCP tool with proper metadata"""
     return mcp.tool()(func)
@@ -247,8 +254,9 @@ async def list_databases() -> Dict[str, Any]:
         Dictionary with database names and count
     """
     try:
-        databases = await mcp_manager.list_databases()
-        return {"databases": databases, "count": len(databases), "mode": mcp_manager.config.mode}
+        manager = _get_manager()
+        databases = await manager.list_databases()
+        return {"databases": databases, "count": len(databases), "mode": manager.config.mode}
     except Exception as e:
         logger.error(f"Error listing databases: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -266,7 +274,8 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
         Database statistics and configuration
     """
     try:
-        db = await mcp_manager.get_database(database_name)
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
 
         # Get stats
         stats = db.get_stats()
@@ -338,7 +347,8 @@ async def query_database(
         Search results with scores and metadata
     """
     try:
-        db = await mcp_manager.get_database(database_name)
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
 
         # Use async query if available
         if hasattr(db, "query_async"):
@@ -421,7 +431,8 @@ async def filter_documents(
         Filtered documents
     """
     try:
-        db = await mcp_manager.get_database(database_name)
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
 
         # Use filter method
         if hasattr(db, "filter_async"):
@@ -462,7 +473,8 @@ async def get_document(database_name: str, document_id: str) -> Dict[str, Any]:
         Document content and metadata
     """
     try:
-        db = await mcp_manager.get_database(database_name)
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
 
         # Get document
         if hasattr(db, "get_async"):
@@ -500,7 +512,8 @@ async def check_documents_exist(database_name: str, document_ids: List[str]) -> 
         Dictionary mapping document IDs to existence status
     """
     try:
-        db = await mcp_manager.get_database(database_name)
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
 
         # Check existence
         if hasattr(db, "exists_async"):
@@ -527,7 +540,8 @@ async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
         Metadata schema definition
     """
     try:
-        db = await mcp_manager.get_database(database_name)
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
 
         if hasattr(db, "metadata_schema") and db.metadata_schema:
             schema = {}
@@ -551,14 +565,25 @@ async def get_system_info() -> Dict[str, Any]:
         System version, configuration, and status
     """
     try:
-        return {
-            "version": get_system_version(),
-            "mode": mcp_manager.config.mode if mcp_manager else "not_initialized",
-            "database_root": mcp_manager.config.databases_root if mcp_manager else None,
-            "available_providers": EmbeddingRegistry.list(),
-            "databases_count": len(await mcp_manager.list_databases()) if mcp_manager else 0,
-            "enabled_tools": mcp_manager.config.get_enabled_tools() if mcp_manager else [],
-        }
+        if mcp_manager is not None:
+            manager = mcp_manager
+            return {
+                "version": get_system_version(),
+                "mode": manager.config.mode,
+                "database_root": manager.config.databases_root,
+                "available_providers": EmbeddingRegistry.list(),
+                "databases_count": len(await manager.list_databases()),
+                "enabled_tools": manager.config.get_enabled_tools(),
+            }
+        else:
+            return {
+                "version": get_system_version(),
+                "mode": "not_initialized",
+                "database_root": None,
+                "available_providers": EmbeddingRegistry.list(),
+                "databases_count": 0,
+                "enabled_tools": [],
+            }
     except Exception as e:
         logger.error(f"Error getting system info: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -593,10 +618,11 @@ async def create_database(
         Database configuration and status
     """
     try:
-        mcp_manager.config.check_write_permission("create_database")
+        manager = _get_manager()
+        manager.config.check_write_permission("create_database")
 
         # Build kwargs from provided parameters
-        kwargs = {}
+        kwargs: Dict[str, Any] = {}
         if embedding_provider:
             kwargs["embedding_provider"] = embedding_provider
         if embedding_model:
@@ -609,7 +635,7 @@ async def create_database(
             kwargs["chunk_overlap"] = chunk_overlap
 
         # Create database
-        db = await mcp_manager.create_database(name=name, metadata_schema=metadata_schema, **kwargs)
+        db = await manager.create_database(name=name, metadata_schema=metadata_schema, **kwargs)
 
         return {
             "message": f"Successfully created database '{name}'",
@@ -617,12 +643,12 @@ async def create_database(
             "config": {
                 "name": db.name,
                 "embedding_provider": kwargs.get(
-                    "embedding_provider", mcp_manager.config.db_defaults["embedding_provider"]
+                    "embedding_provider", manager.config.db_defaults["embedding_provider"]
                 ),
-                "embedding_model": kwargs.get("embedding_model", mcp_manager.config.db_defaults["embedding_model"]),
-                "chunking_method": kwargs.get("chunking_method", mcp_manager.config.db_defaults["chunking_method"]),
-                "chunk_size": kwargs.get("chunk_size", mcp_manager.config.db_defaults["chunk_size"]),
-                "chunk_overlap": kwargs.get("chunk_overlap", mcp_manager.config.db_defaults["chunk_overlap"]),
+                "embedding_model": kwargs.get("embedding_model", manager.config.db_defaults["embedding_model"]),
+                "chunking_method": kwargs.get("chunking_method", manager.config.db_defaults["chunking_method"]),
+                "chunk_size": kwargs.get("chunk_size", manager.config.db_defaults["chunk_size"]),
+                "chunk_overlap": kwargs.get("chunk_overlap", manager.config.db_defaults["chunk_overlap"]),
             },
         }
 
@@ -645,9 +671,10 @@ async def delete_database(name: str) -> Dict[str, Any]:
         Deletion status
     """
     try:
-        mcp_manager.config.check_write_permission("delete_database")
+        manager = _get_manager()
+        manager.config.check_write_permission("delete_database")
 
-        await mcp_manager.delete_database(name)
+        await manager.delete_database(name)
 
         return {"message": f"Successfully deleted database '{name}'", "status": "success"}
 
@@ -682,7 +709,8 @@ async def upsert_documents(
         Document IDs and operation status
     """
     try:
-        mcp_manager.config.check_write_permission("upsert_documents")
+        manager = _get_manager()
+        manager.config.check_write_permission("upsert_documents")
 
         # Normalize inputs
         if isinstance(documents, str):
@@ -693,7 +721,7 @@ async def upsert_documents(
             ids = [ids]
 
         # Get database
-        db = await mcp_manager.get_database(database_name)
+        db = await manager.get_database(database_name)
 
         # Upsert documents
         if hasattr(db, "upsert_async"):
@@ -739,9 +767,10 @@ async def update_document(
         Update status
     """
     try:
-        mcp_manager.config.check_write_permission("update_document")
+        manager = _get_manager()
+        manager.config.check_write_permission("update_document")
 
-        db = await mcp_manager.get_database(database_name)
+        db = await manager.get_database(database_name)
 
         # Update document
         if hasattr(db, "update_async"):
@@ -773,9 +802,10 @@ async def delete_document(database_name: str, document_id: str) -> Dict[str, Any
         Deletion status
     """
     try:
-        mcp_manager.config.check_write_permission("delete_document")
+        manager = _get_manager()
+        manager.config.check_write_permission("delete_document")
 
-        db = await mcp_manager.get_database(database_name)
+        db = await manager.get_database(database_name)
 
         # Delete document
         if hasattr(db, "delete_async"):
@@ -812,9 +842,10 @@ async def update_metadata_schema(database_name: str, metadata_schema: Dict[str, 
         Update status
     """
     try:
-        mcp_manager.config.check_write_permission("update_metadata_schema")
+        manager = _get_manager()
+        manager.config.check_write_permission("update_metadata_schema")
 
-        db = await mcp_manager.get_database(database_name)
+        db = await manager.get_database(database_name)
 
         # Parse metadata schema
         parsed_schema = parse_metadata_schema(metadata_schema)

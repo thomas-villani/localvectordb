@@ -9,7 +9,7 @@ with structured logging, error handling, and performance monitoring.
 import ipaddress
 import logging
 import os
-from typing import Union
+from typing import Any, Optional, Union
 
 from flask import Flask, abort, request
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -38,9 +38,9 @@ try:
     _FLASK_LIMITER_AVAILABLE = True
 except ImportError:
     _FLASK_LIMITER_AVAILABLE = False
-    Limiter = None
+    Limiter: Any = None  # type: ignore[no-redef]
 
-    def get_remote_address():
+    def get_remote_address() -> Optional[str]:  # type: ignore[misc]
         return None
 
 
@@ -120,7 +120,7 @@ def create_app(
     flask_config = _config.to_flask_config()
 
     app.config.update(flask_config)
-    app.config_obj = _config
+    setattr(app, "config_obj", _config)  # noqa: B010
 
     # Configure enhanced logging first
     log_file = None
@@ -241,12 +241,9 @@ def create_app(
 
         if _config.server.proxy_settings:
             logger.debug(f"Proxy settings: {_config.server.proxy_settings}")
-            app.wsgi_app = ProxyFix(app.wsgi_app, **_config.server.proxy_settings)
+            app.wsgi_app = ProxyFix(app.wsgi_app, **_config.server.proxy_settings)  # type: ignore[method-assign]
         else:  # Default config, single proxy, forward
-            app.wsgi_app = ProxyFix(
-                app.wsgi_app,
-                x_for=1,  # Number of proxies setting X-Forwarded-For, one for single proxy
-            )
+            app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)  # type: ignore[method-assign]
 
     if _config.server.security.security_headers_enabled:
         security_config = {
@@ -277,7 +274,7 @@ def create_app(
             default_limits=[_config.server.rate_limit],
             storage_uri=_config.server.rate_limit_storage_uri,
         )
-        app.limiter = limiter
+        setattr(app, "limiter", limiter)  # noqa: B010
         logger.info(f"Rate limiting enabled: {_config.server.rate_limit}")
 
     # Initialize caching
@@ -291,15 +288,14 @@ def create_app(
 
     # Initialize database manager with error handling
     try:
-        app.db_manager = DatabaseManager(app)
+        setattr(app, "db_manager", DatabaseManager(app))  # noqa: B010
         logger.info("Database manager initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database manager: {e}", exc_info=True)
         raise ConfigurationError(f"Database manager initialization failed: {e}") from e
 
-    app.key_manager = KeyManager(
-        _config.server.security.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db")
-    )
+    key_db_path = _config.server.security.key_database_path or os.path.join(_config.database.root_dir, "api_keys.db")
+    setattr(app, "key_manager", KeyManager(key_db_path))  # noqa: B010
 
     # Register blueprints
     from localvectordb_server.routes import api
@@ -318,7 +314,7 @@ def create_app(
                 app.config["SECRET_KEY"] = os.urandom(32)
             logger.info("Inspector UI registered at /inspector")
 
-            if not app.config_obj.server.security.require_api_key:
+            if not getattr(app, "config_obj").server.security.require_api_key:  # noqa: B009
                 logger.warning("Inspector enabled without api-key protection.")
                 logger.warning(
                     "**The inspector is available and allows full database access to anyone with "
@@ -327,7 +323,7 @@ def create_app(
 
         except ImportError as e:
             logger.warning(f"Inspector UI not available: {e}")
-            inspector_bp = None
+            inspector_bp = None  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Failed to register inspector UI: {e}")
     else:

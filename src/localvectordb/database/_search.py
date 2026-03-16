@@ -22,18 +22,42 @@ import logging
 import math
 from abc import ABC
 from collections import defaultdict
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
-from localvectordb.core import ChunkPosition, DocumentScoringMethod, QueryResult
+from localvectordb.core import ChunkPosition, DocumentScoringMethod, MetadataFieldType, QueryResult
 from localvectordb.database.base import LocalVectorDBBase
+
+if TYPE_CHECKING:
+    from faiss import IndexIDMap2
+
+    from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
+    from localvectordb.section_detection import SectionDetector
 
 logger = logging.getLogger(__name__)
 
 
 class SearchMixin(LocalVectorDBBase, ABC):
+
+    # Redeclare attributes from LocalVectorDBBase and composed class as non-Optional.
+    # At runtime these are always initialized before any mixin methods are called.
+    _read_write_lock: "ReadWriteLock"
+    connection_pool: "ConnectionPool"
+    async_connection_pool: Optional["AsyncConnectionPool"]
+    index: Optional["IndexIDMap2"]
+
+    # Declare attributes from the composed class not on LocalVectorDBBase.
+    _hierarchical_embeddings: bool
+    _faiss_lock: "ReadWriteLock"
+    section_index: Optional["IndexIDMap2"]
+    document_index: Optional["IndexIDMap2"]
+    _section_detector: Optional["SectionDetector"]
+
+    def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float:
+        """Convert FAISS distance to similarity score. Implemented in _core.py."""
+        raise NotImplementedError
 
     # -----------------
     # Helper methods
@@ -74,7 +98,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """Calculate similarities between query and field embeddings (pure business logic)"""
         query_embedding_2d = query_embedding.reshape(1, -1)
         similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
-        scores = (similarities + 1) / 2  # Normalize to [0, 1]
+        scores: np.ndarray = (similarities + 1) / 2  # Normalize to [0, 1]
         return scores
 
     def _filter_and_sort_by_scores(self, scores: np.ndarray, score_threshold: float, k: int) -> np.ndarray:
@@ -260,8 +284,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
             elif reranker_config:
                 from localvectordb.reranking import RerankerRegistry
 
+                _provider: str = reranker_config.get("provider", "")
                 _reranker = RerankerRegistry.create_reranker(
-                    reranker_config.get("provider"),
+                    _provider,
                     reranker_config.get("model"),
                     **{kk: v for kk, v in reranker_config.items() if kk not in ("provider", "model")},
                 )
@@ -282,12 +307,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_window: int,
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         query_embeddings = self.embedding_provider.embed_sync([query])
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
+        assert self.index is not None
         with self._faiss_lock.read_lock():
             distances, indices = self.index.search(query_embedding, initial_k)
         valid_results, valid_faiss_ids = [], []
@@ -383,7 +409,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 # Parse JSON fields if needed
                 if value is not None and col_name in self.metadata_schema:
                     field_def = self.metadata_schema[col_name]
-                    if field_def.type.name == "JSON" and isinstance(value, str):
+                    if (
+                        isinstance(field_def.type, MetadataFieldType)
+                        and field_def.type.name == "JSON"
+                        and isinstance(value, str)
+                    ):
                         try:
                             import json
 
@@ -410,7 +440,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_window: int,
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.warning("FTS not available, returning empty results")
@@ -515,7 +545,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_window: int,
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.info("FTS not available, falling back to vector search")
@@ -829,11 +859,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         np.ndarray
 
         """
-        single_id = isinstance(chunk_ids, str)
-        if single_id:
-            chunk_ids = [chunk_ids]
+        chunk_ids_list: List[str] = [chunk_ids] if isinstance(chunk_ids, str) else list(chunk_ids)
         chunk_list = []
-        for cid in chunk_ids:
+        for cid in chunk_ids_list:
             doc_id, chunk_idx = self._split_chunk_id(cid)
             if chunk_idx == -1:
                 raise ValueError(f"Expected chunk ids (e.g. doc_1:1), found: {cid}")
@@ -971,7 +999,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     end_index = chunk_index + context_window
                     ranges_needed.append((start_index, end_index, chunk_index, result))
                 merged_ranges = self._merge_overlapping_ranges(ranges_needed)
-                all_chunk_indices = set()
+                all_chunk_indices: set[int] = set()
                 for start, end, _, _ in merged_ranges:
                     all_chunk_indices.update(range(start, end + 1))
                 if not all_chunk_indices:
@@ -1116,7 +1144,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 all_matched_indices = [chunk_index for chunk_index, _ in chunk_requests]
                 all_matched_results = [result for _, result in chunk_requests]
                 relevant_chunks = set()
-                similarity_scores = {}
+                similarity_scores: Dict[int, float] = {}
                 for chunk_index in all_matched_indices:
                     if chunk_index not in doc_chunks:
                         continue
@@ -1199,15 +1227,16 @@ class SearchMixin(LocalVectorDBBase, ABC):
         self,
         chunk_results: List[QueryResult],
         method: DocumentScoringMethod = "frequency_boost",
-        method_options: dict = None,
+        method_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         if not chunk_results:
             return []
         method_options = method_options or {}
-        doc_groups = defaultdict(list)
+        doc_groups: Dict[str, List[QueryResult]] = defaultdict(list)
         for result in chunk_results:
             doc_id = result.document_id if result.type == "chunk" else result.id
-            doc_groups[doc_id].append(result)
+            if doc_id is not None:
+                doc_groups[doc_id].append(result)
         all_doc_ids = list(doc_groups.keys())
         if not all_doc_ids:
             return []
@@ -1223,7 +1252,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
             )
             doc_content_map = {row["id"]: row["content"] for row in cursor.fetchall()}
             doc_metadata_batch = self._get_documents_metadata_batch(conn, all_doc_ids)
-        return self._compute_document_scores(method, method_options, doc_groups, doc_content_map, doc_metadata_batch)
+        scored_results: List[QueryResult] = self._compute_document_scores(
+            method, method_options, doc_groups, doc_content_map, doc_metadata_batch
+        )
+        return scored_results
 
     @staticmethod
     def _compute_document_scores(method, method_options, doc_groups, doc_content_map, doc_metadata_batch):
@@ -1391,7 +1423,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
         Query across multiple columns (main content + embedding-enabled metadata fields)
@@ -1648,14 +1680,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 ),
             )
 
-        query_embedding = None
+        query_embedding: Optional[np.ndarray] = None
         if search_type in ["vector", "hybrid"]:
             query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
         results = await self._search_with_embedding_async(
             query,
             query_embedding,
             search_type,
-            return_type,
+            return_type if return_type != "sections" else "chunks",
             k,
             score_threshold,
             filters,
@@ -1672,8 +1704,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         elif reranker_config:
             from localvectordb.reranking import RerankerRegistry
 
+            _async_provider: str = reranker_config.get("provider", "")
             _reranker = RerankerRegistry.create_reranker(
-                reranker_config.get("provider"),
+                _async_provider,
                 reranker_config.get("model"),
                 **{kk: v for kk, v in reranker_config.items() if kk not in ("provider", "model")},
             )
@@ -1686,7 +1719,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query: str,
         query_embedding: Optional[np.ndarray],
         search_type: Literal["vector", "keyword", "hybrid"],
-        return_type: Literal["documents", "chunks", "context", "enriched"],
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"],
         k: int,
         score_threshold: float,
         filters: Optional[Dict[str, Any]],
@@ -1694,12 +1727,16 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_window: int,
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
+        effective_return_type: Literal["documents", "chunks", "context", "enriched"] = (
+            "chunks" if return_type == "sections" else return_type
+        )
         if search_type == "vector":
+            assert query_embedding is not None
             results = await self._vector_search_with_embedding_async(
                 query_embedding,
-                return_type,
+                effective_return_type,
                 k,
                 score_threshold,
                 filters,
@@ -1711,7 +1748,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         elif search_type == "keyword":
             results = await self._keyword_search_async(
                 query,
-                return_type,
+                effective_return_type,
                 k,
                 score_threshold,
                 filters,
@@ -1721,10 +1758,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 document_scoring_options,
             )
         elif search_type == "hybrid":
+            assert query_embedding is not None
             results = await self._hybrid_search_with_embedding_async(
                 query,
                 query_embedding,
-                return_type,
+                effective_return_type,
                 k,
                 score_threshold,
                 filters,
@@ -1823,6 +1861,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         metadata_columns = list(self.metadata_schema.keys())
         metadata_select = ", ".join([f"d.{col}" for col in metadata_columns]) if metadata_columns else ""
         metadata_select_clause = f", {metadata_select}" if metadata_select else ""
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             sql = f"""
                 SELECT c.document_id, c.chunk_index, c.content, c.faiss_id,
@@ -1953,6 +1992,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             JOIN documents d ON d.id = c.document_id
             WHERE c.faiss_id IN ({placeholders})
         """
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             cursor = await conn.execute(sql, faiss_ids)
             rows = await cursor.fetchall()
@@ -1972,7 +2012,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 value = row[field_name]
                 if value is not None:
                     field_def = self.metadata_schema[field_name]
-                    if field_def.type.name == "JSON" and isinstance(value, str):
+                    if (
+                        isinstance(field_def.type, MetadataFieldType)
+                        and field_def.type.name == "JSON"
+                        and isinstance(value, str)
+                    ):
                         try:
                             value = json.loads(value)
                         except (json.JSONDecodeError, TypeError):
@@ -2015,6 +2059,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not all_columns:
             return {doc_id: {} for doc_id in doc_ids}
         sql = f"SELECT {', '.join(all_columns)} FROM documents WHERE id IN ({','.join(['?' for _ in doc_ids])})"
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             cursor = await conn.execute(sql, doc_ids)
             rows = await cursor.fetchall()
@@ -2027,7 +2072,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 value = row[field_name]
                 if value is not None:
                     field_def = self.metadata_schema[field_name]
-                    if field_def.type.name == "JSON" and isinstance(value, str):
+                    if (
+                        isinstance(field_def.type, MetadataFieldType)
+                        and field_def.type.name == "JSON"
+                        and isinstance(value, str)
+                    ):
                         try:
                             value = json.loads(value)
                         except (json.JSONDecodeError, TypeError):
@@ -2061,7 +2110,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             return results
         if return_type == "documents":
             return await self._aggregate_document_scores_with_method_async(
-                results, document_scoring_method, document_scoring_options
+                results, document_scoring_method, document_scoring_options or {}
             )
         elif return_type == "enriched":
             return await self._enrich_with_intra_doc_context_async(results, context_window)
@@ -2086,6 +2135,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             chunk_results = chunk_results[:max_candidates]
 
         chunk_identifiers = [(r.document_id, self._extract_chunk_index_from_id(r.id)) for r in chunk_results]
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ",".join(["(?,?)"] * len(chunk_identifiers))
             query = f"""
@@ -2139,18 +2189,20 @@ class SearchMixin(LocalVectorDBBase, ABC):
         self,
         chunk_results: List[QueryResult],
         method: DocumentScoringMethod = "frequency_boost",
-        method_options: dict = None,
+        method_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         if not chunk_results:
             return []
         method_options = method_options or {}
-        doc_groups = defaultdict(list)
+        doc_groups: Dict[str, List[QueryResult]] = defaultdict(list)
         for result in chunk_results:
             doc_id = result.document_id if result.type == "chunk" else result.id
-            doc_groups[doc_id].append(result)
+            if doc_id is not None:
+                doc_groups[doc_id].append(result)
         all_doc_ids = list(doc_groups.keys())
         if not all_doc_ids:
             return []
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ",".join(["?"] * len(all_doc_ids))
             cursor = await conn.execute(
@@ -2182,6 +2234,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             doc_id = result.document_id
             chunk_index = self._extract_chunk_index_from_id(result.id)
             doc_chunk_requests[doc_id].append((chunk_index, result))
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             for doc_id, chunk_requests in doc_chunk_requests.items():
                 ranges_needed = []
@@ -2190,7 +2243,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     end_index = chunk_index + context_window
                     ranges_needed.append((start_index, end_index, chunk_index, result))
                 merged_ranges = self._merge_overlapping_ranges(ranges_needed)
-                all_chunk_indices = set()
+                all_chunk_indices: set[int] = set()
                 for start, end, _, _ in merged_ranges:
                     all_chunk_indices.update(range(start, end + 1))
                 if not all_chunk_indices:
@@ -2273,6 +2326,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             return results
         enriched_results: List[QueryResult] = []
         doc_chunks_to_enrich = defaultdict(list)
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             for result in results:
                 if result.type != "chunk":
@@ -2448,16 +2502,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # Use shared business logic for SQL construction
         sql, params = self._build_metadata_field_search_sql(field_name)
 
+        assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             # Get all metadata field embeddings
             cursor = await conn.execute(sql, params)
-            field_embedding_data = await cursor.fetchall()
+            field_embedding_data_rows = list(await cursor.fetchall())
 
-            if not field_embedding_data:
+            if not field_embedding_data_rows:
                 return []
 
             # Extract FAISS IDs for this field
-            faiss_ids = [row["faiss_id"] for row in field_embedding_data]
+            faiss_ids = [row["faiss_id"] for row in field_embedding_data_rows]
 
             if not faiss_ids:
                 return []
@@ -2485,12 +2540,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
             results = []
 
             # Get document metadata for all results in batch
-            doc_ids = [field_embedding_data[idx]["document_id"] for idx in sorted_indices]
+            doc_ids = [field_embedding_data_rows[idx]["document_id"] for idx in sorted_indices]
             doc_metadata_batch = await self._get_document_metadata_async(doc_ids)
 
             # Build results using shared business logic
             for idx in sorted_indices:
-                row_data = field_embedding_data[idx]
+                row_data = field_embedding_data_rows[idx]
                 doc_metadata = doc_metadata_batch.get(row_data["document_id"], {})
                 result = self._create_metadata_search_result(row_data, field_name, scores[idx], doc_metadata)
                 results.append(result)
@@ -2517,7 +2572,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
         Async query across multiple columns (main content + embedding-enabled metadata fields)

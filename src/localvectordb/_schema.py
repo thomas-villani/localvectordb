@@ -504,7 +504,7 @@ class DatabaseSchema:
             # For other errors, also return False to fall back gracefully
             return False
 
-    def _get_sqlite_version(self, conn: sqlite3.Connection) -> tuple:
+    def _get_sqlite_version(self, conn: sqlite3.Connection) -> tuple[int, ...]:
         """
         Get SQLite version as a tuple for comparison.
 
@@ -518,7 +518,9 @@ class DatabaseSchema:
         tuple
             SQLite version as (major, minor, patch) tuple
         """
-        version_string = conn.execute("SELECT sqlite_version()").fetchone()[0]
+        row = conn.execute("SELECT sqlite_version()").fetchone()
+        assert row is not None
+        version_string: str = row[0]
         return tuple(map(int, version_string.split(".")))
 
     def _supports_drop_column(self, conn: sqlite3.Connection) -> bool:
@@ -736,6 +738,7 @@ class DatabaseSchema:
 
     def _get_sqlite_type_mapping(self, field_def: MetadataField) -> str:
         """Get SQLite type for metadata field (pure business logic)"""
+        assert isinstance(field_def.type, MetadataFieldType)
         sqlite_type_map = {
             MetadataFieldType.TEXT: "TEXT",
             MetadataFieldType.INTEGER: "INTEGER",
@@ -754,6 +757,7 @@ class DatabaseSchema:
         Instead, defaults are populated via immediate UPDATE after column creation.
         This prevents SQL injection from unescaped default values.
         """
+        assert isinstance(field_def.type, MetadataFieldType)
         if field_def.default_value is None:
             return ""
 
@@ -929,6 +933,7 @@ class DatabaseSchema:
                 )
 
             # Store schema definition
+            assert isinstance(field_def.type, MetadataFieldType)
             self._sync_executor.execute(
                 conn,
                 """INSERT OR REPLACE INTO metadata_schema
@@ -990,6 +995,7 @@ class DatabaseSchema:
                 )
 
             # Store schema definition (fixed to include embedding_enabled and fts_enabled)
+            assert isinstance(field_def.type, MetadataFieldType)
             await self._async_executor.execute(
                 conn,
                 """INSERT OR REPLACE INTO metadata_schema
@@ -1268,7 +1274,7 @@ class DatabaseSchema:
             if db_connection is None:
                 db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
-            changes = {
+            changes: Dict[str, Any] = {
                 "added_fields": [],
                 "removed_fields": [],
                 "modified_fields": [],
@@ -1305,7 +1311,9 @@ class DatabaseSchema:
                         # Validate required fields have defaults if they're new
                         if field_def.required and field_name not in current_schema and field_def.default_value is None:
                             # Check if we have documents that would need this field
-                            doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                            count_row = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+                            assert count_row is not None
+                            doc_count = count_row[0]
                             if doc_count > 0:
                                 raise ValueError(
                                     f"Required field '{field_name}' must have a default_value when added to "
@@ -1343,6 +1351,7 @@ class DatabaseSchema:
                             # New field - add it
                             try:
                                 # Store schema definition
+                                assert isinstance(field_def.type, MetadataFieldType)
                                 conn.execute(
                                     """INSERT OR REPLACE INTO metadata_schema
                                     (field_name, field_type, indexed, required, default_value)
@@ -1369,7 +1378,9 @@ class DatabaseSchema:
                                         changes["populated_defaults"].append(populated_info)
 
                                 # Add warning for nullable new fields on existing documents
-                                doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                                count_row = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+                                assert count_row is not None
+                                doc_count = count_row[0]
                                 if doc_count > 0 and field_def.default_value is None:
                                     changes["warnings"].append(
                                         f"New field '{field_name}' added to database with existing documents. "
@@ -1383,9 +1394,11 @@ class DatabaseSchema:
                             # Existing field - check if it needs updates
                             current_field = current_schema[field_name]
                             field_changed = False
-                            change_details = {}
+                            change_details: Dict[str, Any] = {}
 
                             # Check if any properties changed
+                            assert isinstance(current_field.type, MetadataFieldType)
+                            assert isinstance(field_def.type, MetadataFieldType)
                             if current_field.type != field_def.type:
                                 change_details["type"] = {"old": current_field.type.value, "new": field_def.type.value}
                                 field_changed = True
@@ -1528,8 +1541,8 @@ class DatabaseSchema:
                                             # Validate field_name for safe use in DDL
                                             validate_sql_identifier(field_name)
                                             # First drop any FTS triggers and tables
-                                            current_field = current_schema.get(field_name)
-                                            if current_field and getattr(current_field, "fts_enabled", False):
+                                            drop_field: Optional[MetadataField] = current_schema.get(field_name)
+                                            if drop_field and getattr(drop_field, "fts_enabled", False):
                                                 fts_table_name = f"fts_{field_name}"
                                                 try:
                                                     # Drop FTS triggers (names derived from validated field_name)
@@ -1613,6 +1626,8 @@ class DatabaseSchema:
             # Validate that the types are compatible
             old_field = current_schema[old_col]
             new_field = new_schema[new_col]
+            assert isinstance(old_field.type, MetadataFieldType)
+            assert isinstance(new_field.type, MetadataFieldType)
             if not self._are_types_compatible(old_field.type, new_field.type):
                 raise ValueError(
                     f"Cannot remap '{old_col}' (type: {old_field.type.value}) to "
@@ -1651,7 +1666,7 @@ class DatabaseSchema:
         new_schema: Dict[str, MetadataField],
     ) -> Dict[str, Any]:
         """Perform the actual column remapping operations"""
-        remap_changes = {"remapped_columns": [], "warnings": [], "errors": []}
+        remap_changes: Dict[str, Any] = {"remapped_columns": [], "warnings": [], "errors": []}
 
         for old_col, new_col in column_mapping.items():
             try:
@@ -1698,6 +1713,8 @@ class DatabaseSchema:
             raise ValueError(f"Target column '{new_col}' does not exist in documents table")
 
         # Get the data transfer SQL based on type compatibility
+        assert isinstance(old_field.type, MetadataFieldType)
+        assert isinstance(new_field.type, MetadataFieldType)
         transfer_sql = self._get_transfer_sql(old_col, new_col, old_field.type, new_field.type)
 
         # Execute the transfer
@@ -1783,7 +1800,7 @@ class DatabaseSchema:
 
     async def _setup_metadata_schema_async(self, conn, schema: Dict[str, MetadataField]) -> None:
         """Set up metadata schema and add columns to documents table asynchronously"""
-        return await self._core_setup_metadata_schema_async(conn, schema)
+        await self._core_setup_metadata_schema_async(conn, schema)
 
     async def _add_metadata_column_async(self, conn, field_name: str, field_def: MetadataField) -> None:
         """Add a metadata column to the documents table asynchronously"""
@@ -1904,7 +1921,9 @@ class DatabaseSchema:
         if owns_connection:
             db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
-        changes = {
+        assert db_connection is not None
+
+        changes: Dict[str, Any] = {
             "added_fields": [],
             "removed_fields": [],
             "modified_fields": [],
@@ -1950,9 +1969,11 @@ class DatabaseSchema:
                     else:
                         # Check for modifications
                         old_def = current_schema[field_name]
-                        modifications = []
+                        modifications: List[Dict[str, Any]] = []
 
                         # Check type change
+                        assert isinstance(old_def.type, MetadataFieldType)
+                        assert isinstance(field_def.type, MetadataFieldType)
                         if old_def.type != field_def.type:
                             if not self._are_types_compatible(old_def.type, field_def.type):
                                 changes["warnings"].append(
@@ -2027,6 +2048,7 @@ class DatabaseSchema:
 
                 # Update metadata_schema table for all fields in new schema
                 for field_name, field_def in new_schema.items():
+                    assert isinstance(field_def.type, MetadataFieldType)
                     await db_connection.execute(
                         """
                         INSERT OR REPLACE INTO metadata_schema
@@ -2083,6 +2105,8 @@ class DatabaseSchema:
             # Check type compatibility
             old_type = current_schema[old_name].type
             new_type = new_schema[new_name].type
+            assert isinstance(old_type, MetadataFieldType)
+            assert isinstance(new_type, MetadataFieldType)
             if not self._are_types_compatible(old_type, new_type):
                 errors.append(
                     f"Incompatible types for mapping '{old_name}' ({old_type.value}) "
@@ -2128,6 +2152,8 @@ class DatabaseSchema:
     ) -> int:
         """Transfer data from old column to new column asynchronously"""
         # Get the appropriate SQL for data transfer
+        assert isinstance(field_def.type, MetadataFieldType)
+        assert isinstance(old_field_def.type, MetadataFieldType)
         transfer_sql = self._get_transfer_sql(old_name, new_name, field_def.type, old_field_def.type)
 
         # Execute the transfer
@@ -2163,6 +2189,7 @@ class DatabaseSchema:
         # Check how many rows would be affected
         cursor = await conn.execute(f"SELECT COUNT(*) FROM documents WHERE {where_clause}")
         row = await cursor.fetchone()
+        assert row is not None
         null_count = row[0]
 
         if null_count == 0:
@@ -2244,4 +2271,4 @@ def get_common_metadata_schemas(
                 f"Schema `{schema}` was not found in predefined schema templates. Available options: "
                 f"{", ".join(schemas.keys())}"
             )
-        return schemas.get(schema)
+        return schemas[schema]

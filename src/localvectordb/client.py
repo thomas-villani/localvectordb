@@ -121,13 +121,18 @@ MongoDB-like filtering::
     either local or remote databases with minimal changes.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+
+if TYPE_CHECKING:
+    pass
 
 import httpx
 import numpy as np
@@ -185,17 +190,17 @@ class RemoteQueryBuilder:
     def __init__(self, db: "RemoteVectorDB"):
         """Initialize the RemoteQueryBuilder."""
         self._db = db
-        self._search_clauses = []
-        self._exact_filters = []
-        self._semantic_filters = []
+        self._search_clauses: List[Dict[str, Any]] = []
+        self._exact_filters: List[Dict[str, Any]] = []
+        self._semantic_filters: List[Dict[str, Any]] = []
         self._search_type = "hybrid"
         self._vector_weight = 0.7
         self._return_type = "documents"
-        self._order_by = []
+        self._order_by: List[Dict[str, str]] = []
         self._limit = 10
         self._offset = 0
-        self._group_by = []
-        self._aggregations = []
+        self._group_by: List[str] = []
+        self._aggregations: List[Dict[str, Any]] = []
 
     def clone(self) -> "RemoteQueryBuilder":
         """Create a copy of the current builder state."""
@@ -429,6 +434,7 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
 
     def get_dimension(self) -> int:
         """Get embedding dimension"""
+        assert self._dimension is not None, "Embedding dimension must be set"
         return self._dimension
 
     async def _embed_single_batch(self, texts, client: Optional[httpx.AsyncClient] = None, **kwargs):
@@ -517,7 +523,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         name: str,
         base_url: str = "http://127.0.0.1:5000",
-        api_key: str = None,
+        api_key: Optional[str] = None,
         *,
         create_if_not_exists: bool = True,
         metadata_schema: Optional[Dict[str, MetadataField]] = None,
@@ -531,7 +537,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         enable_fts: bool = True,
         sqlite_profile: SqliteProfile = "balanced",
         sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
-        request_timeout: int = None,
+        request_timeout: Optional[int] = None,
         authorization_header: str = "Authorization",
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -543,11 +549,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         api_key_env_var = "LVDB_API_KEY"
         # Allow the user to specify an environment variable by prefixing $
-        if api_key and api_key.startswith("$") and api_key[1:].isupper():
-            api_key_env_var = api_key[1:]
-            api_key = None
+        resolved_api_key: Optional[str] = api_key
+        if resolved_api_key and resolved_api_key.startswith("$") and resolved_api_key[1:].isupper():
+            api_key_env_var = resolved_api_key[1:]
+            resolved_api_key = None
 
-        self.api_key = api_key or os.getenv(api_key_env_var)
+        self.api_key = resolved_api_key or os.getenv(api_key_env_var)
         self.request_timeout = request_timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -556,7 +563,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         )
 
         # Configuration
-        self._metadata_schema = metadata_schema or {}
+        self._metadata_schema: Dict[str, MetadataField] = metadata_schema or {}
         self._embedding_provider = embedding_provider
         self._embedding_model = embedding_model
         self._embedding_config = embedding_config or {}
@@ -569,15 +576,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
         self._authorization_header = authorization_header
 
-        self._last_ping_timestamp = 0
+        self._last_ping_timestamp: float = 0
         self._last_ping_status = False
 
         # State variables to be loaded from server
         self._embedding_dimension = 0
 
         # HTTP clients for connection pooling (initialize before making requests)
-        self._sync_client = None
-        self._client = None
+        self._sync_client: Optional[httpx.Client] = None
+        self._client: Optional[httpx.AsyncClient] = None
 
         # Check if database exists and create if needed
         if create_if_not_exists:
@@ -607,7 +614,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             )
         return self._sync_client
 
-    def _make_request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response | None:
+    def _make_request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
         """Make HTTP request with exponential backoff retry"""
 
         last_exception = None
@@ -653,11 +660,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Should not reach here, but just in case
         if last_exception:
             raise last_exception
-        return None
+        raise RuntimeError("Unexpected: no response and no exception after retries")
 
-    def _get_headers(self) -> dict:
+    def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests including authentication if provided"""
-        headers = {"Content-Type": "application/json"}
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers[self._authorization_header] = f"Bearer {self.api_key}"
         return headers
@@ -691,11 +698,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         return error_type, error_msg
 
-    def _handle_response(self, response: httpx.Response) -> dict:
+    def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
         """Handle API response and raise appropriate exceptions"""
         if response.status_code == 200:
             try:
-                return response.json()
+                result: Dict[str, Any] = response.json()
+                return result
             except ValueError as e:
                 logger.warning(f"Failed to parse successful response as JSON: {e}")
                 raise BaseLocalVectorDBException(f"Invalid JSON response from server: {response.text[:200]}") from e
@@ -747,11 +755,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         config = db_info.get("config", {})
         self._embedding_provider = config.get("embedding_provider", self._embedding_provider)
         self._embedding_model = config.get("embedding_model", self._embedding_model)
-        self._embedding_dimension = config.get("embedding_dimension", 0)
-        self._chunking_method = config.get("chunking_method", self._chunking_method)
-        self._chunk_size = config.get("chunk_size", self._chunk_size)
-        self._chunk_overlap = config.get("chunk_overlap", self._chunk_overlap)
-        self._enable_fts = config.get("fts_enabled", self._enable_fts)
+        self._embedding_dimension = int(config.get("embedding_dimension", 0))
+        self._chunking_method = str(config.get("chunking_method", self._chunking_method))
+        self._chunk_size = int(config.get("chunk_size", self._chunk_size))
+        self._chunk_overlap = int(config.get("chunk_overlap", self._chunk_overlap))
+        self._enable_fts = bool(config.get("fts_enabled", self._enable_fts))
 
         self._last_ping_timestamp = time.time()
         self._last_ping_status = True
@@ -772,11 +780,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url("/api/v1/databases")
 
         # Serialize metadata schema
-        metadata_schema_data = {}
+        metadata_schema_data: Dict[str, Any] = {}
         if self.metadata_schema:
             for field_name, field_def in self.metadata_schema.items():
+                field_type = field_def.type
+                type_value = field_type.value if isinstance(field_type, MetadataFieldType) else str(field_type)
                 metadata_schema_data[field_name] = {
-                    "type": field_def.type.value,
+                    "type": type_value,
                     "indexed": field_def.indexed,
                     "required": field_def.required,
                     "default_value": field_def.default_value,
@@ -801,7 +811,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         created_db_info = self._handle_response(response)
         config = created_db_info.get("config", {})
-        self._embedding_dimension = config.get("embedding_dimension", 0)
+        self._embedding_dimension = int(config.get("embedding_dimension", 0))
 
     @property
     def embedding_provider(self) -> EmbeddingProvider:
@@ -851,7 +861,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/info")
         response = self._make_request_with_retry("GET", url)
         db_info = self._handle_response(response)
-        return db_info.get("stats", {})
+        stats: Dict[str, Any] = db_info.get("stats", {})
+        return stats
 
     def upsert(
         self,
@@ -906,7 +917,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     def insert(
         self,
@@ -964,7 +976,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -990,7 +1003,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("count", 0)
+        count: int = result.get("count", 0)
+        return count
 
     def upsert_from_file(
         self,
@@ -1034,7 +1048,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Normalize file paths to list
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        resolved_paths: List[Path] = [Path(p) for p in file_paths]
 
         # Normalize other inputs
         if isinstance(metadata, dict):
@@ -1043,15 +1057,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             ids = [ids]
 
         # Validate inputs
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(resolved_paths):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(resolved_paths):
             raise ValueError("Number of IDs must match number of files")
 
         # Check files exist
-        for file_path in file_paths:
-            if not file_path.exists():
-                raise FileNotFoundError(f"File not found: {file_path}")
+        for fp in resolved_paths:
+            if not fp.exists():
+                raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
@@ -1074,12 +1088,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Prepare files for streaming upload
         files = []
         file_handles = []
-        result = {}
+        result: Dict[str, Any] = {}
         try:
-            for file_path in file_paths:
-                file_handle = open(file_path, "rb")
+            for fp in resolved_paths:
+                file_handle = open(fp, "rb")
                 file_handles.append(file_handle)
-                files.append(("files", (file_path.name, file_handle, "application/octet-stream")))
+                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
 
             # Make request with streaming files
             response = self._make_request_with_retry("POST", url, data=form_data, files=files)
@@ -1092,7 +1106,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 except Exception:
                     pass  # Ignore close errors
 
-        return result.get("document_ids", [])
+        doc_ids: List[str] = result.get("document_ids", [])
+        return doc_ids
 
     def insert_from_file(
         self,
@@ -1141,7 +1156,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Normalize file paths to list
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        resolved_paths: List[Path] = [Path(p) for p in file_paths]
 
         # Normalize other inputs
         if isinstance(metadata, dict):
@@ -1150,15 +1165,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             ids = [ids]
 
         # Validate inputs
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(resolved_paths):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(resolved_paths):
             raise ValueError("Number of IDs must match number of files")
 
         # Check files exist
-        for file_path in file_paths:
-            if not file_path.exists():
-                raise FileNotFoundError(f"File not found: {file_path}")
+        for fp in resolved_paths:
+            if not fp.exists():
+                raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
@@ -1181,12 +1196,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Prepare files for streaming upload
         files = []
         file_handles = []
-        result = {}
+        result: Dict[str, Any] = {}
         try:
-            for file_path in file_paths:
-                file_handle = open(file_path, "rb")
+            for fp in resolved_paths:
+                file_handle = open(fp, "rb")
                 file_handles.append(file_handle)
-                files.append(("files", (file_path.name, file_handle, "application/octet-stream")))
+                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
 
             # Make request with streaming files
             response = self._make_request_with_retry("POST", url, data=form_data, files=files)
@@ -1199,7 +1214,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 except Exception:
                     pass  # Ignore close errors
 
-        return result.get("document_ids", [])
+        doc_ids: List[str] = result.get("document_ids", [])
+        return doc_ids
 
     def upsert_from_chunks(
         self,
@@ -1230,29 +1246,26 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             List of document IDs that were upserted
         """
         # Convert Chunk objects to serializable format
-        serializable_chunks = {}
+        serializable_chunks: Dict[str, Any] = {}
         for doc_id, chunks in chunks_by_document.items():
-            if chunks and hasattr(chunks[0], "__dict__"):
+            if chunks and isinstance(chunks[0], Chunk):
                 # Convert Chunk objects to dicts
                 serializable_chunks[doc_id] = [
-                    (
-                        {
-                            "text": chunk.content,
-                            "position": chunk.position.to_dict(),
-                            "total_chunks": getattr(chunk, "total_chunks", len(chunks)),
-                            "metadata": getattr(chunk, "metadata", {}),
-                        }
-                        if hasattr(chunk, "content")
-                        else str(chunk)
-                    )
-                    for chunk in chunks
+                    {
+                        "text": c.content,
+                        "position": c.position.to_dict(),
+                        "total_chunks": getattr(c, "total_chunks", len(chunks)),
+                        "metadata": getattr(c, "metadata", {}),
+                    }
+                    for c in chunks
+                    if isinstance(c, Chunk)
                 ]
             else:
                 # Already strings or serializable
-                serializable_chunks[doc_id] = chunks
+                serializable_chunks[doc_id] = [str(c) for c in chunks]
 
         # Prepare request payload
-        payload = {"chunks_by_document": serializable_chunks, "batch_size": batch_size}
+        payload: Dict[str, Any] = {"chunks_by_document": serializable_chunks, "batch_size": batch_size}
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -1264,7 +1277,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     def insert_from_chunks(
         self,
@@ -1301,29 +1315,30 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             If a document ID already exists and errors="raise"
         """
         # Convert Chunk objects to serializable format
-        serializable_chunks = {}
+        serializable_chunks: Dict[str, Any] = {}
         for doc_id, chunks in chunks_by_document.items():
-            if chunks and hasattr(chunks[0], "__dict__"):
+            if chunks and isinstance(chunks[0], Chunk):
                 # Convert Chunk objects to dicts
                 serializable_chunks[doc_id] = [
-                    (
-                        {
-                            "text": chunk.content,
-                            "position": chunk.position.to_dict(),
-                            "total_chunks": getattr(chunk, "total_chunks", len(chunks)),
-                            "metadata": getattr(chunk, "metadata", {}),
-                        }
-                        if hasattr(chunk, "content")
-                        else str(chunk)
-                    )
-                    for chunk in chunks
+                    {
+                        "text": c.content,
+                        "position": c.position.to_dict(),
+                        "total_chunks": getattr(c, "total_chunks", len(chunks)),
+                        "metadata": getattr(c, "metadata", {}),
+                    }
+                    for c in chunks
+                    if isinstance(c, Chunk)
                 ]
             else:
                 # Already strings or serializable
-                serializable_chunks[doc_id] = chunks
+                serializable_chunks[doc_id] = [str(c) for c in chunks]
 
         # Prepare request payload
-        payload = {"chunks_by_document": serializable_chunks, "batch_size": batch_size, "errors": errors}
+        payload: Dict[str, Any] = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": batch_size,
+            "errors": errors,
+        }
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -1335,7 +1350,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     def get(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """
@@ -1356,17 +1372,17 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         DocumentNotFoundError
             If any requested documents are not found
         """
-        single_id = isinstance(ids, str)
-        requested_ids = [ids] if single_id else ids
-
-        if single_id:
+        if isinstance(ids, str):
             url = self._build_url(f"/api/v1/{self.name}/documents/{ids}")
             response = self._make_request_with_retry("GET", url)
 
             result = self._handle_response(response)
             doc = Document.from_dict(result)
+            if doc is None:
+                raise DocumentNotFoundError(f"Document not found: {ids}")
             return doc
         else:
+            requested_ids: List[str] = ids
             url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(requested_ids)}")
             response = self._make_request_with_retry("GET", url)
 
@@ -1375,7 +1391,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             if missing_ids:
                 raise DocumentNotFoundError(f"Documents not found: {', '.join(missing_ids)}", missing_ids)
 
-            documents = [Document.from_dict(d) for d in result["documents"]]
+            documents: List[Document] = []
+            for d in result["documents"]:
+                parsed = Document.from_dict(d)
+                if parsed is not None:
+                    documents.append(parsed)
 
             # Ensure documents are returned in the same order as requested
             id_to_doc = {doc.id: doc for doc in documents}
@@ -1403,7 +1423,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         results = self._handle_response(response)
 
-        embeddings = results.get("embeddings")[0] if single_id else results.get("embeddings")
+        all_embeddings: Any = results.get("embeddings", [])
+        embeddings = all_embeddings[0] if single_id else all_embeddings
         return np.array(embeddings)
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
@@ -1427,7 +1448,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = self._make_request_with_retry("POST", url, json=payload)
         results = self._handle_response(response)
 
-        return results.get("exists")[0] if single_id else results.get("exists")
+        exists_list: List[bool] = results.get("exists", [])
+        if single_id:
+            return exists_list[0]
+        return exists_list
 
     def delete(self, ids: Union[str, List[str]]) -> int:
         """
@@ -1449,10 +1473,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Use batch endpoint for multiple IDs (threshold: 2+ IDs)
         if len(ids) >= 2:
             url = self._build_url(f"/api/v1/{self.name}/documents/delete")
-            payload = {"ids": ids}
+            payload: Dict[str, Any] = {"ids": ids}
             response = self._make_request_with_retry("POST", url, json=payload)
             result = self._handle_response(response)
-            return result.get("deleted_count", 0)
+            count: int = result.get("deleted_count", 0)
+            return count
 
         # Single ID: use original DELETE endpoint
         deleted_count = 0
@@ -1460,7 +1485,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
             response = self._make_request_with_retry("DELETE", url)
             result = self._handle_response(response)
-            deleted_count += result.get("deleted_count", 0)
+            deleted_count += int(result.get("deleted_count", 0))
 
         return deleted_count
 
@@ -1485,7 +1510,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if not content and not metadata:
             return False
 
-        payload = {}
+        payload: Dict[str, Any] = {}
         if content is not None:
             payload["content"] = content
         if metadata is not None:
@@ -1496,7 +1521,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         try:
             result = self._handle_response(response)
-            return result.get("updated", False)
+            updated: bool = result.get("updated", False)
+            return updated
         except DatabaseNotFoundError:
             return False
 
@@ -1505,7 +1531,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         query: str,
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "vector",
-        return_type: Literal["documents", "chunks", "context", "enriched"] = "documents",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
@@ -1514,7 +1541,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         context_window: int = 2,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -1574,7 +1603,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_results = result.get("results", [])
-        return [QueryResult.from_dict(res) for res in raw_results]
+        return [r for res in raw_results if (r := QueryResult.from_dict(res)) is not None]
 
     def query_multi_column(
         self,
@@ -1588,7 +1617,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
         Query across multiple columns (main content + embedding-enabled metadata fields)
@@ -1646,7 +1675,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_results = result.get("results", [])
-        return [QueryResult.from_dict(res) for res in raw_results]
+        return [r for res in raw_results if (r := QueryResult.from_dict(res)) is not None]
 
     def filter(
         self,
@@ -1772,7 +1801,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
 
         # Prepare request payload
-        payload = {"where": where, "offset": offset}
+        payload: Dict[str, Any] = {"where": where, "offset": offset}
 
         if order_by is not None:
             payload["order_by"] = order_by
@@ -1786,9 +1815,14 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_docs = result.get("documents", [])
-        return [Document.from_dict(doc) for doc in raw_docs]
+        documents: List[Document] = []
+        for doc_data in raw_docs:
+            parsed = Document.from_dict(doc_data)
+            if parsed is not None:
+                documents.append(parsed)
+        return documents
 
-    def query_builder(self) -> RemoteQueryBuilder:
+    def query_builder(self) -> Any:
         """
         Create a new RemoteQueryBuilder for this database.
 
@@ -1844,7 +1878,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_results = result.get("results", [])
-        return [QueryResult.from_dict(res) for res in raw_results]
+        return [r for res in raw_results if (r := QueryResult.from_dict(res)) is not None]
 
     async def _execute_query_builder_async(self, query_state: Dict[str, Any]) -> List[QueryResult]:
         """
@@ -1861,14 +1895,14 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             The query results
         """
         url = self._build_url(f"/api/v1/{self.name}/query_builder")
-        response = await self._make_async_request_with_retry("POST", url, json=query_state)
+        response = await self._make_request_with_retry_async("POST", url, json=query_state)
         result = self._handle_response(response)
 
         # Process results
         raw_results = result.get("results", [])
-        return [QueryResult.from_dict(res) for res in raw_results]
+        return [r for res in raw_results if (r := QueryResult.from_dict(res)) is not None]
 
-    def save(self):
+    def save(self) -> None:
         """Save the database (no-op for remote client)"""
         # No-op for remote client - server handles saving automatically
         pass
@@ -1946,29 +1980,30 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         - Changes are applied in a transaction and rolled back on error
         """
         # Handle different input formats
+        schema_data: Union[str, Dict[str, Any]]
         if isinstance(new_schema, str):
             # Send schema name to server
             schema_data = new_schema
         elif isinstance(new_schema, dict):
             # Convert to server-compatible format
-            schema_data = {}
+            schema_dict: Dict[str, Any] = {}
             for field_name, field_def in new_schema.items():
                 if isinstance(field_def, str):
                     # Simple type string
-                    schema_data[field_name] = field_def
+                    schema_dict[field_name] = field_def
                 elif isinstance(field_def, tuple):
                     # Tuple format: (type, indexed) or (type, indexed, required)
                     if len(field_def) == 2:
                         field_type, indexed = field_def
-                        schema_data[field_name] = {"type": field_type, "indexed": indexed}
+                        schema_dict[field_name] = {"type": field_type, "indexed": indexed}
                     elif len(field_def) == 3:
                         field_type, indexed, required = field_def
-                        schema_data[field_name] = {"type": field_type, "indexed": indexed, "required": required}
+                        schema_dict[field_name] = {"type": field_type, "indexed": indexed, "required": required}
                     else:
                         raise ValueError(f"Tuple definition for '{field_name}' must have 2 or 3 elements")
                 elif hasattr(field_def, "type"):
                     # MetadataField object
-                    schema_data[field_name] = {
+                    schema_dict[field_name] = {
                         "type": field_def.type.value if hasattr(field_def.type, "value") else str(field_def.type),
                         "indexed": field_def.indexed,
                         "required": field_def.required,
@@ -1976,9 +2011,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                     }
                 elif isinstance(field_def, dict):
                     # Dictionary configuration
-                    schema_data[field_name] = field_def
+                    schema_dict[field_name] = field_def
                 else:
                     raise ValueError(f"Invalid field definition for '{field_name}': {type(field_def)}")
+            schema_data = schema_dict
         else:
             raise ValueError("new_schema must be a string, dictionary, or MetadataField mapping")
 
@@ -1986,7 +2022,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             raise ValueError(f"column_mapping must be None or a dict, found: {type(column_mapping)}")
 
         # Prepare request payload
-        payload = {"metadata_schema": schema_data, "drop_columns": drop_columns, "column_mapping": column_mapping}
+        payload: Dict[str, Any] = {
+            "metadata_schema": schema_data,
+            "drop_columns": drop_columns,
+            "column_mapping": column_mapping,
+        }
 
         url = self._build_url(f"/api/v1/{self.name}/schema")
         response = self._make_request_with_retry("PUT", url, json=payload)
@@ -2004,7 +2044,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                     default_value=field_config.get("default_value"),
                 )
 
-        return result.get("changes", {})
+        changes: Dict[str, Any] = result.get("changes", {})
+        return changes
 
     def get_metadata_schema_info(self) -> Dict[str, Any]:
         """
@@ -2038,7 +2079,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/schema")
         response = self._make_request_with_retry("GET", url)
         result = self._handle_response(response)
-        return result.get("schema_info", {})
+        schema_info: Dict[str, Any] = result.get("schema_info", {})
+        return schema_info
 
     @property
     def healthy(self) -> bool:
@@ -2077,7 +2119,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Return False to indicate connection is not closed
         return False
 
-    def ping(self, force=False):
+    def ping(self, force: bool = False) -> bool:
         now = time.time()
         if now - self._last_ping_timestamp < 60 and self._last_ping_status and not force:
             return self._last_ping_status
@@ -2085,13 +2127,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url("/api/v1/databases")
         response = self._make_request_with_retry("GET", url)
         data = self._handle_response(response)
-        databases = data.get("databases", [])
+        databases: List[str] = data.get("databases", [])
 
         self._last_ping_status = self.name in databases
         self._last_ping_timestamp = now
         return self._last_ping_status
 
-    def close(self):
+    def close(self) -> None:
         """Close the database connection and HTTP clients"""
         # Close sync client if it exists
         if self._sync_client is not None and not self._sync_client.is_closed:
@@ -2099,45 +2141,51 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             self._sync_client = None
 
         # Close async client if it exists (requires running from async context or event loop)
-        if self._client is not None and not self._client.is_closed:
+        async_client = self._client
+        if async_client is not None and not async_client.is_closed:
             try:
                 # Try to get current event loop to close async client properly
-                import asyncio
-
                 loop = asyncio.get_running_loop()
                 # If we're in an async context, schedule the close
-                loop.create_task(self._client.aclose())
+                loop.create_task(async_client.aclose())
                 self._client = None
             except RuntimeError:
                 # No event loop running - create one briefly to close the client
                 try:
-                    asyncio.run(self._client.aclose())
+                    asyncio.run(async_client.aclose())
                     self._client = None
                 except Exception:
                     # If closing fails, at least clear the reference to prevent further use
                     self._client = None
 
-    def __enter__(self):
+    def __enter__(self) -> "RemoteVectorDB":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "RemoteVectorDB":
         """Async context manager entry"""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit"""
         await self.close_async()
 
     def hybrid_query(
-        self, query_text: str, k: int = 10, vector_weight: float = 0.7, metadata_filters: dict = None, **kwargs
+        self,
+        query_text: str,
+        k: int = 10,
+        vector_weight: float = 0.7,
+        metadata_filters: Optional[dict] = None,
+        **kwargs: Any,
     ) -> List[QueryResult]:
         """Legacy method for backward compatibility - use query() instead"""
         return self.query(query_text, search_type="hybrid", k=k, filters=metadata_filters, vector_weight=vector_weight)
 
-    def keyword_search(self, query_text: str, k: int = 10, metadata_filters: dict = None) -> List[QueryResult]:
+    def keyword_search(
+        self, query_text: str, k: int = 10, metadata_filters: Optional[dict] = None
+    ) -> List[QueryResult]:
         """Legacy method for backward compatibility - use query() instead"""
         return self.query(query_text, search_type="keyword", k=k, filters=metadata_filters)
 
@@ -2146,8 +2194,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         cls,
         db_name: str,
         base_url: str = "http://127.0.0.1:5000",
-        api_key: str = None,
-        authorization_header="Authorization",
+        api_key: Optional[str] = None,
+        authorization_header: str = "Authorization",
     ) -> bool:
         """Check if a database exists on the server"""
         url = f"{base_url}/api/v1/databases"
@@ -2180,7 +2228,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             )
         return self._client
 
-    async def _make_request_with_retry_async(self, method: str, url: str, **kwargs) -> httpx.Response | None:
+    async def _make_request_with_retry_async(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         """Make HTTP request with exponential backoff retry"""
         client = await self._ensure_client()
 
@@ -2227,14 +2275,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Should not reach here, but just in case
         if last_exception:
             raise last_exception
-        return None
+        raise RuntimeError("Unexpected: no response and no exception after retries")
 
     async def get_stats_async(self) -> Dict[str, Any]:
         """Get database statistics"""
         url = self._build_url(f"/api/v1/{self.name}/info")
         response = await self._make_request_with_retry_async("GET", url)
         db_info = self._handle_response(response)
-        return db_info.get("stats", {})
+        stats: Dict[str, Any] = db_info.get("stats", {})
+        return stats
 
     async def upsert_async(
         self,
@@ -2290,7 +2339,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     async def insert_async(
         self,
@@ -2350,17 +2400,19 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     async def upsert_from_file_async(
         self,
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
         extractor_kwargs: Optional[Dict[str, Any]] = None,
-        **kwargs,
     ) -> List[str]:
         """
         Insert or update documents from files using file extraction (async).
@@ -2395,7 +2447,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Normalize file paths to list
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        resolved_paths: List[Path] = [Path(p) for p in file_paths]
 
         # Normalize other inputs
         if isinstance(metadata, dict):
@@ -2404,21 +2456,22 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             ids = [ids]
 
         # Validate inputs
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(resolved_paths):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(resolved_paths):
             raise ValueError("Number of IDs must match number of files")
 
         # Check files exist
-        for file_path in file_paths:
-            if not file_path.exists():
-                raise FileNotFoundError(f"File not found: {file_path}")
+        for fp in resolved_paths:
+            if not fp.exists():
+                raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
 
         # Build form data
-        form_data = {"batch_size": str(batch_size), "mode": "upsert"}  # Specify upsert mode
+        effective_batch_size = batch_size if batch_size is not None else 100
+        form_data = {"batch_size": str(effective_batch_size), "mode": "upsert"}  # Specify upsert mode
 
         if metadata is not None:
             form_data["metadata"] = json.dumps(metadata)
@@ -2435,12 +2488,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Prepare files for streaming upload
         files = []
         file_handles = []
-        result = None
+        result: Optional[Dict[str, Any]] = None
         try:
-            for file_path in file_paths:
-                file_handle = open(file_path, "rb")
+            for fp in resolved_paths:
+                file_handle = open(fp, "rb")
                 file_handles.append(file_handle)
-                files.append(("files", (file_path.name, file_handle, "application/octet-stream")))
+                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
 
             # Make request with streaming files
             response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
@@ -2454,7 +2507,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                     pass  # Ignore close errors
 
         if result is not None:
-            return result.get("document_ids", [])
+            doc_ids: List[str] = result.get("document_ids", [])
+            return doc_ids
         return []
 
     async def insert_from_file_async(
@@ -2462,11 +2516,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
         extractor_kwargs: Optional[Dict[str, Any]] = None,
-        **kwargs,
     ) -> List[str]:
         """
         Insert new documents from files using file extraction (async).
@@ -2485,6 +2540,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Skip chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"]
             How to handle document ID conflicts, by default "raise"
+        max_concurrent_chunks : int
+            Maximum concurrent chunk processing (unused for remote)
+        max_concurrent_embeddings : int
+            Maximum concurrent embedding requests (unused for remote)
         extractor_kwargs : Optional[Dict[str, Any]]
             Additional keyword arguments passed to the extractor
 
@@ -2505,7 +2564,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Normalize file paths to list
         if isinstance(file_paths, (str, Path)):
             file_paths = [file_paths]
-        file_paths = [Path(p) for p in file_paths]
+        resolved_paths: List[Path] = [Path(p) for p in file_paths]
 
         # Normalize other inputs
         if isinstance(metadata, dict):
@@ -2514,21 +2573,22 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             ids = [ids]
 
         # Validate inputs
-        if metadata is not None and len(metadata) != len(file_paths):
+        if metadata is not None and len(metadata) != len(resolved_paths):
             raise ValueError("Number of metadata entries must match number of files")
-        if ids is not None and len(ids) != len(file_paths):
+        if ids is not None and len(ids) != len(resolved_paths):
             raise ValueError("Number of IDs must match number of files")
 
         # Check files exist
-        for file_path in file_paths:
-            if not file_path.exists():
-                raise FileNotFoundError(f"File not found: {file_path}")
+        for fp in resolved_paths:
+            if not fp.exists():
+                raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
         url = self._build_url(f"/api/v1/{self.name}/upload")
 
         # Build form data
-        form_data = {"batch_size": str(batch_size), "mode": "insert", "errors": errors}  # Specify insert mode
+        effective_batch_size = batch_size if batch_size is not None else 100
+        form_data = {"batch_size": str(effective_batch_size), "mode": "insert", "errors": errors}  # Specify insert mode
 
         if metadata is not None:
             form_data["metadata"] = json.dumps(metadata)
@@ -2546,10 +2606,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         files = []
         file_handles = []
         try:
-            for file_path in file_paths:
-                file_handle = open(file_path, "rb")
+            for fp in resolved_paths:
+                file_handle = open(fp, "rb")
                 file_handles.append(file_handle)
-                files.append(("files", (file_path.name, file_handle, "application/octet-stream")))
+                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
 
             # Make request with streaming files
             response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
@@ -2562,15 +2622,17 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 except Exception:
                     pass  # Ignore close errors
 
-        return result.get("document_ids", [])
+        doc_ids: List[str] = result.get("document_ids", [])
+        return doc_ids
 
     async def upsert_from_chunks_async(
         self,
-        chunks_by_document: Dict[str, Union[List["Chunk"], List[str]]],
+        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
-        **kwargs,
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         """
         Upsert documents from pre-chunked data (async).
@@ -2587,6 +2649,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Number of embeddings to generate at once
         similarity_threshold : Optional[float], default=None
             If provided, filters out chunks that are too similar to existing chunks
+        max_concurrent_chunks : int
+            Maximum concurrent chunk processing (unused for remote)
+        max_concurrent_embeddings : int
+            Maximum concurrent embedding requests (unused for remote)
 
         Returns
         -------
@@ -2594,29 +2660,27 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             List of document IDs that were upserted
         """
         # Convert Chunk objects to serializable format
-        serializable_chunks = {}
+        serializable_chunks: Dict[str, Any] = {}
         for doc_id, chunks in chunks_by_document.items():
-            if chunks and hasattr(chunks[0], "__dict__"):
+            if chunks and isinstance(chunks[0], Chunk):
                 # Convert Chunk objects to dicts
                 serializable_chunks[doc_id] = [
-                    (
-                        {
-                            "text": chunk.content,
-                            "position": chunk.position.to_dict(),
-                            "total_chunks": getattr(chunk, "total_chunks", len(chunks)),
-                            "metadata": getattr(chunk, "metadata", {}),
-                        }
-                        if hasattr(chunk, "content")
-                        else str(chunk)
-                    )
-                    for chunk in chunks
+                    {
+                        "text": c.content,
+                        "position": c.position.to_dict(),
+                        "total_chunks": getattr(c, "total_chunks", len(chunks)),
+                        "metadata": getattr(c, "metadata", {}),
+                    }
+                    for c in chunks
+                    if isinstance(c, Chunk)
                 ]
             else:
                 # Already strings or serializable
-                serializable_chunks[doc_id] = chunks
+                serializable_chunks[doc_id] = [str(c) for c in chunks]
 
         # Prepare request payload
-        payload = {"chunks_by_document": serializable_chunks, "batch_size": batch_size}
+        effective_batch_size = batch_size if batch_size is not None else 100
+        payload: Dict[str, Any] = {"chunks_by_document": serializable_chunks, "batch_size": effective_batch_size}
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -2628,16 +2692,18 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
     async def insert_from_chunks_async(
         self,
-        chunks_by_document: Dict[str, Union[List["Chunk"], List[str]]],
+        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
-        **kwargs,
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         """
         Insert documents from pre-chunked data with conflict handling (async).
@@ -2654,6 +2720,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             If provided, filters out chunks that are too similar to existing chunks
         errors : Literal["ignore", "raise"], default="raise"
             How to handle document ID conflicts
+        max_concurrent_chunks : int
+            Maximum concurrent chunk processing (unused for remote)
+        max_concurrent_embeddings : int
+            Maximum concurrent embedding requests (unused for remote)
 
         Returns
         -------
@@ -2666,29 +2736,31 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             If a document ID already exists and errors="raise"
         """
         # Convert Chunk objects to serializable format
-        serializable_chunks = {}
+        serializable_chunks: Dict[str, Any] = {}
         for doc_id, chunks in chunks_by_document.items():
-            if chunks and hasattr(chunks[0], "__dict__"):
+            if chunks and isinstance(chunks[0], Chunk):
                 # Convert Chunk objects to dicts
                 serializable_chunks[doc_id] = [
-                    (
-                        {
-                            "text": chunk.content,
-                            "position": chunk.position.to_dict(),
-                            "total_chunks": getattr(chunk, "total_chunks", len(chunks)),
-                            "metadata": getattr(chunk, "metadata", {}),
-                        }
-                        if hasattr(chunk, "content")
-                        else str(chunk)
-                    )
-                    for chunk in chunks
+                    {
+                        "text": c.content,
+                        "position": c.position.to_dict(),
+                        "total_chunks": getattr(c, "total_chunks", len(chunks)),
+                        "metadata": getattr(c, "metadata", {}),
+                    }
+                    for c in chunks
+                    if isinstance(c, Chunk)
                 ]
             else:
                 # Already strings or serializable
-                serializable_chunks[doc_id] = chunks
+                serializable_chunks[doc_id] = [str(c) for c in chunks]
 
         # Prepare request payload
-        payload = {"chunks_by_document": serializable_chunks, "batch_size": batch_size, "errors": errors}
+        effective_batch_size = batch_size if batch_size is not None else 100
+        payload: Dict[str, Any] = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": effective_batch_size,
+            "errors": errors,
+        }
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -2700,9 +2772,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("ids", [])
+        ids_result: List[str] = result.get("ids", [])
+        return ids_result
 
-    async def get_async(self, ids: Union[str, List[str]]) -> Union[Document, List[Document], None]:
+    async def get_async(self, ids: Union[str, List[str]]) -> Union[Document, List[Document]]:
         """
         Retrieve documents by ID
 
@@ -2713,8 +2786,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         Returns
         -------
-        Union[Document, List[Document], None]
-            Retrieved document(s) or None if not found
+        Union[Document, List[Document]]
+            Retrieved document(s)
         """
 
         single_id = isinstance(ids, str)
@@ -2726,9 +2799,17 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("GET", url)
         result = self._handle_response(response)
         if single_id:
-            return Document.from_dict(result)
+            doc = Document.from_dict(result)
+            if doc is None:
+                raise DocumentNotFoundError(f"Document not found: {ids}")
+            return doc
         else:
-            return [Document.from_dict(doc) for doc in result["documents"]]
+            documents: List[Document] = []
+            for d in result["documents"]:
+                parsed = Document.from_dict(d)
+                if parsed is not None:
+                    documents.append(parsed)
+            return documents
 
     async def exists_async(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
         """
@@ -2751,7 +2832,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         response = await self._make_request_with_retry_async("POST", url, json={"ids": check_ids})
         results = self._handle_response(response)
 
-        return results.get("exists")[0] if single_id else results.get("exists")
+        exists_list: List[bool] = results.get("exists", [])
+        if single_id:
+            return exists_list[0]
+        return exists_list
 
     async def delete_async(self, ids: Union[str, List[str]]) -> int:
         """
@@ -2774,28 +2858,30 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Use batch endpoint for multiple IDs (threshold: 2+ IDs)
         if len(ids) >= 2:
             url = self._build_url(f"/api/v1/{self.name}/documents/delete")
-            payload = {"ids": ids}
+            payload: Dict[str, Any] = {"ids": ids}
             response = await self._make_request_with_retry_async("POST", url, json=payload)
-            result = self._handle_response(response)
-            return result.get("deleted_count", 0)
+            resp_data = self._handle_response(response)
+            count: int = resp_data.get("deleted_count", 0)
+            return count
 
         # Single ID: use original DELETE endpoint (keeping async concurrency for very small batches)
         deleted_count = 0
 
         async def delete_single(doc_id: str) -> int:
-            url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
-            response = await self._make_request_with_retry_async("DELETE", url)
-            result = self._handle_response(response)
-            return result.get("deleted_count", 0)
+            del_url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+            del_response = await self._make_request_with_retry_async("DELETE", del_url)
+            del_result = self._handle_response(del_response)
+            del_count: int = del_result.get("deleted_count", 0)
+            return del_count
 
         tasks = [delete_single(doc_id) for doc_id in ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for result in results:
-            if isinstance(result, int):
-                deleted_count += result
-            elif isinstance(result, Exception):
-                logger.warning(f"Failed to delete document: {result}")
+        for gather_result in results:
+            if isinstance(gather_result, int):
+                deleted_count += gather_result
+            elif isinstance(gather_result, Exception):
+                logger.warning(f"Failed to delete document: {gather_result}")
 
         return deleted_count
 
@@ -2816,14 +2902,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/documents/count")
 
         # Prepare payload
-        payload = {}
+        payload: Dict[str, Any] = {}
         if filters is not None:
             payload["filters"] = filters
 
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
-        return result.get("count", 0)
+        count: int = result.get("count", 0)
+        return count
 
     async def update_async(
         self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
@@ -2849,7 +2936,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if not content and not metadata:
             return False
 
-        payload = {}
+        payload: Dict[str, Any] = {}
         if content is not None:
             payload["content"] = content
         if metadata is not None:
@@ -2860,7 +2947,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         try:
             response = await self._make_request_with_retry_async("PUT", url, json=payload)
             result = self._handle_response(response)
-            return result.get("updated", False)
+            updated: bool = result.get("updated", False)
+            return updated
         except DatabaseNotFoundError:
             return False
 
@@ -2869,7 +2957,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         query: str,
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "vector",
-        return_type: Literal["documents", "chunks", "context"] = "documents",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
@@ -2877,7 +2966,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         context_window: int = 2,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -2936,7 +3027,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_results = result.get("results", [])
-        return [QueryResult.from_dict(res) for res in raw_results]
+        return [r for res in raw_results if (r := QueryResult.from_dict(res)) is not None]
 
     async def query_multi_column_async(
         self,
@@ -2950,7 +3041,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
         Async query across multiple columns (main content + embedding-enabled metadata fields)
@@ -3008,7 +3099,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_results = result.get("results", [])
-        return [QueryResult.from_dict(res) for res in raw_results]
+        return [r for res in raw_results if (r := QueryResult.from_dict(res)) is not None]
 
     async def filter_async(
         self,
@@ -3038,7 +3129,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
 
         # Prepare request payload
-        payload = {"where": where, "offset": offset}
+        payload: Dict[str, Any] = {"where": where, "offset": offset}
 
         if order_by is not None:
             payload["order_by"] = order_by
@@ -3052,13 +3143,18 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Process results
         raw_docs = result.get("documents", [])
-        return [Document.from_dict(doc) for doc in raw_docs]
+        documents: List[Document] = []
+        for doc_data in raw_docs:
+            parsed = Document.from_dict(doc_data)
+            if parsed is not None:
+                documents.append(parsed)
+        return documents
 
-    async def save_async(self):
+    async def save_async(self) -> None:
         """No-op for remote databases"""
         pass
 
-    async def close_async(self):
+    async def close_async(self) -> None:
         """Close HTTP clients"""
         # Close sync client if it exists
         if self._sync_client is not None and not self._sync_client.is_closed:
@@ -3126,29 +3222,30 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             changes = await db.update_metadata_schema_async('research_papers')
         """
         # Handle different input formats
+        schema_data: Union[str, Dict[str, Any]]
         if isinstance(new_schema, str):
             # Send schema name to server
             schema_data = new_schema
         elif isinstance(new_schema, dict):
             # Convert to server-compatible format
-            schema_data = {}
+            schema_dict: Dict[str, Any] = {}
             for field_name, field_def in new_schema.items():
                 if isinstance(field_def, str):
                     # Simple type string
-                    schema_data[field_name] = field_def
+                    schema_dict[field_name] = field_def
                 elif isinstance(field_def, tuple):
                     # Tuple format: (type, indexed) or (type, indexed, required)
                     if len(field_def) == 2:
                         field_type, indexed = field_def
-                        schema_data[field_name] = {"type": field_type, "indexed": indexed}
+                        schema_dict[field_name] = {"type": field_type, "indexed": indexed}
                     elif len(field_def) == 3:
                         field_type, indexed, required = field_def
-                        schema_data[field_name] = {"type": field_type, "indexed": indexed, "required": required}
+                        schema_dict[field_name] = {"type": field_type, "indexed": indexed, "required": required}
                     else:
                         raise ValueError(f"Tuple definition for '{field_name}' must have 2 or 3 elements")
                 elif hasattr(field_def, "type"):
                     # MetadataField object
-                    schema_data[field_name] = {
+                    schema_dict[field_name] = {
                         "type": field_def.type.value if hasattr(field_def.type, "value") else str(field_def.type),
                         "indexed": field_def.indexed,
                         "required": getattr(field_def, "required", False),
@@ -3156,14 +3253,19 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                     }
                 elif isinstance(field_def, dict):
                     # Already in dict format
-                    schema_data[field_name] = field_def
+                    schema_dict[field_name] = field_def
                 else:
                     raise ValueError(f"Invalid field definition for '{field_name}': {type(field_def)}")
+            schema_data = schema_dict
         else:
             raise ValueError("new_schema must be a string (schema name) or dict")
 
         url = self._build_url(f"/api/v1/{self.name}/update_schema")
-        payload = {"new_schema": schema_data, "drop_columns": drop_columns, "column_mapping": column_mapping or {}}
+        payload: Dict[str, Any] = {
+            "new_schema": schema_data,
+            "drop_columns": drop_columns,
+            "column_mapping": column_mapping or {},
+        }
 
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
@@ -3179,7 +3281,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                     default_value=field_config.get("default_value"),
                 )
 
-        return result.get("changes", {})
+        changes: Dict[str, Any] = result.get("changes", {})
+        return changes
 
     async def get_metadata_schema_info_async(self) -> Dict[str, Any]:
         """
@@ -3213,7 +3316,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/schema")
         response = await self._make_request_with_retry_async("GET", url)
         result = self._handle_response(response)
-        return result.get("schema_info", {})
+        schema_info: Dict[str, Any] = result.get("schema_info", {})
+        return schema_info
 
     ## Tuning
     def get_sqlite_tuning(self) -> Dict[str, Any]:
@@ -3264,4 +3368,5 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "POST", f"/api/v1/{self.name}/maintenance/checkpoint_if_large", json=payload
         )
         data = self._handle_response(response)
-        return data.get("checkpointed", False)
+        checkpointed: bool = data.get("checkpointed", False)
+        return checkpointed

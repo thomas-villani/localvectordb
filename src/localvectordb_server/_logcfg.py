@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import wraps
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import flask
 from flask import g, has_app_context, has_request_context, request
@@ -39,7 +39,7 @@ def configure_logging(app: flask.Flask, log_file: Optional[str] = None) -> None:
     use_structured = app.config.get("LOG_STRUCTURED", not app.debug)
     log_format = app.config.get("LOG_FORMAT", "%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    config = {
+    config: Dict[str, Any] = {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
@@ -169,7 +169,7 @@ class StructuredFormatter(logging.Formatter):
         message = ansi_escape.sub("", message)
 
         # Base log entry
-        log_entry = {
+        log_entry: Dict[str, Any] = {
             "timestamp": datetime.now(UTC).isoformat() + "Z",
             "level": record.levelname,
             "logger": record.name,
@@ -191,7 +191,7 @@ class StructuredFormatter(logging.Formatter):
                     {
                         "method": request.method,
                         "path": request.path,
-                        "remote_addr": request.remote_addr,
+                        "remote_addr": request.remote_addr or "",
                         "user_agent": request.headers.get("User-Agent", "")[:100],
                     }
                 )
@@ -204,11 +204,12 @@ class StructuredFormatter(logging.Formatter):
             log_entry.update(record.extra_fields)
 
         # Add exception info if present
-        if record.exc_info:
+        if record.exc_info and record.exc_info[0] is not None:
+            exc_info_tuple = record.exc_info
             log_entry["exception"] = {
-                "type": record.exc_info[0].__name__,
-                "message": str(record.exc_info[1]),
-                "traceback": self.formatException(record.exc_info),
+                "type": exc_info_tuple[0].__name__,
+                "message": str(exc_info_tuple[1]),
+                "traceback": self.formatException(exc_info_tuple),
             }
 
         return json.dumps(log_entry, ensure_ascii=False)
@@ -267,7 +268,7 @@ class SecurityLogger:
     def __init__(self, logger_name: str = "localvectordb.security"):
         self.logger = logging.getLogger(logger_name)
 
-    def log_auth_attempt(self, success: bool, reason: str = None, **kwargs):
+    def log_auth_attempt(self, success: bool, reason: Optional[str] = None, **kwargs):
         """Log authentication attempts"""
         level = logging.INFO if success else logging.WARNING
         message = f"Authentication {'successful' if success else 'failed'}"

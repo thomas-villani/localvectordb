@@ -30,7 +30,6 @@ jobs:
 
       - name: Type check with mypy
         run: mypy src/
-        continue-on-error: true
 
       - name: Security lint with bandit
         run: bandit -c pyproject.toml -r src/

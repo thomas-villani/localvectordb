@@ -343,7 +343,7 @@ class QueryBuilder:
         builder._exact_filters.append(filter_dict)
         return builder
 
-    def filter(self, field: str = None, value=None, **kwargs) -> "QueryBuilder":
+    def filter(self, field: Optional[str] = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """
         Add exact filter conditions.
 
@@ -505,7 +505,7 @@ class QueryBuilder:
         return builder
 
     def documents(
-        self, scoring_method: DocumentScoringMethod = "frequency_boost", scoring_options: dict = None
+        self, scoring_method: DocumentScoringMethod = "frequency_boost", scoring_options: Optional[dict] = None
     ) -> "QueryBuilder":
         """Return full documents in results (default)."""
         builder = self.clone()
@@ -526,7 +526,7 @@ class QueryBuilder:
         builder._return_type = "sections"
         return builder
 
-    def search_level(self, level: str) -> "QueryBuilder":
+    def search_level(self, level: Literal["chunks", "sections", "documents"]) -> "QueryBuilder":
         """Set the FAISS index to search ('chunks', 'sections', or 'documents').
 
         Parameters
@@ -583,7 +583,12 @@ class QueryBuilder:
         builder._group_by.extend(fields)
         return builder
 
-    def aggregate(self, field: str, function: str, alias: Optional[str] = None) -> "QueryBuilder":
+    def aggregate(
+        self,
+        field: str,
+        function: Literal["count", "sum", "avg", "min", "max", "std", "var"],
+        alias: Optional[str] = None,
+    ) -> "QueryBuilder":
         """Add an aggregation function."""
         valid_functions = ["count", "sum", "avg", "min", "max", "std", "var"]
         if function not in valid_functions:
@@ -842,7 +847,8 @@ class QueryBuilder:
             Query results. Returns List when streaming=False, Iterator[List] when streaming=True
         """
         if streaming:
-            return self.stream_async(batch_size)
+            result: Union[List[QueryResult], Iterator[List[QueryResult]]] = self.stream_async(batch_size)
+            return result
         else:
             executor = AsyncQueryExecutor(self)
             return await executor.execute()
@@ -952,12 +958,288 @@ class QueryBuilder:
         return plan
 
 
-class QueryExecutor:
-    """Synchronous executor for QueryBuilder queries."""
+class _QueryExecutorBase:
+    """Base class with shared methods for sync and async query executors."""
 
     def __init__(self, query_builder: "QueryBuilder"):
         self.builder = query_builder
         self.db = query_builder._db
+
+    def _combine_exact_filters(self) -> Dict[str, Any]:
+        """Combine all exact filters into a single filter dictionary."""
+        if not self.builder._exact_filters:
+            return {}
+
+        combined: Dict[str, Any] = {}
+        and_clauses: List[Dict[str, Any]] = []
+
+        for filter_dict in self.builder._exact_filters:
+            if len(filter_dict) == 1:
+                key, value = next(iter(filter_dict.items()))
+                if key in combined:
+                    and_clauses.append({key: combined[key]})
+                    and_clauses.append({key: value})
+                    combined.pop(key)
+                else:
+                    combined[key] = value
+            else:
+                and_clauses.append(filter_dict)
+
+        if and_clauses:
+            if combined:
+                and_clauses.append(combined)
+            return {"$and": and_clauses}
+
+        return combined
+
+    def _build_order_by_clause(self) -> Optional[str]:
+        """Build ORDER BY clause for database queries."""
+        if not self.builder._order_by:
+            return None
+
+        field, direction = self.builder._order_by[0]
+        return f"{field} {direction.upper()}"
+
+    def _apply_sorting(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply sorting to results."""
+        for field, direction in reversed(self.builder._order_by):
+            reverse = direction.lower() == "desc"
+
+            if field == "score":
+                results.sort(key=lambda x: x.score, reverse=reverse)
+            else:
+
+                def sort_key(result: QueryResult, field: str = field, reverse: bool = reverse) -> Any:
+                    value = result.metadata.get(field)
+                    if value is None:
+                        return float("-inf") if reverse else float("inf")
+                    return value
+
+                results.sort(key=sort_key, reverse=reverse)
+
+        return results
+
+    def _apply_aggregations_and_grouping(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply GROUP BY and aggregation operations to results."""
+        if not (self.builder._group_by or self.builder._aggregations):
+            return results
+
+        # Group results
+        if self.builder._group_by:
+            grouped_results = self._group_results(results)
+        else:
+            grouped_results = {"_all": results}
+
+        # Apply aggregations
+        aggregated_results: List[QueryResult] = []
+        for group_key, group_results in grouped_results.items():
+            aggregation_data: Dict[str, Any] = {}
+
+            for agg in self.builder._aggregations:
+                agg_value = self._calculate_aggregation(group_results, agg)
+                alias = agg.alias or f"{agg.function}_{agg.field}"
+                aggregation_data[alias] = agg_value
+
+            # Create result for this group
+            if self.builder._group_by:
+                group_metadata = dict(
+                    zip(
+                        self.builder._group_by, group_key if isinstance(group_key, tuple) else [group_key], strict=False
+                    )
+                )
+                group_metadata.update(aggregation_data)
+
+                result = QueryResult(
+                    id=f"group_{hash(group_key)}",
+                    score=1.0,
+                    type="group",
+                    content=f"Group: {group_key}",
+                    metadata=group_metadata,
+                )
+            else:
+                result = QueryResult(
+                    id="aggregation_result",
+                    score=1.0,
+                    type="aggregation",
+                    content="Aggregation Result",
+                    metadata=aggregation_data,
+                )
+
+            aggregated_results.append(result)
+
+        # Apply HAVING clauses
+        if self.builder._having_clauses:
+            aggregated_results = self._apply_having_clauses(aggregated_results)
+
+        return aggregated_results
+
+    def _group_results(self, results: List[QueryResult]) -> Dict[Any, List[QueryResult]]:
+        """Group results by specified fields."""
+        grouped: Dict[Any, List[QueryResult]] = defaultdict(list)
+
+        for result in results:
+            if len(self.builder._group_by) == 1:
+                field = self.builder._group_by[0]
+                key = result.metadata.get(field, "NULL")
+            else:
+                key = tuple(result.metadata.get(field, "NULL") for field in self.builder._group_by)
+
+            grouped[key].append(result)
+
+        return dict(grouped)
+
+    def _calculate_aggregation(self, results: List[QueryResult], agg: AggregationClause) -> Union[int, float]:
+        """Calculate aggregation value for a group of results."""
+        if agg.function == "count":
+            return len(results)
+
+        # Extract values for numeric aggregations
+        values: List[Union[int, float]] = []
+        for result in results:
+            if agg.field == "score":
+                values.append(result.score)
+            elif agg.field in result.metadata:
+                value = result.metadata[agg.field]
+                if isinstance(value, (int, float)):
+                    values.append(value)
+
+        if not values:
+            return 0
+
+        if agg.function == "sum":
+            return sum(values)
+        elif agg.function == "avg":
+            return sum(values) / len(values)
+        elif agg.function == "min":
+            return min(values)
+        elif agg.function == "max":
+            return max(values)
+        elif agg.function == "std":
+            return statistics.stdev(values) if len(values) > 1 else 0
+        elif agg.function == "var":
+            return statistics.variance(values) if len(values) > 1 else 0
+
+        return 0
+
+    def _apply_having_clauses(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply HAVING clauses to aggregated results."""
+        filtered_results: List[QueryResult] = []
+
+        for result in results:
+            passes_having = True
+
+            for having_clause in self.builder._having_clauses:
+                for field, condition in having_clause.items():
+                    if field not in result.metadata:
+                        passes_having = False
+                        break
+
+                    value = result.metadata[field]
+
+                    if isinstance(condition, dict):
+                        for operator, target_value in condition.items():
+                            if not self._check_condition(value, operator, target_value):
+                                passes_having = False
+                                break
+                    else:
+                        if value != condition:
+                            passes_having = False
+                            break
+
+                if not passes_having:
+                    break
+
+            if passes_having:
+                filtered_results.append(result)
+
+        return filtered_results
+
+    def _check_condition(self, value: Any, operator: str, target: Any) -> bool:
+        """Check if a value satisfies a condition."""
+        if operator == "$eq":
+            return bool(value == target)
+        elif operator == "$ne":
+            return bool(value != target)
+        elif operator == "$gt":
+            return bool(value > target)
+        elif operator == "$gte":
+            return bool(value >= target)
+        elif operator == "$lt":
+            return bool(value < target)
+        elif operator == "$lte":
+            return bool(value <= target)
+        return False
+
+    def _apply_reranking(self, results: List[QueryResult]) -> List[QueryResult]:
+        """Apply reranking based on configuration."""
+        if not self.builder._rerank_config:
+            return results
+
+        method = self.builder._rerank_config["method"]
+
+        if method == "recency":
+            date_field = self.builder._rerank_config["date_field"]
+            weight = self.builder._rerank_config.get("weight", 1.0)
+
+            current_time = datetime.now()
+            for result in results:
+                if date_field in result.metadata:
+                    try:
+                        date_value = result.metadata[date_field]
+                        if isinstance(date_value, str):
+                            date_obj = parse_iso8601(date_value)
+                        elif isinstance(date_value, datetime):
+                            date_obj = date_value
+                        else:
+                            continue
+
+                        days_ago = (current_time - date_obj).days
+                        recency_score = 1.0 / (1.0 + days_ago / 365.0)
+                        result.score = (result.score * (1 - weight)) + (recency_score * weight)
+                    except (ValueError, TypeError):
+                        continue
+
+            results.sort(key=lambda x: x.score, reverse=True)
+
+        elif method == "diversity":
+            field = self.builder._rerank_config["field"]
+            weight = self.builder._rerank_config.get("weight", 1.0)
+
+            seen_values: set[Any] = set()
+            for result in results:
+                field_value = result.metadata.get(field)
+                if field_value not in seen_values:
+                    result.score *= 1.0 + weight
+                    seen_values.add(field_value)
+
+            results.sort(key=lambda x: x.score, reverse=True)
+
+        elif method == "cross_encoder":
+            from localvectordb.reranking import RerankerRegistry
+
+            config = self.builder._rerank_config
+            provider: str = config.get("provider", "")
+            model = config.get("model")
+            top_k = config.get("top_k")
+
+            reranker_kwargs = {
+                k: v for k, v in config.items() if k not in ("method", "provider", "model", "top_k") and v is not None
+            }
+
+            reranker = RerankerRegistry.create_reranker(provider, model, **reranker_kwargs)
+
+            # Extract query text from search clauses
+            query_text = ""
+            if self.builder._search_clauses:
+                query_text = self.builder._search_clauses[0].query
+
+            results = reranker.rerank(query_text, results, top_k=top_k)
+
+        return results
+
+
+class QueryExecutor(_QueryExecutorBase):
+    """Synchronous executor for QueryBuilder queries."""
 
     def execute(self) -> List[QueryResult]:
         """Execute the query synchronously with full feature support."""
@@ -1082,245 +1364,6 @@ class QueryExecutor:
 
         return results
 
-    def _apply_sorting(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply sorting to results."""
-        for field, direction in reversed(self.builder._order_by):
-            reverse = direction.lower() == "desc"
-
-            if field == "score":
-                results.sort(key=lambda x: x.score, reverse=reverse)
-            else:
-
-                def sort_key(result, field=field, reverse=reverse):
-                    value = result.metadata.get(field)
-                    if value is None:
-                        return float("-inf") if reverse else float("inf")
-                    return value
-
-                results.sort(key=sort_key, reverse=reverse)
-
-        return results
-
-    def _apply_aggregations_and_grouping(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply GROUP BY and aggregation operations to results."""
-        if not (self.builder._group_by or self.builder._aggregations):
-            return results
-
-        # Group results
-        if self.builder._group_by:
-            grouped_results = self._group_results(results)
-        else:
-            grouped_results = {"_all": results}
-
-        # Apply aggregations
-        aggregated_results = []
-        for group_key, group_results in grouped_results.items():
-            aggregation_data = {}
-
-            for agg in self.builder._aggregations:
-                agg_value = self._calculate_aggregation(group_results, agg)
-                alias = agg.alias or f"{agg.function}_{agg.field}"
-                aggregation_data[alias] = agg_value
-
-            # Aggregation results are packed into QueryResult metadata.
-            # A dedicated AggregatedQueryResult type could improve clarity.
-            # Create result for this group
-            if self.builder._group_by:
-                group_metadata = dict(
-                    zip(
-                        self.builder._group_by, group_key if isinstance(group_key, tuple) else [group_key], strict=False
-                    )
-                )
-                group_metadata.update(aggregation_data)
-
-                result = QueryResult(
-                    id=f"group_{hash(group_key)}",
-                    score=1.0,
-                    type="group",
-                    content=f"Group: {group_key}",
-                    metadata=group_metadata,
-                )
-            else:
-                result = QueryResult(
-                    id="aggregation_result",
-                    score=1.0,
-                    type="aggregation",
-                    content="Aggregation Result",
-                    metadata=aggregation_data,
-                )
-
-            aggregated_results.append(result)
-
-        # Apply HAVING clauses
-        if self.builder._having_clauses:
-            aggregated_results = self._apply_having_clauses(aggregated_results)
-
-        return aggregated_results
-
-    def _group_results(self, results: List[QueryResult]) -> Dict[Any, List[QueryResult]]:
-        """Group results by specified fields."""
-        grouped = defaultdict(list)
-
-        for result in results:
-            if len(self.builder._group_by) == 1:
-                field = self.builder._group_by[0]
-                key = result.metadata.get(field, "NULL")
-            else:
-                key = tuple(result.metadata.get(field, "NULL") for field in self.builder._group_by)
-
-            grouped[key].append(result)
-
-        return dict(grouped)
-
-    def _calculate_aggregation(self, results: List[QueryResult], agg: AggregationClause) -> Union[int, float]:
-        """Calculate aggregation value for a group of results."""
-        if agg.function == "count":
-            return len(results)
-
-        # Extract values for numeric aggregations
-        values = []
-        for result in results:
-            if agg.field == "score":
-                values.append(result.score)
-            elif agg.field in result.metadata:
-                value = result.metadata[agg.field]
-                if isinstance(value, (int, float)):
-                    values.append(value)
-
-        if not values:
-            return 0
-
-        if agg.function == "sum":
-            return sum(values)
-        elif agg.function == "avg":
-            return sum(values) / len(values)
-        elif agg.function == "min":
-            return min(values)
-        elif agg.function == "max":
-            return max(values)
-        elif agg.function == "std":
-            return statistics.stdev(values) if len(values) > 1 else 0
-        elif agg.function == "var":
-            return statistics.variance(values) if len(values) > 1 else 0
-
-        return 0
-
-    def _apply_having_clauses(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply HAVING clauses to aggregated results."""
-        filtered_results = []
-
-        for result in results:
-            passes_having = True
-
-            for having_clause in self.builder._having_clauses:
-                for field, condition in having_clause.items():
-                    if field not in result.metadata:
-                        passes_having = False
-                        break
-
-                    value = result.metadata[field]
-
-                    if isinstance(condition, dict):
-                        for operator, target_value in condition.items():
-                            if not self._check_condition(value, operator, target_value):
-                                passes_having = False
-                                break
-                    else:
-                        if value != condition:
-                            passes_having = False
-                            break
-
-                if not passes_having:
-                    break
-
-            if passes_having:
-                filtered_results.append(result)
-
-        return filtered_results
-
-    def _check_condition(self, value: Any, operator: str, target: Any) -> bool:
-        """Check if a value satisfies a condition."""
-        if operator == "$eq":
-            return value == target
-        elif operator == "$ne":
-            return value != target
-        elif operator == "$gt":
-            return value > target
-        elif operator == "$gte":
-            return value >= target
-        elif operator == "$lt":
-            return value < target
-        elif operator == "$lte":
-            return value <= target
-        return False
-
-    def _apply_reranking(self, results: List[QueryResult]) -> List[QueryResult]:
-        """Apply reranking based on configuration."""
-        if not self.builder._rerank_config:
-            return results
-
-        method = self.builder._rerank_config["method"]
-
-        if method == "recency":
-            date_field = self.builder._rerank_config["date_field"]
-            weight = self.builder._rerank_config.get("weight", 1.0)
-
-            current_time = datetime.now()
-            for result in results:
-                if date_field in result.metadata:
-                    try:
-                        date_value = result.metadata[date_field]
-                        if isinstance(date_value, str):
-                            date_obj = parse_iso8601(date_value)
-                        elif isinstance(date_value, datetime):
-                            date_obj = date_value
-                        else:
-                            continue
-
-                        days_ago = (current_time - date_obj).days
-                        recency_score = 1.0 / (1.0 + days_ago / 365.0)
-                        result.score = (result.score * (1 - weight)) + (recency_score * weight)
-                    except (ValueError, TypeError):
-                        continue
-
-            results.sort(key=lambda x: x.score, reverse=True)
-
-        elif method == "diversity":
-            field = self.builder._rerank_config["field"]
-            weight = self.builder._rerank_config.get("weight", 1.0)
-
-            seen_values = set()
-            for result in results:
-                field_value = result.metadata.get(field)
-                if field_value not in seen_values:
-                    result.score *= 1.0 + weight
-                    seen_values.add(field_value)
-
-            results.sort(key=lambda x: x.score, reverse=True)
-
-        elif method == "cross_encoder":
-            from localvectordb.reranking import RerankerRegistry
-
-            config = self.builder._rerank_config
-            provider = config.get("provider")
-            model = config.get("model")
-            top_k = config.get("top_k")
-
-            reranker_kwargs = {
-                k: v for k, v in config.items() if k not in ("method", "provider", "model", "top_k") and v is not None
-            }
-
-            reranker = RerankerRegistry.create_reranker(provider, model, **reranker_kwargs)
-
-            # Extract query text from search clauses
-            query_text = ""
-            if self.builder._search_clauses:
-                query_text = self.builder._search_clauses[0].query
-
-            results = reranker.rerank(query_text, results, top_k=top_k)
-
-        return results
-
     def count(self) -> int:
         """Get count of matching results."""
         if self.builder._search_clauses:
@@ -1330,7 +1373,7 @@ class QueryExecutor:
             # Use database count if available, otherwise execute filter
             if hasattr(self.db, "count"):
                 filters = self._combine_exact_filters()
-                return self.db.count(where=filters)
+                return self.db.count(filters=filters)
             else:
                 results = self._execute_filter_only_query()
                 return len(results)
@@ -1363,142 +1406,109 @@ class QueryExecutor:
             logger.error(f"Error during streaming: {e}")
             raise
 
-    def _combine_exact_filters(self) -> Dict[str, Any]:
-        """Combine all exact filters into a single filter dictionary."""
-        if not self.builder._exact_filters:
-            return {}
-
-        combined = {}
-        and_clauses = []
-
-        for filter_dict in self.builder._exact_filters:
-            if len(filter_dict) == 1:
-                key, value = next(iter(filter_dict.items()))
-                if key in combined:
-                    and_clauses.append({key: combined[key]})
-                    and_clauses.append({key: value})
-                    combined.pop(key)
-                else:
-                    combined[key] = value
-            else:
-                and_clauses.append(filter_dict)
-
-        if and_clauses:
-            if combined:
-                and_clauses.append(combined)
-            return {"$and": and_clauses}
-
-        return combined
-
-    def _build_order_by_clause(self) -> Optional[str]:
-        """Build ORDER BY clause for database queries."""
-        if not self.builder._order_by:
-            return None
-
-        field, direction = self.builder._order_by[0]
-        return f"{field} {direction.upper()}"
-
     def _generate_execution_plan(self) -> Dict[str, Any]:
         """Generate execution plan for explain functionality."""
-        plan = {
-            "steps": [],
-            "estimated_cost": 0,
-            "query_type": (
-                "hybrid"
-                if self.builder._search_clauses and self.builder._exact_filters
-                else "search" if self.builder._search_clauses else "filter"
-            ),
-            "optimizations": [],
-        }
+        steps: List[str] = []
+        estimated_cost: int = 0
+        query_type: str = (
+            "hybrid"
+            if self.builder._search_clauses and self.builder._exact_filters
+            else "search" if self.builder._search_clauses else "filter"
+        )
+        optimizations: List[str] = []
 
         if self.builder._search_clauses:
-            plan["steps"].append("vector_search")
-            plan["estimated_cost"] += len(self.builder._search_clauses) * 10
+            steps.append("vector_search")
+            estimated_cost += len(self.builder._search_clauses) * 10
 
         if self.builder._exact_filters:
-            plan["steps"].append("exact_filtering")
-            plan["estimated_cost"] += len(self.builder._exact_filters) * 2
+            steps.append("exact_filtering")
+            estimated_cost += len(self.builder._exact_filters) * 2
 
         if self.builder._semantic_filters:
-            plan["steps"].append("semantic_filtering")
-            plan["estimated_cost"] += len(self.builder._semantic_filters) * 50
+            steps.append("semantic_filtering")
+            estimated_cost += len(self.builder._semantic_filters) * 50
 
         if self.builder._group_by:
-            plan["steps"].append("grouping")
-            plan["estimated_cost"] += 20
+            steps.append("grouping")
+            estimated_cost += 20
 
         if self.builder._aggregations:
-            plan["steps"].append("aggregation")
-            plan["estimated_cost"] += len(self.builder._aggregations) * 5
+            steps.append("aggregation")
+            estimated_cost += len(self.builder._aggregations) * 5
 
         if self.builder._having_clauses:
-            plan["steps"].append("having_filter")
-            plan["estimated_cost"] += len(self.builder._having_clauses) * 3
+            steps.append("having_filter")
+            estimated_cost += len(self.builder._having_clauses) * 3
 
         if self.builder._order_by:
-            plan["steps"].append("sorting")
-            plan["estimated_cost"] += 10
+            steps.append("sorting")
+            estimated_cost += 10
 
         if self.builder._rerank_config:
-            plan["steps"].append("reranking")
-            plan["estimated_cost"] += 30
+            steps.append("reranking")
+            estimated_cost += 30
 
-        return plan
+        return {
+            "steps": steps,
+            "estimated_cost": estimated_cost,
+            "query_type": query_type,
+            "optimizations": optimizations,
+        }
 
 
-class AsyncQueryExecutor:
+class AsyncQueryExecutor(_QueryExecutorBase):
     """Asynchronous executor for QueryBuilder queries with native database async support."""
-
-    def __init__(self, query_builder: "QueryBuilder"):
-        self.builder = query_builder
-        self.db = query_builder._db
 
     async def _generate_execution_plan(self) -> Dict[str, Any]:
         """Generate execution plan for explain functionality."""
-        plan = {
-            "steps": [],
-            "estimated_cost": 0,
-            "query_type": (
-                "hybrid"
-                if self.builder._search_clauses and self.builder._exact_filters
-                else "search" if self.builder._search_clauses else "filter"
-            ),
-            "optimizations": [],
-        }
+        steps: List[str] = []
+        estimated_cost: int = 0
+        query_type: str = (
+            "hybrid"
+            if self.builder._search_clauses and self.builder._exact_filters
+            else "search" if self.builder._search_clauses else "filter"
+        )
+        optimizations: List[str] = []
 
         if self.builder._search_clauses:
-            plan["steps"].append("vector_search")
-            plan["estimated_cost"] += len(self.builder._search_clauses) * 10
+            steps.append("vector_search")
+            estimated_cost += len(self.builder._search_clauses) * 10
 
         if self.builder._exact_filters:
-            plan["steps"].append("exact_filtering")
-            plan["estimated_cost"] += len(self.builder._exact_filters) * 2
+            steps.append("exact_filtering")
+            estimated_cost += len(self.builder._exact_filters) * 2
 
         if self.builder._semantic_filters:
-            plan["steps"].append("semantic_filtering")
-            plan["estimated_cost"] += len(self.builder._semantic_filters) * 50
+            steps.append("semantic_filtering")
+            estimated_cost += len(self.builder._semantic_filters) * 50
 
         if self.builder._group_by:
-            plan["steps"].append("grouping")
-            plan["estimated_cost"] += 20
+            steps.append("grouping")
+            estimated_cost += 20
 
         if self.builder._aggregations:
-            plan["steps"].append("aggregation")
-            plan["estimated_cost"] += len(self.builder._aggregations) * 5
+            steps.append("aggregation")
+            estimated_cost += len(self.builder._aggregations) * 5
 
         if self.builder._having_clauses:
-            plan["steps"].append("having_filter")
-            plan["estimated_cost"] += len(self.builder._having_clauses) * 3
+            steps.append("having_filter")
+            estimated_cost += len(self.builder._having_clauses) * 3
 
         if self.builder._order_by:
-            plan["steps"].append("sorting")
-            plan["estimated_cost"] += 10
+            steps.append("sorting")
+            estimated_cost += 10
 
         if self.builder._rerank_config:
-            plan["steps"].append("reranking")
-            plan["estimated_cost"] += 30
+            steps.append("reranking")
+            estimated_cost += 30
 
-        return plan
+        return {
+            "steps": steps,
+            "estimated_cost": estimated_cost,
+            "query_type": query_type,
+            "optimizations": optimizations,
+        }
 
     async def execute(self) -> List[QueryResult]:
         """Execute the query asynchronously with full feature support."""
@@ -1665,13 +1675,4 @@ class AsyncQueryExecutor:
             logger.error(f"Error during async streaming: {e}")
             raise
 
-    # Reuse sync methods for CPU-bound operations
-    _apply_aggregations_and_grouping = QueryExecutor._apply_aggregations_and_grouping
-    _group_results = QueryExecutor._group_results
-    _calculate_aggregation = QueryExecutor._calculate_aggregation
-    _apply_having_clauses = QueryExecutor._apply_having_clauses
-    _check_condition = QueryExecutor._check_condition
-    _apply_reranking = QueryExecutor._apply_reranking
-    _apply_sorting = QueryExecutor._apply_sorting
-    _combine_exact_filters = QueryExecutor._combine_exact_filters
-    _build_order_by_clause = QueryExecutor._build_order_by_clause
+    # Shared methods inherited from _QueryExecutorBase

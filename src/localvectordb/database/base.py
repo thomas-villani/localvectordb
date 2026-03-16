@@ -341,7 +341,7 @@ class BaseVectorDB(ABC):
         self,
         chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = None,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         max_concurrent_chunks: int = 3,
         max_concurrent_embeddings: int = 2,
@@ -353,7 +353,7 @@ class BaseVectorDB(ABC):
         self,
         chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = None,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         max_concurrent_chunks: int = 3,
@@ -367,7 +367,7 @@ class BaseVectorDB(ABC):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = None,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         max_concurrent_chunks: int = 3,
         max_concurrent_embeddings: int = 2,
@@ -381,7 +381,7 @@ class BaseVectorDB(ABC):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = None,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         max_concurrent_chunks: int = 3,
@@ -431,7 +431,7 @@ class BaseVectorDB(ABC):
         context_window: int = 2,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: dict = None,
+        document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
     ) -> List["QueryResult"]:
@@ -518,21 +518,21 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         create_if_not_exists: bool = True,
     ):
         super().__init__()
-        self._read_write_lock: ReadWriteLock = None
-        self.schema: DatabaseSchema = None
-        self.chunker: PositionTrackingChunker = None
-        self.connection_pool: ConnectionPool = None
-        self.async_connection_pool: AsyncConnectionPool = None
-        self._metadata_schema: Dict[str, MetadataField] = None
-        self._embedding_provider: EmbeddingProvider = None
-        self.index: IndexIDMap2 = None
-        self.db_path: Path = None
-        self.async_max_connections: int = None
+        self._read_write_lock: ReadWriteLock
+        self.schema: DatabaseSchema
+        self.chunker: PositionTrackingChunker
+        self.connection_pool: ConnectionPool
+        self.async_connection_pool: Optional[AsyncConnectionPool] = None
+        self._metadata_schema: Dict[str, MetadataField] = {}
+        self._embedding_provider: EmbeddingProvider
+        self.index: Optional[IndexIDMap2] = None
+        self.db_path: Union[str, Path]
+        self.async_max_connections: int = 10
         self.pipeline_queue_size: int = DEFAULT_QUEUE_SIZE
         self._batch_size: int = DEFAULT_BATCH_SIZE
         self._sqlite_profile: SqliteProfile = sqlite_profile
-        self._sqlite_pragma_overrides = sqlite_pragma_overrides or {}
-        self._sqlite_pragmas: dict = {}
+        self._sqlite_pragma_overrides: Dict[str, Any] = sqlite_pragma_overrides or {}
+        self._sqlite_pragmas: Dict[str, Any] = {}
 
     @abstractmethod
     def _generate_doc_id(self) -> str:
@@ -614,6 +614,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
     def _save_next_doc_id(self) -> None:
         pass
 
+    @property
     @abstractmethod
     def is_memory_only(self) -> bool:
         pass

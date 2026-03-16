@@ -24,12 +24,13 @@ TuningMixin
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.sqlite_tuning import (
     SQLITE_PRAGMA_PROFILES,
     AutoTuner,
+    SqliteProfile,
     WorkloadProfile,
     list_profiles,
 )
@@ -272,7 +273,7 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
             base_pragmas.update(overrides)
 
         # Store configuration
-        self._sqlite_profile = profile
+        self._sqlite_profile = cast(SqliteProfile, profile)
         self._sqlite_pragma_overrides = overrides or {}
         self._sqlite_pragmas = base_pragmas
 
@@ -370,7 +371,7 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
             pragmas = dict(SQLITE_PRAGMA_PROFILES[profile].pragmas)
             pragmas.update(overrides)
 
-            self._sqlite_profile = profile
+            self._sqlite_profile = cast(SqliteProfile, profile)
             self._sqlite_pragma_overrides = overrides
             self._sqlite_pragmas = pragmas
 

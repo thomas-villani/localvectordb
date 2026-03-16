@@ -17,7 +17,7 @@ enabling perfect reconstruction and precise highlighting.
 
 import re
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import tiktoken
 
@@ -147,7 +147,7 @@ class SentenceChunker(PositionTrackingChunker):
 
         while i < len(sentences):
             # Start building a chunk
-            chunk_sentences = []
+            chunk_sentences: list[tuple[int, int, str]] = []
             chunk_tokens = 0
             start_idx = i
 
@@ -238,7 +238,7 @@ class SentenceChunker(PositionTrackingChunker):
         i = 0
 
         while i < len(words):
-            chunk_words = []
+            chunk_words: list[tuple[int, int, str]] = []
 
             # Add words until we hit the token limit
             while i < len(words):
@@ -359,7 +359,7 @@ class WordChunker(PositionTrackingChunker):
         i = 0
 
         while i < len(words):
-            chunk_words = []
+            chunk_words: list[tuple[int, int, str]] = []
             start_idx = i
 
             # Add words until we hit the token limit
@@ -441,7 +441,7 @@ class LineChunker(PositionTrackingChunker):
         i = 0
 
         while i < len(line_positions):
-            chunk_lines = []
+            chunk_lines: list[tuple[int, int, str]] = []
             chunk_tokens = 0
             start_idx = i
 
@@ -568,7 +568,7 @@ class ParagraphChunker(PositionTrackingChunker):
         i = 0
 
         while i < len(paragraphs):
-            chunk_paragraphs = []
+            chunk_paragraphs: list[tuple[int, int, str]] = []
             chunk_tokens = 0
             start_idx = i
 
@@ -1041,9 +1041,9 @@ class CodeBlockChunker(PositionTrackingChunker):
     @staticmethod
     def _identify_code_blocks(
         lines: List[str], language: str, start_patterns: List[str], end_patterns: List[str]
-    ) -> List[dict]:
+    ) -> List[Dict[str, Any]]:
         """Identify code blocks based on language-specific patterns"""
-        blocks = []
+        blocks: List[Dict[str, Any]] = []
         i = 0
 
         # Special handling for Python (indentation-based)
@@ -1090,7 +1090,7 @@ class CodeBlockChunker(PositionTrackingChunker):
 
         # For bracket-based languages
         else:
-            bracket_stack = []
+            bracket_stack: list[int] = []
 
             while i < len(lines):
                 line = lines[i]
@@ -1169,14 +1169,14 @@ class CodeBlockChunker(PositionTrackingChunker):
 
         return blocks
 
-    def _create_chunks_from_blocks(self, text: str, lines: List[str], blocks: List[dict]) -> List[Chunk]:
+    def _create_chunks_from_blocks(self, text: str, lines: List[str], blocks: List[Dict[str, Any]]) -> List[Chunk]:
         """Create text chunks from code blocks respecting max_tokens"""
         if not blocks:
             return []
 
         chunks = []
         chunk_index = 0
-        current_chunk_lines = []
+        current_chunk_lines: list[Dict[str, Any]] = []
         current_tokens = 0
 
         # Calculate line positions in the original text

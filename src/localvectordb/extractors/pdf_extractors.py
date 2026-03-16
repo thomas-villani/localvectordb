@@ -14,7 +14,7 @@ PDF file extractors using different libraries.
 
 import io
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from localvectordb import MetadataField
 from localvectordb.core import MetadataFieldType
@@ -71,7 +71,7 @@ class PDFPlumberExtractor(BaseExtractor):
             with io.BytesIO(file_content) as file_buffer:
                 with pdfplumber.open(file_buffer) as pdf:
                     text_parts = []
-                    page_info = []
+                    page_info: list[dict[str, Any]] = []
 
                     for page_num, page in enumerate(pdf.pages, 1):
                         try:
@@ -154,7 +154,7 @@ class PyPDFExtractor(BaseExtractor):
             with io.BytesIO(file_content) as file_buffer:
                 pdf_reader = pypdf.PdfReader(file_buffer)
                 text_parts = []
-                page_info = []
+                page_info: list[dict[str, Any]] = []
 
                 for page_num, page in enumerate(pdf_reader.pages, 1):
                     try:

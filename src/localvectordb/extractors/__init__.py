@@ -141,7 +141,7 @@ class ExtractionResult:
         self,
         text: str,
         success: bool = True,
-        method: str = None,
+        method: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
     ):
@@ -479,7 +479,7 @@ class ExtractorRegistry:
     def get_supported_formats(cls) -> Dict[str, Dict[str, Any]]:
         """Get information about all supported formats."""
         cls._discover_plugins()
-        formats = {}
+        formats: Dict[str, Dict[str, Any]] = {}
 
         for extractor in cls._extractors.values():
             if not extractor.available:
@@ -516,7 +516,7 @@ def get_extractor_registry():
     return ExtractorRegistry
 
 
-def get_supported_formats() -> Dict[str, Any]:
+def get_supported_formats() -> Dict[str, Dict[str, Any]]:
     """Get currently supported file formats."""
-    registry = get_extractor_registry()
-    return registry.get_supported_formats()
+    result: Dict[str, Dict[str, Any]] = ExtractorRegistry.get_supported_formats()
+    return result
