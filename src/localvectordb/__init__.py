@@ -193,7 +193,14 @@ MIT License. See LICENSE file for details.
 from localvectordb.backup import BackupManager, IncrementalBackupManager, PointInTimeRecoveryManager
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.client import RemoteVectorDB
-from localvectordb.core import MetadataField, Section, SectionBoundary
+from localvectordb.core import (
+    ChunkAlignment,
+    DocumentComparisonResult,
+    DocumentSimilarityMatrix,
+    MetadataField,
+    Section,
+    SectionBoundary,
+)
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
@@ -220,6 +227,9 @@ __all__ = [
     "MetadataField",
     "Section",
     "SectionBoundary",
+    "ChunkAlignment",
+    "DocumentComparisonResult",
+    "DocumentSimilarityMatrix",
     "section_detection",
     "section_metadata",
     "factory",

@@ -14,6 +14,7 @@ Subpackages
 
    localvectordb.database
    localvectordb.extractors
+   localvectordb.visualization
 
 Submodules
 ----------

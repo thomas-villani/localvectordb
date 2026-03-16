@@ -700,6 +700,41 @@ The same code works for both local and remote databases:
    async with db:
        results = await db.query_async("search query", k=10)
 
+Document Comparison & Visualization
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Compare documents, find nearest neighbours, and visualise the embedding space directly from
+the database object:
+
+.. code-block:: python
+
+   # Cosine similarity between two documents
+   score = db.compare_documents("doc_a", "doc_b")
+
+   # Find the 5 most similar documents
+   neighbours = db.nearest_neighbors("doc_a", k=5)
+
+   # NxN similarity matrix
+   matrix = db.pairwise_similarity_matrix()
+
+   # Chunk-level detailed comparison
+   detail = db.compare_documents_detailed("doc_a", "doc_b", chunk_threshold=0.7)
+   print(f"Matched: {detail.matched_ratio_1:.0%} of doc_a, {detail.matched_ratio_2:.0%} of doc_b")
+
+   # Visualise (requires pip install localvectordb[visualization])
+   fig = db.visualize_documents(method="tsne", n_clusters=3)
+
+See :doc:`comparison` for the full guide.
+
+Agent Skills
+^^^^^^^^^^^^
+
+LocalVectorDB ships with pre-built `Agent Skills <https://agentskills.io>`_ that teach AI
+coding agents (Claude Code, Cursor, VS Code Copilot, etc.) how to use LocalVectorDB.
+Three skills are included: ``semantic-search``, ``fact-checking``, and ``document-comparison``.
+
+See :doc:`skills` for details and how to create your own.
+
 Architecture Overview
 ---------------------
 

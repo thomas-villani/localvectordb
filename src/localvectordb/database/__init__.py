@@ -10,6 +10,7 @@
 # src/localvectordb/database/__init__.py
 from __future__ import annotations
 
+from localvectordb.database._comparison import ComparisonMixin
 from localvectordb.database._core import LocalVectorDBCore
 from localvectordb.database._crud import CrudMixin
 from localvectordb.database._ingest import PipelineMixin
@@ -19,7 +20,9 @@ from localvectordb.database._tuning import LocalTuningMixin, TuningMixin
 from localvectordb.database.base import BaseVectorDB
 
 
-class LocalVectorDB(LocalTuningMixin, PipelineMixin, SearchMixin, MetadataMixin, CrudMixin, LocalVectorDBCore):
+class LocalVectorDB(
+    LocalTuningMixin, PipelineMixin, SearchMixin, MetadataMixin, CrudMixin, ComparisonMixin, LocalVectorDBCore
+):
     """
     Document-first vector database with SQLite + FAISS + embeddings
 

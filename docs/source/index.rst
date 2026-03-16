@@ -36,12 +36,14 @@ scale to distributed deployments without changing your code.
    metadata.filtering
    querybuilder
    document-scoring
+   comparison
    file-extraction
    server/index
    cli
    mcp
    backup
    migrations
+   skills
    recipes
    tutorials/index
    modules/index

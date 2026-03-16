@@ -112,11 +112,20 @@ local-embeddings = [
     "transformers>=4.40.0",
     "torch>=2.0.0",
 ]
+visualization = [
+    "scikit-learn>=1.3.0",
+    "matplotlib>=3.7.0",
+]
+visualization-interactive = [
+    "localvectordb[visualization]",
+    "plotly>=5.15.0",
+]
 all = [
     "localvectordb[server]",
     "localvectordb[file-extraction]",
     "localvectordb[mcp]",
     "localvectordb[sentence-transformers]",
+    "localvectordb[visualization]",
 ]
 dev = [
     "freezegun>=1.5.2",
@@ -130,6 +139,7 @@ dev = [
     "localvectordb[file-extraction]",
     "localvectordb[server]",
     "localvectordb[mcp]",
+    "localvectordb[visualization]",
     "ruff>=0.12.12",
     "mypy>=1.17.1",
     "pytest-cov>=7.0.0",

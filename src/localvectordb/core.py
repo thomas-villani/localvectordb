@@ -26,6 +26,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 
+import numpy as np
+
 from .utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
@@ -537,3 +539,75 @@ class QueryResult:
 #
 #     def order_by(self, ) -> QueryResultList:
 #         pass
+
+
+@dataclass
+class ChunkAlignment:
+    """Alignment between a chunk in one document and its best match in another.
+
+    Parameters
+    ----------
+    chunk_index_1 : int
+        Chunk index in the first document.
+    chunk_index_2 : int
+        Best-matching chunk index in the second document.
+    similarity : float
+        Cosine similarity between the two chunks.
+    """
+
+    chunk_index_1: int
+    chunk_index_2: int
+    similarity: float
+
+
+@dataclass
+class DocumentComparisonResult:
+    """Rich comparison result between two documents.
+
+    Parameters
+    ----------
+    doc_id_1 : str
+        ID of the first document.
+    doc_id_2 : str
+        ID of the second document.
+    overall_similarity : float
+        Centroid-level cosine similarity between documents.
+    chunk_alignments : List[ChunkAlignment]
+        Best match per chunk in doc_1, sorted by similarity descending.
+    matched_ratio_1 : float
+        Fraction of doc_1 chunks with a match >= threshold.
+    matched_ratio_2 : float
+        Fraction of doc_2 chunks with a match >= threshold.
+    unmatched_chunks_1 : List[int]
+        Chunk indices in doc_1 with no match >= threshold.
+    unmatched_chunks_2 : List[int]
+        Chunk indices in doc_2 with no match >= threshold.
+    """
+
+    doc_id_1: str
+    doc_id_2: str
+    overall_similarity: float
+    chunk_alignments: List[ChunkAlignment]
+    matched_ratio_1: float
+    matched_ratio_2: float
+    unmatched_chunks_1: List[int]
+    unmatched_chunks_2: List[int]
+
+
+@dataclass
+class DocumentSimilarityMatrix:
+    """NxN similarity matrix for a set of documents.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        (N, N) array of pairwise similarity scores.
+    doc_ids : List[str]
+        Ordered document IDs matching rows/columns.
+    embeddings : np.ndarray
+        (N, D) document embeddings used to compute the matrix.
+    """
+
+    matrix: np.ndarray
+    doc_ids: List[str]
+    embeddings: np.ndarray

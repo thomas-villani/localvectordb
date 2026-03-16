@@ -1079,3 +1079,133 @@ Complete HTML page showing how to integrate with the LocalVectorDB server.
    - Create an API key using the CLI: ``lvdb auth create-key --description "Web Interface"``
    - Enable CORS if accessing from a different domain
    - Check supported file formats with ``GET /api/v1/upload/supported-formats``
+
+Document Comparison Recipes
+===========================
+
+Find Near-Duplicate Documents
+-----------------------------
+
+Scan the database for document pairs with very high similarity.
+
+.. code-block:: python
+
+   def find_duplicates(db, threshold=0.95):
+       """Find near-duplicate documents in the database."""
+       matrix = db.pairwise_similarity_matrix()
+       duplicates = []
+       for i in range(len(matrix.doc_ids)):
+           for j in range(i + 1, len(matrix.doc_ids)):
+               if matrix.matrix[i, j] >= threshold:
+                   duplicates.append((
+                       matrix.doc_ids[i],
+                       matrix.doc_ids[j],
+                       float(matrix.matrix[i, j]),
+                   ))
+       return sorted(duplicates, key=lambda x: x[2], reverse=True)
+
+   # Usage
+   for doc_a, doc_b, score in find_duplicates(db):
+       print(f"  {doc_a} <-> {doc_b}: {score:.3f}")
+
+Cluster Documents by Topic
+---------------------------
+
+Automatically group documents into topic clusters and print the groups.
+
+.. code-block:: python
+
+   from localvectordb.visualization import cluster_embeddings, find_optimal_clusters
+
+   def cluster_documents(db):
+       """Cluster all documents and return groups."""
+       embeddings, doc_ids = db._get_document_embeddings_batch(None)
+       k = find_optimal_clusters(embeddings)
+       clusters = cluster_embeddings(embeddings, n_clusters=k)
+
+       groups = {}
+       for i, label in enumerate(clusters.labels):
+           groups.setdefault(int(label), []).append(doc_ids[i])
+       return groups
+
+   # Usage
+   for cluster_id, members in cluster_documents(db).items():
+       print(f"Cluster {cluster_id}: {members}")
+
+Compare Document Versions
+--------------------------
+
+Detect what changed between two versions of a document using chunk-level comparison.
+
+.. code-block:: python
+
+   def diff_documents(db, old_id, new_id, threshold=0.6):
+       """Show content differences between two document versions."""
+       result = db.compare_documents_detailed(old_id, new_id, chunk_threshold=threshold)
+
+       print(f"Overall similarity: {result.overall_similarity:.3f}")
+       print(f"Matched: {result.matched_ratio_1:.0%} of old, {result.matched_ratio_2:.0%} of new")
+
+       if result.unmatched_chunks_2:
+           new_doc = db.get(new_id)
+           print("\nNew content in updated version:")
+           for chunk in new_doc.chunks or []:
+               if chunk.index in result.unmatched_chunks_2:
+                   print(f"  + {chunk.content[:120]}...")
+
+       if result.unmatched_chunks_1:
+           old_doc = db.get(old_id)
+           print("\nRemoved from old version:")
+           for chunk in old_doc.chunks or []:
+               if chunk.index in result.unmatched_chunks_1:
+                   print(f"  - {chunk.content[:120]}...")
+
+Visualization Recipes
+=====================
+
+Generate a Similarity Heatmap
+------------------------------
+
+Create a heatmap of pairwise document similarities, useful for spotting clusters and outliers.
+
+.. code-block:: python
+
+   from localvectordb.visualization import plot_similarity_matrix
+
+   matrix = db.pairwise_similarity_matrix()
+   fig = plot_similarity_matrix(matrix, title="Document Similarity Heatmap")
+   fig.savefig("similarity_heatmap.png", dpi=150, bbox_inches="tight")
+
+Build a Document Similarity Network
+-------------------------------------
+
+Visualise documents as a network graph where edges connect similar documents.
+
+.. code-block:: python
+
+   from localvectordb.visualization import plot_similarity_graph
+
+   matrix = db.pairwise_similarity_matrix()
+   fig = plot_similarity_graph(
+       matrix,
+       threshold=0.5,      # only show edges with similarity >= 0.5
+       title="Document Network",
+   )
+   fig.savefig("doc_network.png", dpi=150, bbox_inches="tight")
+
+Visualise Query Relevance
+--------------------------
+
+Overlay multiple queries on the document embedding map. Documents more relevant to the
+queries appear as larger dots.
+
+.. code-block:: python
+
+   fig = db.visualize_queries(
+       queries=[
+           "machine learning algorithms",
+           "database performance tuning",
+       ],
+       method="pca",
+   )
+   fig.savefig("query_relevance.png", dpi=150, bbox_inches="tight")
