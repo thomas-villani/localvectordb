@@ -20,6 +20,7 @@
 `lvdb delete NAME`
     Delete a database
 """
+
 import os
 
 import click
@@ -28,19 +29,30 @@ from localvectordb_server.cli._utils import EXIT_CODE_CONFIGURATION_ERROR, EXIT_
 
 
 @click.command()
-@click.option('--host', '-h', default=None, help='The interface to bind to (e.g. 127.0.0.1 for local serving).',
-              envvar="LVDB_HOST")
-@click.option('--port', '-p', default=None, type=int, help='The port to bind to (default = 5000).',
-              envvar="LVDB_PORT")
-@click.option('--debug', is_flag=True, help='Enable Flask debug mode.',
-              envvar="LVDB_DEBUG")
 @click.option(
-    '--log-level', '-l', default=None, type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-    help='Set the logging level. Must be one of "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"',
-    envvar="LVDB_LOG_LEVEL"
+    "--host",
+    "-h",
+    default=None,
+    help="The interface to bind to (e.g. 127.0.0.1 for local serving).",
+    envvar="LVDB_HOST",
 )
-@click.option('--disable-ollama-check', '-x', is_flag=True, help='Disable checking for ollama on startup',
-              envvar="LVDB_DISABLE_OLLAMA_CHECK")
+@click.option("--port", "-p", default=None, type=int, help="The port to bind to (default = 5000).", envvar="LVDB_PORT")
+@click.option("--debug", is_flag=True, help="Enable Flask debug mode.", envvar="LVDB_DEBUG")
+@click.option(
+    "--log-level",
+    "-l",
+    default=None,
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+    help='Set the logging level. Must be one of "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"',
+    envvar="LVDB_LOG_LEVEL",
+)
+@click.option(
+    "--disable-ollama-check",
+    "-x",
+    is_flag=True,
+    help="Disable checking for ollama on startup",
+    envvar="LVDB_DISABLE_OLLAMA_CHECK",
+)
 @click.pass_context
 def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     """
@@ -70,7 +82,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
             debug=debug,
             log_level=log_level,
             host=host,
-            port=port
+            port=port,
         )
 
         # Get final configuration
@@ -107,11 +119,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
                 raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR) from e
 
         # Run the Flask app with final config values
-        app.run(
-            host=host or config.server.host,
-            port=port or config.server.port,
-            debug=debug
-        )
+        app.run(host=host or config.server.host, port=port or config.server.port, debug=debug)
 
     except ConfigurationError as e:
         click.secho(f"Configuration error: {e}", fg="bright_red")
@@ -121,7 +129,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@click.command('list')
+@click.command("list")
 @click.option("--details", "-v", is_flag=True, default=False, help="Show details")
 @click.pass_context
 def list_databases(ctx, details):
@@ -155,10 +163,13 @@ def list_databases(ctx, details):
             else:
                 try:
                     from localvectordb.database import LocalVectorDB
+
                     db = LocalVectorDB(name, db_folder, create_if_not_exists=False)
                     stats = db.get_stats()
-                    click.echo(f"{name:<25}{stats['documents']:<10}{stats['chunks']:<10}"
-                               f"{stats['embedding_model']:<25}{stats['chunking_method']:<20}")
+                    click.echo(
+                        f"{name:<25}{stats['documents']:<10}{stats['chunks']:<10}"
+                        f"{stats['embedding_model']:<25}{stats['chunking_method']:<20}"
+                    )
                     db.close()
                 except Exception:
                     click.echo(f"{name:<25}{'ERROR':<10}{'ERROR':<10}{'ERROR':<25}{'ERROR':<20}")
@@ -169,22 +180,27 @@ def list_databases(ctx, details):
 
 
 # Schema input currently uses CLI options only; JSON file/string input may be added later.
-@click.command('create')
-@click.argument('name')
-@click.option('--embedding-model', default=None, type=str, help='Embedding model to use')
-@click.option('--embedding-provider', default=None, type=click.Choice(['ollama', 'openai']), help='Embedding provider')
-@click.option('--chunk-size', default=None, type=int, help='Max tokens per chunk')
-@click.option('--chunking-method', default=None,
-              type=click.Choice(['sentences', 'tokens', 'characters', 'words', 'lines', 'sections']),
-              help='Chunking method')
-@click.option('--chunk-overlap', default=None, type=int, help='Overlap between chunks')
-@click.option('--metadata-schema', default=None,
-              type=click.Choice(['documents', 'research_papers', 'code_repository', 'customer_support']),
-              help='Predefined metadata schema to use')
+@click.command("create")
+@click.argument("name")
+@click.option("--embedding-model", default=None, type=str, help="Embedding model to use")
+@click.option("--embedding-provider", default=None, type=click.Choice(["ollama", "openai"]), help="Embedding provider")
+@click.option("--chunk-size", default=None, type=int, help="Max tokens per chunk")
+@click.option(
+    "--chunking-method",
+    default=None,
+    type=click.Choice(["sentences", "tokens", "characters", "words", "lines", "sections"]),
+    help="Chunking method",
+)
+@click.option("--chunk-overlap", default=None, type=int, help="Overlap between chunks")
+@click.option(
+    "--metadata-schema",
+    default=None,
+    type=click.Choice(["documents", "research_papers", "code_repository", "customer_support"]),
+    help="Predefined metadata schema to use",
+)
 @click.pass_context
 def create_vector_database(
-        ctx, name, embedding_model, embedding_provider, chunk_size, chunking_method,
-        chunk_overlap, metadata_schema
+    ctx, name, embedding_model, embedding_provider, chunk_size, chunking_method, chunk_overlap, metadata_schema
 ):
     """
     Create a new vector database.
@@ -230,6 +246,7 @@ def create_vector_database(
     schema_dict = None
     if metadata_schema:
         from localvectordb_server.config import Config
+
         temp_config = Config()
         temp_config.apply_common_schema(metadata_schema)
         schema_dict = temp_config.database.default_metadata_schema
@@ -259,13 +276,13 @@ def create_vector_database(
             click.echo(f"   metadata_schema: {metadata_schema}")
 
     except Exception as e:
-        click.secho(f"Error creating database: {str(repr(e))}", fg='bright_red', err=True)
+        click.secho(f"Error creating database: {str(repr(e))}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@click.command('delete')
-@click.argument('name')
-@click.option('--confirm', '-y', flag_value=True, default=False, help='Pre-confirm deletion (danger!)')
+@click.command("delete")
+@click.argument("name")
+@click.option("--confirm", "-y", flag_value=True, default=False, help="Pre-confirm deletion (danger!)")
 @click.pass_context
 def delete_database(ctx, name, confirm):
     """
@@ -286,7 +303,9 @@ def delete_database(ctx, name, confirm):
     if not db_folder or not os.path.exists(db_folder):
         click.secho(
             f"DB_FOLDER {'not specified and not found in configuration' if not db_folder else 'does not exist'}.",
-            fg="bright_red", err=True)
+            fg="bright_red",
+            err=True,
+        )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     sqlite_file = os.path.abspath(os.path.join(db_folder, f"{name}.sqlite"))
@@ -298,11 +317,11 @@ def delete_database(ctx, name, confirm):
             files.append(faiss_file)
         if not confirm:
             confirm = click.prompt(
-                click.style(f'Are you sure you want to delete the database "{name}"?', fg="bright_red") +
-                f'\nThis will remove the following file(s):\n'
-                f'{chr(10).join("- " + f for f in files)}\n' +
-                click.style('Warning: this action cannot be undone!', fg="bright_red", bold=True) +
-                '\nEnter "confirm" to delete, anything else to exit.'
+                click.style(f'Are you sure you want to delete the database "{name}"?', fg="bright_red")
+                + f"\nThis will remove the following file(s):\n"
+                f'{chr(10).join("- " + f for f in files)}\n'
+                + click.style("Warning: this action cannot be undone!", fg="bright_red", bold=True)
+                + '\nEnter "confirm" to delete, anything else to exit.'
             )
             if confirm != "confirm":
                 click.echo("Aborted by user!")

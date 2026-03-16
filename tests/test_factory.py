@@ -16,7 +16,7 @@ class TestVectorDBFactory:
 
     def test_local_database_creation(self, temp_dir, sample_metadata_schema):
         """Test creating local database via factory."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_instance = Mock()
             mock_local.return_value = mock_instance
 
@@ -26,7 +26,7 @@ class TestVectorDBFactory:
                 metadata_schema=sample_metadata_schema,
                 embedding_model="test-model",
                 chunk_size=500,
-                enable_gpu=True
+                enable_gpu=True,
             )
 
             assert db == mock_instance
@@ -36,31 +36,25 @@ class TestVectorDBFactory:
                 metadata_schema=sample_metadata_schema,
                 embedding_model="test-model",
                 chunk_size=500,
-                enable_gpu=True
+                enable_gpu=True,
             )
 
     def test_local_database_string_path(self, sample_metadata_schema):
         """Test creating local database with string path."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_instance = Mock()
             mock_local.return_value = mock_instance
 
-            db = VectorDB(
-                name="test_db",
-                base_path="./local_storage",
-                metadata_schema=sample_metadata_schema
-            )
+            db = VectorDB(name="test_db", base_path="./local_storage", metadata_schema=sample_metadata_schema)
 
             assert db == mock_instance
             mock_local.assert_called_once_with(
-                name="test_db",
-                base_path="./local_storage",
-                metadata_schema=sample_metadata_schema
+                name="test_db", base_path="./local_storage", metadata_schema=sample_metadata_schema
             )
 
     def test_remote_database_http_url(self, sample_metadata_schema):
         """Test creating remote database with http URL."""
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_instance = Mock()
             mock_remote.return_value = mock_instance
 
@@ -69,7 +63,7 @@ class TestVectorDBFactory:
                 base_path="http://localhost:5000",
                 api_key="test-key",
                 metadata_schema=sample_metadata_schema,
-                request_timeout=30
+                request_timeout=30,
             )
 
             assert db == mock_instance
@@ -78,31 +72,25 @@ class TestVectorDBFactory:
                 base_url="http://localhost:5000",
                 api_key="test-key",
                 metadata_schema=sample_metadata_schema,
-                request_timeout=30
+                request_timeout=30,
             )
 
     def test_remote_database_https_url(self):
         """Test creating remote database with https URL."""
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_instance = Mock()
             mock_remote.return_value = mock_instance
 
-            db = VectorDB(
-                name="test_db",
-                base_path="https://api.example.com",
-                api_key="secret-key"
-            )
+            db = VectorDB(name="test_db", base_path="https://api.example.com", api_key="secret-key")
 
             assert db == mock_instance
             mock_remote.assert_called_once_with(
-                name="test_db",
-                base_url="https://api.example.com",
-                api_key="secret-key"
+                name="test_db", base_url="https://api.example.com", api_key="secret-key"
             )
 
     def test_parameter_filtering_for_local(self):
         """Test that remote-only parameters are filtered for local databases."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_instance = Mock()
             mock_local.return_value = mock_instance
 
@@ -112,7 +100,7 @@ class TestVectorDBFactory:
                 api_key="should-be-filtered",  # Remote-only
                 timeout=30,  # Remote-only
                 enable_gpu=True,  # Local-only
-                connection_pool_size=5  # Local-only
+                connection_pool_size=5,  # Local-only
             )
 
             # Check that remote-only params were filtered out
@@ -124,7 +112,7 @@ class TestVectorDBFactory:
 
     def test_parameter_filtering_for_remote(self):
         """Test that local-only parameters are filtered for remote databases."""
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_instance = Mock()
             mock_remote.return_value = mock_instance
 
@@ -133,7 +121,7 @@ class TestVectorDBFactory:
                 base_path="http://localhost:5000",
                 api_key="test-key",  # Remote-only
                 timeout=30,  # Remote-only
-                connection_pool_size=10  # Local-only - should be filtered
+                connection_pool_size=10,  # Local-only - should be filtered
             )
 
             # Check that local-only params were filtered out
@@ -154,32 +142,24 @@ class TestVectorDBFactory:
             "chunk_overlap": 100,
             "enable_gpu": False,
             "enable_fts": True,
-            "create_if_not_exists": False
+            "create_if_not_exists": False,
         }
 
         # Test local database
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
-            VectorDB(
-                name="test_db",
-                base_path="./local",
-                **shared_params
-            )
+            VectorDB(name="test_db", base_path="./local", **shared_params)
 
             call_kwargs = mock_local.call_args[1]
             for key, value in shared_params.items():
                 assert call_kwargs[key] == value
 
         # Test remote database
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
 
-            VectorDB(
-                name="test_db",
-                base_path="http://localhost:5000",
-                **shared_params
-            )
+            VectorDB(name="test_db", base_path="http://localhost:5000", **shared_params)
 
             call_kwargs = mock_remote.call_args[1]
             for key, value in shared_params.items():
@@ -187,7 +167,7 @@ class TestVectorDBFactory:
 
     def test_path_object_detection(self, temp_dir):
         """Test that Path objects are properly detected as local."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             VectorDB("test_db", temp_dir)
@@ -210,8 +190,10 @@ class TestVectorDBFactory:
         ]
 
         for url, should_be_remote in test_cases:
-            with patch('localvectordb.factory.LocalVectorDB') as mock_local, \
-                    patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+            with (
+                patch("localvectordb.factory.LocalVectorDB") as mock_local,
+                patch("localvectordb.factory.RemoteVectorDB") as mock_remote,
+            ):
 
                 mock_local.return_value = Mock()
                 mock_remote.return_value = Mock()
@@ -228,19 +210,15 @@ class TestVectorDBFactory:
     def test_comprehensive_local_example(self, temp_dir):
         """Test comprehensive local database example from docstring."""
         metadata_schema = {
-            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'date': MetadataField(type=MetadataFieldType.DATE, indexed=True)
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
         }
 
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             VectorDB(
-                "my_docs",
-                temp_dir,
-                metadata_schema=metadata_schema,
-                embedding_model="nomic-embed-text",
-                chunk_size=500
+                "my_docs", temp_dir, metadata_schema=metadata_schema, embedding_model="nomic-embed-text", chunk_size=500
             )
 
             mock_local.assert_called_once_with(
@@ -248,31 +226,26 @@ class TestVectorDBFactory:
                 base_path=temp_dir,
                 metadata_schema=metadata_schema,
                 embedding_model="nomic-embed-text",
-                chunk_size=500
+                chunk_size=500,
             )
 
     def test_comprehensive_remote_example(self):
         """Test comprehensive remote database example from docstring."""
         metadata_schema = {
-            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'date': MetadataField(type=MetadataFieldType.DATE, indexed=True)
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
         }
 
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
 
-            VectorDB(
-                "my_docs",
-                "http://localhost:5000",
-                api_key="your_api_key",
-                metadata_schema=metadata_schema
-            )
+            VectorDB("my_docs", "http://localhost:5000", api_key="your_api_key", metadata_schema=metadata_schema)
 
             mock_remote.assert_called_once_with(
                 name="my_docs",
                 base_url="http://localhost:5000",
                 api_key="your_api_key",
-                metadata_schema=metadata_schema
+                metadata_schema=metadata_schema,
             )
 
     def test_seamless_switching_example(self):
@@ -287,15 +260,11 @@ class TestVectorDBFactory:
                 extra_kwargs = {"enable_gpu": True}
 
             return VectorDB(
-                "my_database",
-                base_path,
-                embedding_model="nomic-embed-text",
-                chunk_size=500,
-                **extra_kwargs
+                "my_database", base_path, embedding_model="nomic-embed-text", chunk_size=500, **extra_kwargs
             )
 
         # Test local creation
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             _local_db = create_database(use_remote=False)
@@ -305,11 +274,11 @@ class TestVectorDBFactory:
                 base_path="./local_storage",
                 embedding_model="nomic-embed-text",
                 chunk_size=500,
-                enable_gpu=True
+                enable_gpu=True,
             )
 
         # Test remote creation
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
 
             _remote_db = create_database(use_remote=True)
@@ -319,30 +288,27 @@ class TestVectorDBFactory:
                 base_url="http://localhost:5000",
                 embedding_model="nomic-embed-text",
                 chunk_size=500,
-                api_key="your_api_key"
+                api_key="your_api_key",
             )
 
     def test_empty_kwargs(self):
         """Test factory with minimal parameters."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             VectorDB("test_db", "./local")
 
-            mock_local.assert_called_once_with(
-                name="test_db",
-                base_path="./local"
-            )
+            mock_local.assert_called_once_with(name="test_db", base_path="./local")
 
     def test_all_parameters_local(self, temp_dir):
         """Test factory with all possible local parameters."""
         metadata_schema = {
-            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'rating': MetadataField(type=MetadataFieldType.REAL),
-            'tags': MetadataField(type=MetadataFieldType.JSON)
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "rating": MetadataField(type=MetadataFieldType.REAL),
+            "tags": MetadataField(type=MetadataFieldType.JSON),
         }
 
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             VectorDB(
@@ -359,7 +325,7 @@ class TestVectorDBFactory:
                 enable_gpu=True,
                 enable_fts=False,
                 connection_pool_size=20,
-                create_if_not_exists=False
+                create_if_not_exists=False,
             )
 
             # Verify all parameters were passed
@@ -380,12 +346,12 @@ class TestVectorDBFactory:
     def test_all_parameters_remote(self):
         """Test factory with all possible remote parameters."""
         metadata_schema = {
-            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'category': MetadataField(type=MetadataFieldType.TEXT),
-            'priority': MetadataField(type=MetadataFieldType.INTEGER)
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "category": MetadataField(type=MetadataFieldType.TEXT),
+            "priority": MetadataField(type=MetadataFieldType.INTEGER),
         }
 
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
 
             VectorDB(
@@ -402,7 +368,7 @@ class TestVectorDBFactory:
                 chunk_overlap=80,
                 enable_gpu=False,
                 enable_fts=True,
-                timeout=120
+                timeout=120,
             )
 
             # Verify all parameters were passed
@@ -430,7 +396,7 @@ class TestFactoryDocstringExamples:
 
     def test_local_database_example(self, temp_dir):
         """Test the local database example from docstring."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             # Example from docstring
@@ -438,11 +404,11 @@ class TestFactoryDocstringExamples:
                 "my_docs",
                 temp_dir,
                 metadata_schema={
-                    'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                    'date': MetadataField(type=MetadataFieldType.DATE, indexed=True)
+                    "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                    "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
                 },
                 embedding_model="nomic-embed-text",
-                chunk_size=500
+                chunk_size=500,
             )
 
             assert mock_local.called
@@ -452,7 +418,7 @@ class TestFactoryDocstringExamples:
 
     def test_remote_database_example(self):
         """Test the remote database example from docstring."""
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
 
             # Example from docstring
@@ -461,9 +427,9 @@ class TestFactoryDocstringExamples:
                 "http://localhost:5000",
                 api_key="your_api_key",
                 metadata_schema={
-                    'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                    'date': MetadataField(type=MetadataFieldType.DATE, indexed=True)
-                }
+                    "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                    "date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+                },
             )
 
             assert mock_remote.called
@@ -483,21 +449,17 @@ class TestFactoryDocstringExamples:
                 extra_kwargs = {"enable_gpu": True}
 
             return VectorDB(
-                "my_database",
-                base_path,
-                embedding_model="nomic-embed-text",
-                chunk_size=500,
-                **extra_kwargs
+                "my_database", base_path, embedding_model="nomic-embed-text", chunk_size=500, **extra_kwargs
             )
 
         # Test local creation
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
             _local_db = create_database(use_remote=False)
             assert mock_local.called
 
         # Test remote creation
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
             _remote_db = create_database(use_remote=True)
             assert mock_remote.called
@@ -509,7 +471,7 @@ class TestFactoryErrorCases:
 
     def test_invalid_local_parameters(self):
         """Test that invalid parameters raise appropriate errors."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             # Simulate LocalVectorDB raising ValueError for invalid params
             mock_local.side_effect = ValueError("Invalid chunk_size")
 
@@ -518,7 +480,7 @@ class TestFactoryErrorCases:
 
     def test_invalid_remote_parameters(self):
         """Test that invalid remote parameters raise appropriate errors."""
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             # Simulate RemoteVectorDB raising ValueError for invalid params
             mock_remote.side_effect = ValueError("Invalid API key")
 
@@ -532,7 +494,7 @@ class TestFactoryErrorCases:
             def __str__(self):
                 return "http://localhost:5000"
 
-        with patch('localvectordb.factory.RemoteVectorDB') as mock_remote:
+        with patch("localvectordb.factory.RemoteVectorDB") as mock_remote:
             mock_remote.return_value = Mock()
 
             # Should be detected as remote due to string conversion
@@ -542,7 +504,7 @@ class TestFactoryErrorCases:
 
     def test_none_base_path(self):
         """Test handling of None base_path."""
-        with patch('localvectordb.factory.LocalVectorDB') as mock_local:
+        with patch("localvectordb.factory.LocalVectorDB") as mock_local:
             mock_local.return_value = Mock()
 
             # None should be converted to "None" string

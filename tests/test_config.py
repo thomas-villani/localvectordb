@@ -370,18 +370,9 @@ class TestConfig:
     def test_from_dict_with_data(self):
         """Test creating config from dict with data."""
         data = {
-            "database": {
-                "root_dir": "/custom/path",
-                "chunk_size": 1000
-            },
-            "embedding": {
-                "provider": "openai",
-                "model": "text-embedding-ada-002"
-            },
-            "server": {
-                "host": "0.0.0.0",
-                "port": 8080
-            }
+            "database": {"root_dir": "/custom/path", "chunk_size": 1000},
+            "embedding": {"provider": "openai", "model": "text-embedding-ada-002"},
+            "server": {"host": "0.0.0.0", "port": 8080},
         }
 
         config = Config.from_dict(data)
@@ -399,7 +390,7 @@ class TestConfig:
             "database": {
                 "default_metadata_schema": {
                     "title": {"type": "text", "indexed": True},
-                    "author": {"type": "text", "required": True}
+                    "author": {"type": "text", "required": True},
                 }
             }
         }
@@ -452,7 +443,7 @@ port = 9000
         json_data = {
             "database": {"root_dir": "/json/test", "chunk_size": 600},
             "embedding": {"provider": "ollama", "model": "json-model"},
-            "server": {"host": "127.0.0.1", "port": 7000}
+            "server": {"host": "127.0.0.1", "port": 7000},
         }
 
         json_file = temp_dir / "config.json"
@@ -478,12 +469,16 @@ port = 9000
         with pytest.raises(ValueError, match="Unsupported configuration file format"):
             Config.from_file(str(unsupported_file))
 
-    @patch.dict(os.environ, {
-        "LVDB_DATABASE_ROOT_DIR": "/env/test",
-        "LVDB_DATABASE_CHUNK_SIZE": "777",
-        "LVDB_EMBEDDING_PROVIDER": "openai",
-        "LVDB_SERVER_PORT": "6000"
-    }, clear=True)
+    @patch.dict(
+        os.environ,
+        {
+            "LVDB_DATABASE_ROOT_DIR": "/env/test",
+            "LVDB_DATABASE_CHUNK_SIZE": "777",
+            "LVDB_EMBEDDING_PROVIDER": "openai",
+            "LVDB_SERVER_PORT": "6000",
+        },
+        clear=True,
+    )
     def test_from_env(self):
         """Test loading config from environment variables."""
         config = Config.from_env()
@@ -499,9 +494,11 @@ port = 9000
         config = Config.from_env()
         assert config.database.enable_gpu is True
 
-    @patch.dict(os.environ,
-                {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["http://localhost", "https://example.com"]'},
-                clear=True)
+    @patch.dict(
+        os.environ,
+        {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["http://localhost", "https://example.com"]'},
+        clear=True,
+    )
     def test_from_env_list_conversion(self):
         """Test environment variable list conversion."""
         config = Config.from_env()
@@ -532,10 +529,10 @@ port = 9000
 
         assert 'root_dir = "/test/toml"' in toml_str
         assert 'provider = "openai"' in toml_str
-        assert 'port = 8080' in toml_str
-        assert '[database]' in toml_str
-        assert '[embedding]' in toml_str
-        assert '[server]' in toml_str
+        assert "port = 8080" in toml_str
+        assert "[database]" in toml_str
+        assert "[embedding]" in toml_str
+        assert "[server]" in toml_str
 
     def test_apply_common_schema(self):
         """Test applying common metadata schema."""
@@ -577,14 +574,10 @@ port = 9000
     def test_merge_metadata_schema(self):
         """Test merging configurations with metadata schemas."""
         base_config = Config()
-        base_config.database.default_metadata_schema = {
-            "title": MetadataField(type=MetadataFieldType.TEXT)
-        }
+        base_config.database.default_metadata_schema = {"title": MetadataField(type=MetadataFieldType.TEXT)}
 
         override_config = Config()
-        override_config.database.default_metadata_schema = {
-            "author": MetadataField(type=MetadataFieldType.TEXT)
-        }
+        override_config.database.default_metadata_schema = {"author": MetadataField(type=MetadataFieldType.TEXT)}
 
         merged = base_config.merge(override_config)
 
@@ -596,10 +589,7 @@ port = 9000
         """Test update_from_dict class method."""
         base_config = Config()
 
-        update_map = {
-            "database": {"root_dir": "/updated/path", "chunk_size": 999},
-            "server": {"port": 7777}
-        }
+        update_map = {"database": {"root_dir": "/updated/path", "chunk_size": 999}, "server": {"port": 7777}}
 
         updated_config = Config.update_from_dict(base_config, update_map)
 
@@ -642,10 +632,7 @@ class TestLoadConfig:
 
     def test_load_config_with_dict(self):
         """Test loading config with dictionary."""
-        input_dict = {
-            "database": {"root_dir": "/dict/test"},
-            "server": {"port": 8888}
-        }
+        input_dict = {"database": {"root_dir": "/dict/test"}, "server": {"port": 8888}}
 
         result = load_config(input_dict, verbose=False)
 
@@ -723,7 +710,7 @@ port = 5555
         with pytest.raises(ConfigurationError):
             load_config(input_config, validate=True, verbose=False)
 
-    @patch('click.secho')
+    @patch("click.secho")
     def test_load_config_verbose_mode(self, mock_secho):
         """Test load_config in verbose mode."""
         input_config = Config()
@@ -830,57 +817,53 @@ class TestConfigRefactorFixes:
         # Issue 2: Environment parsing for Union[str, List[str]] fails in Python 3.11+
 
         # Test JSON array format
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["https://test1.com", "https://test2.com"]'
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["https://test1.com", "https://test2.com"]'},
+            clear=True,
+        ):
             config = Config.from_env()
             assert config.server.security.cors_allowed_origins == ["https://test1.com", "https://test2.com"]
 
         # Test comma-separated format
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://test1.com,https://test2.com"
-        }, clear=True):
+        with patch.dict(
+            os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://test1.com,https://test2.com"}, clear=True
+        ):
             config = Config.from_env()
             assert config.server.security.cors_allowed_origins == ["https://test1.com", "https://test2.com"]
 
         # Test semicolon-separated format (new feature)
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://test1.com;https://test2.com"
-        }, clear=True):
+        with patch.dict(
+            os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://test1.com;https://test2.com"}, clear=True
+        ):
             config = Config.from_env()
             assert config.server.security.cors_allowed_origins == ["https://test1.com", "https://test2.com"]
 
         # Test single string value
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://single.com"
-        }, clear=True):
+        with patch.dict(os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "https://single.com"}, clear=True):
             config = Config.from_env()
             assert config.server.security.cors_allowed_origins == "https://single.com"
 
         # Test wildcard string
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "*"
-        }, clear=True):
+        with patch.dict(os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": "*"}, clear=True):
             config = Config.from_env()
             assert config.server.security.cors_allowed_origins == "*"
 
     def test_union_str_list_malformed_json_fallback(self):
         """Test that malformed JSON falls back to comma-separated parsing."""
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["incomplete json'
-        }, clear=True):
+        with patch.dict(os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["incomplete json'}, clear=True):
             config = Config.from_env()
             # Malformed JSON without comma should be treated as single string
             assert config.server.security.cors_allowed_origins == '["incomplete json'
 
         # Test malformed JSON that contains commas - should fall back to comma parsing
-        with patch.dict(os.environ, {
-            "LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["site1.com", "site2.com"'
-        }, clear=True):
+        with patch.dict(
+            os.environ, {"LVDB_SERVER_SECURITY_CORS_ALLOWED_ORIGINS": '["site1.com", "site2.com"'}, clear=True
+        ):
             config = Config.from_env()
             # Should fall back to parsing the content as comma-separated
             # The parsing strips quotes and whitespace from each item
-            assert config.server.security.cors_allowed_origins == ['["site1.com', 'site2.com']
+            assert config.server.security.cors_allowed_origins == ['["site1.com', "site2.com"]
 
     def test_no_legacy_environment_variables_supported(self):
         """Test that legacy environment variables are no longer supported."""
@@ -891,7 +874,7 @@ class TestConfigRefactorFixes:
             "LVDB_HOST": "192.168.1.1",
             "LVDB_PORT": "9999",
             "LVDB_LOG_LEVEL": "DEBUG",
-            "LVDB_ROOT_DIR": "/legacy/path"
+            "LVDB_ROOT_DIR": "/legacy/path",
         }
 
         with patch.dict(os.environ, legacy_env_vars, clear=True):
@@ -913,7 +896,7 @@ class TestConfigRefactorFixes:
                 # These legacy security fields should no longer be automatically mapped
                 "require_api_key": True,
                 "cors_enabled": False,
-                "cors_allowed_origins": ["https://legacy.com"]
+                "cors_allowed_origins": ["https://legacy.com"],
             }
         }
 
@@ -935,8 +918,8 @@ class TestConfigRefactorFixes:
                 "security": {
                     "require_api_key": True,
                     "cors_enabled": False,
-                    "cors_allowed_origins": ["https://proper.com"]
-                }
+                    "cors_allowed_origins": ["https://proper.com"],
+                },
             }
         }
 

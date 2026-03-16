@@ -15,6 +15,7 @@ Extractors automatically populate section metadata during ingestion.
 Built-in extractors are text-based (no external dependencies).
 Users can provide custom extractors by subclassing SectionMetadataExtractor.
 """
+
 from __future__ import annotations
 
 import re
@@ -25,12 +26,12 @@ from typing import Any, Dict, List, Optional, Union
 
 class SectionMetadataExtractor(ABC):
     """Base class for section metadata extractors."""
+
     name: str = ""
     requires_llm: bool = False
 
     @abstractmethod
-    def extract(self, section_text: str, heading: Optional[str],
-                context: Dict[str, Any]) -> Dict[str, Any]:
+    def extract(self, section_text: str, heading: Optional[str], context: Dict[str, Any]) -> Dict[str, Any]:
         """Extract metadata from a section.
 
         Parameters
@@ -52,19 +53,19 @@ class SectionMetadataExtractor(ABC):
 
 class WordCountExtractor(SectionMetadataExtractor):
     """Extracts word count for a section."""
+
     name = "word_count"
 
-    def extract(self, section_text: str, heading: Optional[str],
-                context: Dict[str, Any]) -> Dict[str, Any]:
+    def extract(self, section_text: str, heading: Optional[str], context: Dict[str, Any]) -> Dict[str, Any]:
         return {"word_count": len(section_text.split())}
 
 
 class CharCountExtractor(SectionMetadataExtractor):
     """Extracts character count for a section."""
+
     name = "char_count"
 
-    def extract(self, section_text: str, heading: Optional[str],
-                context: Dict[str, Any]) -> Dict[str, Any]:
+    def extract(self, section_text: str, heading: Optional[str], context: Dict[str, Any]) -> Dict[str, Any]:
         return {"char_count": len(section_text)}
 
 
@@ -73,10 +74,10 @@ class HeadingPathExtractor(SectionMetadataExtractor):
 
     Requires 'all_sections' key in context with list of (heading, heading_level) tuples.
     """
+
     name = "heading_path"
 
-    def extract(self, section_text: str, heading: Optional[str],
-                context: Dict[str, Any]) -> Dict[str, Any]:
+    def extract(self, section_text: str, heading: Optional[str], context: Dict[str, Any]) -> Dict[str, Any]:
         all_sections = context.get("all_sections", [])
         current_index = context.get("section_index", 0)
 
@@ -112,6 +113,7 @@ class KeywordsExtractor(SectionMetadataExtractor):
     min_word_length : int
         Minimum word length to consider. Default: 3.
     """
+
     name = "keywords"
 
     def __init__(self, top_n: int = 10, min_word_length: int = 3):
@@ -119,20 +121,70 @@ class KeywordsExtractor(SectionMetadataExtractor):
         self.min_word_length = min_word_length
         # Common English stop words
         self._stop_words = {
-            'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had',
-            'her', 'was', 'one', 'our', 'out', 'has', 'have', 'been', 'from',
-            'will', 'with', 'they', 'this', 'that', 'each', 'which', 'their',
-            'said', 'them', 'than', 'its', 'into', 'more', 'other', 'some',
-            'very', 'when', 'come', 'could', 'now', 'would', 'make', 'like',
-            'just', 'over', 'such', 'also', 'about', 'know', 'most', 'only',
-            'then', 'these', 'being', 'does', 'what', 'there', 'where', 'how',
+            "the",
+            "and",
+            "for",
+            "are",
+            "but",
+            "not",
+            "you",
+            "all",
+            "can",
+            "had",
+            "her",
+            "was",
+            "one",
+            "our",
+            "out",
+            "has",
+            "have",
+            "been",
+            "from",
+            "will",
+            "with",
+            "they",
+            "this",
+            "that",
+            "each",
+            "which",
+            "their",
+            "said",
+            "them",
+            "than",
+            "its",
+            "into",
+            "more",
+            "other",
+            "some",
+            "very",
+            "when",
+            "come",
+            "could",
+            "now",
+            "would",
+            "make",
+            "like",
+            "just",
+            "over",
+            "such",
+            "also",
+            "about",
+            "know",
+            "most",
+            "only",
+            "then",
+            "these",
+            "being",
+            "does",
+            "what",
+            "there",
+            "where",
+            "how",
         }
 
-    def extract(self, section_text: str, heading: Optional[str],
-                context: Dict[str, Any]) -> Dict[str, Any]:
-        words = re.findall(r'\b[a-zA-Z]+\b', section_text.lower())
-        filtered = [w for w in words
-                    if len(w) >= self.min_word_length and w not in self._stop_words]
+    def extract(self, section_text: str, heading: Optional[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        words = re.findall(r"\b[a-zA-Z]+\b", section_text.lower())
+        filtered = [w for w in words if len(w) >= self.min_word_length and w not in self._stop_words]
         counter = Counter(filtered)
         top_keywords = [word for word, _ in counter.most_common(self.top_n)]
         return {"keywords": top_keywords}
@@ -148,7 +200,7 @@ BUILTIN_EXTRACTORS: Dict[str, type] = {
 
 
 def resolve_extractors(
-    extractors: Optional[List[Union[str, SectionMetadataExtractor]]]
+    extractors: Optional[List[Union[str, SectionMetadataExtractor]]],
 ) -> List[SectionMetadataExtractor]:
     """Resolve a list of extractor names/instances to extractor instances.
 
@@ -170,14 +222,11 @@ def resolve_extractors(
         if isinstance(ext, str):
             if ext not in BUILTIN_EXTRACTORS:
                 raise ValueError(
-                    f"Unknown section metadata extractor: '{ext}'. "
-                    f"Available: {list(BUILTIN_EXTRACTORS.keys())}"
+                    f"Unknown section metadata extractor: '{ext}'. " f"Available: {list(BUILTIN_EXTRACTORS.keys())}"
                 )
             resolved.append(BUILTIN_EXTRACTORS[ext]())
         elif isinstance(ext, SectionMetadataExtractor):
             resolved.append(ext)
         else:
-            raise TypeError(
-                f"Expected str or SectionMetadataExtractor, got {type(ext)}"
-            )
+            raise TypeError(f"Expected str or SectionMetadataExtractor, got {type(ext)}")
     return resolved

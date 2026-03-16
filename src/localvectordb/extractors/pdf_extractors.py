@@ -38,15 +38,15 @@ class PDFPlumberExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.pdf']
+        return [".pdf"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return ['application/pdf']
+        return ["application/pdf"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['pdfplumber']
+        return ["pdfplumber"]
 
     @property
     def priority(self) -> int:
@@ -58,10 +58,11 @@ class PDFPlumberExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("pdfplumber") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from PDF using pdfplumber."""
         try:
@@ -77,57 +78,39 @@ class PDFPlumberExtractor(BaseExtractor):
                             page_text = page.extract_text()
                             if page_text and page_text.strip():
                                 text_parts.append(page_text)
-                                page_info.append({
-                                    'page': page_num,
-                                    'text_length': len(page_text),
-                                    'has_text': True
-                                })
+                                page_info.append({"page": page_num, "text_length": len(page_text), "has_text": True})
                             else:
-                                page_info.append({
-                                    'page': page_num,
-                                    'text_length': 0,
-                                    'has_text': False
-                                })
+                                page_info.append({"page": page_num, "text_length": 0, "has_text": False})
                         except Exception as e:
                             logger.warning(f"Error extracting text from page {page_num}: {e}")
-                            page_info.append({
-                                'page': page_num,
-                                'error': str(e),
-                                'has_text': False
-                            })
+                            page_info.append({"page": page_num, "error": str(e), "has_text": False})
 
                     if not text_parts:
                         return ExtractionResult(
                             text="",
                             success=False,
-                            method='PDFPlumberExtractor',
-                            error="No text content found in PDF (may be image-based)"
+                            method="PDFPlumberExtractor",
+                            error="No text content found in PDF (may be image-based)",
                         )
 
                     # Join pages with double newlines
-                    full_text = '\n\n'.join(text_parts)
+                    full_text = "\n\n".join(text_parts)
 
                     metadata = {
-                        'total_pages': len(pdf.pages),
-                        'pages_with_text': len(text_parts),
-                        'file_size_bytes': len(file_content),
-                        'character_count': len(full_text),
-                        'page_details': page_info,
+                        "total_pages": len(pdf.pages),
+                        "pages_with_text": len(text_parts),
+                        "file_size_bytes": len(file_content),
+                        "character_count": len(full_text),
+                        "page_details": page_info,
                     }
 
                     return ExtractionResult(
-                        text=full_text,
-                        success=True,
-                        method='PDFPlumberExtractor',
-                        metadata=metadata
+                        text=full_text, success=True, method="PDFPlumberExtractor", metadata=metadata
                     )
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='PDFPlumberExtractor',
-                error=f"pdfplumber extraction failed: {str(e)}"
+                text="", success=False, method="PDFPlumberExtractor", error=f"pdfplumber extraction failed: {str(e)}"
             )
 
 
@@ -138,15 +121,15 @@ class PyPDFExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.pdf']
+        return [".pdf"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return ['application/pdf']
+        return ["application/pdf"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['pypdf']
+        return ["pypdf"]
 
     @property
     def priority(self) -> int:
@@ -158,10 +141,11 @@ class PyPDFExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("pypdf") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from PDF using PyPDF2."""
         try:
@@ -177,61 +161,41 @@ class PyPDFExtractor(BaseExtractor):
                         page_text = page.extract_text(extraction_mode="layout")
                         if page_text and page_text.strip():
                             text_parts.append(page_text)
-                            page_info.append({
-                                'page': page_num,
-                                'text_length': len(page_text),
-                                'has_text': True
-                            })
+                            page_info.append({"page": page_num, "text_length": len(page_text), "has_text": True})
                         else:
-                            page_info.append({
-                                'page': page_num,
-                                'text_length': 0,
-                                'has_text': False
-                            })
+                            page_info.append({"page": page_num, "text_length": 0, "has_text": False})
                     except Exception as e:
                         logger.warning(f"Error extracting text from page {page_num}: {e}")
-                        page_info.append({
-                            'page': page_num,
-                            'error': str(e),
-                            'has_text': False
-                        })
+                        page_info.append({"page": page_num, "error": str(e), "has_text": False})
 
                 if not text_parts:
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='PyPDFExtractor',
-                        error="No text content found in PDF (may be image-based)"
+                        method="PyPDFExtractor",
+                        error="No text content found in PDF (may be image-based)",
                     )
 
                 # Join pages with double newlines
-                full_text = '\n\n'.join(text_parts)
+                full_text = "\n\n".join(text_parts)
 
                 metadata = {
-                    'total_pages': len(pdf_reader.pages),
-                    'pages_with_text': len(text_parts),
-                    'file_size_bytes': len(file_content),
-                    'character_count': len(full_text),
-                    'page_details': page_info,
-                    'extraction_library': 'PyPDF2',
-                    'encrypted': False
+                    "total_pages": len(pdf_reader.pages),
+                    "pages_with_text": len(text_parts),
+                    "file_size_bytes": len(file_content),
+                    "character_count": len(full_text),
+                    "page_details": page_info,
+                    "extraction_library": "PyPDF2",
+                    "encrypted": False,
                 }
 
                 # Check if PDF is encrypted
                 if pdf_reader.is_encrypted:
-                    metadata['encrypted'] = True
+                    metadata["encrypted"] = True
 
-                return ExtractionResult(
-                    text=full_text,
-                    success=True,
-                    method='PyPDFExtractor',
-                    metadata=metadata
-                )
+                return ExtractionResult(text=full_text, success=True, method="PyPDFExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='PyPDFExtractor',
-                error=f"PyPDF2 extraction failed: {str(e)}"
+                text="", success=False, method="PyPDFExtractor", error=f"PyPDF2 extraction failed: {str(e)}"
             )

@@ -48,14 +48,13 @@ def list_tuning_profiles():
 
 @tuning_group.command("get")
 @click.argument("database")
-@click.option("--format", "-f", type=click.Choice(["table", "json"]), default="table",
-              help="Output format")
+@click.option("--format", "-f", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.pass_context
 def get_tuning_config(ctx, database, format):
     """Show current SQLite tuning configuration for a database."""
 
     try:
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -78,13 +77,13 @@ def get_tuning_config(ctx, database, format):
 
             click.echo(f"Profile: {click.style(config['profile'], fg='green', bold=True)}")
 
-            if config['overrides']:
+            if config["overrides"]:
                 click.echo("\nProfile Overrides:")
-                for key, value in config['overrides'].items():
+                for key, value in config["overrides"].items():
                     click.echo(f"  {key}: {value}")
 
             click.echo("\nActive Pragma Settings:")
-            for key, value in config['pragmas'].items():
+            for key, value in config["pragmas"].items():
                 click.echo(f"  {key}: {value}")
 
     except Exception as e:
@@ -94,8 +93,9 @@ def get_tuning_config(ctx, database, format):
 @tuning_group.command("set")
 @click.argument("database")
 @click.argument("profile")
-@click.option("--override", "-o", multiple=True, metavar="KEY=VALUE",
-              help="Pragma override (can be used multiple times)")
+@click.option(
+    "--override", "-o", multiple=True, metavar="KEY=VALUE", help="Pragma override (can be used multiple times)"
+)
 @click.option("--no-persist", is_flag=True, help="Don't persist settings to database")
 @click.option("--dry-run", is_flag=True, help="Show what would be applied without applying")
 @click.pass_context
@@ -106,20 +106,20 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
         # Parse overrides
         overrides = {}
         for override_str in override:
-            if '=' not in override_str:
+            if "=" not in override_str:
                 click.echo(f"Error: Invalid override format '{override_str}'. Use KEY=VALUE", err=True)
                 return
 
-            key, value = override_str.split('=', 1)
+            key, value = override_str.split("=", 1)
             key = key.strip()
             value = value.strip()
 
             # Try to parse as number, boolean, or keep as string
-            if value.lower() in ('true', 'false'):
-                overrides[key] = value.lower() == 'true'
+            if value.lower() in ("true", "false"):
+                overrides[key] = value.lower() == "true"
             elif value.isdigit():
                 overrides[key] = int(value)
-            elif value.lstrip('-').isdigit():
+            elif value.lstrip("-").isdigit():
                 overrides[key] = int(value)
             else:
                 overrides[key] = value
@@ -134,7 +134,7 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
             click.echo(f"Persist: {not no_persist}")
             return
 
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -178,7 +178,7 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
     """Set a specific pragma override for a database."""
 
     try:
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -189,11 +189,11 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
             return
 
         # Parse pragma value
-        if pragma_value.lower() in ('true', 'false'):
-            parsed_value = pragma_value.lower() == 'true'
+        if pragma_value.lower() in ("true", "false"):
+            parsed_value = pragma_value.lower() == "true"
         elif pragma_value.isdigit():
             parsed_value = int(pragma_value)
-        elif pragma_value.lstrip('-').isdigit():
+        elif pragma_value.lstrip("-").isdigit():
             parsed_value = int(pragma_value)
         else:
             parsed_value = pragma_value
@@ -202,15 +202,16 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
         current_config = db.get_sqlite_tuning()
 
-        overrides = dict(current_config['overrides'])
+        overrides = dict(current_config["overrides"])
         overrides[pragma_key] = parsed_value
 
-        db.set_sqlite_tuning(current_config['profile'], overrides, persist=not no_persist)
+        db.set_sqlite_tuning(current_config["profile"], overrides, persist=not no_persist)
         db.close()
 
         click.echo(
             f" Set pragma '{click.style(pragma_key, fg='cyan')}'"
-            f" = '{click.style(str(parsed_value), fg='yellow')}' for '{database}'")
+            f" = '{click.style(str(parsed_value), fg='yellow')}' for '{database}'"
+        )
 
         if not no_persist:
             click.echo(" Setting persisted to database")
@@ -222,22 +223,23 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
 @tuning_group.command("auto")
 @click.argument("database")
 @click.option("--interactive", "-i", is_flag=True, help="Run interactive workload interview")
-@click.option("--workload-type",
-              type=click.Choice(["read_heavy", "write_heavy", "balanced", "batch_ingest", "real_time"]),
-              help="Workload type (skips interview)")
-@click.option("--memory-constraint", type=click.Choice(["generous", "moderate", "limited"]),
-              help="Memory availability")
-@click.option("--durability", type=click.Choice(["critical", "high", "normal", "low"]),
-              help="Data durability importance")
+@click.option(
+    "--workload-type",
+    type=click.Choice(["read_heavy", "write_heavy", "balanced", "batch_ingest", "real_time"]),
+    help="Workload type (skips interview)",
+)
+@click.option("--memory-constraint", type=click.Choice(["generous", "moderate", "limited"]), help="Memory availability")
+@click.option(
+    "--durability", type=click.Choice(["critical", "high", "normal", "low"]), help="Data durability importance"
+)
 @click.option("--apply", is_flag=True, help="Apply recommended settings immediately")
-@click.option("--format", "-f", type=click.Choice(["table", "json"]), default="table",
-              help="Output format")
+@click.option("--format", "-f", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.pass_context
 def auto_tune_database(ctx, database, interactive, workload_type, memory_constraint, durability, apply, format):
     """Get auto-tuning recommendations for a database."""
 
     try:
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -255,16 +257,12 @@ def auto_tune_database(ctx, database, interactive, workload_type, memory_constra
                 "memory_constraint": memory_constraint or "moderate",
                 "durability_level": durability or "normal",
                 "concurrent_users": 5,
-                "document_size": "medium"
+                "document_size": "medium",
             }
 
         # Get recommendations
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
-        recommendation = db.auto_tune(
-            workload=workload,
-            interactive=interactive,
-            apply=apply
-        )
+        recommendation = db.auto_tune(workload=workload, interactive=interactive, apply=apply)
         db.close()
 
         if format == "json":
@@ -275,18 +273,18 @@ def auto_tune_database(ctx, database, interactive, workload_type, memory_constra
 
             click.echo(f"Recommended Profile: {click.style(recommendation['profile_name'], fg='green', bold=True)}")
 
-            if recommendation['pragma_overrides']:
+            if recommendation["pragma_overrides"]:
                 click.echo("\nRecommended Overrides:")
-                for key, value in recommendation['pragma_overrides'].items():
+                for key, value in recommendation["pragma_overrides"].items():
                     click.echo(f"  {key}: {value}")
 
             click.echo(f"\nEstimated Memory Usage: {recommendation['estimated_memory_mb']} MB")
 
             click.echo("\nReasoning:")
-            for reason in recommendation['reasoning']:
+            for reason in recommendation["reasoning"]:
                 click.echo(f"  • {reason}")
 
-            if recommendation['applied']:
+            if recommendation["applied"]:
                 click.echo(f"\n {click.style('Settings have been applied!', fg='green', bold=True)}")
             else:
                 click.echo("\n Run with --apply to apply these settings")
@@ -303,14 +301,19 @@ def maintenance_group():
 
 @maintenance_group.command("checkpoint")
 @click.argument("database")
-@click.option("--mode", "-m", type=click.Choice(["PASSIVE", "FULL", "RESTART", "TRUNCATE"]),
-              default="PASSIVE", help="Checkpoint mode")
+@click.option(
+    "--mode",
+    "-m",
+    type=click.Choice(["PASSIVE", "FULL", "RESTART", "TRUNCATE"]),
+    default="PASSIVE",
+    help="Checkpoint mode",
+)
 @click.pass_context
 def checkpoint_database(ctx, database, mode):
     """Run SQLite WAL checkpoint on a database."""
 
     try:
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -337,7 +340,7 @@ def optimize_database(ctx, database):
     """Run SQLite PRAGMA optimize on a database."""
 
     try:
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -367,7 +370,7 @@ def vacuum_database(ctx, database, incremental, pages, confirm):
     """Run SQLite VACUUM on a database."""
 
     try:
-        db_folder = ctx.obj.get('db_folder')
+        db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
             return
@@ -399,8 +402,7 @@ def vacuum_database(ctx, database, incremental, pages, confirm):
 
 
 @maintenance_group.command("analyze-system")
-@click.option("--format", "-f", type=click.Choice(["table", "json"]), default="table",
-              help="Output format")
+@click.option("--format", "-f", type=click.Choice(["table", "json"]), default="table", help="Output format")
 def analyze_system_resources(format):
     """Analyze system resources for tuning recommendations."""
 
@@ -414,7 +416,7 @@ def analyze_system_resources(format):
                 "cpu_cores": system_info.cpu_cores,
                 "disk_type": system_info.disk_type,
                 "disk_free_gb": system_info.disk_free_gb,
-                "os_type": system_info.os_type
+                "os_type": system_info.os_type,
             }
             click.echo(json.dumps(resources, indent=2))
         else:

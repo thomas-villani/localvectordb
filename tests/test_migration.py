@@ -47,30 +47,20 @@ def sample_migration_1_1_0():
 
         def get_schema_changes(self) -> Dict[str, Any]:
             return {
-                'new_schema': {
-                    'user_id': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="unknown"
+                "new_schema": {
+                    "user_id": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="unknown"
                     ),
-                    'priority': MetadataField(
-                        type=MetadataFieldType.INTEGER,
-                        indexed=True,
-                        required=False,
-                        default_value=0
-                    )
+                    "priority": MetadataField(
+                        type=MetadataFieldType.INTEGER, indexed=True, required=False, default_value=0
+                    ),
                 },
-                'column_mapping': {},
-                'drop_columns': False
+                "column_mapping": {},
+                "drop_columns": False,
             }
 
         def get_rollback_changes(self) -> Dict[str, Any]:
-            return {
-                'new_schema': {},  # Remove all fields
-                'column_mapping': {},
-                'drop_columns': True
-            }
+            return {"new_schema": {}, "column_mapping": {}, "drop_columns": True}  # Remove all fields
 
     return SampleMigration_1_1_0
 
@@ -88,52 +78,33 @@ def sample_migration_1_2_0():
 
         def get_schema_changes(self) -> Dict[str, Any]:
             return {
-                'new_schema': {
-                    'author_id': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="unknown"
+                "new_schema": {
+                    "author_id": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="unknown"
                     ),
-                    'created_by': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="system"
+                    "created_by": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="system"
                     ),
-                    'priority': MetadataField(
-                        type=MetadataFieldType.INTEGER,
-                        indexed=True,
-                        required=False,
-                        default_value=1  # Changed default
-                    )
+                    "priority": MetadataField(
+                        type=MetadataFieldType.INTEGER, indexed=True, required=False, default_value=1  # Changed default
+                    ),
                 },
-                'column_mapping': {
-                    'user_id': 'author_id'
-                },
-                'drop_columns': False
+                "column_mapping": {"user_id": "author_id"},
+                "drop_columns": False,
             }
 
         def get_rollback_changes(self) -> Dict[str, Any]:
             return {
-                'new_schema': {
-                    'user_id': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="unknown"
+                "new_schema": {
+                    "user_id": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="unknown"
                     ),
-                    'priority': MetadataField(
-                        type=MetadataFieldType.INTEGER,
-                        indexed=True,
-                        required=False,
-                        default_value=0
-                    )
+                    "priority": MetadataField(
+                        type=MetadataFieldType.INTEGER, indexed=True, required=False, default_value=0
+                    ),
                 },
-                'column_mapping': {
-                    'author_id': 'user_id'
-                },
-                'drop_columns': True  # Drop created_by field
+                "column_mapping": {"author_id": "user_id"},
+                "drop_columns": True,  # Drop created_by field
             }
 
     return SampleMigration_1_2_0
@@ -151,65 +122,44 @@ def sample_migration_1_3_0():
         dependencies = ["1.2.0"]
 
         def validate_prerequisites(self, current_schema: Dict[str, MetadataField]) -> bool:
-            return 'author_id' in current_schema
+            return "author_id" in current_schema
 
         def get_schema_changes(self) -> Dict[str, Any]:
             # Get existing fields plus new status field
             return {
-                'new_schema': {
-                    'author_id': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="unknown"
+                "new_schema": {
+                    "author_id": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="unknown"
                     ),
-                    'created_by': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="system"
+                    "created_by": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="system"
                     ),
-                    'priority': MetadataField(
-                        type=MetadataFieldType.INTEGER,
-                        indexed=True,
-                        required=False,
-                        default_value=1
+                    "priority": MetadataField(
+                        type=MetadataFieldType.INTEGER, indexed=True, required=False, default_value=1
                     ),
-                    'status': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=True,
-                        default_value="draft"
-                    )
+                    "status": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=True, default_value="draft"
+                    ),
                 },
-                'column_mapping': {},
-                'drop_columns': False
+                "column_mapping": {},
+                "drop_columns": False,
             }
 
         def get_rollback_changes(self) -> Dict[str, Any]:
             return {
-                'new_schema': {
-                    'author_id': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="unknown"
+                "new_schema": {
+                    "author_id": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="unknown"
                     ),
-                    'created_by': MetadataField(
-                        type=MetadataFieldType.TEXT,
-                        indexed=True,
-                        required=False,
-                        default_value="system"
+                    "created_by": MetadataField(
+                        type=MetadataFieldType.TEXT, indexed=True, required=False, default_value="system"
                     ),
-                    'priority': MetadataField(
-                        type=MetadataFieldType.INTEGER,
-                        indexed=True,
-                        required=False,
-                        default_value=1
-                    )
+                    "priority": MetadataField(
+                        type=MetadataFieldType.INTEGER, indexed=True, required=False, default_value=1
+                    ),
                 },
-                'column_mapping': {},
-                'drop_columns': True
+                "column_mapping": {},
+                "drop_columns": True,
             }
 
     return SampleMigration_1_3_0
@@ -218,7 +168,7 @@ def sample_migration_1_3_0():
 @pytest.fixture
 def temp_db_path():
     """Create a temporary database path."""
-    with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as temp_file:
         temp_path = Path(temp_file.name)
     yield temp_path
     # Cleanup
@@ -250,12 +200,12 @@ def migration_engine(initialized_db, temp_migrations_dir):
     engine = MigrationEngine(
         database_path=initialized_db,
         migrations_directory=temp_migrations_dir,
-        auto_backup=False  # Disable backup for tests
+        auto_backup=False,  # Disable backup for tests
     )
 
     # Write test migration files
     migration_1_1_0 = temp_migrations_dir / "migration_1_1_0_add_user_fields.py"
-    with open(migration_1_1_0, 'w') as f:
+    with open(migration_1_1_0, "w") as f:
         f.write("""
 from typing import Dict, Any
 from localvectordb.migration import Migration
@@ -295,7 +245,7 @@ class MigrationDiscovery_1_1_0(Migration):
 """)
 
     migration_1_2_0 = temp_migrations_dir / "migration_1_2_0_rename_fields.py"
-    with open(migration_1_2_0, 'w') as f:
+    with open(migration_1_2_0, "w") as f:
         f.write("""
 from typing import Dict, Any
 from localvectordb.migration import Migration
@@ -378,11 +328,11 @@ class TestMigration:
         migration = sample_migration_1_1_0(temp_db_path)
         changes = migration.get_schema_changes()
 
-        assert 'new_schema' in changes
-        assert 'user_id' in changes['new_schema']
-        assert 'priority' in changes['new_schema']
+        assert "new_schema" in changes
+        assert "user_id" in changes["new_schema"]
+        assert "priority" in changes["new_schema"]
 
-        user_id_field = changes['new_schema']['user_id']
+        user_id_field = changes["new_schema"]["user_id"]
         assert user_id_field.type == MetadataFieldType.TEXT
         assert user_id_field.indexed is True
         assert user_id_field.default_value == "unknown"
@@ -392,24 +342,20 @@ class TestMigration:
         migration = sample_migration_1_1_0(temp_db_path)
         rollback = migration.get_rollback_changes()
 
-        assert 'new_schema' in rollback
-        assert rollback['new_schema'] == {}  # Empty schema for rollback
-        assert rollback['drop_columns'] is True
+        assert "new_schema" in rollback
+        assert rollback["new_schema"] == {}  # Empty schema for rollback
+        assert rollback["drop_columns"] is True
 
     def test_migration_prerequisites(self, temp_db_path, sample_migration_1_3_0):
         """Test migration prerequisite validation."""
         migration = sample_migration_1_3_0(temp_db_path)
 
         # Should fail without author_id field
-        schema_without_author = {
-            'user_id': MetadataField(type=MetadataFieldType.TEXT)
-        }
+        schema_without_author = {"user_id": MetadataField(type=MetadataFieldType.TEXT)}
         assert not migration.validate_prerequisites(schema_without_author)
 
         # Should pass with author_id field
-        schema_with_author = {
-            'author_id': MetadataField(type=MetadataFieldType.TEXT)
-        }
+        schema_with_author = {"author_id": MetadataField(type=MetadataFieldType.TEXT)}
         assert migration.validate_prerequisites(schema_with_author)
 
 
@@ -441,12 +387,12 @@ class TestMigrationEngine:
         status = migration_engine.get_migration_status()
 
         # Current version might be 1.0.0 if database was initialized with version
-        assert status['current_version'] in ["0.0.0", "1.0.0"]  # Initial or default version
-        assert status['total_available_migrations'] == 2
+        assert status["current_version"] in ["0.0.0", "1.0.0"]  # Initial or default version
+        assert status["total_available_migrations"] == 2
         # Applied count might vary if migrations were run in previous tests
-        assert 'applied_migrations_count' in status
-        assert 'pending_migrations_count' in status
-        assert 'pending_migrations' in status
+        assert "applied_migrations_count" in status
+        assert "pending_migrations_count" in status
+        assert "pending_migrations" in status
 
     def test_migration_apply_single(self, migration_engine):
         """Test applying a single migration."""
@@ -456,14 +402,14 @@ class TestMigrationEngine:
         # Debug: print the result to see what's happening
         print(f"Migration result: {result}")
 
-        assert result['success'] is True
+        assert result["success"] is True
 
         # Check if migration was actually applied
-        if 'applied_migrations' in result:
-            assert "1.1.0" in result['applied_migrations']
+        if "applied_migrations" in result:
+            assert "1.1.0" in result["applied_migrations"]
 
-        if 'migration_errors' in result:
-            assert len(result['migration_errors']) == 0
+        if "migration_errors" in result:
+            assert len(result["migration_errors"]) == 0
 
         # Check schema was updated
         current_schema = migration_engine.database_schema.load_metadata_schema()
@@ -471,7 +417,7 @@ class TestMigrationEngine:
 
         # The test might be failing because the migration system is working differently
         # Let's check if the fields were added
-        if 'user_id' not in current_schema:
+        if "user_id" not in current_schema:
             # Maybe the migration isn't being applied correctly - let's be more lenient
             print("Migration may not have applied schema changes as expected")
 
@@ -487,7 +433,7 @@ class TestMigrationEngine:
         result = migration_engine.migrate()
 
         print(f"Multiple migration result: {result}")
-        assert result['success'] is True
+        assert result["success"] is True
 
         # Check final schema
         current_schema = migration_engine.database_schema.load_metadata_schema()
@@ -495,7 +441,7 @@ class TestMigrationEngine:
 
         # These assertions might need to be adjusted based on actual implementation
         # For now, let's just verify the result structure
-        if 'applied_migrations' in result:
+        if "applied_migrations" in result:
             print(f"Applied migrations: {result['applied_migrations']}")
 
         # Check final version
@@ -507,9 +453,9 @@ class TestMigrationEngine:
         """Test migration dry run."""
         result = migration_engine.migrate(dry_run=True)
 
-        assert result['success'] is True
-        assert result['dry_run'] is True
-        assert 'pending_migrations' in result
+        assert result["success"] is True
+        assert result["dry_run"] is True
+        assert "pending_migrations" in result
 
         # Schema should not have changed
         current_schema = migration_engine.database_schema.load_metadata_schema()
@@ -522,21 +468,21 @@ class TestMigrationEngine:
 
         # Verify migrations were applied
         current_schema = migration_engine.database_schema.load_metadata_schema()
-        assert 'author_id' in current_schema
-        assert 'created_by' in current_schema
+        assert "author_id" in current_schema
+        assert "created_by" in current_schema
 
         # Rollback to version 1.1.0
         result = migration_engine.rollback("1.1.0")
 
-        assert result['success'] is True
-        assert result['rolled_back_migrations'] == ["1.2.0"]
+        assert result["success"] is True
+        assert result["rolled_back_migrations"] == ["1.2.0"]
 
         # Check schema was rolled back
         current_schema = migration_engine.database_schema.load_metadata_schema()
-        assert 'user_id' in current_schema  # Restored
-        assert 'priority' in current_schema  # Kept
-        assert 'author_id' not in current_schema  # Removed
-        assert 'created_by' not in current_schema  # Removed
+        assert "user_id" in current_schema  # Restored
+        assert "priority" in current_schema  # Kept
+        assert "author_id" not in current_schema  # Removed
+        assert "created_by" not in current_schema  # Removed
 
         # Check version was rolled back
         version_manager = VersionManager(migration_engine.database_path)
@@ -551,8 +497,8 @@ class TestMigrationEngine:
         # Rollback to initial version (1.0.0 is the base version)
         result = migration_engine.rollback("1.0.0")
 
-        assert result['success'] is True
-        assert len(result['rolled_back_migrations']) == 2
+        assert result["success"] is True
+        assert len(result["rolled_back_migrations"]) == 2
 
         # Schema should be empty after rollback
         current_schema = migration_engine.database_schema.load_metadata_schema()
@@ -562,7 +508,7 @@ class TestMigrationEngine:
         """Test migration fails when prerequisites not met."""
         # Create a migration that depends on missing version
         bad_migration_path = migration_engine.migrations_directory / "migration_2_0_0_bad.py"
-        with open(bad_migration_path, 'w') as f:
+        with open(bad_migration_path, "w") as f:
             f.write("""
 from typing import List, Tuple
 from localvectordb.migration import Migration
@@ -587,9 +533,7 @@ class MigrationPrereq_2_0_0(Migration):
     def test_create_migration_template(self, migration_engine):
         """Test creating migration template files."""
         template_path = migration_engine.create_migration_template(
-            version="1.4.0",
-            description="test template",
-            template_type="schema"
+            version="1.4.0", description="test template", template_type="schema"
         )
 
         assert template_path.exists()
@@ -621,21 +565,18 @@ class TestMigrationIntegration:
         engine = MigrationEngine(temp_db_path, temp_migrations_dir, auto_backup=False)
 
         # 3. Create initial migration template
-        template_path = engine.create_migration_template(
-            version="1.1.0",
-            description="add metadata fields"
-        )
+        template_path = engine.create_migration_template(version="1.1.0", description="add metadata fields")
         assert template_path.exists()
 
         # 4. Check initial status
         status = engine.get_migration_status()
         # New databases start at version 1.0.0 by default
-        assert status['current_version'] == "1.0.0"
+        assert status["current_version"] == "1.0.0"
         # The template migration is discovered and counted as pending
-        assert status['pending_migrations_count'] == 1
+        assert status["pending_migrations_count"] == 1
 
         # 5. Replace template with real migration
-        with open(template_path, 'w') as f:
+        with open(template_path, "w") as f:
             f.write("""
 from typing import Dict, Any
 from localvectordb.migration import Migration
@@ -663,15 +604,15 @@ class MigrationE2E_1_1_0(Migration):
 
         # 6. Apply migration
         result = engine.migrate()
-        assert result['success'] is True
+        assert result["success"] is True
 
         # 7. Verify schema changes
         current_schema = db_schema.load_metadata_schema()
-        assert 'category' in current_schema
+        assert "category" in current_schema
 
         # 8. Rollback migration to base version
         rollback_result = engine.rollback("1.0.0")
-        assert rollback_result['success'] is True
+        assert rollback_result["success"] is True
 
         # 9. Verify rollback
         current_schema = db_schema.load_metadata_schema()
@@ -687,15 +628,18 @@ class MigrationE2E_1_1_0(Migration):
 
         # Insert test documents
         with sqlite3.connect(temp_db_path) as conn:
-            conn.execute("INSERT INTO documents (id, content, content_hash) VALUES (?, ?, ?)",
-                         ("doc1", "test content", "hash1"))
-            conn.execute("INSERT INTO documents (id, content, content_hash) VALUES (?, ?, ?)",
-                         ("doc2", "test content 2", "hash2"))
+            conn.execute(
+                "INSERT INTO documents (id, content, content_hash) VALUES (?, ?, ?)", ("doc1", "test content", "hash1")
+            )
+            conn.execute(
+                "INSERT INTO documents (id, content, content_hash) VALUES (?, ?, ?)",
+                ("doc2", "test content 2", "hash2"),
+            )
             conn.commit()
 
         # Create migration that adds field with default
         migration_file = temp_migrations_dir / "migration_1_1_0_add_status.py"
-        with open(migration_file, 'w') as f:
+        with open(migration_file, "w") as f:
             f.write("""
 from typing import Dict, Any
 from localvectordb.migration import Migration
@@ -726,7 +670,7 @@ class MigrationPopulate_1_1_0(Migration):
         engine = MigrationEngine(temp_db_path, temp_migrations_dir, auto_backup=False)
         result = engine.migrate()
 
-        assert result['success'] is True
+        assert result["success"] is True
 
         # Verify default values were populated
         with sqlite3.connect(temp_db_path) as conn:

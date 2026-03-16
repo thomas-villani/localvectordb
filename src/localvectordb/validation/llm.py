@@ -62,9 +62,7 @@ class OpenAIProvider:
         if self._is_async:
             response = await self._client.chat.completions.create(**kwargs)
         else:
-            response = await asyncio.to_thread(
-                self._client.chat.completions.create, **kwargs
-            )
+            response = await asyncio.to_thread(self._client.chat.completions.create, **kwargs)
         return response.choices[0].message.content
 
 

@@ -71,9 +71,9 @@ class DatabaseVersion:
         """Parse version string into components"""
         # Support semantic versioning: MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
         pattern = (
-            r'^(\d+)\.(\d+)\.(\d+)'
-            r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
-            r'(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+            r"^(\d+)\.(\d+)\.(\d+)"
+            r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+            r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
         )
         match = re.match(pattern, version)
 
@@ -101,7 +101,7 @@ class DatabaseVersion:
         return self.major * 1_000_000 + self.minor * 1_000 + self.patch
 
     @classmethod
-    def from_sqlite_version(cls, sqlite_version: int) -> 'DatabaseVersion':
+    def from_sqlite_version(cls, sqlite_version: int) -> "DatabaseVersion":
         """
         Create DatabaseVersion from SQLite PRAGMA user_version integer.
 
@@ -124,7 +124,7 @@ class DatabaseVersion:
 
         return cls(f"{major}.{minor}.{patch}")
 
-    def is_compatible_with(self, other: 'DatabaseVersion') -> bool:
+    def is_compatible_with(self, other: "DatabaseVersion") -> bool:
         """
         Check if this version is compatible with another version.
 
@@ -258,16 +258,22 @@ class VersionManager:
                 conn.execute(f"PRAGMA user_version = {version.to_sqlite_version()}")
 
                 # Also store in config table for additional metadata
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO config (key, value)
                     VALUES (?, ?)
-                """, ("db_version", str(version)))
+                """,
+                    ("db_version", str(version)),
+                )
 
                 # Store version metadata
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO config (key, value)
                     VALUES (?, ?)
-                """, ("version_updated_at", datetime.now(UTC).isoformat()))
+                """,
+                    ("version_updated_at", datetime.now(UTC).isoformat()),
+                )
 
                 logger.info(f"Database version updated to {version}")
 
@@ -302,12 +308,9 @@ class VersionManager:
 
             migrations = []
             for row in cursor.fetchall():
-                migrations.append({
-                    'version': row[0],
-                    'applied_at': row[1],
-                    'rollback_script': row[2],
-                    'checksum': row[3]
-                })
+                migrations.append(
+                    {"version": row[0], "applied_at": row[1], "rollback_script": row[2], "checksum": row[3]}
+                )
 
             return migrations
 
@@ -320,9 +323,12 @@ class VersionManager:
                 conn.close()
 
     def record_migration(
-            self, version: str, rollback_script: Optional[str] = None,
-            checksum: Optional[str] = None, conn: Optional[sqlite3.Connection] = None
-            ) -> None:
+        self,
+        version: str,
+        rollback_script: Optional[str] = None,
+        checksum: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> None:
         """
         Record a completed migration in the migration log.
 
@@ -343,10 +349,13 @@ class VersionManager:
 
         try:
             with conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO migration_log (version, applied_at, rollback_script, checksum)
                     VALUES (?, ?, ?, ?)
-                """, (version, datetime.now(UTC).isoformat(), rollback_script, checksum))
+                """,
+                    (version, datetime.now(UTC).isoformat(), rollback_script, checksum),
+                )
 
                 logger.info(f"Recorded migration to version {version}")
 
@@ -355,9 +364,8 @@ class VersionManager:
                 conn.close()
 
     def needs_migration(
-            self, target_version: Optional[DatabaseVersion] = None,
-            conn: Optional[sqlite3.Connection] = None
-            ) -> bool:
+        self, target_version: Optional[DatabaseVersion] = None, conn: Optional[sqlite3.Connection] = None
+    ) -> bool:
         """
         Check if database needs migration to target version.
 
@@ -400,10 +408,7 @@ class VersionManager:
 
             # Record initial state
             self.record_migration(
-                str(current_version),
-                rollback_script=None,  # No rollback for initial version
-                checksum=None,
-                conn=conn
+                str(current_version), rollback_script=None, checksum=None, conn=conn  # No rollback for initial version
             )
 
             logger.info(f"Initialized version tracking at {current_version}")

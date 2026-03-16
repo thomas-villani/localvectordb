@@ -14,6 +14,7 @@ MCP Server Configuration
 Simple configuration management for LocalVectorDB MCP server that maps
 directly to LocalVectorDB constructor parameters.
 """
+
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -33,22 +34,22 @@ class MCPConfig:
     databases_map: Dict[str, str] = field(default_factory=dict)  # Name -> path/URL mapping
 
     # Default database creation parameters
-    db_defaults: Dict[str, Any] = field(default_factory=lambda: {
-        "embedding_provider": "ollama",
-        "embedding_model": "nomic-embed-text",
-        "chunk_size": 500,
-        "chunk_overlap": 50,
-        "chunking_method": "sentences",
-        "enable_fts": True,
-        "enable_gpu": False
-    })
+    db_defaults: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "embedding_provider": "ollama",
+            "embedding_model": "nomic-embed-text",
+            "chunk_size": 500,
+            "chunk_overlap": 50,
+            "chunking_method": "sentences",
+            "enable_fts": True,
+            "enable_gpu": False,
+        }
+    )
 
     # Connection settings for remote databases
-    remote_defaults: Dict[str, Any] = field(default_factory=lambda: {
-        "timeout": 30,
-        "max_retries": 3,
-        "retry_delay": 1.0
-    })
+    remote_defaults: Dict[str, Any] = field(
+        default_factory=lambda: {"timeout": 30, "max_retries": 3, "retry_delay": 1.0}
+    )
 
     # Operational settings
     max_concurrent_operations: int = 10
@@ -57,26 +58,30 @@ class MCPConfig:
     log_level: str = "INFO"
 
     # Tools to expose
-    read_only_tools: List[str] = field(default_factory=lambda: [
-        "list_databases",
-        "get_database_info",
-        "query_database",
-        "filter_documents",
-        "get_document",
-        "check_documents_exist",
-        "global_search",
-        "get_metadata_schema",
-        "get_system_info"
-    ])
+    read_only_tools: List[str] = field(
+        default_factory=lambda: [
+            "list_databases",
+            "get_database_info",
+            "query_database",
+            "filter_documents",
+            "get_document",
+            "check_documents_exist",
+            "global_search",
+            "get_metadata_schema",
+            "get_system_info",
+        ]
+    )
 
-    write_tools: List[str] = field(default_factory=lambda: [
-        "create_database",
-        "delete_database",
-        "upsert_documents",
-        "update_document",
-        "delete_document",
-        "update_metadata_schema",
-    ])
+    write_tools: List[str] = field(
+        default_factory=lambda: [
+            "create_database",
+            "delete_database",
+            "upsert_documents",
+            "update_document",
+            "delete_document",
+            "update_metadata_schema",
+        ]
+    )
 
     def check_write_permission(self, operation: str):
         """Check if write operations are allowed"""

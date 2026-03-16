@@ -54,6 +54,7 @@ Security Notes
 - Port numbers are automatically stripped
 - Empty or malformed hosts are rejected
 """
+
 import fnmatch
 import ipaddress
 import logging
@@ -63,12 +64,10 @@ from typing import List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Regex for validating hostname format (basic check)
-HOSTNAME_PATTERN = re.compile(
-    r'^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$'
-)
+HOSTNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$")
 
 # IPv6 address in brackets pattern
-IPV6_BRACKET_PATTERN = re.compile(r'^\[([^\]]+)\](?::(\d+))?$')
+IPV6_BRACKET_PATTERN = re.compile(r"^\[([^\]]+)\](?::(\d+))?$")
 
 
 def parse_host(host_string: str) -> Tuple[str, Optional[int]]:
@@ -112,9 +111,9 @@ def parse_host(host_string: str) -> Tuple[str, Optional[int]]:
         return hostname, port
 
     # Handle regular hostname:port format
-    if ':' in host_string:
+    if ":" in host_string:
         # Split on last colon and check if the last part looks like a port
-        parts = host_string.rsplit(':', 1)
+        parts = host_string.rsplit(":", 1)
         if len(parts) == 2:
             potential_hostname, potential_port = parts
 
@@ -183,7 +182,7 @@ def is_valid_hostname(hostname: str) -> bool:
 
     # Check if it looks like an IP address first
     # If it contains only digits and dots, validate as IPv4
-    if all(c.isdigit() or c == '.' for c in hostname):
+    if all(c.isdigit() or c == "." for c in hostname):
         try:
             ipaddress.IPv4Address(hostname)
             return True
@@ -191,7 +190,7 @@ def is_valid_hostname(hostname: str) -> bool:
             return False
 
     # Check for IPv6 address (contains colons)
-    if ':' in hostname:
+    if ":" in hostname:
         try:
             ipaddress.IPv6Address(hostname)
             return True
@@ -259,9 +258,9 @@ def match_host_pattern(hostname: str, pattern: str) -> bool:
             # Ensure it's a subdomain, not just a suffix match
             # hostname = "api.example.com", domain_part = "example.com"
             # hostname should be "api.example.com" and not "notexample.com"
-            prefix = hostname[:-len(f".{domain_part}")]
+            prefix = hostname[: -len(f".{domain_part}")]
             # Prefix should be a valid subdomain (no dots for single-level wildcard)
-            if prefix and '.' not in prefix:
+            if prefix and "." not in prefix:
                 return True
 
         return False

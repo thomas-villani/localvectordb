@@ -13,6 +13,7 @@ CRUD, filter, stats facades that use base/ingest/search/metadata helpers.
 
 Public API is kept identical to the original LocalVectorDB methods.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,7 @@ from localvectordb.query_builder import QueryBuilder
 logger = logging.getLogger(__name__)
 
 # Pattern for valid SQL identifiers (alphanumeric and underscores, starting with letter or underscore)
-_SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+_SAFE_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 def _validate_sql_identifier(name: str) -> None:
@@ -106,14 +107,14 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """Build list of columns for document retrieval (pure business logic)"""
         metadata_columns = list(self.metadata_schema.keys())
         if metadata_columns:
-            return ['id', 'content', 'content_hash', 'created_at', 'updated_at'] + metadata_columns
+            return ["id", "content", "content_hash", "created_at", "updated_at"] + metadata_columns
         else:
-            return ['id', 'content', 'content_hash', 'created_at', 'updated_at']
+            return ["id", "content", "content_hash", "created_at", "updated_at"]
 
     def _build_get_documents_sql(self, requested_ids: List[str]) -> tuple[str, List[str]]:
         """Build SQL for retrieving documents by ID (pure business logic)"""
         columns = self._build_document_columns_list()
-        placeholders = ','.join(['?'] * len(requested_ids))
+        placeholders = ",".join(["?"] * len(requested_ids))
         sql = f"SELECT {', '.join(columns)} FROM documents WHERE id IN ({placeholders})"
         return sql, requested_ids
 
@@ -130,9 +131,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
         """Construct Document object from database row (pure business logic)"""
         # Extract metadata (columns that are not base columns)
         metadata = {}
-        base_columns = {'id', 'content', 'content_hash', 'created_at', 'updated_at'}
+        base_columns = {"id", "content", "content_hash", "created_at", "updated_at"}
 
-        if hasattr(row, 'items'):
+        if hasattr(row, "items"):
             row_items = row.items()
         else:
             row_items = [(key, row[key]) for key in row.keys()]
@@ -142,29 +143,32 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 metadata[key] = value
 
         return Document(
-            id=row['id'],
-            content=row['content'],
+            id=row["id"],
+            content=row["content"],
             metadata=metadata,
-            created_at=row['created_at'],
-            updated_at=row['updated_at'],
-            content_hash=row['content_hash'],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            content_hash=row["content_hash"],
         )
 
     def _build_exists_sql(self, ids_list: List[str]) -> tuple[str, List[str]]:
         """Build SQL for checking document existence (pure business logic)"""
-        placeholders = ','.join(['?'] * len(ids_list))
-        sql = f'SELECT id FROM documents WHERE id IN ({placeholders})'
+        placeholders = ",".join(["?"] * len(ids_list))
+        sql = f"SELECT id FROM documents WHERE id IN ({placeholders})"
         return sql, ids_list
 
     def _process_exists_results(self, rows, ids_list: List[str]) -> List[bool]:
         """Process exists query results into boolean list (pure business logic)"""
-        existing_ids = {row['id'] for row in rows}
+        existing_ids = {row["id"] for row in rows}
         return [doc_id in existing_ids for doc_id in ids_list]
 
     def _build_filter_sql(
-            self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None,
-            limit: Optional[int] = None, offset: int = 0
-            ) -> tuple[str, List[Any]]:
+        self,
+        where: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> tuple[str, List[Any]]:
         """Build SQL for filtering documents (pure business logic)"""
         columns = self._build_document_columns_list()
         query_parts = [f"SELECT {', '.join(columns)} FROM documents"]
@@ -201,7 +205,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 raise MetadataFilterError("Offset must be a non-negative integer")
             query_parts.append(f"OFFSET {offset}")
 
-        return ' '.join(query_parts), params
+        return " ".join(query_parts), params
 
     def _construct_documents_from_rows(self, rows) -> List[Document]:
         """Construct Document objects from database rows (pure business logic)"""
@@ -222,7 +226,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             cursor.close()
 
         # Validate all documents were found using shared logic
-        found_ids = {row['id'] for row in rows}
+        found_ids = {row["id"] for row in rows}
         self._validate_missing_documents(requested_ids, found_ids)
 
         # Construct documents using shared logic
@@ -240,7 +244,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
         rows = await self._async_executor.fetchall(cursor)
 
         # Validate all documents were found using shared logic
-        found_ids = {row['id'] for row in rows}
+        found_ids = {row["id"] for row in rows}
         self._validate_missing_documents(requested_ids, found_ids)
 
         # Construct documents using shared logic
@@ -334,15 +338,15 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 ids = [ids]
             faiss_ids_to_remove: List[int] = []
             with self.connection_pool.get_connection() as conn:
-                placeholders = ','.join(['?'] * len(ids))
+                placeholders = ",".join(["?"] * len(ids))
 
                 # Collect chunk FAISS IDs
                 cursor = conn.execute(
-                    f'SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
+                    f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
                     ids,
                 )
                 try:
-                    faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                    faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
                 finally:
                     cursor.close()
 
@@ -350,11 +354,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
                 # when documents are deleted, but we need to collect their FAISS IDs first
                 cursor = conn.execute(
-                    f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
+                    f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
                     ids,
                 )
                 try:
-                    faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                    faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
                 finally:
                     cursor.close()
 
@@ -363,25 +367,25 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 doc_faiss_ids_to_remove: list = []
                 if self._hierarchical_embeddings:
                     cursor = conn.execute(
-                        f'SELECT faiss_id FROM sections WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
+                        f"SELECT faiss_id FROM sections WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
                         ids,
                     )
                     try:
-                        section_faiss_ids_to_remove.extend([row['faiss_id'] for row in cursor.fetchall()])
+                        section_faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
                     finally:
                         cursor.close()
 
                     cursor = conn.execute(
-                        f'SELECT doc_faiss_id FROM documents WHERE id IN ({placeholders}) AND doc_faiss_id IS NOT NULL',
+                        f"SELECT doc_faiss_id FROM documents WHERE id IN ({placeholders}) AND doc_faiss_id IS NOT NULL",
                         ids,
                     )
                     try:
-                        doc_faiss_ids_to_remove.extend([row['doc_faiss_id'] for row in cursor.fetchall()])
+                        doc_faiss_ids_to_remove.extend([row["doc_faiss_id"] for row in cursor.fetchall()])
                     finally:
                         cursor.close()
 
                 # Delete documents (CASCADE deletes chunks, sections)
-                cursor = conn.execute(f'DELETE FROM documents WHERE id IN ({placeholders})', ids)
+                cursor = conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
                 try:
                     deleted_count = cursor.rowcount
                 finally:
@@ -392,7 +396,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
                 else:
                     raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
-            if faiss_ids_to_remove and hasattr(self.index, 'remove_ids'):
+            if faiss_ids_to_remove and hasattr(self.index, "remove_ids"):
                 try:
                     ids_array = np.array(faiss_ids_to_remove, dtype=np.int64)
                     self.index.remove_ids(ids_array)
@@ -439,7 +443,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             if not existing_doc:
                 raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found")
             if content is not None:
-                new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+                new_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 if new_hash != existing_doc.content_hash:
                     updated_metadata = existing_doc.metadata.copy()
                     if metadata:
@@ -452,13 +456,13 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 self._validate_metadata_batch([updated_metadata])
                 changed_embedding_fields = self._get_changed_embedding_fields(existing_doc.metadata, updated_metadata)
                 with self.connection_pool.get_connection() as conn:
-                    conn.execute('BEGIN')
+                    conn.execute("BEGIN")
                     try:
                         if changed_embedding_fields:
                             self._remove_metadata_embeddings(conn, doc_id)
-                            new_field_embeddings = self._generate_metadata_embeddings(updated_metadata,
-                                                                                      changed_embedding_fields,
-                                                                                      batch_size=100)
+                            new_field_embeddings = self._generate_metadata_embeddings(
+                                updated_metadata, changed_embedding_fields, batch_size=100
+                            )
                             if new_field_embeddings:
                                 self._store_metadata_embeddings(conn, doc_id, new_field_embeddings)
                                 logger.debug(
@@ -471,7 +475,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                             if field_name in self.metadata_schema:
                                 # Validate and quote field name to prevent SQL injection
                                 quoted_field = _quote_identifier(field_name)
-                                set_clauses.append(f'{quoted_field} = ?')
+                                set_clauses.append(f"{quoted_field} = ?")
                                 values.append(value)
                         values.append(doc_id)
                         sql = f"UPDATE documents SET {', '.join(set_clauses)} WHERE id = ?"
@@ -488,11 +492,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
     # Filter
     # --------
     def filter(
-            self,
-            where: Optional[Dict[str, Any]] = None,
-            order_by: Optional[str] = None,
-            limit: Optional[int] = None,
-            offset: int = 0
+        self,
+        where: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[Document]:
         """
         Filter documents using enhanced metadata filtering
@@ -664,29 +668,29 @@ class CrudMixin(LocalVectorDBBase, ABC):
             return 0
         deleted_count = 0
         async with self.async_connection_pool.get_connection_context() as conn:
-            placeholders = ','.join(['?' for _ in ids])
+            placeholders = ",".join(["?" for _ in ids])
             cursor = await conn.execute(
-                f'SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL',
+                f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
                 ids,
             )
-            faiss_ids = [row['faiss_id'] for row in await cursor.fetchall()]
+            faiss_ids = [row["faiss_id"] for row in await cursor.fetchall()]
 
             # Also collect metadata embedding FAISS IDs
             # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
             # when documents are deleted, but we need to collect their FAISS IDs first
             cursor = await conn.execute(
-                f'SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})',
+                f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
                 ids,
             )
-            faiss_ids.extend([row['faiss_id'] for row in await cursor.fetchall()])
+            faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
 
             if faiss_ids:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
-            await conn.execute('BEGIN')
+            await conn.execute("BEGIN")
             try:
-                cursor = await conn.execute(f'DELETE FROM chunks WHERE document_id IN ({placeholders})', ids)
-                cursor = await conn.execute(f'DELETE FROM documents WHERE id IN ({placeholders})', ids)
+                cursor = await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
+                cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
                 deleted_count = cursor.rowcount or 0
                 await conn.commit()
             except Exception:
@@ -726,7 +730,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
         async with self.async_connection_pool.get_connection_context() as conn:
             cursor = await conn.execute(sql, params)
             row = await cursor.fetchone()
-            return row['count'] if row else 0
+            return row["count"] if row else 0
 
     async def exists_async(self, ids: Union[str, list[str]]) -> Union[bool, list[bool]]:
         """
@@ -754,8 +758,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
         return results[0] if single else results
 
     async def filter_async(
-            self, where: Optional[Dict[str, Any]] = None, order_by: Optional[str] = None, limit: Optional[int] = None,
-            offset: int = 0
+        self,
+        where: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[Document]:
         """
         Async filter documents by metadata criteria
@@ -788,7 +795,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             return self._construct_documents_from_rows(rows)
 
     async def update_async(
-            self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
+        self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Update a document's content and/or metadata asynchronously.
@@ -843,7 +850,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             raise DocumentNotFoundError(f"Document {doc_id} not found for update")
         changes_made = False
         if isinstance(content, str):
-            new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+            new_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             if new_hash != existing_doc.content_hash:
                 updated_metadata = existing_doc.metadata.copy()
                 if metadata:
@@ -859,13 +866,13 @@ class CrudMixin(LocalVectorDBBase, ABC):
             await self._validate_metadata_async(updated_metadata)
             changed_embedding_fields = self._get_changed_embedding_fields(existing_doc.metadata, updated_metadata)
             async with self.async_connection_pool.get_connection_context() as conn:
-                await conn.execute('BEGIN')
+                await conn.execute("BEGIN")
                 try:
                     if changed_embedding_fields:
                         await self._remove_metadata_embeddings_async(conn, doc_id)
-                        new_field_embeddings = await self._generate_metadata_embeddings_async(updated_metadata,
-                                                                                              changed_embedding_fields,
-                                                                                              batch_size=100)
+                        new_field_embeddings = await self._generate_metadata_embeddings_async(
+                            updated_metadata, changed_embedding_fields, batch_size=100
+                        )
                         if new_field_embeddings:
                             await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
                             logger.debug(
@@ -878,7 +885,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                         if field_name in self.metadata_schema:
                             # Validate and quote field name to prevent SQL injection
                             quoted_field = _quote_identifier(field_name)
-                            set_clauses.append(f'{quoted_field} = ?')
+                            set_clauses.append(f"{quoted_field} = ?")
                             values.append(value)
                     values.append(doc_id)
                     update_sql = f"""

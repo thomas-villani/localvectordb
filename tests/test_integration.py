@@ -4,6 +4,7 @@ Integration tests for localvectordb.
 These tests verify that different components work together correctly.
 They may be slower than unit tests and require more dependencies.
 """
+
 import sqlite3
 from unittest.mock import Mock, patch
 
@@ -52,17 +53,19 @@ class TestLocalVectorDBIntegration:
     def integration_db(self, temp_dir):
         """Create a real LocalVectorDB for integration testing."""
         metadata_schema = {
-            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'rating': MetadataField(type=MetadataFieldType.REAL),
-            'tags': MetadataField(type=MetadataFieldType.JSON)
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "rating": MetadataField(type=MetadataFieldType.REAL),
+            "tags": MetadataField(type=MetadataFieldType.JSON),
         }
 
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+            patch("localvectordb._pools.ConnectionPool") as mock_pool,
+            patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+        ):
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
@@ -77,10 +80,7 @@ class TestLocalVectorDBIntegration:
             # Mock FAISS index
             mock_index = Mock()
             mock_index.ntotal = 0
-            mock_index.search.return_value = (
-                np.array([[0.1, 0.2, 0.3]]),
-                np.array([[0, 1, 2]])
-            )
+            mock_index.search.return_value = (np.array([[0.1, 0.2, 0.3]]), np.array([[0, 1, 2]]))
             mock_faiss.return_value = mock_index
             mock_faiss_idmap.return_value = mock_index
 
@@ -104,7 +104,7 @@ class TestLocalVectorDBIntegration:
                     chunking_method="sentences",
                     chunk_size=100,
                     chunk_overlap=10,
-                    enable_fts=False  # Disable FTS for simpler testing
+                    enable_fts=False,  # Disable FTS for simpler testing
                 )
 
                 db.index = mock_index
@@ -130,13 +130,13 @@ class TestLocalVectorDBIntegration:
         documents = [
             "This is the first test document about machine learning.",
             "This is the second test document about natural language processing.",
-            "This is the third test document about computer vision."
+            "This is the third test document about computer vision.",
         ]
 
         metadata = [
             {"author": "Alice", "category": "ML", "rating": 4.5, "tags": ["machine-learning", "ai"]},
             {"author": "Bob", "category": "NLP", "rating": 4.8, "tags": ["nlp", "language"]},
-            {"author": "Charlie", "category": "CV", "rating": 4.2, "tags": ["vision", "image"]}
+            {"author": "Charlie", "category": "CV", "rating": 4.2, "tags": ["vision", "image"]},
         ]
 
         # Setup mock for insert operation
@@ -144,7 +144,7 @@ class TestLocalVectorDBIntegration:
         mock_conn.execute.return_value.fetchall.return_value = []  # No existing docs
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled):
             # Test insert
             doc_ids = integration_db.insert(documents, metadata=metadata)
 
@@ -155,20 +155,20 @@ class TestLocalVectorDBIntegration:
         mock_conn = create_mock_connection()
         mock_conn.execute.return_value.fetchall.return_value = [
             {
-                'id': doc_ids[0],
-                'content': documents[0],
-                'content_hash': 'hash1',
-                'created_at': '2024-01-01T00:00:00',
-                'updated_at': '2024-01-01T00:00:00',
-                'author': 'Alice',
-                'category': 'ML',
-                'rating': 4.5,
-                'tags': '["machine-learning", "ai"]'
+                "id": doc_ids[0],
+                "content": documents[0],
+                "content_hash": "hash1",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+                "author": "Alice",
+                "category": "ML",
+                "rating": 4.5,
+                "tags": '["machine-learning", "ai"]',
             }
         ]
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled):
             # Test retrieval
             retrieved_docs = integration_db.get(doc_ids[0])
             assert isinstance(retrieved_docs, Document)
@@ -178,20 +178,22 @@ class TestLocalVectorDBIntegration:
     def test_chunking_integration(self, integration_db):
         """Test that chunking works correctly with database operations."""
         # Test document that will be chunked
-        long_document = " ".join([
-            "This is sentence one about artificial intelligence.",
-            "This is sentence two about machine learning algorithms.",
-            "This is sentence three about deep neural networks.",
-            "This is sentence four about natural language processing.",
-            "This is sentence five about computer vision applications."
-        ])
+        long_document = " ".join(
+            [
+                "This is sentence one about artificial intelligence.",
+                "This is sentence two about machine learning algorithms.",
+                "This is sentence three about deep neural networks.",
+                "This is sentence four about natural language processing.",
+                "This is sentence five about computer vision applications.",
+            ]
+        )
 
         mock_conn = create_mock_connection()
         mock_conn.execute.return_value.fetchall.return_value = []  # No existing docs
         mock_conn.execute.return_value.rowcount = 1
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled):
             # Insert long document
             doc_ids = integration_db.upsert([long_document])
 
@@ -206,13 +208,13 @@ class TestLocalVectorDBIntegration:
         documents = [
             "Document about Python programming",
             "Document about Java programming",
-            "Document about JavaScript programming"
+            "Document about JavaScript programming",
         ]
 
         metadata = [
             {"author": "Alice", "category": "Python", "rating": 4.5},
             {"author": "Bob", "category": "Java", "rating": 4.0},
-            {"author": "Alice", "category": "JavaScript", "rating": 4.8}
+            {"author": "Alice", "category": "JavaScript", "rating": 4.8},
         ]
 
         # Setup mock for upsert
@@ -220,7 +222,7 @@ class TestLocalVectorDBIntegration:
         mock_conn.execute.return_value.fetchall.return_value = []  # No existing docs for insert
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled):
             # Insert documents
             doc_ids = integration_db.upsert(documents, metadata=metadata)
 
@@ -229,31 +231,31 @@ class TestLocalVectorDBIntegration:
         # Mock filtered results (Alice's documents) - include all schema fields
         mock_conn.execute.return_value.fetchall.return_value = [
             {
-                'id': doc_ids[0],
-                'content': documents[0],
-                'content_hash': 'hash1',
-                'created_at': '2024-01-01T00:00:00',
-                'updated_at': '2024-01-01T00:00:00',
-                'author': 'Alice',
-                'category': 'Python',
-                'rating': 4.5,
-                'tags': '["python", "programming"]'  # Include tags field
+                "id": doc_ids[0],
+                "content": documents[0],
+                "content_hash": "hash1",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+                "author": "Alice",
+                "category": "Python",
+                "rating": 4.5,
+                "tags": '["python", "programming"]',  # Include tags field
             },
             {
-                'id': doc_ids[2],
-                'content': documents[2],
-                'content_hash': 'hash3',
-                'created_at': '2024-01-01T00:00:00',
-                'updated_at': '2024-01-01T00:00:00',
-                'author': 'Alice',
-                'category': 'JavaScript',
-                'rating': 4.8,
-                'tags': '["javascript", "programming"]'  # Include tags field
-            }
+                "id": doc_ids[2],
+                "content": documents[2],
+                "content_hash": "hash3",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+                "author": "Alice",
+                "category": "JavaScript",
+                "rating": 4.8,
+                "tags": '["javascript", "programming"]',  # Include tags field
+            },
         ]
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled):
             # Filter by author
             alice_docs = integration_db.filter(where={"author": "Alice"})
 
@@ -265,42 +267,40 @@ class TestLocalVectorDBIntegration:
         documents = [
             "Machine learning algorithms for classification",
             "Deep learning neural networks",
-            "Natural language processing techniques"
+            "Natural language processing techniques",
         ]
 
-        metadata = [
-            {"category": "ML"},
-            {"category": "DL"},
-            {"category": "NLP"}
-        ]
+        metadata = [{"category": "ML"}, {"category": "DL"}, {"category": "NLP"}]
 
         mock_conn = create_mock_connection()
         mock_conn.execute.return_value.fetchall.return_value = []
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled):
             # Insert documents
             doc_ids = integration_db.upsert(documents, metadata=metadata)
 
         # Mock search results
         mock_conn = create_mock_connection()
         mock_conn.execute.return_value.fetchone.return_value = {
-            'document_id': doc_ids[0],
-            'chunk_index': 0,
-            'content': documents[0],
-            'start_pos': 0,
-            'end_pos': len(documents[0]),
-            'start_line': 1,
-            'start_col': 1,
-            'end_line': 1,
-            'end_col': 10,
-            'doc_id': doc_ids[0],
-            'doc_content': documents[0]
+            "document_id": doc_ids[0],
+            "chunk_index": 0,
+            "content": documents[0],
+            "start_pos": 0,
+            "end_pos": len(documents[0]),
+            "start_line": 1,
+            "start_col": 1,
+            "end_line": 1,
+            "end_col": 10,
+            "doc_id": doc_ids[0],
+            "doc_content": documents[0],
         }
         mock_pooled = create_mock_pooled_connection(mock_conn)
 
-        with patch.object(integration_db, '_get_documents_metadata_batch') as mock_get_meta, \
-                patch.object(integration_db.connection_pool, 'get_connection', return_value=mock_pooled):
+        with (
+            patch.object(integration_db, "_get_documents_metadata_batch") as mock_get_meta,
+            patch.object(integration_db.connection_pool, "get_connection", return_value=mock_pooled),
+        ):
             mock_get_meta.return_value = {doc_ids[0]: {"category": "ML"}}
 
             # Test vector search
@@ -315,11 +315,13 @@ class TestLocalVectorDBIntegration:
 
         def test_factory_creates_local_database(self, temp_dir):
             """Test factory creates working local database."""
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                    patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                    patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                    patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+            with (
+                patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+                patch("faiss.IndexFlatL2") as mock_faiss,
+                patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+                patch("localvectordb._pools.ConnectionPool") as mock_pool,
+                patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+            ):
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
 
@@ -343,12 +345,7 @@ class TestLocalVectorDBIntegration:
                 mock_pool_instance.closed = False
                 mock_pool.return_value = mock_pool_instance
 
-                db = VectorDB(
-                    name="factory_test",
-                    base_path=temp_dir,
-                    embedding_provider="mock",
-                    chunk_size=200
-                )
+                db = VectorDB(name="factory_test", base_path=temp_dir, embedding_provider="mock", chunk_size=200)
 
                 # Should be LocalVectorDB instance
                 assert isinstance(db, LocalVectorDB)
@@ -359,9 +356,11 @@ class TestLocalVectorDBIntegration:
             """Test factory creates working remote database."""
 
             # Mock ALL the HTTP-related methods to prevent any real network calls
-            with patch('localvectordb.client.RemoteVectorDB._ensure_database_exists') as mock_ensure, \
-                    patch('localvectordb.client.RemoteVectorDB._load_database_info') as mock_load, \
-                    patch('httpx.Client', return_value=mock_httpx_client):
+            with (
+                patch("localvectordb.client.RemoteVectorDB._ensure_database_exists") as mock_ensure,
+                patch("localvectordb.client.RemoteVectorDB._load_database_info") as mock_load,
+                patch("httpx.Client", return_value=mock_httpx_client),
+            ):
                 # Prevent any HTTP calls during initialization
                 mock_ensure.return_value = None
                 mock_load.return_value = None
@@ -370,7 +369,7 @@ class TestLocalVectorDBIntegration:
                     name="factory_test",
                     base_path="http://localhost:5000",
                     api_key="test-key",
-                    create_if_not_exists=False  # Avoid triggering _ensure_database_exists
+                    create_if_not_exists=False,  # Avoid triggering _ensure_database_exists
                 )
 
                 # Should be RemoteVectorDB instance
@@ -381,9 +380,7 @@ class TestLocalVectorDBIntegration:
 
         def test_factory_parameter_passing(self, temp_dir):
             """Test that factory correctly passes parameters to underlying classes."""
-            metadata_schema = {
-                'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
-            }
+            metadata_schema = {"author": MetadataField(type=MetadataFieldType.TEXT, indexed=True)}
 
             # Patch the LocalVectorDB class that's imported in factory.py
             with patch.object(factory, "LocalVectorDB") as mock_local:
@@ -396,7 +393,7 @@ class TestLocalVectorDBIntegration:
                     metadata_schema=metadata_schema,
                     chunk_size=500,
                     # This should be filtered out for local DB
-                    api_key="should-not-appear"
+                    api_key="should-not-appear",
                 )
 
                 # Verify parameters were passed correctly
@@ -411,7 +408,7 @@ class TestLocalVectorDBIntegration:
 
         def test_chunker_factory_integration(self):
             """Test that chunker factory creates working chunkers."""
-            methods = ['sentences', 'tokens', 'words', 'lines', 'paragraphs']
+            methods = ["sentences", "tokens", "words", "lines", "paragraphs"]
 
             test_text = """This is the first paragraph with multiple sentences.
             It contains various types of content that should be chunked appropriately.
@@ -432,16 +429,18 @@ class TestLocalVectorDBIntegration:
 
                 # Verify chunk positions are valid
                 for chunk in chunks:
-                    extracted = test_text[chunk.position.start:chunk.position.end]
+                    extracted = test_text[chunk.position.start : chunk.position.end]
                     assert chunk.content in extracted or extracted in chunk.content
 
         def test_chunking_with_database(self, temp_dir):
             """Test chunking integration with database operations."""
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                    patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                    patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                    patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+            with (
+                patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+                patch("faiss.IndexFlatL2") as mock_faiss,
+                patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+                patch("localvectordb._pools.ConnectionPool") as mock_pool,
+                patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+            ):
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
 
@@ -467,13 +466,13 @@ class TestLocalVectorDBIntegration:
                 mock_pool.return_value = mock_pool_instance
 
                 # Test different chunking methods
-                for method in ['sentences', 'words', 'lines']:
+                for method in ["sentences", "words", "lines"]:
                     db = LocalVectorDB(
                         name=f"chunk_test_{method}",
                         base_path=temp_dir,
                         chunking_method=method,
                         chunk_size=50,
-                        chunk_overlap=5
+                        chunk_overlap=5,
                     )
 
                     assert db.chunking_method == method
@@ -494,7 +493,7 @@ class TestLocalVectorDBIntegration:
                 "Short text",
                 "This is a longer text that should produce different embeddings",
                 "Another completely different piece of text for testing",
-                ""  # Edge case
+                "",  # Edge case
             ]
 
             embeddings = provider.embed_sync(texts)
@@ -544,11 +543,13 @@ class TestLocalVectorDBIntegration:
             db_path.mkdir(exist_ok=True)
 
             # Use context manager for proper cleanup
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                    patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                    patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                    patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+            with (
+                patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+                patch("faiss.IndexFlatL2") as mock_faiss,
+                patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+                patch("localvectordb._pools.ConnectionPool") as mock_pool,
+                patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+            ):
 
                 # Setup mocks with proper isolation
                 mock_provider = MockEmbeddings("test-model", dimension=384)
@@ -588,24 +589,23 @@ class TestLocalVectorDBIntegration:
                         base_path=db_path,
                         chunk_size=100,
                         chunk_overlap=10,
-                        enable_fts=False  # Disable FTS to avoid SQLite conflicts
+                        enable_fts=False,  # Disable FTS to avoid SQLite conflicts
                     )
                     db.index = mock_index
                     db._embedding_provider = mock_provider
                     db._embedding_dimension = mock_provider.get_dimension()
 
                     # Create large document (smaller for better test performance)
-                    large_doc = " ".join([
-                        f"This is sentence {i} in a large document."
-                        for i in range(200)  # Reduced from 1000 to 200
-                    ])
+                    large_doc = " ".join(
+                        [f"This is sentence {i} in a large document." for i in range(200)]  # Reduced from 1000 to 200
+                    )
 
                     # Mock the database operations
                     mock_conn_context = create_mock_connection()
                     mock_conn_context.execute.return_value.fetchall.return_value = []
                     mock_pooled_context = create_mock_pooled_connection(mock_conn_context)
 
-                    with patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled_context):
+                    with patch.object(db.connection_pool, "get_connection", return_value=mock_pooled_context):
                         # Process the document
                         doc_ids = db.upsert([large_doc])
 
@@ -630,20 +630,23 @@ class TestLocalVectorDBIntegration:
                     mock_pool_instance.closed = True
 
                     # Clear large document from memory
-                    if 'large_doc' in locals():
+                    if "large_doc" in locals():
                         del large_doc
 
                     # Force garbage collection
                     import gc
+
                     gc.collect()
 
         def test_batch_processing(self, temp_dir):
             """Test batch processing of multiple documents."""
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                    patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                    patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                    patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+            with (
+                patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+                patch("faiss.IndexFlatL2") as mock_faiss,
+                patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+                patch("localvectordb._pools.ConnectionPool") as mock_pool,
+                patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+            ):
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
 
@@ -668,11 +671,7 @@ class TestLocalVectorDBIntegration:
                 mock_pool_instance.closed = False
                 mock_pool.return_value = mock_pool_instance
 
-                db = LocalVectorDB(
-                    name="batch_test",
-                    base_path=temp_dir,
-                    chunk_size=50
-                )
+                db = LocalVectorDB(name="batch_test", base_path=temp_dir, chunk_size=50)
                 db.index = mock_index
 
                 # Create many documents
@@ -682,7 +681,7 @@ class TestLocalVectorDBIntegration:
                 mock_conn.execute.return_value.fetchall.return_value = []
                 mock_pooled = create_mock_pooled_connection(mock_conn)
 
-                with patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled):
+                with patch.object(db.connection_pool, "get_connection", return_value=mock_pooled):
                     # Should handle batch processing
                     doc_ids = db.upsert(documents, batch_size=25)
 
@@ -695,7 +694,7 @@ class TestLocalVectorDBIntegration:
 
         def test_database_error_propagation(self, temp_dir):
             """Test that errors propagate correctly through the system."""
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding:
+            with patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding:
                 # Setup mock that will fail
                 mock_provider = Mock()
                 mock_provider.validate_model.return_value = False  # Invalid model
@@ -704,11 +703,7 @@ class TestLocalVectorDBIntegration:
 
                 # Should raise ValueError for invalid model
                 with pytest.raises(ValueError, match="Embedding model .* is not available"):
-                    LocalVectorDB(
-                        name="error_test",
-                        base_path=temp_dir,
-                        embedding_model="invalid-model"
-                    )
+                    LocalVectorDB(name="error_test", base_path=temp_dir, embedding_model="invalid-model")
 
         def test_chunking_error_handling(self):
             """Test error handling in chunking operations."""
@@ -741,11 +736,13 @@ class TestLocalVectorDBIntegration:
 
         def test_document_management_workflow(self, temp_dir):
             """Test a realistic document management workflow."""
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                    patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                    patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                    patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+            with (
+                patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+                patch("faiss.IndexFlatL2") as mock_faiss,
+                patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+                patch("localvectordb._pools.ConnectionPool") as mock_pool,
+                patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+            ):
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
 
@@ -773,11 +770,11 @@ class TestLocalVectorDBIntegration:
 
                 # Create database with realistic schema
                 metadata_schema = {
-                    'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                    'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-                    'created_date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
-                    'tags': MetadataField(type=MetadataFieldType.JSON),
-                    'priority': MetadataField(type=MetadataFieldType.INTEGER, indexed=True)
+                    "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                    "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                    "created_date": MetadataField(type=MetadataFieldType.DATE, indexed=True),
+                    "tags": MetadataField(type=MetadataFieldType.JSON),
+                    "priority": MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
                 }
 
                 db = LocalVectorDB(
@@ -785,62 +782,61 @@ class TestLocalVectorDBIntegration:
                     base_path=temp_dir,
                     metadata_schema=metadata_schema,
                     chunk_size=200,
-                    chunk_overlap=20
+                    chunk_overlap=20,
                 )
                 db.index = mock_index
 
                 # Simulate adding documents over time
                 documents = [
                     {
-                        'content': (
+                        "content": (
                             "Project specification for the new AI system."
                             " This document outlines requirements and architecture."
                         ),
-                        'metadata': {
-                            'title': "AI System Spec",
-                            'author': "Alice Johnson",
-                            'created_date': "2024-01-15",
-                            'tags': ["ai", "specification", "architecture"],
-                            'priority': 1
-                        }
+                        "metadata": {
+                            "title": "AI System Spec",
+                            "author": "Alice Johnson",
+                            "created_date": "2024-01-15",
+                            "tags": ["ai", "specification", "architecture"],
+                            "priority": 1,
+                        },
                     },
                     {
-                        'content': (
-                            "Meeting notes from AI project kickoff."
-                            " Discussed timeline and resource allocation."
+                        "content": (
+                            "Meeting notes from AI project kickoff." " Discussed timeline and resource allocation."
                         ),
-                        'metadata': {
-                            'title': "AI Project Kickoff Notes",
-                            'author': "Bob Smith",
-                            'created_date': "2024-01-20",
-                            'tags': ["meeting", "ai", "planning"],
-                            'priority': 2
-                        }
+                        "metadata": {
+                            "title": "AI Project Kickoff Notes",
+                            "author": "Bob Smith",
+                            "created_date": "2024-01-20",
+                            "tags": ["meeting", "ai", "planning"],
+                            "priority": 2,
+                        },
                     },
                     {
-                        'content': (
+                        "content": (
                             "Technical design document for machine learning pipeline."
                             " Includes data flow and model architecture."
                         ),
-                        'metadata': {
-                            'title': "ML Pipeline Design",
-                            'author': "Charlie Brown",
-                            'created_date': "2024-01-25",
-                            'tags': ["ml", "pipeline", "design"],
-                            'priority': 1
-                        }
-                    }
+                        "metadata": {
+                            "title": "ML Pipeline Design",
+                            "author": "Charlie Brown",
+                            "created_date": "2024-01-25",
+                            "tags": ["ml", "pipeline", "design"],
+                            "priority": 1,
+                        },
+                    },
                 ]
 
                 mock_conn = create_mock_connection()
                 mock_conn.execute.return_value.fetchall.return_value = []
                 mock_pooled = create_mock_pooled_connection(mock_conn)
 
-                with patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled):
+                with patch.object(db.connection_pool, "get_connection", return_value=mock_pooled):
                     # Insert documents
                     doc_ids = []
                     for doc in documents:
-                        ids = db.upsert([doc['content']], metadata=[doc['metadata']])
+                        ids = db.upsert([doc["content"]], metadata=[doc["metadata"]])
                         doc_ids.extend(ids)
 
                     assert len(doc_ids) == 3
@@ -848,22 +844,24 @@ class TestLocalVectorDBIntegration:
                 # Simulate search and filtering operations
                 mock_conn = create_mock_connection()
                 mock_conn.execute.return_value.fetchone.return_value = {
-                    'document_id': doc_ids[0],
-                    'chunk_index': 0,
-                    'content': documents[0]['content'][:50],
-                    'start_pos': 0,
-                    'end_pos': 50,
-                    'start_line': 1,
-                    'start_col': 1,
-                    'end_line': 1,
-                    'end_col': 50,
-                    'doc_id': doc_ids[0],
-                    'doc_content': documents[0]['content']
+                    "document_id": doc_ids[0],
+                    "chunk_index": 0,
+                    "content": documents[0]["content"][:50],
+                    "start_pos": 0,
+                    "end_pos": 50,
+                    "start_line": 1,
+                    "start_col": 1,
+                    "end_line": 1,
+                    "end_col": 50,
+                    "doc_id": doc_ids[0],
+                    "doc_content": documents[0]["content"],
                 }
                 mock_pooled = create_mock_pooled_connection(mock_conn)
 
-                with patch.object(db, '_get_documents_metadata_batch') as mock_get_meta, \
-                        patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled):
+                with (
+                    patch.object(db, "_get_documents_metadata_batch") as mock_get_meta,
+                    patch.object(db.connection_pool, "get_connection", return_value=mock_pooled),
+                ):
                     mock_get_meta.return_value = {doc_ids[0]: {"title": "AI System Spec", "priority": 1}}
 
                     # Search for AI-related documents
@@ -874,32 +872,34 @@ class TestLocalVectorDBIntegration:
                 mock_conn = create_mock_connection()
                 mock_conn.execute.return_value.fetchall.return_value = [
                     {
-                        'id': doc_ids[0],
-                        'content': documents[0]['content'],
-                        'content_hash': 'hash1',
-                        'created_at': '2024-01-15T00:00:00',
-                        'updated_at': '2024-01-15T00:00:00',
-                        'title': 'AI System Spec',
-                        'author': 'Alice Johnson',
-                        'created_date': '2024-01-15',
-                        'tags': '["ai", "specification", "architecture"]',
-                        'priority': 1
+                        "id": doc_ids[0],
+                        "content": documents[0]["content"],
+                        "content_hash": "hash1",
+                        "created_at": "2024-01-15T00:00:00",
+                        "updated_at": "2024-01-15T00:00:00",
+                        "title": "AI System Spec",
+                        "author": "Alice Johnson",
+                        "created_date": "2024-01-15",
+                        "tags": '["ai", "specification", "architecture"]',
+                        "priority": 1,
                     }
                 ]
                 mock_pooled = create_mock_pooled_connection(mock_conn)
 
-                with patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled):
+                with patch.object(db.connection_pool, "get_connection", return_value=mock_pooled):
                     # Filter high priority documents
                     high_priority = db.filter(where={"priority": 1})
                     assert len(high_priority) >= 0  # Depends on mock setup
 
         def test_mixed_content_types(self, temp_dir):
             """Test handling of mixed content types and sizes."""
-            with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                    patch('faiss.IndexFlatL2') as mock_faiss, \
-                    patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                    patch('localvectordb._pools.ConnectionPool') as mock_pool, \
-                    patch('localvectordb._schema.DatabaseSchema') as mock_schema:
+            with (
+                patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+                patch("faiss.IndexFlatL2") as mock_faiss,
+                patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+                patch("localvectordb._pools.ConnectionPool") as mock_pool,
+                patch("localvectordb._schema.DatabaseSchema") as mock_schema,
+            ):
                 mock_provider = MockEmbeddings("test-model", dimension=384)
                 mock_embedding.return_value = mock_provider
 
@@ -924,11 +924,7 @@ class TestLocalVectorDBIntegration:
                 mock_pool_instance.closed = False
                 mock_pool.return_value = mock_pool_instance
 
-                db = LocalVectorDB(
-                    name="mixed_content",
-                    base_path=temp_dir,
-                    chunk_size=150
-                )
+                db = LocalVectorDB(name="mixed_content", base_path=temp_dir, chunk_size=150)
                 db.index = mock_index
                 db._embedding_provider = mock_provider
                 db._embedding_dimension = mock_provider.get_dimension()
@@ -951,7 +947,7 @@ class TestLocalVectorDBIntegration:
                 mock_conn.execute.return_value.fetchall.return_value = []
                 mock_pooled = create_mock_pooled_connection(mock_conn)
 
-                with patch.object(db.connection_pool, 'get_connection', return_value=mock_pooled):
+                with patch.object(db.connection_pool, "get_connection", return_value=mock_pooled):
                     # Should handle all document types
                     doc_ids = db.upsert(mixed_documents)
 
@@ -969,32 +965,20 @@ class TestMultiColumnIntegration:
     def multi_column_db(self, temp_dir):
         """Create a database with multi-column search capabilities."""
         metadata_schema = {
-            'title': MetadataField(
-                type=MetadataFieldType.TEXT,
-                indexed=True,
-                embedding_enabled=True,
-                fts_enabled=True
-            ),
-            'abstract': MetadataField(
-                type=MetadataFieldType.TEXT,
-                embedding_enabled=True
-            ),
-            'summary': MetadataField(
-                type=MetadataFieldType.TEXT,
-                embedding_enabled=True
-            ),
-            'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'year': MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
-            'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-            'keywords': MetadataField(
-                type=MetadataFieldType.JSON,
-                embedding_enabled=True
-            )
+            "title": MetadataField(type=MetadataFieldType.TEXT, indexed=True, embedding_enabled=True, fts_enabled=True),
+            "abstract": MetadataField(type=MetadataFieldType.TEXT, embedding_enabled=True),
+            "summary": MetadataField(type=MetadataFieldType.TEXT, embedding_enabled=True),
+            "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "year": MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+            "keywords": MetadataField(type=MetadataFieldType.JSON, embedding_enabled=True),
         }
 
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+        ):
             # Use mock embeddings for predictable testing
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
@@ -1004,10 +988,7 @@ class TestMultiColumnIntegration:
             mock_index.ntotal = 0
             mock_index.add = Mock()
             mock_index.add_with_ids = Mock()
-            mock_index.search = Mock(return_value=(
-                np.array([[0.1, 0.2, 0.3]]),
-                np.array([[0, 1, 2]])
-            ))
+            mock_index.search = Mock(return_value=(np.array([[0.1, 0.2, 0.3]]), np.array([[0, 1, 2]])))
             mock_index.reconstruct = Mock(return_value=np.random.rand(384))
             mock_faiss.return_value = mock_index
             mock_faiss_idmap.return_value = mock_index
@@ -1019,7 +1000,7 @@ class TestMultiColumnIntegration:
                 embedding_provider="mock",
                 embedding_model="test-model",
                 chunk_size=500,
-                chunking_method="sentences"
+                chunking_method="sentences",
             )
 
             yield db
@@ -1031,37 +1012,37 @@ class TestMultiColumnIntegration:
         documents = [
             "This is a comprehensive paper about machine learning algorithms and their applications.",
             "A detailed study on neural networks and deep learning architectures.",
-            "Research on natural language processing using transformer models."
+            "Research on natural language processing using transformer models.",
         ]
 
         metadata = [
             {
-                'title': 'Machine Learning Algorithms',
-                'abstract': 'Study of various ML algorithms for classification and regression',
-                'summary': 'ML algorithms overview',
-                'author': 'Dr. Smith',
-                'year': 2023,
-                'category': 'AI',
-                'keywords': ['machine learning', 'algorithms', 'classification']
+                "title": "Machine Learning Algorithms",
+                "abstract": "Study of various ML algorithms for classification and regression",
+                "summary": "ML algorithms overview",
+                "author": "Dr. Smith",
+                "year": 2023,
+                "category": "AI",
+                "keywords": ["machine learning", "algorithms", "classification"],
             },
             {
-                'title': 'Deep Learning Architectures',
-                'abstract': 'Comprehensive review of neural network architectures',
-                'summary': 'Deep learning survey',
-                'author': 'Dr. Jones',
-                'year': 2024,
-                'category': 'AI',
-                'keywords': ['neural networks', 'deep learning', 'architectures']
+                "title": "Deep Learning Architectures",
+                "abstract": "Comprehensive review of neural network architectures",
+                "summary": "Deep learning survey",
+                "author": "Dr. Jones",
+                "year": 2024,
+                "category": "AI",
+                "keywords": ["neural networks", "deep learning", "architectures"],
             },
             {
-                'title': 'NLP with Transformers',
-                'abstract': 'Advanced NLP techniques using transformer architecture',
-                'summary': 'Transformer models in NLP',
-                'author': 'Dr. Brown',
-                'year': 2024,
-                'category': 'NLP',
-                'keywords': ['nlp', 'transformers', 'attention']
-            }
+                "title": "NLP with Transformers",
+                "abstract": "Advanced NLP techniques using transformer architecture",
+                "summary": "Transformer models in NLP",
+                "author": "Dr. Brown",
+                "year": 2024,
+                "category": "NLP",
+                "keywords": ["nlp", "transformers", "attention"],
+            },
         ]
 
         # Test upsert with metadata
@@ -1070,52 +1051,52 @@ class TestMultiColumnIntegration:
 
         # Verify embedding-enabled fields are identified
         embedding_fields = multi_column_db._get_embedding_enabled_fields()
-        assert 'title' in embedding_fields
-        assert 'abstract' in embedding_fields
-        assert 'summary' in embedding_fields
-        assert 'keywords' in embedding_fields
-        assert 'author' not in embedding_fields  # Not embedding-enabled
+        assert "title" in embedding_fields
+        assert "abstract" in embedding_fields
+        assert "summary" in embedding_fields
+        assert "keywords" in embedding_fields
+        assert "author" not in embedding_fields  # Not embedding-enabled
 
         # Check that column_embeddings table exists and has data
         with multi_column_db.connection_pool.get_connection() as conn:
             # Check table exists
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'"
-            )
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'")
             assert cursor.fetchone() is not None
 
             # Check FTS tables for fts_enabled fields
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='fts_title'"
-            )
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='fts_title'")
             assert cursor.fetchone() is not None
 
     def test_multi_column_query(self, multi_column_db):
         """Test multi-column query functionality."""
         # Add test data
         documents = ["Document about AI and machine learning"]
-        metadata = [{
-            'title': 'AI Overview',
-            'abstract': 'Introduction to artificial intelligence',
-            'summary': 'AI basics',
-            'author': 'Test Author',
-            'year': 2024,
-            'category': 'AI',
-            'keywords': ['ai', 'machine learning']
-        }]
+        metadata = [
+            {
+                "title": "AI Overview",
+                "abstract": "Introduction to artificial intelligence",
+                "summary": "AI basics",
+                "author": "Test Author",
+                "year": 2024,
+                "category": "AI",
+                "keywords": ["ai", "machine learning"],
+            }
+        ]
 
         multi_column_db.upsert(documents, metadata=metadata)
 
         # Mock the query methods to avoid complex FAISS interactions
-        with patch.object(multi_column_db, 'query') as mock_query, \
-                patch.object(multi_column_db, '_search_metadata_field') as mock_search:
+        with (
+            patch.object(multi_column_db, "query") as mock_query,
+            patch.object(multi_column_db, "_search_metadata_field") as mock_search,
+        ):
             # Setup mock returns
             mock_result = Mock()
             mock_result.score = 0.9
             mock_result.content = "test content"
-            mock_result.metadata = {'title': 'AI Overview'}
-            mock_result.type = 'chunk'
-            mock_result.document_id = 'doc_1'  # Add proper document ID
+            mock_result.metadata = {"title": "AI Overview"}
+            mock_result.type = "chunk"
+            mock_result.document_id = "doc_1"  # Add proper document ID
 
             mock_query.return_value = [mock_result]
             mock_search.return_value = []
@@ -1125,11 +1106,7 @@ class TestMultiColumnIntegration:
             assert isinstance(results, list)
 
             # Test with specific columns
-            results = multi_column_db.query_multi_column(
-                "AI",
-                columns=['title', 'abstract'],
-                k=3
-            )
+            results = multi_column_db.query_multi_column("AI", columns=["title", "abstract"], k=3)
             assert isinstance(results, list)
 
     def test_metadata_field_validation(self):
@@ -1137,40 +1114,29 @@ class TestMultiColumnIntegration:
         from localvectordb.core import MetadataField, MetadataFieldType
 
         # Valid cases
-        text_field = MetadataField(
-            type=MetadataFieldType.TEXT,
-            embedding_enabled=True,
-            fts_enabled=True
-        )
+        text_field = MetadataField(type=MetadataFieldType.TEXT, embedding_enabled=True, fts_enabled=True)
         assert text_field.embedding_enabled is True
         assert text_field.fts_enabled is True
 
-        json_field = MetadataField(
-            type=MetadataFieldType.JSON,
-            embedding_enabled=True
-        )
+        json_field = MetadataField(type=MetadataFieldType.JSON, embedding_enabled=True)
         assert json_field.embedding_enabled is True
 
         # Invalid cases
         with pytest.raises(ValueError, match="embedding_enabled can only be True"):
-            MetadataField(
-                type=MetadataFieldType.INTEGER,
-                embedding_enabled=True
-            )
+            MetadataField(type=MetadataFieldType.INTEGER, embedding_enabled=True)
 
         with pytest.raises(ValueError, match="fts_enabled can only be True"):
-            MetadataField(
-                type=MetadataFieldType.BOOLEAN,
-                fts_enabled=True
-            )
+            MetadataField(type=MetadataFieldType.BOOLEAN, fts_enabled=True)
 
     def test_schema_migration(self, temp_dir):
         """Test that existing databases are migrated to support new schema fields."""
         from localvectordb.database import LocalVectorDB
 
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+        ):
             mock_provider = MockEmbeddings("test-model", dimension=384)
             mock_embedding.return_value = mock_provider
 
@@ -1183,9 +1149,7 @@ class TestMultiColumnIntegration:
             db = LocalVectorDB(
                 name="migration_test",
                 base_path=temp_dir,
-                metadata_schema={
-                    'title': MetadataField(type=MetadataFieldType.TEXT)
-                }
+                metadata_schema={"title": MetadataField(type=MetadataFieldType.TEXT)},
             )
 
             # Verify migration
@@ -1193,13 +1157,11 @@ class TestMultiColumnIntegration:
                 # Check metadata_schema has new columns
                 cursor = conn.execute("PRAGMA table_info(metadata_schema)")
                 columns = {row[1] for row in cursor.fetchall()}
-                assert 'embedding_enabled' in columns
-                assert 'fts_enabled' in columns
+                assert "embedding_enabled" in columns
+                assert "fts_enabled" in columns
 
                 # Check column_embeddings table exists
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='column_embeddings'")
                 assert cursor.fetchone() is not None
 
             db.close()

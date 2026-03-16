@@ -28,7 +28,7 @@ class TestSampleFiles:
     @staticmethod
     def create_sample_text(content="Hello World!\nThis is a test document.\n"):
         """Create sample text file."""
-        return content.encode('utf-8')
+        return content.encode("utf-8")
 
     @staticmethod
     def create_sample_html():
@@ -55,7 +55,7 @@ class TestSampleFiles:
     </table>
 </body>
 </html>"""
-        return html.encode('utf-8')
+        return html.encode("utf-8")
 
     @staticmethod
     def create_sample_xml():
@@ -73,7 +73,7 @@ class TestSampleFiles:
         <description>Another test book</description>
     </book>
 </catalog>"""
-        return xml.encode('utf-8')
+        return xml.encode("utf-8")
 
     @staticmethod
     def create_sample_rss():
@@ -93,7 +93,7 @@ class TestSampleFiles:
         </item>
     </channel>
 </rss>"""
-        return rss.encode('utf-8')
+        return rss.encode("utf-8")
 
     @staticmethod
     def create_sample_rtf():
@@ -103,7 +103,7 @@ class TestSampleFiles:
 This is a test RTF document.\\par
 It contains some formatting.\\par
 }"""
-        return rtf.encode('utf-8')
+        return rtf.encode("utf-8")
 
     @staticmethod
     def create_corrupted_file():
@@ -127,12 +127,7 @@ class TestExtractionResult:
 
     def test_create_success_result(self):
         """Test creating a successful extraction result."""
-        result = ExtractionResult(
-            text="Hello World",
-            success=True,
-            method="TestExtractor",
-            metadata={"key": "value"}
-        )
+        result = ExtractionResult(text="Hello World", success=True, method="TestExtractor", metadata={"key": "value"})
 
         assert result.text == "Hello World"
         assert result.success is True
@@ -142,12 +137,7 @@ class TestExtractionResult:
 
     def test_create_failure_result(self):
         """Test creating a failed extraction result."""
-        result = ExtractionResult(
-            text="",
-            success=False,
-            method="TestExtractor",
-            error="Something went wrong"
-        )
+        result = ExtractionResult(text="", success=False, method="TestExtractor", error="Something went wrong")
 
         assert result.text == ""
         assert result.success is False
@@ -157,21 +147,16 @@ class TestExtractionResult:
 
     def test_to_dict(self):
         """Test converting result to dictionary."""
-        result = ExtractionResult(
-            text="Hello World",
-            success=True,
-            method="TestExtractor",
-            metadata={"key": "value"}
-        )
+        result = ExtractionResult(text="Hello World", success=True, method="TestExtractor", metadata={"key": "value"})
 
         result_dict = result.to_dict()
         expected = {
-            'text': 'Hello World',
-            'extraction_success': True,
-            'extraction_method': 'TestExtractor',
-            'metadata': {'key': 'value'},
-            'error': None,
-            'text_length': 11
+            "text": "Hello World",
+            "extraction_success": True,
+            "extraction_method": "TestExtractor",
+            "metadata": {"key": "value"},
+            "error": None,
+            "text_length": 11,
         }
 
         assert result_dict == expected
@@ -202,11 +187,11 @@ class ConcreteTestExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self):
-        return ['.test']
+        return [".test"]
 
     @property
     def supported_mimetypes(self):
-        return ['application/test']
+        return ["application/test"]
 
     @property
     def required_packages(self):
@@ -224,11 +209,7 @@ class ConcreteTestExtractor(BaseExtractor):
         return True
 
     def _extract_text_impl(self, file_content, filename, mimetype, **kwargs):
-        return ExtractionResult(
-            text="Test extraction successful",
-            success=True,
-            method="ConcreteTestExtractor"
-        )
+        return ExtractionResult(text="Test extraction successful", success=True, method="ConcreteTestExtractor")
 
 
 @pytest.mark.unit
@@ -273,11 +254,17 @@ class TestConcreteExtractor:
         """Test get_info method."""
         info = self.extractor.get_info()
 
-        expected_keys = ['name', 'available', 'supported_extensions',
-                        'supported_mimetypes', 'required_packages', 'priority']
+        expected_keys = [
+            "name",
+            "available",
+            "supported_extensions",
+            "supported_mimetypes",
+            "required_packages",
+            "priority",
+        ]
         assert all(key in info for key in expected_keys)
-        assert info['name'] == "ConcreteTestExtractor"
-        assert info['available'] is True
+        assert info["name"] == "ConcreteTestExtractor"
+        assert info["available"] is True
 
 
 @pytest.mark.unit
@@ -294,10 +281,10 @@ class TestTextFileExtractor:
 
     def test_supported_formats(self):
         """Test supported file formats."""
-        assert '.txt' in self.extractor.supported_extensions
-        assert '.py' in self.extractor.supported_extensions
-        assert '.md' in self.extractor.supported_extensions
-        assert 'text/plain' in self.extractor.supported_mimetypes
+        assert ".txt" in self.extractor.supported_extensions
+        assert ".py" in self.extractor.supported_extensions
+        assert ".md" in self.extractor.supported_extensions
+        assert "text/plain" in self.extractor.supported_mimetypes
 
     def test_extract_utf8_text(self):
         """Test extracting UTF-8 text."""
@@ -306,8 +293,8 @@ class TestTextFileExtractor:
 
         assert result.success is True
         assert "Hello World!" in result.text
-        assert result.metadata['encoding'] == 'utf-8'
-        assert result.metadata['character_count'] > 0
+        assert result.metadata["encoding"] == "utf-8"
+        assert result.metadata["character_count"] > 0
 
     def test_extract_empty_file(self):
         """Test extracting from empty file."""
@@ -333,7 +320,7 @@ class TestTextFileExtractor:
         """Test metadata schema."""
         schema = self.extractor.metadata_schema
 
-        expected_fields = ['encoding', 'file_size_bytes', 'character_count', 'line_count']
+        expected_fields = ["encoding", "file_size_bytes", "character_count", "line_count"]
         assert all(field in schema for field in expected_fields)
 
 
@@ -361,7 +348,7 @@ class TestTextFallbackExtractor:
 
         assert result.success is True
         assert "Hello World!" in result.text
-        assert 'warning' in result.metadata
+        assert "warning" in result.metadata
 
     def test_extract_binary_content(self):
         """Test extracting from binary content."""
@@ -372,8 +359,7 @@ class TestTextFallbackExtractor:
         assert isinstance(result, ExtractionResult)
         # It might succeed with UTF-8 ignore mode or fail due to low text ratio
         if result.success is False:
-            assert any(keyword in result.error.lower()
-                      for keyword in ["binary", "text content", "printable"])
+            assert any(keyword in result.error.lower() for keyword in ["binary", "text content", "printable"])
 
     def test_low_text_ratio(self):
         """Test handling of content with low text ratio."""
@@ -384,8 +370,7 @@ class TestTextFallbackExtractor:
         # Should fail due to low text ratio or lack of printable content
         assert isinstance(result, ExtractionResult)
         if result.success is False:
-            assert any(keyword in result.error.lower()
-                      for keyword in ["text content", "printable", "binary"])
+            assert any(keyword in result.error.lower() for keyword in ["text content", "printable", "binary"])
 
 
 @pytest.mark.unit
@@ -406,14 +391,14 @@ class TestHTMLExtractor:
 
     def test_availability_without_beautifulsoup(self):
         """Test availability when BeautifulSoup is not available."""
-        with patch.dict('sys.modules', {'bs4': None}):
+        with patch.dict("sys.modules", {"bs4": None}):
             # This will be checked at import time, so we can't fully test this
             # without more complex mocking
             pass
 
     @pytest.mark.skipif(
-        not hasattr(HTMLExtractor(), '_check_availability') or not HTMLExtractor()._check_availability(),
-        reason="BeautifulSoup not available"
+        not hasattr(HTMLExtractor(), "_check_availability") or not HTMLExtractor()._check_availability(),
+        reason="BeautifulSoup not available",
     )
     def test_extract_html_content(self):
         """Test extracting content from HTML."""
@@ -424,14 +409,14 @@ class TestHTMLExtractor:
             assert "Test Document" in result.text
             assert "Main Title" in result.text
             assert "test paragraph" in result.text
-            assert result.metadata['title'] == "Test Document"
-            assert "A test HTML document" in result.metadata['description']
+            assert result.metadata["title"] == "Test Document"
+            assert "A test HTML document" in result.metadata["description"]
 
     def test_supported_formats(self):
         """Test supported HTML formats."""
-        assert '.html' in self.extractor.supported_extensions
-        assert '.htm' in self.extractor.supported_extensions
-        assert 'text/html' in self.extractor.supported_mimetypes
+        assert ".html" in self.extractor.supported_extensions
+        assert ".htm" in self.extractor.supported_extensions
+        assert "text/html" in self.extractor.supported_mimetypes
 
 
 @pytest.mark.unit
@@ -443,8 +428,8 @@ class TestXMLExtractor:
         self.extractor = XMLExtractor()
 
     @pytest.mark.skipif(
-        not hasattr(XMLExtractor(), '_check_availability') or not XMLExtractor()._check_availability(),
-        reason="Required XML libraries not available"
+        not hasattr(XMLExtractor(), "_check_availability") or not XMLExtractor()._check_availability(),
+        reason="Required XML libraries not available",
     )
     def test_extract_generic_xml(self):
         """Test extracting content from generic XML."""
@@ -454,11 +439,11 @@ class TestXMLExtractor:
         if result.success:
             assert "Sample Book" in result.text
             assert "Test Author" in result.text
-            assert result.metadata['xml_type'] == 'generic'
+            assert result.metadata["xml_type"] == "generic"
 
     @pytest.mark.skipif(
-        not hasattr(XMLExtractor(), '_check_availability') or not XMLExtractor()._check_availability(),
-        reason="Required XML libraries not available"
+        not hasattr(XMLExtractor(), "_check_availability") or not XMLExtractor()._check_availability(),
+        reason="Required XML libraries not available",
     )
     def test_extract_rss_feed(self):
         """Test extracting content from RSS feed."""
@@ -468,7 +453,7 @@ class TestXMLExtractor:
         if result.success:
             assert "Test RSS Feed" in result.text
             assert "First Article" in result.text
-            assert result.metadata['xml_type'] == 'rss'
+            assert result.metadata["xml_type"] == "rss"
 
 
 @pytest.mark.unit
@@ -531,9 +516,9 @@ class TestExtractorRegistry:
         ExtractorRegistry.register(ConcreteTestExtractor)
         formats = ExtractorRegistry.get_supported_formats()
 
-        assert 'test' in formats
-        assert formats['test']['available'] is True
-        assert len(formats['test']['extractors']) > 0
+        assert "test" in formats
+        assert formats["test"]["available"] is True
+        assert len(formats["test"]["extractors"]) > 0
 
     def test_refresh_plugins(self):
         """Test refreshing plugins."""
@@ -582,11 +567,11 @@ class TestErrorHandling:
         class FaultyExtractor(BaseExtractor):
             @property
             def supported_extensions(self):
-                return ['.faulty']
+                return [".faulty"]
 
             @property
             def supported_mimetypes(self):
-                return ['application/faulty']
+                return ["application/faulty"]
 
             @property
             def required_packages(self):
@@ -619,7 +604,7 @@ class TestMockExtractorBehaviors:
 
     def test_pdf_extractor_without_pdfplumber(self):
         """Test PDF extractor when pdfplumber is not available."""
-        with patch.dict('sys.modules', {'pdfplumber': None}):
+        with patch.dict("sys.modules", {"pdfplumber": None}):
             extractor = PDFPlumberExtractor()
             assert extractor.available is False
 
@@ -629,7 +614,7 @@ class TestMockExtractorBehaviors:
 
     def test_docx_extractor_without_python_docx(self):
         """Test DOCX extractor when python-docx is not available."""
-        with patch.dict('sys.modules', {'docx': None}):
+        with patch.dict("sys.modules", {"docx": None}):
             extractor = DocxExtractor()
             assert extractor.available is False
 
@@ -639,7 +624,7 @@ class TestMockExtractorBehaviors:
 
     def test_rtf_extractor_without_striprtf(self):
         """Test RTF extractor when striprtf is not available."""
-        with patch.dict('sys.modules', {'striprtf': None}):
+        with patch.dict("sys.modules", {"striprtf": None}):
             extractor = RTFExtractor()
             assert extractor.available is False
 
@@ -695,14 +680,14 @@ class TestRealFileExtraction:
 
     def test_create_and_extract_text_file(self):
         """Test creating and extracting a real text file."""
-        with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
             tmp.write(TestSampleFiles.create_sample_text())
             tmp.flush()
             tmp_name = tmp.name
 
         try:
             # Read the file back
-            with open(tmp_name, 'rb') as f:
+            with open(tmp_name, "rb") as f:
                 content = f.read()
 
             result = ExtractorRegistry.extract_text(content, tmp_name)
@@ -721,14 +706,14 @@ class TestRealFileExtraction:
         if not HTMLExtractor()._check_availability():
             pytest.skip("BeautifulSoup not available")
 
-        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
             tmp.write(TestSampleFiles.create_sample_html())
             tmp.flush()
             tmp_name = tmp.name
 
         try:
             # Read the file back
-            with open(tmp_name, 'rb') as f:
+            with open(tmp_name, "rb") as f:
                 content = f.read()
 
             result = ExtractorRegistry.extract_text(content, tmp_name)

@@ -4,6 +4,7 @@ Tests for localvectordb.__init__.py module.
 These tests ensure that the package can be imported correctly and that
 all public APIs are accessible.
 """
+
 import types
 
 import pytest
@@ -16,6 +17,7 @@ class TestPackageImports:
     def test_import_package(self):
         """Test that the package can be imported."""
         import localvectordb
+
         assert localvectordb is not None
 
     def test_import_main_classes(self):
@@ -45,13 +47,17 @@ class TestPackageImports:
         import localvectordb
 
         # Should have __all__ attribute
-        assert hasattr(localvectordb, '__all__')
+        assert hasattr(localvectordb, "__all__")
         assert isinstance(localvectordb.__all__, list)
 
         # Should contain expected classes
         expected_classes = [
-            "LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry",
-            "RemoteVectorDB", "VectorDB", "MetadataField"
+            "LocalVectorDB",
+            "ChunkerFactory",
+            "EmbeddingRegistry",
+            "RemoteVectorDB",
+            "VectorDB",
+            "MetadataField",
         ]
 
         for cls_name in expected_classes:
@@ -86,11 +92,12 @@ class TestPackageImports:
         # Should have version info (either directly or importable)
         try:
             # Try to get version from the package
-            version = getattr(localvectordb, '__version__', None)
+            version = getattr(localvectordb, "__version__", None)
             if version is None:
                 # Try importing from metadata
                 from importlib.metadata import version
-                version = version('localvectordb')
+
+                version = version("localvectordb")
 
             assert version is not None
             assert isinstance(version, str)
@@ -111,10 +118,7 @@ class TestPublicAPI:
         assert isinstance(LocalVectorDB, type)
 
         # Should have expected methods
-        expected_methods = [
-            'upsert', 'insert', 'get', 'delete', 'update',
-            'query', 'filter', 'exists', 'save', 'close'
-        ]
+        expected_methods = ["upsert", "insert", "get", "delete", "update", "query", "filter", "exists", "save", "close"]
 
         for method_name in expected_methods:
             assert hasattr(LocalVectorDB, method_name)
@@ -128,10 +132,7 @@ class TestPublicAPI:
         assert isinstance(RemoteVectorDB, type)
 
         # Should have expected methods (same interface as LocalVectorDB)
-        expected_methods = [
-            'upsert', 'insert', 'get', 'delete', 'update',
-            'query', 'filter', 'exists', 'save', 'close'
-        ]
+        expected_methods = ["upsert", "insert", "get", "delete", "update", "query", "filter", "exists", "save", "close"]
 
         for method_name in expected_methods:
             assert hasattr(RemoteVectorDB, method_name)
@@ -163,7 +164,7 @@ class TestPublicAPI:
         from localvectordb import ChunkerFactory
 
         # Should have expected class methods
-        expected_methods = ['create_chunker', 'list_methods']
+        expected_methods = ["create_chunker", "list_methods"]
 
         for method_name in expected_methods:
             assert hasattr(ChunkerFactory, method_name)
@@ -174,7 +175,7 @@ class TestPublicAPI:
         from localvectordb import EmbeddingRegistry
 
         # Should have expected class methods
-        expected_methods = ['register', 'get', 'create_provider', 'list']
+        expected_methods = ["register", "get", "create_provider", "list"]
 
         for method_name in expected_methods:
             assert hasattr(EmbeddingRegistry, method_name)
@@ -205,6 +206,7 @@ class TestImportPerformance:
         # Test importing just what we need
         start_time = time.time()
         from localvectordb import VectorDB
+
         end_time = time.time()
 
         import_time = end_time - start_time
@@ -223,6 +225,7 @@ class TestBackwardCompatibility:
         # Test importing from submodules (if supported)
         try:
             from localvectordb.database import LocalVectorDB
+
             assert LocalVectorDB is not None
         except ImportError:
             # This might not be supported, which is fine
@@ -230,6 +233,7 @@ class TestBackwardCompatibility:
 
         try:
             from localvectordb.client import RemoteVectorDB
+
             assert RemoteVectorDB is not None
         except ImportError:
             # This might not be supported, which is fine
@@ -260,6 +264,7 @@ class TestImportErrorHandling:
         # Test that core imports work even if optional deps are missing
         try:
             from localvectordb import VectorDB
+
             assert VectorDB is not None
         except ImportError as e:
             pytest.fail(f"Core import failed: {e}")
@@ -271,6 +276,7 @@ class TestImportErrorHandling:
 
         # For now, just ensure current imports work
         import localvectordb
+
         assert localvectordb is not None
 
 
@@ -324,7 +330,7 @@ class TestPackageStructure:
         # Test that we can access submodules through the package
         # This depends on how the package is structured
 
-        expected_submodules = ['database', 'client', 'core', 'factory']
+        expected_submodules = ["database", "client", "core", "factory"]
 
         for submodule in expected_submodules:
             try:
@@ -368,7 +374,7 @@ class TestPackageStructure:
         all_attrs = dir(localvectordb)
 
         # Filter to public attributes (not starting with _)
-        public_attrs = [attr for attr in all_attrs if not attr.startswith('_')]
+        public_attrs = [attr for attr in all_attrs if not attr.startswith("_")]
 
         # Should only contain items from __all__ plus any documented public items
         expected_public = set(localvectordb.__all__)
@@ -378,7 +384,7 @@ class TestPackageStructure:
         extra_items = actual_public - expected_public
 
         # Allow a few common extra items
-        allowed_extra = {'version', '__version__', 'metadata'}
+        allowed_extra = {"version", "__version__", "metadata"}
         unexpected_extra = extra_items - allowed_extra
 
         assert len(unexpected_extra) == 0, f"Unexpected public items: {unexpected_extra}"
@@ -415,7 +421,7 @@ class TestModuleInitialization:
             # Environment shouldn't be modified (much)
             env_changes = set(final_env.keys()) - set(initial_env.keys())
             # Allow some common environment additions
-            allowed_env_changes = {'PYTHONPATH', 'PATH'}  # Common in test environments
+            allowed_env_changes = {"PYTHONPATH", "PATH"}  # Common in test environments
             unexpected_env_changes = env_changes - allowed_env_changes
 
             # Don't be too strict about environment changes in test environments
@@ -423,7 +429,7 @@ class TestModuleInitialization:
 
             # New modules should be reasonable
             new_modules = final_modules - initial_modules
-            localvectordb_modules = [m for m in new_modules if m.startswith('localvectordb')]
+            localvectordb_modules = [m for m in new_modules if m.startswith("localvectordb")]
 
             # Should have imported localvectordb modules
             assert len(localvectordb_modules) > 0
@@ -454,12 +460,14 @@ class TestModuleInitialization:
         # Test importing in function
         def test_function_import():
             from localvectordb import VectorDB
+
             return VectorDB
 
         # Test importing in class
         class TestClass:
             def __init__(self):
                 from localvectordb import LocalVectorDB
+
                 self.db_class = LocalVectorDB
 
         # Both should work
@@ -471,5 +479,6 @@ class TestModuleInitialization:
 
         # Should be the same class
         from localvectordb import LocalVectorDB, VectorDB
+
         assert func_import is VectorDB
         assert class_instance.db_class is LocalVectorDB

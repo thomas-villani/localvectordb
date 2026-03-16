@@ -36,19 +36,15 @@ class HTMLExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.html', '.htm', '.xhtml']
+        return [".html", ".htm", ".xhtml"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return [
-            'text/html',
-            'application/xhtml+xml',
-            'application/html'
-        ]
+        return ["text/html", "application/xhtml+xml", "application/html"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['beautifulsoup4']
+        return ["beautifulsoup4"]
 
     @property
     def priority(self) -> int:
@@ -67,10 +63,11 @@ class HTMLExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("bs4") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from HTML files."""
         try:
@@ -78,10 +75,10 @@ class HTMLExtractor(BaseExtractor):
 
             # Decode HTML content
             try:
-                html_content = file_content.decode('utf-8')
+                html_content = file_content.decode("utf-8")
             except UnicodeDecodeError:
                 # Try other encodings
-                for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                for encoding in ["latin-1", "cp1252", "iso-8859-1"]:
                     try:
                         html_content = file_content.decode(encoding)
                         break
@@ -91,22 +88,22 @@ class HTMLExtractor(BaseExtractor):
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='HTMLExtractor',
-                        error="Could not decode HTML file with supported encodings"
+                        method="HTMLExtractor",
+                        error="Could not decode HTML file with supported encodings",
                     )
 
             # Parse HTML with BeautifulSoup
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, "html.parser")
 
             # Extract metadata
-            title = soup.find('title')
+            title = soup.find("title")
             title_text = title.get_text().strip() if title else None
 
-            meta_description = soup.find('meta', attrs={'name': 'description'})
-            description = meta_description.get('content') if meta_description else None
+            meta_description = soup.find("meta", attrs={"name": "description"})
+            description = meta_description.get("content") if meta_description else None
 
-            meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
-            keywords = meta_keywords.get('content') if meta_keywords else None
+            meta_keywords = soup.find("meta", attrs={"name": "keywords"})
+            keywords = meta_keywords.get("content") if meta_keywords else None
 
             # Remove script and style elements
             for script in soup(["script", "style", "noscript"]):
@@ -130,46 +127,35 @@ class HTMLExtractor(BaseExtractor):
 
             if not text_parts or (len(text_parts) <= 2 and title_text):
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='HTMLExtractor',
-                    error="No meaningful text content found in HTML"
+                    text="", success=False, method="HTMLExtractor", error="No meaningful text content found in HTML"
                 )
 
-            full_text = '\n'.join(text_parts)
+            full_text = "\n".join(text_parts)
 
             # Count various HTML elements
             element_counts = {
-                'paragraphs': len(soup.find_all('p')),
-                'headings': len(soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])),
-                'links': len(soup.find_all('a')),
-                'images': len(soup.find_all('img')),
-                'tables': len(soup.find_all('table')),
-                'lists': len(soup.find_all(['ul', 'ol']))
+                "paragraphs": len(soup.find_all("p")),
+                "headings": len(soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])),
+                "links": len(soup.find_all("a")),
+                "images": len(soup.find_all("img")),
+                "tables": len(soup.find_all("table")),
+                "lists": len(soup.find_all(["ul", "ol"])),
             }
 
             metadata = {
-                'title': title_text,
-                'description': description,
-                'keywords': keywords,
-                'file_size_bytes': len(file_content),
-                'character_count': len(full_text),
-                'html_elements': element_counts,
+                "title": title_text,
+                "description": description,
+                "keywords": keywords,
+                "file_size_bytes": len(file_content),
+                "character_count": len(full_text),
+                "html_elements": element_counts,
             }
 
-            return ExtractionResult(
-                text=full_text,
-                success=True,
-                method='HTMLExtractor',
-                metadata=metadata
-            )
+            return ExtractionResult(text=full_text, success=True, method="HTMLExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='HTMLExtractor',
-                error=f"HTML extraction failed: {str(e)}"
+                text="", success=False, method="HTMLExtractor", error=f"HTML extraction failed: {str(e)}"
             )
 
     def _extract_structured_content(self, soup, text_parts: List[str]):
@@ -177,41 +163,42 @@ class HTMLExtractor(BaseExtractor):
 
         # Extract headings and content in order
         for element in soup.find_all(
-                ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div', 'article', 'section', 'ul', 'ol', 'table']):
-            if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            ["h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "article", "section", "ul", "ol", "table"]
+        ):
+            if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
                 # Headings
                 level = int(element.name[1])
                 heading_text = element.get_text().strip()
                 if heading_text:
-                    prefix = '#' * level
+                    prefix = "#" * level
                     text_parts.append(f"{prefix} {heading_text}")
                     text_parts.append("")
 
-            elif element.name == 'p':
+            elif element.name == "p":
                 # Paragraphs
                 para_text = element.get_text().strip()
                 if para_text:
                     text_parts.append(para_text)
                     text_parts.append("")
 
-            elif element.name in ['ul', 'ol']:
+            elif element.name in ["ul", "ol"]:
                 # Lists
-                list_items = element.find_all('li', recursive=False)
+                list_items = element.find_all("li", recursive=False)
                 if list_items:
                     for i, li in enumerate(list_items, 1):
                         li_text = li.get_text().strip()
                         if li_text:
-                            if element.name == 'ul':
+                            if element.name == "ul":
                                 text_parts.append(f"• {li_text}")
                             else:
                                 text_parts.append(f"{i}. {li_text}")
                     text_parts.append("")
 
-            elif element.name == 'table':
+            elif element.name == "table":
                 # Tables
                 self._extract_table_content(element, text_parts)
 
-            elif element.name in ['div', 'article', 'section']:
+            elif element.name in ["div", "article", "section"]:
                 # Only extract if it contains direct text (not nested in other handled elements)
                 direct_text = self._get_direct_text(element)
                 if direct_text:
@@ -221,14 +208,14 @@ class HTMLExtractor(BaseExtractor):
     @staticmethod
     def _extract_table_content(table, text_parts: List[str]):
         """Extract content from HTML tables."""
-        rows = table.find_all('tr')
+        rows = table.find_all("tr")
         if not rows:
             return
 
         text_parts.append("[Table]")
 
         for row in rows:
-            cells = row.find_all(['td', 'th'])
+            cells = row.find_all(["td", "th"])
             if cells:
                 row_text = []
                 for cell in cells:
@@ -245,7 +232,7 @@ class HTMLExtractor(BaseExtractor):
         """Get text that's directly in the element, not in nested handled elements."""
         # Remove nested elements that we handle separately
         temp_element = copy(element)
-        for nested in temp_element.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'table']):
+        for nested in temp_element.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "table"]):
             nested.extract()
 
         text = temp_element.get_text().strip()
@@ -264,21 +251,15 @@ class XMLExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.xml', '.xsl', '.xsd', '.svg', '.rss', '.atom']
+        return [".xml", ".xsl", ".xsd", ".svg", ".rss", ".atom"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return [
-            'application/xml',
-            'text/xml',
-            'application/rss+xml',
-            'application/atom+xml',
-            'image/svg+xml'
-        ]
+        return ["application/xml", "text/xml", "application/rss+xml", "application/atom+xml", "image/svg+xml"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['beautifulsoup4', 'lxml', 'defusedxml']
+        return ["beautifulsoup4", "lxml", "defusedxml"]
 
     @property
     def priority(self) -> int:
@@ -296,10 +277,12 @@ class XMLExtractor(BaseExtractor):
         try:
             import defusedxml  # noqa: F401
             from bs4 import BeautifulSoup  # noqa: F401
+
             return True
         except ImportError:
             try:
                 from bs4 import BeautifulSoup  # noqa: F401
+
                 # BeautifulSoup can work without defusedxml, but it's required for security
                 logger.warning(
                     "defusedxml not installed - XML extraction will be unavailable for security reasons. "
@@ -316,8 +299,8 @@ class XMLExtractor(BaseExtractor):
             return ExtractionResult(
                 text="",
                 success=False,
-                method='XMLExtractor',
-                error=f"XML file exceeds maximum size limit ({MAX_XML_SIZE_BYTES // (1024*1024)} MB)"
+                method="XMLExtractor",
+                error=f"XML file exceeds maximum size limit ({MAX_XML_SIZE_BYTES // (1024*1024)} MB)",
             )
 
         try:
@@ -326,10 +309,10 @@ class XMLExtractor(BaseExtractor):
 
             # Decode XML content
             try:
-                xml_content = file_content.decode('utf-8')
+                xml_content = file_content.decode("utf-8")
             except UnicodeDecodeError:
                 # Try other encodings
-                for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                for encoding in ["latin-1", "cp1252", "iso-8859-1"]:
                     try:
                         xml_content = file_content.decode(encoding)
                         break
@@ -339,30 +322,31 @@ class XMLExtractor(BaseExtractor):
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='XMLExtractor',
-                        error="Could not decode XML file with supported encodings"
+                        method="XMLExtractor",
+                        error="Could not decode XML file with supported encodings",
                     )
 
             # First, validate XML with defusedxml to catch XXE and entity expansion attacks
             # This will raise an exception if malicious content is detected
             try:
                 import defusedxml
+
                 DefusedET.fromstring(file_content)
             except ImportError:
                 # defusedxml not available - this shouldn't happen as _check_availability should catch it
                 return ExtractionResult(
                     text="",
                     success=False,
-                    method='XMLExtractor',
-                    error="defusedxml library required for secure XML parsing"
+                    method="XMLExtractor",
+                    error="defusedxml library required for secure XML parsing",
                 )
             except defusedxml.DefusedXmlException as e:
                 logger.warning(f"Blocked potentially malicious XML in {filename}: {e}")
                 return ExtractionResult(
                     text="",
                     success=False,
-                    method='XMLExtractor',
-                    error=f"XML security validation failed: {type(e).__name__}"
+                    method="XMLExtractor",
+                    error=f"XML security validation failed: {type(e).__name__}",
                 )
             except Exception as e:
                 # XML parsing failed but may not be a security issue - log and continue
@@ -371,7 +355,7 @@ class XMLExtractor(BaseExtractor):
 
             # Use html.parser which is safe from XXE (doesn't process external entities)
             # Note: lxml's XML parser can be vulnerable to XXE, so we avoid it
-            parser = 'html.parser'
+            parser = "html.parser"
 
             # Parse XML with BeautifulSoup using safe parser
             soup = BeautifulSoup(xml_content, parser)
@@ -380,64 +364,61 @@ class XMLExtractor(BaseExtractor):
             root_tag = soup.find()
             xml_type = self._detect_xml_type(soup, root_tag)
 
-            if xml_type == 'rss':
+            if xml_type == "rss":
                 return self._extract_rss_content(soup)
-            elif xml_type == 'atom':
+            elif xml_type == "atom":
                 return self._extract_atom_content(soup)
-            elif xml_type == 'svg':
+            elif xml_type == "svg":
                 return self._extract_svg_content(soup)
             else:
                 return self._extract_generic_xml_content(soup, xml_content)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='XMLExtractor',
-                error=f"XML extraction failed: {str(e)}"
+                text="", success=False, method="XMLExtractor", error=f"XML extraction failed: {str(e)}"
             )
 
     def _detect_xml_type(self, soup, root_tag):
         """Detect the type of XML document."""
         if not root_tag:
-            return 'generic'
+            return "generic"
 
         root_name = root_tag.name.lower()
 
-        if root_name == 'rss' or soup.find('channel'):
-            return 'rss'
-        elif root_name == 'feed' or soup.find('entry'):
-            return 'atom'
-        elif root_name == 'svg':
-            return 'svg'
+        if root_name == "rss" or soup.find("channel"):
+            return "rss"
+        elif root_name == "feed" or soup.find("entry"):
+            return "atom"
+        elif root_name == "svg":
+            return "svg"
         else:
-            return 'generic'
+            return "generic"
 
     def _extract_rss_content(self, soup):
         """Extract content from RSS feeds."""
         text_parts = []
 
         # Channel information
-        channel = soup.find('channel')
+        channel = soup.find("channel")
         if channel:
-            title = channel.find('title')
+            title = channel.find("title")
             if title:
                 text_parts.append(f"RSS Feed: {title.get_text().strip()}")
 
-            description = channel.find('description')
+            description = channel.find("description")
             if description:
                 text_parts.append(f"Description: {description.get_text().strip()}")
 
             text_parts.append("")
 
         # Items
-        items = soup.find_all('item')
+        items = soup.find_all("item")
         text_parts.append(f"Feed Items ({len(items)}):")
         text_parts.append("")
 
         for i, item in enumerate(items, 1):
-            title = item.find('title')
-            description = item.find('description')
+            title = item.find("title")
+            description = item.find("description")
 
             if title:
                 text_parts.append(f"{i}. {title.get_text().strip()}")
@@ -446,49 +427,45 @@ class XMLExtractor(BaseExtractor):
                 desc_text = description.get_text().strip()
                 # Clean HTML tags from description if present
                 from bs4 import BeautifulSoup
-                clean_desc = BeautifulSoup(desc_text, 'html.parser').get_text()
+
+                clean_desc = BeautifulSoup(desc_text, "html.parser").get_text()
                 text_parts.append(f"   {clean_desc}")
 
             text_parts.append("")
 
-        full_text = '\n'.join(text_parts)
+        full_text = "\n".join(text_parts)
 
         metadata = {
-            'xml_type': 'rss',
-            'item_count': len(items),
-            'character_count': len(full_text),
+            "xml_type": "rss",
+            "item_count": len(items),
+            "character_count": len(full_text),
         }
 
-        return ExtractionResult(
-            text=full_text,
-            success=True,
-            method='XMLExtractor_RSS',
-            metadata=metadata
-        )
+        return ExtractionResult(text=full_text, success=True, method="XMLExtractor_RSS", metadata=metadata)
 
     def _extract_atom_content(self, soup):
         """Extract content from Atom feeds."""
         text_parts = []
 
         # Feed information
-        feed_title = soup.find('title')
+        feed_title = soup.find("title")
         if feed_title:
             text_parts.append(f"Atom Feed: {feed_title.get_text().strip()}")
 
-        feed_subtitle = soup.find('subtitle')
+        feed_subtitle = soup.find("subtitle")
         if feed_subtitle:
             text_parts.append(f"Subtitle: {feed_subtitle.get_text().strip()}")
 
         text_parts.append("")
 
         # Entries
-        entries = soup.find_all('entry')
+        entries = soup.find_all("entry")
         text_parts.append(f"Feed Entries ({len(entries)}):")
         text_parts.append("")
 
         for i, entry in enumerate(entries, 1):
-            title = entry.find('title')
-            content = entry.find('content') or entry.find('summary')
+            title = entry.find("title")
+            content = entry.find("content") or entry.find("summary")
 
             if title:
                 text_parts.append(f"{i}. {title.get_text().strip()}")
@@ -499,36 +476,31 @@ class XMLExtractor(BaseExtractor):
 
             text_parts.append("")
 
-        full_text = '\n'.join(text_parts)
+        full_text = "\n".join(text_parts)
 
         metadata = {
-            'xml_type': 'atom',
-            'entry_count': len(entries),
-            'character_count': len(full_text),
+            "xml_type": "atom",
+            "entry_count": len(entries),
+            "character_count": len(full_text),
         }
 
-        return ExtractionResult(
-            text=full_text,
-            success=True,
-            method='XMLExtractor_Atom',
-            metadata=metadata
-        )
+        return ExtractionResult(text=full_text, success=True, method="XMLExtractor_Atom", metadata=metadata)
 
     def _extract_svg_content(self, soup):
         """Extract content from SVG files."""
         text_parts = []
 
         # SVG metadata
-        title = soup.find('title')
+        title = soup.find("title")
         if title:
             text_parts.append(f"SVG Title: {title.get_text().strip()}")
 
-        desc = soup.find('desc')
+        desc = soup.find("desc")
         if desc:
             text_parts.append(f"Description: {desc.get_text().strip()}")
 
         # Extract text elements
-        text_elements = soup.find_all('text')
+        text_elements = soup.find_all("text")
         if text_elements:
             text_parts.append("")
             text_parts.append("Text Content:")
@@ -539,26 +511,18 @@ class XMLExtractor(BaseExtractor):
 
         if not text_parts:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='XMLExtractor_SVG',
-                error="No extractable text content found in SVG"
+                text="", success=False, method="XMLExtractor_SVG", error="No extractable text content found in SVG"
             )
 
-        full_text = '\n'.join(text_parts)
+        full_text = "\n".join(text_parts)
 
         metadata = {
-            'xml_type': 'svg',
-            'text_elements': len(text_elements),
-            'character_count': len(full_text),
+            "xml_type": "svg",
+            "text_elements": len(text_elements),
+            "character_count": len(full_text),
         }
 
-        return ExtractionResult(
-            text=full_text,
-            success=True,
-            method='XMLExtractor_SVG',
-            metadata=metadata
-        )
+        return ExtractionResult(text=full_text, success=True, method="XMLExtractor_SVG", metadata=metadata)
 
     def _extract_generic_xml_content(self, soup, xml_content):
         """Extract content from generic XML files."""
@@ -600,13 +564,10 @@ class XMLExtractor(BaseExtractor):
 
         if not text_parts or (len(text_parts) <= 2):
             return ExtractionResult(
-                text="",
-                success=False,
-                method='XMLExtractor_Generic',
-                error="No meaningful text content found in XML"
+                text="", success=False, method="XMLExtractor_Generic", error="No meaningful text content found in XML"
             )
 
-        full_text = '\n'.join(text_parts)
+        full_text = "\n".join(text_parts)
 
         # Count elements
         all_elements = soup.find_all()
@@ -616,17 +577,12 @@ class XMLExtractor(BaseExtractor):
                 element_counts[elem.name] = element_counts.get(elem.name, 0) + 1
 
         metadata = {
-            'xml_type': 'generic',
-            'root_element': root.name if root else None,
-            'total_elements': len(all_elements),
-            'element_types': len(element_counts),
-            'element_counts': element_counts,
-            'character_count': len(full_text),
+            "xml_type": "generic",
+            "root_element": root.name if root else None,
+            "total_elements": len(all_elements),
+            "element_types": len(element_counts),
+            "element_counts": element_counts,
+            "character_count": len(full_text),
         }
 
-        return ExtractionResult(
-            text=full_text,
-            success=True,
-            method='XMLExtractor_Generic',
-            metadata=metadata
-        )
+        return ExtractionResult(text=full_text, success=True, method="XMLExtractor_Generic", metadata=metadata)

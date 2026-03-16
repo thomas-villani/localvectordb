@@ -13,6 +13,7 @@
 Enhanced database manager for LocalVectorDB with multi-worker coordination.
 Uses cachelib for shared database registry across workers.
 """
+
 import atexit
 import json
 import logging
@@ -53,9 +54,10 @@ def _cleanup_all_managers():
 
     for manager in managers_to_close:
         try:
-            if hasattr(manager, '_shutdown_event') and not manager._shutdown_event.is_set():
+            if hasattr(manager, "_shutdown_event") and not manager._shutdown_event.is_set():
                 logger.info(
-                    f"Emergency shutdown of database manager (worker: {getattr(manager, 'worker_id', 'unknown')})")
+                    f"Emergency shutdown of database manager (worker: {getattr(manager, 'worker_id', 'unknown')})"
+                )
                 manager.close_all()
         except Exception as e:
             # Use print since logging might not work during shutdown
@@ -66,6 +68,7 @@ def _cleanup_all_managers():
 
 class DatabaseRegistryError(Exception):
     """Raised when database registry operations fail"""
+
     pass
 
 
@@ -84,9 +87,11 @@ class CrossPlatformFileLock:
         # Platform-specific imports
         if self.is_windows:
             import msvcrt
+
             self.msvcrt = msvcrt
         else:
             import fcntl
+
             self.fcntl = fcntl
 
         # Ensure lock directory exists
@@ -98,7 +103,7 @@ class CrossPlatformFileLock:
             return True
 
         try:
-            self.file_handle = open(self.lock_file, 'w')
+            self.file_handle = open(self.lock_file, "w")
 
             if self.is_windows:
                 return self._acquire_windows(blocking)
@@ -273,7 +278,7 @@ class DatabaseRegistry:
         registry_data = list(db_names)
 
         # Use JSON for cross-platform compatibility
-        if hasattr(self.cache, 'set'):
+        if hasattr(self.cache, "set"):
             # Direct set operation
             self.cache.set(self.registry_key, json.dumps(registry_data))
         else:
@@ -292,7 +297,7 @@ class DatabaseRegistry:
             metadata_key = f"{self.metadata_key_prefix}{name}"
             metadata_json = json.dumps(metadata, default=str)  # default=str handles datetime objects
 
-            if hasattr(self.cache, 'set'):
+            if hasattr(self.cache, "set"):
                 self.cache.set(metadata_key, metadata_json)
             else:
                 self.cache[metadata_key] = metadata_json
@@ -313,7 +318,7 @@ class DatabaseRegistry:
 
             # Remove metadata
             metadata_key = f"{self.metadata_key_prefix}{name}"
-            if hasattr(self.cache, 'delete'):
+            if hasattr(self.cache, "delete"):
                 self.cache.delete(metadata_key)
             else:
                 try:
@@ -373,7 +378,7 @@ class DatabaseRegistry:
             metadata_key = f"{self.metadata_key_prefix}{name}"
             metadata_json = json.dumps(metadata, default=str)
 
-            if hasattr(self.cache, 'set'):
+            if hasattr(self.cache, "set"):
                 self.cache.set(metadata_key, metadata_json)
             else:
                 self.cache[metadata_key] = metadata_json
@@ -462,6 +467,7 @@ class DatabaseManager:
         """Create database registry using cachelib"""
         if self.app.config_obj.server.use_single_cache:
             from localvectordb_server._cache import cache
+
             return DatabaseRegistry(cache.cache)
 
         # Get registry configuration from server settings
@@ -477,7 +483,7 @@ class DatabaseManager:
 
         registry_config_kwargs = {}
         for key, value in registry_settings.items():
-            if isinstance(value, str) and value.startswith('$'):
+            if isinstance(value, str) and value.startswith("$"):
                 registry_config_kwargs[key] = os.getenv(value[1:])
             else:
                 registry_config_kwargs[key] = value
@@ -512,20 +518,12 @@ class DatabaseManager:
             self._sync_thread.start()
 
             # Cleanup thread
-            self._cleanup_thread = threading.Thread(
-                target=self._cleanup_loop,
-                daemon=True,
-                name="db-cleanup"
-            )
+            self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True, name="db-cleanup")
             self._cleanup_thread.start()
             logger.info("Database cleanup thread started")
 
             # Health monitoring thread
-            self._health_thread = threading.Thread(
-                target=self._health_check_loop,
-                daemon=True,
-                name="db-health"
-            )
+            self._health_thread = threading.Thread(target=self._health_check_loop, daemon=True, name="db-health")
             self._health_thread.start()
             logger.info("Database health monitoring thread started")
 
@@ -584,28 +582,28 @@ class DatabaseManager:
                 "created_at": datetime.fromtimestamp(sqlite_path.stat().st_ctime).isoformat(),
                 "last_modified": datetime.fromtimestamp(sqlite_path.stat().st_mtime).isoformat(),
                 "discovered_by": self.worker_id,
-                "file_paths": {
-                    "sqlite": str(sqlite_path),
-                    "faiss": str(faiss_path) if faiss_path.exists() else None
-                }
+                "file_paths": {"sqlite": str(sqlite_path), "faiss": str(faiss_path) if faiss_path.exists() else None},
             }
 
             # Try to load database config
             try:
                 from localvectordb.database import LocalVectorDB
+
                 with self.lock_manager.acquire_read_lock(db_name):
                     temp_db = LocalVectorDB(name=db_name, base_path=db_path, create_if_not_exists=False)
                     stats = temp_db.get_stats()
-                    metadata.update({
-                        "embedding_model": stats.get("embedding_model"),
-                        "embedding_provider": stats.get("embedding_provider"),
-                        "embedding_dimension": stats.get("embedding_dimension"),
-                        "chunk_size": stats.get("chunk_size"),
-                        "chunking_method": stats.get("chunking_method"),
-                        "chunk_overlap": stats.get("chunk_overlap"),
-                        "documents": stats.get("documents", 0),
-                        "chunks": stats.get("chunks", 0)
-                    })
+                    metadata.update(
+                        {
+                            "embedding_model": stats.get("embedding_model"),
+                            "embedding_provider": stats.get("embedding_provider"),
+                            "embedding_dimension": stats.get("embedding_dimension"),
+                            "chunk_size": stats.get("chunk_size"),
+                            "chunking_method": stats.get("chunking_method"),
+                            "chunk_overlap": stats.get("chunk_overlap"),
+                            "documents": stats.get("documents", 0),
+                            "chunks": stats.get("chunks", 0),
+                        }
+                    )
                     temp_db.close()
             except Exception as e:
                 logger.warning(f"Could not extract metadata for database '{db_name}': {e}")
@@ -618,10 +616,11 @@ class DatabaseManager:
 
     @log_performance("create_database")
     def create_db(
-            self, new_db_name: str,
-            metadata_schema: Optional[Dict[str, MetadataFieldType]],
-            db_config: DatabaseSettings,
-            embedding_config: EmbeddingSettings
+        self,
+        new_db_name: str,
+        metadata_schema: Optional[Dict[str, MetadataFieldType]],
+        db_config: DatabaseSettings,
+        embedding_config: EmbeddingSettings,
     ) -> "LocalVectorDB":
         """Create a new database with coordination and comprehensive error handling"""
 
@@ -632,7 +631,7 @@ class DatabaseManager:
                     message=f"Invalid database name: '{new_db_name}'",
                     error_code="INVALID_DATABASE_NAME",
                     status_code=400,
-                    recoverable=True
+                    recoverable=True,
                 )
 
             # Check if database already exists in registry
@@ -641,7 +640,7 @@ class DatabaseManager:
                     message=f"Database '{new_db_name}' already exists",
                     error_code="DATABASE_ALREADY_EXISTS",
                     status_code=409,
-                    recoverable=True
+                    recoverable=True,
                 )
 
             from localvectordb.database import LocalVectorDB
@@ -654,7 +653,7 @@ class DatabaseManager:
                         message=f"Database '{new_db_name}' already exists",
                         error_code="DATABASE_ALREADY_EXISTS",
                         status_code=409,
-                        recoverable=True
+                        recoverable=True,
                     )
 
                 try:
@@ -663,16 +662,17 @@ class DatabaseManager:
                         database_name=new_db_name,
                         embedding_provider=embedding_config.provider,
                         embedding_model=embedding_config.model,
-                        chunk_size=db_config.chunk_size
+                        chunk_size=db_config.chunk_size,
                     )
 
                     # Some of the config parameters need to be included in the `embedding_config` kwarg.
-                    embedding_config_dict = dict(timeout=embedding_config.timeout,
-                                                 max_retries=embedding_config.max_retries,
-                                                 base_url=embedding_config.base_url,
-                                                 api_key=embedding_config.api_key,
-                                                 **embedding_config.config
-                                                 )
+                    embedding_config_dict = dict(
+                        timeout=embedding_config.timeout,
+                        max_retries=embedding_config.max_retries,
+                        base_url=embedding_config.base_url,
+                        api_key=embedding_config.api_key,
+                        **embedding_config.config,
+                    )
                     if embedding_config.base_url:
                         embedding_config_dict["base_url"] = embedding_config.base_url
                     if embedding_config.api_key:
@@ -695,7 +695,7 @@ class DatabaseManager:
                         create_if_not_exists=True,
                         faiss_index_type=db_config.faiss_index_type,
                         faiss_index_hnsw_flat_neighbors=db_config.faiss_index_hnsw_flat_neighbors,
-                        faiss_index_lsh_bits=db_config.faiss_index_lsh_bits
+                        faiss_index_lsh_bits=db_config.faiss_index_lsh_bits,
                     )
 
                     # Register in shared registry
@@ -713,8 +713,8 @@ class DatabaseManager:
                         "chunk_overlap": db_config.chunk_overlap,
                         "file_paths": {
                             "sqlite": str(db_path / f"{new_db_name}.sqlite"),
-                            "faiss": str(db_path / f"{new_db_name}.faiss")
-                        }
+                            "faiss": str(db_path / f"{new_db_name}.faiss"),
+                        },
                     }
 
                     self.registry.register_database(new_db_name, metadata)
@@ -726,7 +726,7 @@ class DatabaseManager:
                         "create_database_success",
                         database_name=new_db_name,
                         database_path=str(db_path),
-                        stats=db.get_stats()
+                        stats=db.get_stats(),
                     )
 
                     logger.info(f"Successfully created database: {new_db_name}")
@@ -738,7 +738,7 @@ class DatabaseManager:
                         e,
                         database_name=new_db_name,
                         embedding_provider=embedding_config.provider,
-                        embedding_model=embedding_config.model
+                        embedding_model=embedding_config.model,
                     )
 
                     self._record_error(new_db_name, e)
@@ -751,10 +751,7 @@ class DatabaseManager:
                             error_code="EMBEDDING_MODEL_UNAVAILABLE",
                             status_code=503,
                             recoverable=True,
-                            details={
-                                "provider": embedding_config.provider,
-                                "model": embedding_config.model
-                            }
+                            details={"provider": embedding_config.provider, "model": embedding_config.model},
                         ) from e
                     else:
                         raise APIError(
@@ -762,7 +759,7 @@ class DatabaseManager:
                             error_code="DATABASE_CREATION_FAILED",
                             status_code=500,
                             recoverable=False,
-                            details={"original_error": str(e)}
+                            details={"original_error": str(e)},
                         ) from e
 
     @log_performance("get_database")
@@ -808,7 +805,7 @@ class DatabaseManager:
                         message=f"Database '{name}' not found",
                         error_code="DATABASE_NOT_FOUND",
                         status_code=404,
-                        recoverable=True
+                        recoverable=True,
                     )
 
             # Load database with read lock
@@ -819,11 +816,7 @@ class DatabaseManager:
                     db_logger.log_query("load_database", database_name=name)
 
                     db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
-                    db = LocalVectorDB(
-                        name=name,
-                        base_path=db_path,
-                        create_if_not_exists=False
-                    )
+                    db = LocalVectorDB(name=name, base_path=db_path, create_if_not_exists=False)
 
                     # Verify database is functional
                     if not self._check_database_health(db):
@@ -844,7 +837,7 @@ class DatabaseManager:
                         message=f"Database '{name}' not found",
                         error_code="DATABASE_NOT_FOUND",
                         status_code=404,
-                        recoverable=True
+                        recoverable=True,
                     ) from e
                 except Exception as e:
                     db_logger.log_error("load_database_failed", e, database_name=name)
@@ -855,7 +848,7 @@ class DatabaseManager:
                         error_code="DATABASE_LOAD_FAILED",
                         status_code=500,
                         recoverable=False,
-                        details={"original_error": str(e)}
+                        details={"original_error": str(e)},
                     ) from e
 
     def list_databases(self) -> List[str]:
@@ -886,7 +879,7 @@ class DatabaseManager:
                 error_code="DATABASE_LIST_FAILED",
                 status_code=500,
                 recoverable=False,
-                details={"original_error": str(e)}
+                details={"original_error": str(e)},
             ) from e
 
     def delete_database(self, name: str) -> bool:
@@ -931,21 +924,21 @@ class DatabaseManager:
                     error_code="DATABASE_DELETE_FAILED",
                     status_code=500,
                     recoverable=False,
-                    details={"original_error": str(e)}
+                    details={"original_error": str(e)},
                 ) from e
 
     @log_performance("search_databases")
     def search_databases(
-            self,
-            query: str,
-            database_names: Optional[List[str]] = None,
-            search_type: Literal["vector", "keyword", "hybrid"] = "vector",
-            return_type: Literal["documents", "chunks"] = "documents",
-            k: int = 10,
-            score_threshold: float = 0.0,
-            filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7,
-            context_window: int = 2
+        self,
+        query: str,
+        database_names: Optional[List[str]] = None,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks"] = "documents",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
     ) -> Dict[str, Union[List, str]]:
         """Search across multiple databases with enhanced error handling"""
 
@@ -954,10 +947,12 @@ class DatabaseManager:
 
         results = {}
 
-        db_logger.log_query("multi_database_search",
-                            query_length=len(query),
-                            database_count=len(database_names or []),
-                            search_type=search_type)
+        db_logger.log_query(
+            "multi_database_search",
+            query_length=len(query),
+            database_count=len(database_names or []),
+            search_type=search_type,
+        )
 
         # Search each database with individual error handling
         for db_name in database_names:
@@ -974,7 +969,7 @@ class DatabaseManager:
                     score_threshold=score_threshold,
                     filters=filters,
                     vector_weight=vector_weight,
-                    context_window=context_window
+                    context_window=context_window,
                 )
 
                 results[db_name] = db_results
@@ -991,10 +986,7 @@ class DatabaseManager:
 
     @log_performance("get_embeddings")
     def get_embeddings_for_model(
-            self,
-            query_texts: Union[str, List[str]],
-            provider: str,
-            model: str
+        self, query_texts: Union[str, List[str]], provider: str, model: str
     ) -> List[List[float]]:
         """Get embeddings with enhanced error handling"""
         try:
@@ -1003,10 +995,7 @@ class DatabaseManager:
             if isinstance(query_texts, str):
                 query_texts = [query_texts]
 
-            db_logger.log_query("get_embeddings",
-                                provider=provider,
-                                model=model,
-                                text_count=len(query_texts))
+            db_logger.log_query("get_embeddings", provider=provider, model=model, text_count=len(query_texts))
 
             # Create embedding provider
             embedding_provider = EmbeddingRegistry.create_provider(provider, model)
@@ -1023,7 +1012,7 @@ class DatabaseManager:
                 error_code="EMBEDDING_GENERATION_FAILED",
                 status_code=503,
                 recoverable=True,
-                details={"provider": provider, "model": model}
+                details={"provider": provider, "model": model},
             ) from e
 
     def _validate_database_name(self, name: str) -> bool:
@@ -1054,7 +1043,7 @@ class DatabaseManager:
             return False
 
         # Security: Check for null bytes (path manipulation)
-        if '\x00' in name:
+        if "\x00" in name:
             return False
 
         # Security: Check for control characters (ASCII 0-31)
@@ -1062,22 +1051,22 @@ class DatabaseManager:
             return False
 
         # Security: Check for path traversal sequences
-        if '..' in name:
+        if ".." in name:
             return False
 
         # Security: Check for hidden file indicators
-        if name.startswith('.'):
+        if name.startswith("."):
             return False
 
         # Check for invalid characters (filesystem and path separators)
-        invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']
+        invalid_chars = ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " "]
         if any(char in name for char in invalid_chars):
             return False
 
         # Security: Check for Unicode path separators and lookalikes
         # U+2215 DIVISION SLASH, U+2044 FRACTION SLASH, U+29F8 BIG SOLIDUS
         # U+FF0F FULLWIDTH SOLIDUS, U+FF3C FULLWIDTH REVERSE SOLIDUS
-        unicode_path_chars = ['\u2215', '\u2044', '\u29f8', '\uff0f', '\uff3c']
+        unicode_path_chars = ["\u2215", "\u2044", "\u29f8", "\uff0f", "\uff3c"]
         if any(char in name for char in unicode_path_chars):
             return False
 
@@ -1085,27 +1074,48 @@ class DatabaseManager:
         # (e.g., Cyrillic 'а' vs Latin 'a' in reserved names)
         # Normalize to NFKC and recheck
         import unicodedata
-        normalized_name = unicodedata.normalize('NFKC', name)
+
+        normalized_name = unicodedata.normalize("NFKC", name)
         if normalized_name != name:
             # Name contains characters that normalize differently
             # This could indicate Unicode tricks
             return False
 
         # Check for reserved names (Windows compatibility)
-        reserved_names = ['con', 'prn', 'aux', 'nul',
-                          'com1', 'com2', 'com3', 'com4', 'com5',
-                          'com6', 'com7', 'com8', 'com9',
-                          'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5',
-                          'lpt6', 'lpt7', 'lpt8', 'lpt9']
+        reserved_names = [
+            "con",
+            "prn",
+            "aux",
+            "nul",
+            "com1",
+            "com2",
+            "com3",
+            "com4",
+            "com5",
+            "com6",
+            "com7",
+            "com8",
+            "com9",
+            "lpt1",
+            "lpt2",
+            "lpt3",
+            "lpt4",
+            "lpt5",
+            "lpt6",
+            "lpt7",
+            "lpt8",
+            "lpt9",
+        ]
         # Check base name (before any extension)
-        base_name = name.lower().split('.')[0]
+        base_name = name.lower().split(".")[0]
         if base_name in reserved_names:
             return False
 
         # Ensure name contains only safe characters: alphanumeric, underscore, hyphen
         # This is a whitelist approach for defense in depth
         import re
-        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', name):
+
+        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", name):
             return False
 
         return True
@@ -1121,7 +1131,7 @@ class DatabaseManager:
             stats = db.get_stats()
 
             # Basic sanity checks
-            if stats['documents'] < 0 or stats['chunks'] < 0:
+            if stats["documents"] < 0 or stats["chunks"] < 0:
                 return False
 
             return True
@@ -1134,10 +1144,7 @@ class DatabaseManager:
         """Clean up files from a failed database creation"""
         try:
             db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
-            files_to_remove = [
-                db_path / f"{db_name}.sqlite",
-                db_path / f"{db_name}.faiss"
-            ]
+            files_to_remove = [db_path / f"{db_name}.sqlite", db_path / f"{db_name}.faiss"]
 
             for file_path in files_to_remove:
                 if file_path.exists():
@@ -1155,11 +1162,7 @@ class DatabaseManager:
             self._error_counts[db_name] = 0
 
         self._error_counts[db_name] += 1
-        self._last_errors[db_name] = {
-            'error': str(error),
-            'type': type(error).__name__,
-            'timestamp': current_time
-        }
+        self._last_errors[db_name] = {"error": str(error), "type": type(error).__name__, "timestamp": current_time}
 
     def _cleanup_loop(self):
         """Periodically check for and cleanup inactive databases"""
@@ -1180,8 +1183,11 @@ class DatabaseManager:
             to_remove = []
             for name, (db, last_access) in self.databases.items():
                 if now - last_access > timeout:
-                    db_logger.log_query("cleanup_inactive_database", database_name=name,
-                                        idle_time_seconds=(now - last_access).total_seconds())
+                    db_logger.log_query(
+                        "cleanup_inactive_database",
+                        database_name=name,
+                        idle_time_seconds=(now - last_access).total_seconds(),
+                    )
 
                     try:
                         db.close()
@@ -1247,20 +1253,21 @@ class DatabaseManager:
             uptime = (datetime.now(UTC) - self._start_time).total_seconds()
 
             stats = {
-                'active_databases': active_dbs,
-                'total_databases': total_dbs,
-                'uptime_seconds': uptime,
-                'worker_id': self.worker_id,
-                'registry_type': getattr(self.app.config_obj.server, 'db_registry_type', 'memory'),
-                'error_counts': dict(self._error_counts),
-                'last_health_check': self._last_health_check.isoformat(),
-                'last_registry_sync': self._last_registry_sync.isoformat(),
-                'background_threads': {
-                    'cleanup_running': self._cleanup_thread.is_alive() if hasattr(self, '_cleanup_thread') else False,
-                    'health_check_running': self._health_thread.is_alive() if hasattr(self,
-                                                                                      '_health_thread') else False,
-                    'registry_sync_running': self._sync_thread.is_alive() if hasattr(self, '_sync_thread') else False
-                }
+                "active_databases": active_dbs,
+                "total_databases": total_dbs,
+                "uptime_seconds": uptime,
+                "worker_id": self.worker_id,
+                "registry_type": getattr(self.app.config_obj.server, "db_registry_type", "memory"),
+                "error_counts": dict(self._error_counts),
+                "last_health_check": self._last_health_check.isoformat(),
+                "last_registry_sync": self._last_registry_sync.isoformat(),
+                "background_threads": {
+                    "cleanup_running": self._cleanup_thread.is_alive() if hasattr(self, "_cleanup_thread") else False,
+                    "health_check_running": (
+                        self._health_thread.is_alive() if hasattr(self, "_health_thread") else False
+                    ),
+                    "registry_sync_running": self._sync_thread.is_alive() if hasattr(self, "_sync_thread") else False,
+                },
             }
 
             # Add database-specific stats
@@ -1268,14 +1275,14 @@ class DatabaseManager:
             for name, (db, last_access) in self.databases.items():
                 try:
                     db_stats[name] = {
-                        'last_access': last_access.isoformat(),
-                        'idle_seconds': (datetime.now(UTC) - last_access).total_seconds(),
-                        'stats': db.get_stats()
+                        "last_access": last_access.isoformat(),
+                        "idle_seconds": (datetime.now(UTC) - last_access).total_seconds(),
+                        "stats": db.get_stats(),
                     }
                 except Exception as e:
-                    db_stats[name] = {'error': str(e)}
+                    db_stats[name] = {"error": str(e)}
 
-            stats['databases'] = db_stats
+            stats["databases"] = db_stats
 
             return stats
 
@@ -1302,9 +1309,9 @@ class DatabaseManager:
 
         # Wait for background threads to finish
         for thread_name, thread in [
-            ('cleanup', getattr(self, '_cleanup_thread', None)),
-            ('health', getattr(self, '_health_thread', None)),
-            ('registry-sync', getattr(self, '_sync_thread', None))
+            ("cleanup", getattr(self, "_cleanup_thread", None)),
+            ("health", getattr(self, "_health_thread", None)),
+            ("registry-sync", getattr(self, "_sync_thread", None)),
         ]:
             if thread and thread.is_alive():
                 logger.info(f"Waiting for {thread_name} thread to finish")
@@ -1324,7 +1331,8 @@ class DatabaseManager:
             if not self._shutdown_complete:
                 logger.debug(
                     "DatabaseManager garbage collected, ensuring cleanup "
-                    f"(worker: {getattr(self, 'worker_id', 'unknown')})")
+                    f"(worker: {getattr(self, 'worker_id', 'unknown')})"
+                )
                 self.close_all()
         except Exception as e:
             # Use print since logging might not work during GC

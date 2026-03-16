@@ -55,6 +55,7 @@ class LocalVectorDB(LocalTuningMixin, PipelineMixin, SearchMixin, MetadataMixin,
     create_if_not_exists: bool, default = True
         If False, raises DatabaseNotFoundError if the database doesn't exist.
     """
+
     pass
 
 

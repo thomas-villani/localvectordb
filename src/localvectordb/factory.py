@@ -13,6 +13,7 @@
 This module provides factory functions that automatically choose between
 local and remote database implementations, with support for both sync and async variants.
 """
+
 import os.path
 import re
 from pathlib import Path
@@ -23,11 +24,7 @@ from localvectordb.client import RemoteVectorDB
 from localvectordb.database import LocalVectorDB
 
 
-def VectorDB(
-        name: str,
-        base_path: Union[str, Path],
-        **kwargs
-) -> Union[LocalVectorDB, RemoteVectorDB]:
+def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVectorDB, RemoteVectorDB]:
     """
     Enhanced factory function that returns the appropriate VectorDB instance
     based on whether base_path looks like a URL or a local path, with optional async support.
@@ -125,30 +122,38 @@ def VectorDB(
     base_path_str = str(base_path)
 
     # Check if base_path is a URL
-    if base_path_str.lower().startswith(('http://', 'https://')):
+    if base_path_str.lower().startswith(("http://", "https://")):
         # Remote database
         base_url = base_path_str
 
         # Filter out LocalVectorDB-specific kwargs that don't apply to RemoteVectorDB
-        remote_kwargs = {k: v for k, v in kwargs.items()
-                         if k not in [
-                             'connection_pool_size',  # Local-only parameter
-                         ]}
+        remote_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in [
+                "connection_pool_size",  # Local-only parameter
+            ]
+        }
 
         return RemoteVectorDB(name=name, base_url=base_url, **remote_kwargs)
     else:
         # Local database
 
         # Filter out RemoteVectorDB-specific kwargs that don't apply to LocalVectorDB
-        local_kwargs = {k: v for k, v in kwargs.items()
-                        if k not in [
-                            'api_key',  # Remote-only parameter
-                            'timeout',  # Remote-only parameter (renamed in remote)
-                            'max_retries',  # Remote-only parameter
-                            'retry_delay',  # Remote-only parameter
-                            'authorization_header',  # Remote-only parameter
-                            'connection_limits',  # Remote-only parameter
-                        ]}
+        local_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in [
+                "api_key",  # Remote-only parameter
+                "timeout",  # Remote-only parameter (renamed in remote)
+                "max_retries",  # Remote-only parameter
+                "retry_delay",  # Remote-only parameter
+                "authorization_header",  # Remote-only parameter
+                "connection_limits",  # Remote-only parameter
+            ]
+        }
 
         return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)
 
@@ -175,9 +180,9 @@ def _fix_types(item):
 
     if isinstance(item, str):
         # Only convert purely numeric strings
-        if re.fullmatch(r'-?\d+', item):
+        if re.fullmatch(r"-?\d+", item):
             return int(item)
-        elif re.fullmatch(r'-?\d+\.\d+', item):
+        elif re.fullmatch(r"-?\d+\.\d+", item):
             return float(item)
         elif item.lower() in ("true", "false"):
             return item.lower() == "true"
@@ -189,8 +194,10 @@ def from_uri(db_uri: str) -> Union[LocalVectorDB, RemoteVectorDB]:
     parsed = urlparse(db_uri)
 
     if parsed.scheme not in ("lvdb", "lvdb+http", "lvdb+https", "http", "https"):
-        raise ValueError(f"Invalid database URI: expected 'lvdb', 'lvdb+http', 'lvdb+https', 'http', 'https'. "
-                         f"Found: '{parsed.scheme}'")
+        raise ValueError(
+            f"Invalid database URI: expected 'lvdb', 'lvdb+http', 'lvdb+https', 'http', 'https'. "
+            f"Found: '{parsed.scheme}'"
+        )
     query_params = {}
     if parsed.scheme == "lvdb":
         # The following should only be true if using absolute path
@@ -204,8 +211,9 @@ def from_uri(db_uri: str) -> Union[LocalVectorDB, RemoteVectorDB]:
             complete = parsed.netloc + parsed.path
             full_path, db_name = complete.rsplit("/", 1)
             if parsed.port:
-                raise ValueError("Invalid database URI: port can only be specified with lvdb+http://, http://, "
-                                 "or https://")
+                raise ValueError(
+                    "Invalid database URI: port can only be specified with lvdb+http://, http://, " "or https://"
+                )
 
         if not db_name:
             raise ValueError("Must provide a valid database URI, expected database name specified as path.")

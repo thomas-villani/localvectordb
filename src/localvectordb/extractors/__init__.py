@@ -37,6 +37,7 @@ MAX_ZIP_FILE_COUNT: int = 10000  # Maximum number of files in archive
 
 class ZipBombError(Exception):
     """Exception raised when a potential ZIP bomb is detected."""
+
     pass
 
 
@@ -44,7 +45,7 @@ def validate_zip_safety(
     file_content: bytes,
     max_decompressed_size: int = MAX_ZIP_DECOMPRESSED_SIZE,
     max_compression_ratio: int = MAX_ZIP_COMPRESSION_RATIO,
-    max_file_count: int = MAX_ZIP_FILE_COUNT
+    max_file_count: int = MAX_ZIP_FILE_COUNT,
 ) -> None:
     """
     Validate a ZIP file for potential ZIP bomb attacks.
@@ -78,7 +79,7 @@ def validate_zip_safety(
     compressed_size = len(file_content)
 
     try:
-        with zipfile.ZipFile(io.BytesIO(file_content), 'r') as zf:
+        with zipfile.ZipFile(io.BytesIO(file_content), "r") as zf:
             # Check file count
             file_count = len(zf.namelist())
             if file_count > max_file_count:
@@ -137,12 +138,12 @@ class ExtractionResult:
     """
 
     def __init__(
-            self,
-            text: str,
-            success: bool = True,
-            method: str = None,
-            metadata: Optional[Dict[str, Any]] = None,
-            error: Optional[str] = None
+        self,
+        text: str,
+        success: bool = True,
+        method: str = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
     ):
         self.text = text
         self.success = success
@@ -153,12 +154,12 @@ class ExtractionResult:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
-            'text': self.text,
-            'extraction_success': self.success,
-            'extraction_method': self.method,
-            'metadata': self.metadata,
-            'error': self.error,
-            'text_length': len(self.text)
+            "text": self.text,
+            "extraction_success": self.success,
+            "extraction_method": self.method,
+            "metadata": self.metadata,
+            "error": self.error,
+            "text_length": len(self.text),
         }
 
 
@@ -226,7 +227,7 @@ class BaseExtractor(ABC):
 
     @abstractmethod
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """
         Implementation-specific text extraction.
@@ -281,7 +282,7 @@ class BaseExtractor(ABC):
         return False
 
     def extract_text(
-            self, file_content: bytes, filename: str, mimetype: Optional[str] = None, **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str] = None, **kwargs
     ) -> ExtractionResult:
         """
         Extract text from file content.
@@ -307,15 +308,12 @@ class BaseExtractor(ABC):
                 text="",
                 success=False,
                 method=self.name,
-                error=f"Required packages not available: {', '.join(self.required_packages)}"
+                error=f"Required packages not available: {', '.join(self.required_packages)}",
             )
 
         if not self.can_extract(filename, mimetype):
             return ExtractionResult(
-                text="",
-                success=False,
-                method=self.name,
-                error=f"File type not supported by {self.name}"
+                text="", success=False, method=self.name, error=f"File type not supported by {self.name}"
             )
 
         # Check file size limit to prevent DoS via memory exhaustion
@@ -323,37 +321,30 @@ class BaseExtractor(ABC):
         if self._max_file_size > 0 and file_size > self._max_file_size:
             size_mb = file_size / (1024 * 1024)
             limit_mb = self._max_file_size / (1024 * 1024)
-            logger.warning(
-                f"File '{filename}' rejected: size {size_mb:.2f} MB exceeds limit of {limit_mb:.2f} MB"
-            )
+            logger.warning(f"File '{filename}' rejected: size {size_mb:.2f} MB exceeds limit of {limit_mb:.2f} MB")
             return ExtractionResult(
                 text="",
                 success=False,
                 method=self.name,
-                error=f"File size ({size_mb:.2f} MB) exceeds maximum allowed size ({limit_mb:.2f} MB)"
+                error=f"File size ({size_mb:.2f} MB) exceeds maximum allowed size ({limit_mb:.2f} MB)",
             )
 
         try:
             return self._extract_text_impl(file_content, filename, mimetype, **kwargs)
         except Exception as e:
             logger.error(f"Error in {self.name} extraction: {e}")
-            return ExtractionResult(
-                text="",
-                success=False,
-                method=self.name,
-                error=str(e)
-            )
+            return ExtractionResult(text="", success=False, method=self.name, error=str(e))
 
     def get_info(self) -> Dict[str, Any]:
         """Get information about this extractor."""
         return {
-            'name': self.name,
-            'available': self.available,
-            'supported_extensions': self.supported_extensions,
-            'supported_mimetypes': self.supported_mimetypes,
-            'required_packages': self.required_packages,
-            'priority': self.priority,
-            'max_file_size_bytes': self._max_file_size
+            "name": self.name,
+            "available": self.available,
+            "supported_extensions": self.supported_extensions,
+            "supported_mimetypes": self.supported_mimetypes,
+            "required_packages": self.required_packages,
+            "priority": self.priority,
+            "max_file_size_bytes": self._max_file_size,
         }
 
 
@@ -399,7 +390,7 @@ class ExtractorRegistry:
         from importlib.metadata import entry_points
 
         # Look for entry points in the 'localvectordb.embedding_providers' group
-        extractor_eps = entry_points(group='localvectordb.file_extractors')
+        extractor_eps = entry_points(group="localvectordb.file_extractors")
 
         for ep in extractor_eps:
             try:
@@ -463,15 +454,12 @@ class ExtractorRegistry:
 
         if not extractors:
             # No specific extractor found, try fallback
-            fallback = cls._extractors.get('TextFallbackExtractor')
+            fallback = cls._extractors.get("TextFallbackExtractor")
             if fallback and fallback.available:
                 return fallback.extract_text(file_content, filename, mimetype)
 
             return ExtractionResult(
-                text="",
-                success=False,
-                method="none",
-                error=f"No suitable extractor found for file: {filename}"
+                text="", success=False, method="none", error=f"No suitable extractor found for file: {filename}"
             )
 
         # Try extractors in priority order
@@ -484,10 +472,7 @@ class ExtractorRegistry:
 
         # All extractors failed
         return ExtractionResult(
-            text="",
-            success=False,
-            method="failed",
-            error=f"All extractors failed. Last error: {last_error}"
+            text="", success=False, method="failed", error=f"All extractors failed. Last error: {last_error}"
         )
 
     @classmethod
@@ -501,30 +486,27 @@ class ExtractorRegistry:
                 continue
 
             for ext in extractor.supported_extensions:
-                ext_key = ext.lstrip('.')
+                ext_key = ext.lstrip(".")
                 if ext_key not in formats:
-                    formats[ext_key] = {
-                        'extensions': [ext],
-                        'mimetypes': [],
-                        'extractors': [],
-                        'available': False
-                    }
+                    formats[ext_key] = {"extensions": [ext], "mimetypes": [], "extractors": [], "available": False}
 
-                formats[ext_key]['extractors'].append({
-                    'name': extractor.name,
-                    'priority': extractor.priority,
-                    'required_packages': extractor.required_packages
-                })
-                formats[ext_key]['available'] = True
+                formats[ext_key]["extractors"].append(
+                    {
+                        "name": extractor.name,
+                        "priority": extractor.priority,
+                        "required_packages": extractor.required_packages,
+                    }
+                )
+                formats[ext_key]["available"] = True
 
                 # Add MIME types
                 for mimetype in extractor.supported_mimetypes:
-                    if mimetype not in formats[ext_key]['mimetypes']:
-                        formats[ext_key]['mimetypes'].append(mimetype)
+                    if mimetype not in formats[ext_key]["mimetypes"]:
+                        formats[ext_key]["mimetypes"].append(mimetype)
 
         # Sort extractors by priority for each format
         for format_info in formats.values():
-            format_info['extractors'].sort(key=lambda x: x['priority'], reverse=True)
+            format_info["extractors"].sort(key=lambda x: x["priority"], reverse=True)
 
         return formats
 

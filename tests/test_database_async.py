@@ -34,10 +34,12 @@ class TestAsyncInitialization:
 
     async def test_create_new_database_async_operations(self, temp_dir, sample_metadata_schema):
         """Test creating a new database and performing basic async operations."""
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as _mock_chunker, \
-                patch('faiss.IndexFlatL2') as _mock_faiss, \
-                patch('faiss.IndexIDMap2') as _mock_faiss_idmap:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("localvectordb.chunking.ChunkerFactory.create_chunker") as _mock_chunker,
+            patch("faiss.IndexFlatL2") as _mock_faiss,
+            patch("faiss.IndexIDMap2") as _mock_faiss_idmap,
+        ):
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -50,7 +52,7 @@ class TestAsyncInitialization:
             mock_chunker_instance = Mock()
             mock_chunker_instance.chunk.return_value = [
                 Mock(content="chunk1", tokens=5, index=0, position=Mock(start=0, end=6)),
-                Mock(content="chunk2", tokens=5, index=1, position=Mock(start=7, end=13))
+                Mock(content="chunk2", tokens=5, index=1, position=Mock(start=7, end=13)),
             ]
             _mock_chunker.return_value = mock_chunker_instance
 
@@ -60,7 +62,7 @@ class TestAsyncInitialization:
                 base_path=temp_dir,
                 metadata_schema=sample_metadata_schema,
                 embedding_provider="test",
-                embedding_model="test-model"
+                embedding_model="test-model",
             )
 
             # Test basic properties
@@ -70,10 +72,12 @@ class TestAsyncInitialization:
 
     async def test_in_memory_database_async(self, sample_metadata_schema):
         """Test creating an in-memory database with async operations."""
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('localvectordb.chunking.ChunkerFactory.create_chunker') as _mock_chunker, \
-                patch('faiss.IndexFlatL2') as _mock_faiss, \
-                patch('faiss.IndexIDMap2') as _mock_faiss_idmap:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("localvectordb.chunking.ChunkerFactory.create_chunker") as _mock_chunker,
+            patch("faiss.IndexFlatL2") as _mock_faiss,
+            patch("faiss.IndexIDMap2") as _mock_faiss_idmap,
+        ):
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -93,7 +97,7 @@ class TestAsyncInitialization:
                 base_path=":memory:",
                 metadata_schema=sample_metadata_schema,
                 embedding_provider="test",
-                embedding_model="test-model"
+                embedding_model="test-model",
             )
 
             # Verify it's using shared cache format for in-memory
@@ -112,19 +116,16 @@ class TestAsyncUpsert:
         """Create a database for async testing with minimal mocking."""
         # Create database with MockEmbeddings - use real chunking
         db = LocalVectorDB(
-            name="test_async_upsert",
-            base_path=temp_dir,
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_async_upsert", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
         )
 
         yield db
 
         # Cleanup
         try:
-            if hasattr(db, 'connection_pool') and db.connection_pool:
+            if hasattr(db, "connection_pool") and db.connection_pool:
                 db.connection_pool.close_all()
-            if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+            if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                 await db.async_connection_pool.close_all()
         except Exception:
             pass
@@ -146,7 +147,7 @@ class TestAsyncUpsert:
         documents = [
             "First test document for async batch upsert.",
             "Second test document for async batch upsert.",
-            "Third test document for async batch upsert."
+            "Third test document for async batch upsert.",
         ]
 
         result = await mock_db.upsert_async(documents)
@@ -171,10 +172,7 @@ class TestAsyncUpsert:
         """Test async upsert specifically with in-memory database."""
         # Create in-memory database with MockEmbeddings
         db = LocalVectorDB(
-            name="test_memory_upsert",
-            base_path=":memory:",
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_memory_upsert", base_path=":memory:", embedding_provider="mock", embedding_model="test-model"
         )
 
         try:
@@ -187,9 +185,9 @@ class TestAsyncUpsert:
         finally:
             # Cleanup
             try:
-                if hasattr(db, 'connection_pool') and db.connection_pool:
+                if hasattr(db, "connection_pool") and db.connection_pool:
                     db.connection_pool.close_all()
-                if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+                if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
                 pass
@@ -205,10 +203,7 @@ class TestAsyncRetrieval:
         """Create a database with sample data for retrieval testing."""
         # Create database with MockEmbeddings
         db = LocalVectorDB(
-            name="test_retrieval",
-            base_path=temp_dir,
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_retrieval", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
         )
 
         # Insert some test data
@@ -219,9 +214,9 @@ class TestAsyncRetrieval:
 
         # Cleanup
         try:
-            if hasattr(db, 'connection_pool') and db.connection_pool:
+            if hasattr(db, "connection_pool") and db.connection_pool:
                 db.connection_pool.close_all()
-            if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+            if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                 await db.async_connection_pool.close_all()
         except Exception:
             pass
@@ -275,10 +270,7 @@ class TestAsyncQuery:
         """Create a database with data for query testing."""
         # Create database with MockEmbeddings
         db = LocalVectorDB(
-            name="test_query",
-            base_path=temp_dir,
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_query", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
         )
 
         # Insert test documents with varied content for different search types
@@ -286,7 +278,7 @@ class TestAsyncQuery:
             "Machine learning is a subset of artificial intelligence",
             "Python is a powerful programming language",
             "Vector databases enable semantic search capabilities",
-            "Natural language processing involves computational linguistics"
+            "Natural language processing involves computational linguistics",
         ]
         await db.upsert_async(test_documents)
 
@@ -294,9 +286,9 @@ class TestAsyncQuery:
 
         # Cleanup
         try:
-            if hasattr(db, 'connection_pool') and db.connection_pool:
+            if hasattr(db, "connection_pool") and db.connection_pool:
                 db.connection_pool.close_all()
-            if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+            if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                 await db.async_connection_pool.close_all()
         except Exception:
             pass
@@ -310,8 +302,11 @@ class TestAsyncQuery:
         assert result is not None
         assert len(result) <= 3
         # Should find relevant documents
-        assert any("machine learning" in doc.content.lower() or "artificial intelligence" in doc.content.lower()
-                   for doc in result if hasattr(doc, 'content'))
+        assert any(
+            "machine learning" in doc.content.lower() or "artificial intelligence" in doc.content.lower()
+            for doc in result
+            if hasattr(doc, "content")
+        )
 
     async def test_keyword_search_async(self, mock_db_for_query):
         """Test keyword search asynchronously."""
@@ -322,7 +317,7 @@ class TestAsyncQuery:
         assert result is not None
         # Should find documents containing "Python"
         if len(result) > 0:
-            assert any("python" in doc.content.lower() for doc in result if hasattr(doc, 'content'))
+            assert any("python" in doc.content.lower() for doc in result if hasattr(doc, "content"))
 
     async def test_hybrid_search_async(self, mock_db_for_query):
         """Test hybrid search asynchronously."""
@@ -363,19 +358,19 @@ class TestAsyncFilter:
             base_path=temp_dir,
             metadata_schema=sample_metadata_schema,
             embedding_provider="mock",
-            embedding_model="test-model"
+            embedding_model="test-model",
         )
 
         # Insert test documents with metadata
         test_documents = [
             "Document by John Doe about AI",
             "Document by Jane Smith about Python",
-            "Document by Bob Johnson about databases"
+            "Document by Bob Johnson about databases",
         ]
         test_metadata = [
             {"author": "John Doe", "category": "ai", "rating": 4.5},
             {"author": "Jane Smith", "category": "programming", "rating": 5.0},
-            {"author": "Bob Johnson", "category": "database", "rating": 3.8}
+            {"author": "Bob Johnson", "category": "database", "rating": 3.8},
         ]
         await db.upsert_async(test_documents, metadata=test_metadata)
 
@@ -383,9 +378,9 @@ class TestAsyncFilter:
 
         # Cleanup
         try:
-            if hasattr(db, 'connection_pool') and db.connection_pool:
+            if hasattr(db, "connection_pool") and db.connection_pool:
                 db.connection_pool.close_all()
-            if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+            if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                 await db.async_connection_pool.close_all()
         except Exception:
             pass
@@ -405,10 +400,7 @@ class TestAsyncFilter:
         """Test complex metadata filter asynchronously."""
         db = mock_db_for_filter
 
-        filters = {
-            "category": "ai",
-            "rating": {"$gte": 4.0}
-        }
+        filters = {"category": "ai", "rating": {"$gte": 4.0}}
         result = await db.filter_async(filters)
 
         assert result is not None
@@ -433,27 +425,20 @@ class TestAsyncDeletion:
         """Create a database with data for deletion testing."""
         # Create database with MockEmbeddings
         db = LocalVectorDB(
-            name="test_deletion",
-            base_path=temp_dir,
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_deletion", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
         )
 
         # Insert test documents for deletion
-        test_documents = [
-            "Document to be deleted",
-            "Another document for batch deletion",
-            "Third document for testing"
-        ]
+        test_documents = ["Document to be deleted", "Another document for batch deletion", "Third document for testing"]
         await db.upsert_async(test_documents)
 
         yield db
 
         # Cleanup
         try:
-            if hasattr(db, 'connection_pool') and db.connection_pool:
+            if hasattr(db, "connection_pool") and db.connection_pool:
                 db.connection_pool.close_all()
-            if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+            if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                 await db.async_connection_pool.close_all()
         except Exception:
             pass
@@ -506,10 +491,7 @@ class TestAsyncInMemorySpecific:
         """Test that in-memory database uses shared cache for async operations."""
         # Create in-memory database
         db = LocalVectorDB(
-            name="test_in_memory_async",
-            base_path=":memory:",
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_in_memory_async", base_path=":memory:", embedding_provider="mock", embedding_model="test-model"
         )
 
         try:
@@ -525,9 +507,9 @@ class TestAsyncInMemorySpecific:
         finally:
             # Cleanup
             try:
-                if hasattr(db, 'connection_pool') and db.connection_pool:
+                if hasattr(db, "connection_pool") and db.connection_pool:
                     db.connection_pool.close_all()
-                if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+                if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
                 pass
@@ -536,10 +518,7 @@ class TestAsyncInMemorySpecific:
         """Test concurrent async operations on in-memory database."""
         # Create in-memory database
         db = LocalVectorDB(
-            name="test_concurrent",
-            base_path=":memory:",
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_concurrent", base_path=":memory:", embedding_provider="mock", embedding_model="test-model"
         )
 
         try:
@@ -553,7 +532,7 @@ class TestAsyncInMemorySpecific:
                 db.upsert_async(documents1),
                 db.upsert_async(documents2),
                 db.upsert_async(documents3),
-                return_exceptions=True
+                return_exceptions=True,
             )
 
             # Verify all operations completed successfully
@@ -563,9 +542,9 @@ class TestAsyncInMemorySpecific:
         finally:
             # Cleanup
             try:
-                if hasattr(db, 'connection_pool') and db.connection_pool:
+                if hasattr(db, "connection_pool") and db.connection_pool:
                     db.connection_pool.close_all()
-                if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+                if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
                 pass
@@ -580,14 +559,11 @@ class TestAsyncErrorHandling:
         """Test handling of async connection failures."""
         # Create a real database first
         db = LocalVectorDB(
-            name="test_error_handling",
-            base_path=temp_dir,
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_error_handling", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
         )
 
         # Now patch the async connection pool to fail
-        with patch.object(db, 'async_connection_pool') as mock_pool:
+        with patch.object(db, "async_connection_pool") as mock_pool:
             mock_pool.get_connection_context = AsyncMock(side_effect=Exception("Connection failed"))
 
             # Test that connection failure is handled gracefully
@@ -604,10 +580,7 @@ class TestAsyncErrorHandling:
         """Test basic async operation error handling."""
         # Create a database and test that errors are handled gracefully
         db = LocalVectorDB(
-            name="test_rollback",
-            base_path=temp_dir,
-            embedding_provider="mock",
-            embedding_model="test-model"
+            name="test_rollback", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
         )
 
         try:
@@ -618,9 +591,9 @@ class TestAsyncErrorHandling:
         finally:
             # Cleanup
             try:
-                if hasattr(db, 'connection_pool') and db.connection_pool:
+                if hasattr(db, "connection_pool") and db.connection_pool:
                     db.connection_pool.close_all()
-                if hasattr(db, 'async_connection_pool') and db.async_connection_pool:
+                if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
                 pass

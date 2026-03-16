@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 class WorkloadType(Enum):
     """Workload type enumeration for auto-tuning."""
+
     READ_HEAVY = "read_heavy"
     WRITE_HEAVY = "write_heavy"
     BALANCED = "balanced"
@@ -62,6 +63,7 @@ class WorkloadType(Enum):
 
 class DurabilityLevel(Enum):
     """Data durability importance levels."""
+
     CRITICAL = "critical"  # Banking, medical records
     HIGH = "high"  # Production data
     NORMAL = "normal"  # Standard applications
@@ -82,6 +84,7 @@ class SQLitePragmaProfile:
     pragmas : Dict[str, Any]
         Dictionary of pragma key-value pairs
     """
+
     name: str
     description: str = ""
     pragmas: Dict[str, Any] = field(default_factory=dict)
@@ -103,7 +106,7 @@ SQLITE_PRAGMA_PROFILES: Dict[str, SQLitePragmaProfile] = {
             "wal_autocheckpoint": 1000,
             "cache_spill": "ON",
             "automatic_index": "ON",
-        }
+        },
     ),
     "fast_ingest": SQLitePragmaProfile(
         name="fast_ingest",
@@ -119,7 +122,7 @@ SQLITE_PRAGMA_PROFILES: Dict[str, SQLitePragmaProfile] = {
             "wal_autocheckpoint": 4000,  # Larger WAL before checkpoint
             "cache_spill": "ON",
             "automatic_index": "ON",
-        }
+        },
     ),
     "read_optimized": SQLitePragmaProfile(
         name="read_optimized",
@@ -135,7 +138,7 @@ SQLITE_PRAGMA_PROFILES: Dict[str, SQLitePragmaProfile] = {
             "wal_autocheckpoint": 1000,
             "cache_spill": "ON",
             "automatic_index": "ON",
-        }
+        },
     ),
     "durable": SQLitePragmaProfile(
         name="durable",
@@ -150,7 +153,7 @@ SQLITE_PRAGMA_PROFILES: Dict[str, SQLitePragmaProfile] = {
             "mmap_size": 134217728,  # 128MB
             "wal_autocheckpoint": 100,  # Frequent checkpoints
             "cache_spill": "ON",
-        }
+        },
     ),
     "memory_saver": SQLitePragmaProfile(
         name="memory_saver",
@@ -165,25 +168,41 @@ SQLITE_PRAGMA_PROFILES: Dict[str, SQLitePragmaProfile] = {
             "mmap_size": 0,  # Disable mmap
             "wal_autocheckpoint": 500,
             "cache_spill": "ON",
-        }
+        },
     ),
 }
 
 SqliteProfile = Literal["balanced", "fast_ingest", "read_optimized", "durable", "memory_saver"]
 
+
 def is_valid_sqlite_pragma_profile(profile: SqliteProfile) -> bool:
     return profile in SQLITE_PRAGMA_PROFILES
 
+
 def get_sqlite_pragma_profile(
-        profile: SqliteProfile, *, default: Optional[SqliteProfile] = None
+    profile: SqliteProfile, *, default: Optional[SqliteProfile] = None
 ) -> SQLitePragmaProfile:
     return SQLITE_PRAGMA_PROFILES.get(profile, SQLITE_PRAGMA_PROFILES.get(default) if default is not None else default)
 
+
 # Safe pragma values that don't require quotes
 SAFE_PRAGMA_VALUES = {
-    "ON", "OFF", "WAL", "MEMORY", "FILE", "DELETE", "PERSIST",
-    "TRUNCATE", "FULL", "NORMAL", "IMMEDIATE", "EXCLUSIVE",
-    "RESTART", "PASSIVE", "INCREMENTAL", "NONE"
+    "ON",
+    "OFF",
+    "WAL",
+    "MEMORY",
+    "FILE",
+    "DELETE",
+    "PERSIST",
+    "TRUNCATE",
+    "FULL",
+    "NORMAL",
+    "IMMEDIATE",
+    "EXCLUSIVE",
+    "RESTART",
+    "PASSIVE",
+    "INCREMENTAL",
+    "NONE",
 }
 
 
@@ -305,6 +324,7 @@ class SystemInfo:
     os_type : str
         Operating system type
     """
+
     total_ram_mb: int
     available_ram_mb: int
     cpu_cores: int
@@ -331,6 +351,7 @@ class WorkloadProfile:
     memory_constraint : str
         Memory availability (generous/moderate/limited)
     """
+
     workload_type: WorkloadType
     document_size: str  # small, medium, large
     concurrent_users: int
@@ -354,6 +375,7 @@ class TuningRecommendation:
     estimated_memory_mb : int
         Estimated memory usage with these settings
     """
+
     profile_name: str
     pragma_overrides: Dict[str, Any]
     reasoning: List[str]
@@ -391,7 +413,7 @@ class AutoTuner:
 
         # Get disk space
         disk = shutil.disk_usage(Path.cwd())
-        disk_free_gb = disk.free / (1024 ** 3)
+        disk_free_gb = disk.free / (1024**3)
 
         # Get OS type
         os_type = platform.system()
@@ -402,7 +424,7 @@ class AutoTuner:
             cpu_cores=cpu_cores,
             disk_type=disk_type,
             disk_free_gb=disk_free_gb,
-            os_type=os_type
+            os_type=os_type,
         )
 
     @staticmethod
@@ -422,7 +444,7 @@ class AutoTuner:
             # Use temporary file to avoid CWD permissions and ensure cleanup
             with tempfile.NamedTemporaryFile(delete=True, dir=tempfile.gettempdir()) as temp_file:
                 start = time.time()
-                temp_file.write(b'0' * test_size)
+                temp_file.write(b"0" * test_size)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
                 elapsed = time.time() - start
@@ -436,10 +458,7 @@ class AutoTuner:
             return "Unknown"
 
     @staticmethod
-    def recommend_profile(
-            system: SystemInfo,
-            workload: WorkloadProfile
-    ) -> TuningRecommendation:
+    def recommend_profile(system: SystemInfo, workload: WorkloadProfile) -> TuningRecommendation:
         """
         Recommend optimal tuning profile based on system and workload.
 
@@ -511,8 +530,7 @@ class AutoTuner:
             reasoning.append("Strict WAL settings for real-time processing")
 
         # Platform-specific adjustments
-        if (system.os_type == "Darwin"
-                and workload.durability_level in [DurabilityLevel.CRITICAL, DurabilityLevel.HIGH]):
+        if system.os_type == "Darwin" and workload.durability_level in [DurabilityLevel.CRITICAL, DurabilityLevel.HIGH]:
             pragma_overrides["fullfsync"] = "ON"
             reasoning.append("Enabled fullfsync for macOS durability")
 
@@ -530,7 +548,7 @@ class AutoTuner:
             profile_name=profile_name,
             pragma_overrides=pragma_overrides,
             reasoning=reasoning,
-            estimated_memory_mb=estimated_memory_mb
+            estimated_memory_mb=estimated_memory_mb,
         )
 
     @staticmethod
@@ -555,11 +573,11 @@ class AutoTuner:
 
         choice = input("\nSelect (a-e): ").lower()
         workload_map = {
-            'a': WorkloadType.READ_HEAVY,
-            'b': WorkloadType.WRITE_HEAVY,
-            'c': WorkloadType.BALANCED,
-            'd': WorkloadType.BATCH_INGEST,
-            'e': WorkloadType.REAL_TIME
+            "a": WorkloadType.READ_HEAVY,
+            "b": WorkloadType.WRITE_HEAVY,
+            "c": WorkloadType.BALANCED,
+            "d": WorkloadType.BATCH_INGEST,
+            "e": WorkloadType.REAL_TIME,
         }
         workload_type = workload_map.get(choice, WorkloadType.BALANCED)
 
@@ -570,8 +588,8 @@ class AutoTuner:
         print("   c) Large (> 10KB) - books, papers")
 
         choice = input("\nSelect (a-c): ").lower()
-        doc_size_map = {'a': 'small', 'b': 'medium', 'c': 'large'}
-        document_size = doc_size_map.get(choice, 'medium')
+        doc_size_map = {"a": "small", "b": "medium", "c": "large"}
+        document_size = doc_size_map.get(choice, "medium")
 
         # Concurrent users
         print("\n3. How many concurrent users/processes?")
@@ -581,7 +599,7 @@ class AutoTuner:
         print("   d) Large deployment (20+)")
 
         choice = input("\nSelect (a-d): ").lower()
-        users_map = {'a': 1, 'b': 5, 'c': 15, 'd': 50}
+        users_map = {"a": 1, "b": 5, "c": 15, "d": 50}
         concurrent_users = users_map.get(choice, 5)
 
         # Durability
@@ -593,10 +611,10 @@ class AutoTuner:
 
         choice = input("\nSelect (a-d): ").lower()
         durability_map = {
-            'a': DurabilityLevel.CRITICAL,
-            'b': DurabilityLevel.HIGH,
-            'c': DurabilityLevel.NORMAL,
-            'd': DurabilityLevel.LOW
+            "a": DurabilityLevel.CRITICAL,
+            "b": DurabilityLevel.HIGH,
+            "c": DurabilityLevel.NORMAL,
+            "d": DurabilityLevel.LOW,
         }
         durability_level = durability_map.get(choice, DurabilityLevel.NORMAL)
 
@@ -607,15 +625,15 @@ class AutoTuner:
         print("   c) Limited - Minimize memory usage")
 
         choice = input("\nSelect (a-c): ").lower()
-        memory_map = {'a': 'generous', 'b': 'moderate', 'c': 'limited'}
-        memory_constraint = memory_map.get(choice, 'moderate')
+        memory_map = {"a": "generous", "b": "moderate", "c": "limited"}
+        memory_constraint = memory_map.get(choice, "moderate")
 
         return WorkloadProfile(
             workload_type=workload_type,
             document_size=document_size,
             concurrent_users=concurrent_users,
             durability_level=durability_level,
-            memory_constraint=memory_constraint
+            memory_constraint=memory_constraint,
         )
 
 

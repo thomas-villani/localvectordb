@@ -16,6 +16,7 @@ in documents based on configurable patterns (e.g., markdown headers).
 Sections are an overlay on top of existing chunking - they group chunks
 by document structure for mid-level retrieval.
 """
+
 from __future__ import annotations
 
 import bisect
@@ -28,7 +29,7 @@ from localvectordb.core import Chunk, SectionBoundary
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SECTION_PATTERN = r'^(#{1,6})\s+(.+)$'
+DEFAULT_SECTION_PATTERN = r"^(#{1,6})\s+(.+)$"
 
 
 class SectionDetector:
@@ -73,16 +74,18 @@ class SectionDetector:
         if not matches:
             # No headers found: entire document is one section
             start_line = 1
-            end_line = text.count('\n') + 1
-            return [SectionBoundary(
-                index=0,
-                heading=None,
-                heading_level=None,
-                start_pos=0,
-                end_pos=len(text),
-                start_line=start_line,
-                end_line=end_line,
-            )]
+            end_line = text.count("\n") + 1
+            return [
+                SectionBoundary(
+                    index=0,
+                    heading=None,
+                    heading_level=None,
+                    start_pos=0,
+                    end_pos=len(text),
+                    start_line=start_line,
+                    end_line=end_line,
+                )
+            ]
 
         sections: List[SectionBoundary] = []
         section_index = 0
@@ -93,16 +96,18 @@ class SectionDetector:
             preamble_text = text[:first_match_start].strip()
             if preamble_text:
                 start_line = 1
-                end_line = text[:first_match_start].count('\n') + 1
-                sections.append(SectionBoundary(
-                    index=section_index,
-                    heading=None,
-                    heading_level=None,
-                    start_pos=0,
-                    end_pos=first_match_start,
-                    start_line=start_line,
-                    end_line=end_line,
-                ))
+                end_line = text[:first_match_start].count("\n") + 1
+                sections.append(
+                    SectionBoundary(
+                        index=section_index,
+                        heading=None,
+                        heading_level=None,
+                        start_pos=0,
+                        end_pos=first_match_start,
+                        start_line=start_line,
+                        end_line=end_line,
+                    )
+                )
                 section_index += 1
 
         # Process each header match
@@ -121,18 +126,20 @@ class SectionDetector:
             else:
                 end_pos = len(text)
 
-            start_line = text[:start_pos].count('\n') + 1
-            end_line = text[:end_pos].count('\n') + 1
+            start_line = text[:start_pos].count("\n") + 1
+            end_line = text[:end_pos].count("\n") + 1
 
-            sections.append(SectionBoundary(
-                index=section_index,
-                heading=heading_text,
-                heading_level=heading_level,
-                start_pos=start_pos,
-                end_pos=end_pos,
-                start_line=start_line,
-                end_line=end_line,
-            ))
+            sections.append(
+                SectionBoundary(
+                    index=section_index,
+                    heading=heading_text,
+                    heading_level=heading_level,
+                    start_pos=start_pos,
+                    end_pos=end_pos,
+                    start_line=start_line,
+                    end_line=end_line,
+                )
+            )
             section_index += 1
 
         return sections
@@ -181,5 +188,5 @@ class SectionDetector:
     @staticmethod
     def compute_section_content_hash(text: str, section: SectionBoundary) -> str:
         """Compute SHA-256 hash of a section's content."""
-        section_text = text[section.start_pos:section.end_pos]
-        return hashlib.sha256(section_text.encode('utf-8')).hexdigest()
+        section_text = text[section.start_pos : section.end_pos]
+        return hashlib.sha256(section_text.encode("utf-8")).hexdigest()

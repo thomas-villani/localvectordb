@@ -106,8 +106,7 @@ class TestMultiThreadedPipeline:
         db = mock_db_with_pipeline
 
         # Mock the database write operations but keep pipeline logic
-        with mock_database_operations(db), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+        with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             # Track embedding calls
             initial_calls = db.embedding_provider.number_of_calls
@@ -120,7 +119,7 @@ class TestMultiThreadedPipeline:
                 ids=doc_ids,
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify results
@@ -137,8 +136,7 @@ class TestMultiThreadedPipeline:
 
         # Simplified test - just verify the pipeline completes successfully
         # without hanging and that database methods are called properly
-        with mock_database_operations(db), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+        with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             doc_ids = ["doc_1", "doc_2", "doc_3"]
             result = db._process_with_pipeline(
@@ -147,7 +145,7 @@ class TestMultiThreadedPipeline:
                 ids=doc_ids,
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify pipeline completed successfully
@@ -168,20 +166,34 @@ class TestMultiThreadedPipeline:
 
         # Mock chunker to return predictable chunks
         mock_chunks = [
-            Chunk(content="existing chunk 0", index=0, tokens=10,
-                  position=ChunkPosition(start=0, end=16, line=1, column=1, end_line=1, end_column=16),
-                  content_hash=hashlib.sha256("existing chunk 0".encode()).hexdigest()),
-            Chunk(content="existing chunk 1", index=1, tokens=10,
-                  position=ChunkPosition(start=17, end=33, line=1, column=17, end_line=1, end_column=33),
-                  content_hash=hashlib.sha256("existing chunk 1".encode()).hexdigest()),
-            Chunk(content="new chunk content", index=2, tokens=10,
-                  position=ChunkPosition(start=34, end=51, line=1, column=34, end_line=1, end_column=51),
-                  content_hash=hashlib.sha256("new chunk content".encode()).hexdigest()),
+            Chunk(
+                content="existing chunk 0",
+                index=0,
+                tokens=10,
+                position=ChunkPosition(start=0, end=16, line=1, column=1, end_line=1, end_column=16),
+                content_hash=hashlib.sha256("existing chunk 0".encode()).hexdigest(),
+            ),
+            Chunk(
+                content="existing chunk 1",
+                index=1,
+                tokens=10,
+                position=ChunkPosition(start=17, end=33, line=1, column=17, end_line=1, end_column=33),
+                content_hash=hashlib.sha256("existing chunk 1".encode()).hexdigest(),
+            ),
+            Chunk(
+                content="new chunk content",
+                index=2,
+                tokens=10,
+                position=ChunkPosition(start=34, end=51, line=1, column=34, end_line=1, end_column=51),
+                content_hash=hashlib.sha256("new chunk content".encode()).hexdigest(),
+            ),
         ]
 
-        with patch.object(db, '_fetch_existing_chunks_batch', return_value=existing_chunks_fixture), \
-             patch.object(db.chunker, 'chunk', return_value=mock_chunks), \
-             mock_database_operations(db):
+        with (
+            patch.object(db, "_fetch_existing_chunks_batch", return_value=existing_chunks_fixture),
+            patch.object(db.chunker, "chunk", return_value=mock_chunks),
+            mock_database_operations(db),
+        ):
 
             db._process_with_pipeline(
                 documents=[doc_text],
@@ -189,7 +201,7 @@ class TestMultiThreadedPipeline:
                 ids=[doc_id],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify embedding was called (for new chunk)
@@ -206,14 +218,20 @@ class TestMultiThreadedPipeline:
         doc_id = "doc_1"
 
         mock_chunks = [
-            Chunk(content="only one chunk", index=0, tokens=5,
-                  position=ChunkPosition(start=0, end=14, line=1, column=1, end_line=1, end_column=14),
-                  content_hash=hashlib.sha256("only one chunk".encode()).hexdigest()),
+            Chunk(
+                content="only one chunk",
+                index=0,
+                tokens=5,
+                position=ChunkPosition(start=0, end=14, line=1, column=1, end_line=1, end_column=14),
+                content_hash=hashlib.sha256("only one chunk".encode()).hexdigest(),
+            ),
         ]
 
-        with patch.object(db, '_fetch_existing_chunks_batch', return_value=existing_chunks_fixture), \
-             patch.object(db.chunker, 'chunk', return_value=mock_chunks), \
-             mock_database_operations(db):
+        with (
+            patch.object(db, "_fetch_existing_chunks_batch", return_value=existing_chunks_fixture),
+            patch.object(db.chunker, "chunk", return_value=mock_chunks),
+            mock_database_operations(db),
+        ):
 
             # Note: With the new mocking approach, we can't easily capture chunk removals
             # The test logic may need adjustment
@@ -224,7 +242,7 @@ class TestMultiThreadedPipeline:
                 ids=[doc_id],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Should have identified chunk index 1 for removal (from existing_chunks_fixture)
@@ -236,24 +254,34 @@ class TestMultiThreadedPipeline:
 
         # Create chunks that will have high similarity
         similar_chunks = [
-            Chunk(content="test content alpha", index=0, tokens=5,
-                  position=ChunkPosition(start=0, end=18, line=1, column=1, end_line=1, end_column=18),
-                  content_hash=hashlib.sha256("test content alpha".encode()).hexdigest()),
-            Chunk(content="test content beta", index=1, tokens=5,
-                  position=ChunkPosition(start=19, end=36, line=1, column=19, end_line=1, end_column=36),
-                  content_hash=hashlib.sha256("test content beta".encode()).hexdigest()),
+            Chunk(
+                content="test content alpha",
+                index=0,
+                tokens=5,
+                position=ChunkPosition(start=0, end=18, line=1, column=1, end_line=1, end_column=18),
+                content_hash=hashlib.sha256("test content alpha".encode()).hexdigest(),
+            ),
+            Chunk(
+                content="test content beta",
+                index=1,
+                tokens=5,
+                position=ChunkPosition(start=19, end=36, line=1, column=19, end_line=1, end_column=36),
+                content_hash=hashlib.sha256("test content beta".encode()).hexdigest(),
+            ),
         ]
 
-        with patch.object(db, '_fetch_existing_chunks_batch', return_value={}), \
-             patch.object(db.chunker, 'chunk', return_value=similar_chunks), \
-             patch.object(db, '_filter_similar_chunks_vectorized') as mock_filter, \
-             mock_database_operations(db):
+        with (
+            patch.object(db, "_fetch_existing_chunks_batch", return_value={}),
+            patch.object(db.chunker, "chunk", return_value=similar_chunks),
+            patch.object(db, "_filter_similar_chunks_vectorized") as mock_filter,
+            mock_database_operations(db),
+        ):
 
             # Set up mock filter to return only one chunk
             mock_filter.return_value = (
                 [similar_chunks[0]],  # filtered chunks
                 np.array([[0.1] * 128]),  # filtered embeddings
-                None
+                None,
             )
 
             db._process_with_pipeline(
@@ -262,7 +290,7 @@ class TestMultiThreadedPipeline:
                 ids=["doc_1"],
                 batch_size=10,
                 similarity_threshold=0.95,  # High threshold
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify filter was called with similarity threshold
@@ -274,8 +302,10 @@ class TestMultiThreadedPipeline:
         """Test that errors in chunking worker are properly handled."""
         db = mock_db_with_pipeline
 
-        with patch.object(db.chunker, 'chunk', side_effect=ValueError("Chunking error")), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+        with (
+            patch.object(db.chunker, "chunk", side_effect=ValueError("Chunking error")),
+            patch.object(db, "_fetch_existing_chunks_batch", return_value={}),
+        ):
 
             # In the threaded implementation, errors in worker threads may not propagate
             # to the main thread immediately. The pipeline may complete with empty results.
@@ -286,7 +316,7 @@ class TestMultiThreadedPipeline:
                 ids=["doc_1"],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # The result may be empty or contain the doc_id depending on error handling
@@ -301,9 +331,11 @@ class TestMultiThreadedPipeline:
         def failing_embed_sync(*args, **kwargs):
             raise RuntimeError("Embedding error")
 
-        with patch.object(db.embedding_provider, 'embed_sync', side_effect=failing_embed_sync), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}), \
-             mock_database_operations(db):
+        with (
+            patch.object(db.embedding_provider, "embed_sync", side_effect=failing_embed_sync),
+            patch.object(db, "_fetch_existing_chunks_batch", return_value={}),
+            mock_database_operations(db),
+        ):
 
             # The pipeline catches worker errors and only logs them, returning empty result
             result = db._process_with_pipeline(
@@ -312,7 +344,7 @@ class TestMultiThreadedPipeline:
                 ids=["doc_1"],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Pipeline should return empty list when worker fails
@@ -327,8 +359,7 @@ class TestMultiThreadedPipeline:
         metadata = [{"index": i} for i in range(10)]
         doc_ids = [f"doc_{i}" for i in range(10)]
 
-        with mock_database_operations(db), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+        with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             result = db._process_with_pipeline(
                 documents=documents,
@@ -336,7 +367,7 @@ class TestMultiThreadedPipeline:
                 ids=doc_ids,
                 batch_size=5,  # Smaller than total docs
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify all documents were processed
@@ -352,12 +383,7 @@ class TestMultiThreadedPipeline:
         db = mock_db_with_pipeline
 
         result = db._process_with_pipeline(
-            documents=[],
-            metadata_batch=[],
-            ids=[],
-            batch_size=10,
-            similarity_threshold=None,
-            mode="upsert"
+            documents=[], metadata_batch=[], ids=[], batch_size=10, similarity_threshold=None, mode="upsert"
         )
 
         assert result == []
@@ -367,16 +393,18 @@ class TestMultiThreadedPipeline:
         db = mock_db_with_pipeline
 
         # Set up metadata fields with embedding enabled
-        with patch.object(db, '_get_embedding_enabled_fields') as mock_get_fields:
+        with patch.object(db, "_get_embedding_enabled_fields") as mock_get_fields:
             mock_get_fields.return_value = [
                 MetadataField(type="text", embedding_enabled=True)  # Correct constructor with lowercase
             ]
 
             metadata = [{"description": "Important document about testing"}]
 
-            with patch.object(db, '_generate_metadata_embeddings') as mock_gen_meta_embed, \
-                 mock_database_operations(db), \
-                 patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+            with (
+                patch.object(db, "_generate_metadata_embeddings") as mock_gen_meta_embed,
+                mock_database_operations(db),
+                patch.object(db, "_fetch_existing_chunks_batch", return_value={}),
+            ):
 
                 mock_gen_meta_embed.return_value = {"description": np.array([[0.5] * 384])}  # Correct dimension
 
@@ -386,7 +414,7 @@ class TestMultiThreadedPipeline:
                     ids=["doc_1"],
                     batch_size=10,
                     similarity_threshold=None,
-                    mode="upsert"
+                    mode="upsert",
                 )
 
                 # Verify metadata embeddings were generated
@@ -419,10 +447,12 @@ class TestAsyncPipeline:
             await asyncio.sleep(0.01)
             stage_order.append("database_end")
 
-        with patch.object(db, '_chunking_stage', side_effect=track_chunking), \
-             patch.object(db, '_embedding_stage', side_effect=track_embedding), \
-             patch.object(db, '_database_stage', side_effect=track_database), \
-             patch.object(db, '_fetch_existing_chunks_batch_async', return_value={}):
+        with (
+            patch.object(db, "_chunking_stage", side_effect=track_chunking),
+            patch.object(db, "_embedding_stage", side_effect=track_embedding),
+            patch.object(db, "_database_stage", side_effect=track_database),
+            patch.object(db, "_fetch_existing_chunks_batch_async", return_value={}),
+        ):
 
             await db._async_pipeline_process(
                 documents=sample_documents,
@@ -432,7 +462,7 @@ class TestAsyncPipeline:
                 similarity_threshold=None,
                 max_concurrent_chunks=2,
                 max_concurrent_embeddings=2,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify stages ran concurrently (not sequentially)
@@ -479,10 +509,12 @@ class TestAsyncPipeline:
                 result_ids.append(item["doc_id"])
                 processed += 1
 
-        with patch.object(db, '_chunking_stage', side_effect=capture_chunk_stage), \
-             patch.object(db, '_embedding_stage', side_effect=capture_embedding_stage), \
-             patch.object(db, '_database_stage', side_effect=capture_database_stage), \
-             patch.object(db, '_fetch_existing_chunks_batch_async', return_value={}):
+        with (
+            patch.object(db, "_chunking_stage", side_effect=capture_chunk_stage),
+            patch.object(db, "_embedding_stage", side_effect=capture_embedding_stage),
+            patch.object(db, "_database_stage", side_effect=capture_database_stage),
+            patch.object(db, "_fetch_existing_chunks_batch_async", return_value={}),
+        ):
 
             result = await db._async_pipeline_process(
                 documents=["doc1", "doc2"],
@@ -492,7 +524,7 @@ class TestAsyncPipeline:
                 similarity_threshold=None,
                 max_concurrent_chunks=2,
                 max_concurrent_embeddings=2,
-                mode="upsert"
+                mode="upsert",
             )
 
             assert len(queue_items["chunk"]) == 2
@@ -526,7 +558,7 @@ class TestAsyncPipeline:
                 "chunk_texts_for_embedding": ["test chunk"],
                 "chunks_needing_embedding": [],
                 "new_embeddings": [],
-                "field_embeddings": {}
+                "field_embeddings": {},
             }
 
         # Mock stages that properly complete the pipeline
@@ -549,10 +581,12 @@ class TestAsyncPipeline:
                 result_ids.append(chunk_data["doc_id"])
                 processed += 1
 
-        with patch.object(db, '_chunk_document_with_comparison_async', side_effect=track_chunk_concurrency), \
-             patch.object(db, '_embedding_stage', side_effect=mock_embedding_stage), \
-             patch.object(db, '_database_stage', side_effect=mock_database_stage), \
-             patch.object(db, '_fetch_existing_chunks_batch_async', return_value={}):
+        with (
+            patch.object(db, "_chunk_document_with_comparison_async", side_effect=track_chunk_concurrency),
+            patch.object(db, "_embedding_stage", side_effect=mock_embedding_stage),
+            patch.object(db, "_database_stage", side_effect=mock_database_stage),
+            patch.object(db, "_fetch_existing_chunks_batch_async", return_value={}),
+        ):
 
             # Create documents to test concurrency limits
             documents = [f"doc{i}" for i in range(6)]
@@ -567,7 +601,7 @@ class TestAsyncPipeline:
                 similarity_threshold=None,
                 max_concurrent_chunks=3,  # Limit to 3
                 max_concurrent_embeddings=2,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Verify concurrency was limited and pipeline completed
@@ -582,10 +616,12 @@ class TestAsyncPipeline:
         async def failing_embedding_stage(*args, **kwargs):
             raise RuntimeError("Async embedding failed")
 
-        with patch.object(db, '_chunking_stage'), \
-             patch.object(db, '_embedding_stage', side_effect=failing_embedding_stage), \
-             patch.object(db, '_database_stage'), \
-             patch.object(db, '_fetch_existing_chunks_batch_async', return_value={}):
+        with (
+            patch.object(db, "_chunking_stage"),
+            patch.object(db, "_embedding_stage", side_effect=failing_embedding_stage),
+            patch.object(db, "_database_stage"),
+            patch.object(db, "_fetch_existing_chunks_batch_async", return_value={}),
+        ):
 
             with pytest.raises(RuntimeError, match="Async embedding failed"):
                 await db._async_pipeline_process(
@@ -596,7 +632,7 @@ class TestAsyncPipeline:
                     similarity_threshold=None,
                     max_concurrent_chunks=1,
                     max_concurrent_embeddings=1,
-                    mode="upsert"
+                    mode="upsert",
                 )
 
     @pytest.mark.asyncio
@@ -608,10 +644,12 @@ class TestAsyncPipeline:
         async def slow_chunking_stage(*args, **kwargs):
             await asyncio.sleep(10)  # Long operation
 
-        with patch.object(db, '_chunking_stage', side_effect=slow_chunking_stage), \
-             patch.object(db, '_embedding_stage'), \
-             patch.object(db, '_database_stage'), \
-             patch.object(db, '_fetch_existing_chunks_batch_async', return_value={}):
+        with (
+            patch.object(db, "_chunking_stage", side_effect=slow_chunking_stage),
+            patch.object(db, "_embedding_stage"),
+            patch.object(db, "_database_stage"),
+            patch.object(db, "_fetch_existing_chunks_batch_async", return_value={}),
+        ):
 
             task = asyncio.create_task(
                 db._async_pipeline_process(
@@ -622,7 +660,7 @@ class TestAsyncPipeline:
                     similarity_threshold=None,
                     max_concurrent_chunks=1,
                     max_concurrent_embeddings=1,
-                    mode="upsert"
+                    mode="upsert",
                 )
             )
 
@@ -643,23 +681,26 @@ class TestWorkerStages:
 
         # Create predictable chunks
         test_chunks = [
-            Chunk(content="chunk1", index=0, tokens=3,
-                  position=ChunkPosition(start=0, end=6, line=1, column=1, end_line=1, end_column=6),
-                  content_hash=hashlib.sha256("chunk1".encode()).hexdigest()),
-            Chunk(content="chunk2", index=1, tokens=3,
-                  position=ChunkPosition(start=7, end=13, line=1, column=7, end_line=1, end_column=13),
-                  content_hash=hashlib.sha256("chunk2".encode()).hexdigest()),
+            Chunk(
+                content="chunk1",
+                index=0,
+                tokens=3,
+                position=ChunkPosition(start=0, end=6, line=1, column=1, end_line=1, end_column=6),
+                content_hash=hashlib.sha256("chunk1".encode()).hexdigest(),
+            ),
+            Chunk(
+                content="chunk2",
+                index=1,
+                tokens=3,
+                position=ChunkPosition(start=7, end=13, line=1, column=7, end_line=1, end_column=13),
+                content_hash=hashlib.sha256("chunk2".encode()).hexdigest(),
+            ),
         ]
 
-        existing = {
-            0: {
-                "content_hash": test_chunks[0].content_hash,
-                "faiss_id": 100
-            }
-        }
+        existing = {0: {"content_hash": test_chunks[0].content_hash, "faiss_id": 100}}
 
         # Test the chunking logic directly
-        with patch.object(db.chunker, 'chunk', return_value=test_chunks):
+        with patch.object(db.chunker, "chunk", return_value=test_chunks):
             # Simulate what chunking worker does
             chunks = db.chunker.chunk("test document")
             unchanged_chunks = []
@@ -667,8 +708,8 @@ class TestWorkerStages:
 
             for chunk in chunks:
                 existing_chunk = existing.get(chunk.index)
-                if existing_chunk and existing_chunk['content_hash'] == chunk.content_hash:
-                    chunk.faiss_id = existing_chunk['faiss_id']
+                if existing_chunk and existing_chunk["content_hash"] == chunk.content_hash:
+                    chunk.faiss_id = existing_chunk["faiss_id"]
                     unchanged_chunks.append(chunk)
                 else:
                     chunks_needing_embedding.append(chunk)
@@ -710,21 +751,27 @@ class TestWorkerStages:
         db = mock_db_with_pipeline
 
         # Mock the async chunking method
-        if hasattr(db, '_chunk_document_with_comparison_async'):
-            existing_chunks = {
-                0: {"content_hash": "hash1", "faiss_id": 100}
-            }
+        if hasattr(db, "_chunk_document_with_comparison_async"):
+            existing_chunks = {0: {"content_hash": "hash1", "faiss_id": 100}}
 
             mock_chunks = [
-                Chunk(content="chunk1", index=0, tokens=3,
-                      position=ChunkPosition(start=0, end=6, line=1, column=1, end_line=1, end_column=6),
-                      content_hash="hash1"),
-                Chunk(content="chunk2", index=1, tokens=3,
-                      position=ChunkPosition(start=7, end=13, line=1, column=7, end_line=1, end_column=13),
-                      content_hash="hash2"),
+                Chunk(
+                    content="chunk1",
+                    index=0,
+                    tokens=3,
+                    position=ChunkPosition(start=0, end=6, line=1, column=1, end_line=1, end_column=6),
+                    content_hash="hash1",
+                ),
+                Chunk(
+                    content="chunk2",
+                    index=1,
+                    tokens=3,
+                    position=ChunkPosition(start=7, end=13, line=1, column=7, end_line=1, end_column=13),
+                    content_hash="hash2",
+                ),
             ]
 
-            with patch.object(db.chunker, 'chunk', return_value=mock_chunks):
+            with patch.object(db.chunker, "chunk", return_value=mock_chunks):
                 semaphore = asyncio.Semaphore(1)
                 result = await db._chunk_document_with_comparison_async(
                     0, "doc1", "test doc", {}, existing_chunks, semaphore
@@ -743,9 +790,11 @@ class TestEdgeCasesAndErrors:
         """Test handling when all chunks are filtered out by similarity threshold."""
         db = mock_db_with_pipeline
 
-        with patch.object(db, '_filter_similar_chunks_vectorized') as mock_filter, \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}), \
-             mock_database_operations(db):
+        with (
+            patch.object(db, "_filter_similar_chunks_vectorized") as mock_filter,
+            patch.object(db, "_fetch_existing_chunks_batch", return_value={}),
+            mock_database_operations(db),
+        ):
 
             # Filter returns empty lists (all chunks filtered)
             mock_filter.return_value = ([], np.array([]).reshape(0, 384), None)
@@ -756,7 +805,7 @@ class TestEdgeCasesAndErrors:
                 ids=["doc1"],
                 batch_size=10,
                 similarity_threshold=0.99,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Document should still be processed (document record created)
@@ -780,9 +829,11 @@ class TestEdgeCasesAndErrors:
                 raise RuntimeError("Provider failure")
             return np.random.rand(len(texts), 384)  # Use correct dimension
 
-        with patch.object(db.embedding_provider, 'embed_sync', side_effect=failing_embed), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}), \
-             mock_database_operations(db):
+        with (
+            patch.object(db.embedding_provider, "embed_sync", side_effect=failing_embed),
+            patch.object(db, "_fetch_existing_chunks_batch", return_value={}),
+            mock_database_operations(db),
+        ):
 
             # Use short documents that produce exactly 1 chunk each (< chunk_size of 20)
             # This ensures each document is "complete" after its single chunk is embedded
@@ -795,7 +846,7 @@ class TestEdgeCasesAndErrors:
                 ids=["id1", "id2"],
                 batch_size=1,  # Each chunk is embedded separately
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # First document's single chunk is embedded successfully (call 1)
@@ -813,8 +864,7 @@ class TestEdgeCasesAndErrors:
         metadata = [{}] * 10
         ids = [f"doc_{i}" for i in range(10)]
 
-        with mock_database_operations(db), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+        with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             # Should handle small queue size without deadlock
             result = db._process_with_pipeline(
@@ -823,7 +873,7 @@ class TestEdgeCasesAndErrors:
                 ids=ids,
                 batch_size=5,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             assert len(result) == 10
@@ -833,8 +883,7 @@ class TestEdgeCasesAndErrors:
         db = mock_db_with_pipeline
 
         def run_pipeline(doc_set):
-            with mock_database_operations(db), \
-                 patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+            with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
                 return db._process_with_pipeline(
                     documents=[f"Doc set {doc_set}"],
@@ -842,7 +891,7 @@ class TestEdgeCasesAndErrors:
                     ids=[f"doc_{doc_set}"],
                     batch_size=10,
                     similarity_threshold=None,
-                    mode="upsert"
+                    mode="upsert",
                 )
 
         # Run multiple pipelines in threads
@@ -883,8 +932,7 @@ class TestEdgeCasesAndErrors:
         # Create a very large document
         large_doc = " ".join([f"Sentence {i}." for i in range(1000)])
 
-        with mock_database_operations(db), \
-             patch.object(db, '_fetch_existing_chunks_batch', return_value={}):
+        with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             result = db._process_with_pipeline(
                 documents=[large_doc],
@@ -892,7 +940,7 @@ class TestEdgeCasesAndErrors:
                 ids=["large_doc"],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             assert result == ["large_doc"]
@@ -905,14 +953,12 @@ class TestEdgeCasesAndErrors:
         db = mock_db_with_pipeline
 
         # Test insert mode with existing document
-        existing_chunks = {
-            "doc_1": {
-                0: {"content_hash": "hash1", "faiss_id": 100}
-            }
-        }
+        existing_chunks = {"doc_1": {0: {"content_hash": "hash1", "faiss_id": 100}}}
 
-        with patch.object(db, '_fetch_existing_chunks_batch', return_value=existing_chunks), \
-             mock_database_operations(db):
+        with (
+            patch.object(db, "_fetch_existing_chunks_batch", return_value=existing_chunks),
+            mock_database_operations(db),
+        ):
 
             # Insert mode - should process even with existing chunks
             result_insert = db._process_with_pipeline(
@@ -921,7 +967,7 @@ class TestEdgeCasesAndErrors:
                 ids=["doc_1"],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="insert"
+                mode="insert",
             )
 
             # Upsert mode - should update existing
@@ -931,7 +977,7 @@ class TestEdgeCasesAndErrors:
                 ids=["doc_1"],
                 batch_size=10,
                 similarity_threshold=None,
-                mode="upsert"
+                mode="upsert",
             )
 
             # Both should succeed
@@ -993,7 +1039,7 @@ class TestPipelineIntegration:
 
         finally:
             # Clean up resources
-            if hasattr(db, 'connection_pool') and db.connection_pool:
+            if hasattr(db, "connection_pool") and db.connection_pool:
                 db.connection_pool.close_all()
 
     @pytest.mark.asyncio
@@ -1030,5 +1076,5 @@ class TestPipelineIntegration:
         assert len(search_results) > 0
 
         # Clean up
-        if hasattr(db, 'async_connection_pool'):
+        if hasattr(db, "async_connection_pool"):
             await db.async_connection_pool.close_all()

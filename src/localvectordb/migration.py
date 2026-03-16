@@ -50,24 +50,24 @@ logger = logging.getLogger(__name__)
 def serialize_metadata_field(field: MetadataField) -> Dict[str, Any]:
     """Serialize a MetadataField object to a JSON-compatible dictionary."""
     return {
-        'type': field.type.value if isinstance(field.type, MetadataFieldType) else str(field.type),
-        'indexed': field.indexed,
-        'required': field.required,
-        'default_value': field.default_value,
-        'embedding_enabled': getattr(field, 'embedding_enabled', False),
-        'fts_enabled': getattr(field, 'fts_enabled', False)
+        "type": field.type.value if isinstance(field.type, MetadataFieldType) else str(field.type),
+        "indexed": field.indexed,
+        "required": field.required,
+        "default_value": field.default_value,
+        "embedding_enabled": getattr(field, "embedding_enabled", False),
+        "fts_enabled": getattr(field, "fts_enabled", False),
     }
 
 
 def deserialize_metadata_field(data: Dict[str, Any]) -> MetadataField:
     """Deserialize a dictionary back to a MetadataField object."""
     return MetadataField(
-        type=MetadataFieldType(data['type']),
-        indexed=data.get('indexed', False),
-        required=data.get('required', False),
-        default_value=data.get('default_value'),
-        embedding_enabled=data.get('embedding_enabled', False),
-        fts_enabled=data.get('fts_enabled', False)
+        type=MetadataFieldType(data["type"]),
+        indexed=data.get("indexed", False),
+        required=data.get("required", False),
+        default_value=data.get("default_value"),
+        embedding_enabled=data.get("embedding_enabled", False),
+        fts_enabled=data.get("fts_enabled", False),
     )
 
 
@@ -75,17 +75,17 @@ def serialize_schema_changes(changes: Dict[str, Any]) -> str:
     """Serialize schema changes containing MetadataField objects to JSON string."""
     serialized = {}
 
-    if 'new_schema' in changes:
-        serialized['new_schema'] = {
+    if "new_schema" in changes:
+        serialized["new_schema"] = {
             name: serialize_metadata_field(field) if isinstance(field, MetadataField) else field
-            for name, field in changes['new_schema'].items()
+            for name, field in changes["new_schema"].items()
         }
 
-    if 'column_mapping' in changes:
-        serialized['column_mapping'] = changes['column_mapping']
+    if "column_mapping" in changes:
+        serialized["column_mapping"] = changes["column_mapping"]
 
-    if 'drop_columns' in changes:
-        serialized['drop_columns'] = changes['drop_columns']
+    if "drop_columns" in changes:
+        serialized["drop_columns"] = changes["drop_columns"]
 
     return json.dumps(serialized)
 
@@ -95,17 +95,17 @@ def deserialize_schema_changes(json_str: str) -> Dict[str, Any]:
     data = json.loads(json_str)
     result = {}
 
-    if 'new_schema' in data:
-        result['new_schema'] = {
+    if "new_schema" in data:
+        result["new_schema"] = {
             name: deserialize_metadata_field(field_data) if isinstance(field_data, dict) else field_data
-            for name, field_data in data['new_schema'].items()
+            for name, field_data in data["new_schema"].items()
         }
 
-    if 'column_mapping' in data:
-        result['column_mapping'] = data['column_mapping']
+    if "column_mapping" in data:
+        result["column_mapping"] = data["column_mapping"]
 
-    if 'drop_columns' in data:
-        result['drop_columns'] = data['drop_columns']
+    if "drop_columns" in data:
+        result["drop_columns"] = data["drop_columns"]
 
     return result
 
@@ -234,7 +234,7 @@ class MigrationScript:
     def _calculate_checksum(self) -> str:
         """Calculate SHA-256 checksum of the migration file."""
         sha256_hash = hashlib.sha256()
-        with open(self.file_path, 'rb') as f:
+        with open(self.file_path, "rb") as f:
             sha256_hash.update(f.read())
         return sha256_hash.hexdigest()
 
@@ -264,11 +264,11 @@ class MigrationEngine:
     """
 
     def __init__(
-            self,
-            database_path: Union[str, Path],
-            migrations_directory: Union[str, Path] = "./migrations",
-            backup_manager: Optional[BackupManager] = None,
-            auto_backup: bool = True
+        self,
+        database_path: Union[str, Path],
+        migrations_directory: Union[str, Path] = "./migrations",
+        backup_manager: Optional[BackupManager] = None,
+        auto_backup: bool = True,
     ):
         self.database_path = Path(database_path)
         self.migrations_directory = Path(migrations_directory)
@@ -334,9 +334,7 @@ class MigrationEngine:
             # Find Migration class in the module
             migration_class = None
             for _name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and
-                        issubclass(obj, Migration) and
-                        obj != Migration):
+                if inspect.isclass(obj) and issubclass(obj, Migration) and obj != Migration:
                     migration_class = obj
                     break
 
@@ -426,12 +424,9 @@ class MigrationEngine:
 
                 applied = []
                 for row in cursor.fetchall():
-                    applied.append({
-                        'version': row[0],
-                        'applied_at': row[1],
-                        'rollback_script': row[2],
-                        'checksum': row[3]
-                    })
+                    applied.append(
+                        {"version": row[0], "applied_at": row[1], "rollback_script": row[2], "checksum": row[3]}
+                    )
 
                 return applied
 
@@ -454,14 +449,14 @@ class MigrationEngine:
             List of migration versions that need to be applied
         """
 
-        applied_versions = {m['version'] for m in self.get_applied_migrations()}
+        applied_versions = {m["version"] for m in self.get_applied_migrations()}
         migration_order = self.get_migration_order()
 
         if target_version:
             # Find migrations up to target version
             try:
                 target_index = migration_order.index(target_version)
-                migration_order = migration_order[:target_index + 1]
+                migration_order = migration_order[: target_index + 1]
             except ValueError:
                 logger.warning(f"Target version {target_version} not found in migrations")
                 return []
@@ -470,10 +465,7 @@ class MigrationEngine:
         return [version for version in migration_order if version not in applied_versions]
 
     def migrate(
-            self,
-            target_version: Optional[str] = None,
-            dry_run: bool = False,
-            create_backup: Optional[bool] = None
+        self, target_version: Optional[str] = None, dry_run: bool = False, create_backup: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Apply pending migrations up to the target version.
@@ -503,22 +495,22 @@ class MigrationEngine:
 
         if not pending_migrations:
             return {
-                'success': True,
-                'message': 'No pending migrations',
-                'applied_migrations': [],
-                'target_version': target_version,
-                'dry_run': dry_run
+                "success": True,
+                "message": "No pending migrations",
+                "applied_migrations": [],
+                "target_version": target_version,
+                "dry_run": dry_run,
             }
 
         logger.info(f"Found {len(pending_migrations)} pending migrations: {pending_migrations}")
 
         if dry_run:
             return {
-                'success': True,
-                'message': f'Dry run: would apply {len(pending_migrations)} migrations',
-                'pending_migrations': pending_migrations,
-                'target_version': target_version,
-                'dry_run': True
+                "success": True,
+                "message": f"Dry run: would apply {len(pending_migrations)} migrations",
+                "pending_migrations": pending_migrations,
+                "target_version": target_version,
+                "dry_run": True,
             }
 
         # Create backup if requested
@@ -560,21 +552,18 @@ class MigrationEngine:
                         schema_changes = migration.get_schema_changes()
 
                         # Apply schema changes using DatabaseSchema
-                        if 'new_schema' in schema_changes:
-                            new_schema = schema_changes['new_schema']
-                            column_mapping = schema_changes.get('column_mapping', {})
-                            drop_columns = schema_changes.get('drop_columns', False)
+                        if "new_schema" in schema_changes:
+                            new_schema = schema_changes["new_schema"]
+                            column_mapping = schema_changes.get("column_mapping", {})
+                            drop_columns = schema_changes.get("drop_columns", False)
 
                             # Apply schema changes
                             change_results = self.database_schema.update_metadata_schema(
-                                new_schema,
-                                db_connection=conn,
-                                drop_columns=drop_columns,
-                                column_mapping=column_mapping
+                                new_schema, db_connection=conn, drop_columns=drop_columns, column_mapping=column_mapping
                             )
 
                             # Check for errors
-                            if change_results.get('errors'):
+                            if change_results.get("errors"):
                                 error_msg = f"Schema update errors: {', '.join(change_results['errors'])}"
                                 raise ValueError(error_msg)
 
@@ -588,10 +577,7 @@ class MigrationEngine:
                             rollback_script = serialize_schema_changes(rollback_changes)
 
                         self.version_manager.record_migration(
-                            version,
-                            rollback_script=rollback_script,
-                            checksum=migration_script.checksum,
-                            conn=conn
+                            version, rollback_script=rollback_script, checksum=migration_script.checksum, conn=conn
                         )
 
                         # Update database version
@@ -611,31 +597,28 @@ class MigrationEngine:
             success = len(migration_errors) == 0
 
             return {
-                'success': success,
-                'applied_migrations': applied_migrations,
-                'migration_errors': migration_errors,
-                'backup_id': backup_id,
-                'target_version': target_version,
-                'dry_run': False
+                "success": success,
+                "applied_migrations": applied_migrations,
+                "migration_errors": migration_errors,
+                "backup_id": backup_id,
+                "target_version": target_version,
+                "dry_run": False,
             }
 
         except Exception as e:
             logger.error(f"Migration process failed: {e}")
             return {
-                'success': False,
-                'error': str(e),
-                'applied_migrations': applied_migrations,
-                'migration_errors': migration_errors,
-                'backup_id': backup_id,
-                'target_version': target_version,
-                'dry_run': False
+                "success": False,
+                "error": str(e),
+                "applied_migrations": applied_migrations,
+                "migration_errors": migration_errors,
+                "backup_id": backup_id,
+                "target_version": target_version,
+                "dry_run": False,
             }
 
     def rollback(
-            self,
-            target_version: str,
-            dry_run: bool = False,
-            create_backup: Optional[bool] = None
+        self, target_version: str, dry_run: bool = False, create_backup: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Rollback migrations to a target version.
@@ -667,16 +650,12 @@ class MigrationEngine:
         try:
             target_db_version = DatabaseVersion(target_version)
         except ValueError:
-            return {
-                'success': False,
-                'error': f'Invalid target version: {target_version}',
-                'dry_run': dry_run
-            }
+            return {"success": False, "error": f"Invalid target version: {target_version}", "dry_run": dry_run}
 
         # Find migrations to rollback (in reverse order)
         migrations_to_rollback = []
         for migration in reversed(applied_migrations):
-            migration_version = DatabaseVersion(migration['version'])
+            migration_version = DatabaseVersion(migration["version"])
             if migration_version > target_db_version:
                 migrations_to_rollback.append(migration)
             else:
@@ -684,22 +663,22 @@ class MigrationEngine:
 
         if not migrations_to_rollback:
             return {
-                'success': True,
-                'message': f'Already at or below target version {target_version}',
-                'rolled_back_migrations': [],
-                'target_version': target_version,
-                'dry_run': dry_run
+                "success": True,
+                "message": f"Already at or below target version {target_version}",
+                "rolled_back_migrations": [],
+                "target_version": target_version,
+                "dry_run": dry_run,
             }
 
         logger.info(f"Found {len(migrations_to_rollback)} migrations to rollback")
 
         if dry_run:
             return {
-                'success': True,
-                'message': f'Dry run: would rollback {len(migrations_to_rollback)} migrations',
-                'migrations_to_rollback': [m['version'] for m in migrations_to_rollback],
-                'target_version': target_version,
-                'dry_run': True
+                "success": True,
+                "message": f"Dry run: would rollback {len(migrations_to_rollback)} migrations",
+                "migrations_to_rollback": [m["version"] for m in migrations_to_rollback],
+                "target_version": target_version,
+                "dry_run": True,
             }
 
         # Create backup if requested
@@ -720,7 +699,7 @@ class MigrationEngine:
 
             with sqlite3.connect(self.database_path) as conn:
                 for migration_record in migrations_to_rollback:
-                    version = migration_record['version']
+                    version = migration_record["version"]
 
                     try:
                         logger.info(f"Rolling back migration {version}")
@@ -731,21 +710,21 @@ class MigrationEngine:
                             migration_instance = migration_script.create_instance(self.database_path)
                             rollback_changes = migration_instance.get_rollback_changes()
 
-                            if rollback_changes and 'new_schema' in rollback_changes:
+                            if rollback_changes and "new_schema" in rollback_changes:
                                 # Apply rollback schema changes using DatabaseSchema
-                                new_schema = rollback_changes['new_schema']
-                                column_mapping = rollback_changes.get('column_mapping', {})
-                                drop_columns = rollback_changes.get('drop_columns', False)
+                                new_schema = rollback_changes["new_schema"]
+                                column_mapping = rollback_changes.get("column_mapping", {})
+                                drop_columns = rollback_changes.get("drop_columns", False)
 
                                 change_results = self.database_schema.update_metadata_schema(
                                     new_schema,
                                     db_connection=conn,
                                     drop_columns=drop_columns,
-                                    column_mapping=column_mapping
+                                    column_mapping=column_mapping,
                                 )
 
                                 # Check for errors
-                                if change_results.get('errors'):
+                                if change_results.get("errors"):
                                     error_msg = f"Schema rollback errors: {', '.join(change_results['errors'])}"
                                     raise ValueError(error_msg)
 
@@ -757,25 +736,25 @@ class MigrationEngine:
                             rolled_back_migrations.append(version)
                             logger.info(f"Successfully rolled back migration {version}")
 
-                        elif migration_record['rollback_script']:
+                        elif migration_record["rollback_script"]:
                             # Use stored rollback changes (JSON format)
                             try:
-                                rollback_changes = deserialize_schema_changes(migration_record['rollback_script'])
+                                rollback_changes = deserialize_schema_changes(migration_record["rollback_script"])
 
-                                if 'new_schema' in rollback_changes:
-                                    new_schema = rollback_changes['new_schema']
-                                    column_mapping = rollback_changes.get('column_mapping', {})
-                                    drop_columns = rollback_changes.get('drop_columns', False)
+                                if "new_schema" in rollback_changes:
+                                    new_schema = rollback_changes["new_schema"]
+                                    column_mapping = rollback_changes.get("column_mapping", {})
+                                    drop_columns = rollback_changes.get("drop_columns", False)
 
                                     change_results = self.database_schema.update_metadata_schema(
                                         new_schema,
                                         db_connection=conn,
                                         drop_columns=drop_columns,
-                                        column_mapping=column_mapping
+                                        column_mapping=column_mapping,
                                     )
 
                                     # Check for errors
-                                    if change_results.get('errors'):
+                                    if change_results.get("errors"):
                                         error_msg = f"Schema rollback errors: {', '.join(change_results['errors'])}"
                                         raise ValueError(error_msg)
 
@@ -787,7 +766,7 @@ class MigrationEngine:
 
                             except json.JSONDecodeError:
                                 # Legacy SQL rollback script
-                                conn.executescript(migration_record['rollback_script'])
+                                conn.executescript(migration_record["rollback_script"])
                                 conn.execute("DELETE FROM migration_log WHERE version = ?", (version,))
                                 rolled_back_migrations.append(version)
                                 logger.info(f"Successfully rolled back migration {version} using legacy SQL script")
@@ -809,24 +788,24 @@ class MigrationEngine:
             success = len(rollback_errors) == 0
 
             return {
-                'success': success,
-                'rolled_back_migrations': rolled_back_migrations,
-                'rollback_errors': rollback_errors,
-                'backup_id': backup_id,
-                'target_version': target_version,
-                'dry_run': False
+                "success": success,
+                "rolled_back_migrations": rolled_back_migrations,
+                "rollback_errors": rollback_errors,
+                "backup_id": backup_id,
+                "target_version": target_version,
+                "dry_run": False,
             }
 
         except Exception as e:
             logger.error(f"Rollback process failed: {e}")
             return {
-                'success': False,
-                'error': str(e),
-                'rolled_back_migrations': rolled_back_migrations,
-                'rollback_errors': rollback_errors,
-                'backup_id': backup_id,
-                'target_version': target_version,
-                'dry_run': False
+                "success": False,
+                "error": str(e),
+                "rolled_back_migrations": rolled_back_migrations,
+                "rollback_errors": rollback_errors,
+                "backup_id": backup_id,
+                "target_version": target_version,
+                "dry_run": False,
             }
 
     def get_migration_status(self) -> Dict[str, Any]:
@@ -846,22 +825,17 @@ class MigrationEngine:
         pending_migrations = self.get_pending_migrations()
 
         return {
-            'current_version': str(current_version),
-            'total_available_migrations': len(available_migrations),
-            'applied_migrations_count': len(applied_migrations),
-            'pending_migrations_count': len(pending_migrations),
-            'migration_order': migration_order,
-            'applied_migrations': applied_migrations,
-            'pending_migrations': pending_migrations,
-            'latest_available_version': migration_order[-1] if migration_order else None
+            "current_version": str(current_version),
+            "total_available_migrations": len(available_migrations),
+            "applied_migrations_count": len(applied_migrations),
+            "pending_migrations_count": len(pending_migrations),
+            "migration_order": migration_order,
+            "applied_migrations": applied_migrations,
+            "pending_migrations": pending_migrations,
+            "latest_available_version": migration_order[-1] if migration_order else None,
         }
 
-    def create_migration_template(
-            self,
-            version: str,
-            description: str,
-            template_type: str = "basic"
-    ) -> Path:
+    def create_migration_template(self, version: str, description: str, template_type: str = "basic") -> Path:
         """
         Create a new migration template file.
 
@@ -895,18 +869,13 @@ class MigrationEngine:
         template_content = self._get_migration_template(version, description, template_type)
 
         # Write template file
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(template_content)
 
         logger.info(f"Created migration template: {file_path}")
         return file_path
 
-    def _get_migration_template(
-            self,
-            version: str,
-            description: str,
-            template_type: str
-    ) -> str:
+    def _get_migration_template(self, version: str, description: str, template_type: str) -> str:
         """Generate migration template content."""
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

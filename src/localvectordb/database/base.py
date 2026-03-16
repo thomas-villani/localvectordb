@@ -45,25 +45,25 @@ class BaseVectorDB(ABC):
     # Core database operations
     @abstractmethod
     def upsert(
-            self,
-            documents: Union[str, List[str]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None
+        self,
+        documents: Union[str, List[str]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """Insert or update documents in the database."""
         pass
 
     @abstractmethod
     def insert(
-            self,
-            documents: Union[str, List[str]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise"
+        self,
+        documents: Union[str, List[str]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         """Insert new documents into the database."""
         pass
@@ -89,45 +89,40 @@ class BaseVectorDB(ABC):
         pass
 
     @abstractmethod
-    def update(
-            self,
-            doc_id: str,
-            content: Optional[str] = None,
-            metadata: Optional[Dict[str, Any]] = None
-    ) -> bool:
+    def update(self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> bool:
         """Update a document's content and/or metadata."""
         pass
 
     # Query operations
     @abstractmethod
     def query(
-            self,
-            query: str,
-            *,
-            search_type: Literal['vector', 'keyword', 'hybrid'] = 'vector',
-            return_type: Literal['documents', 'chunks', 'sections', 'context', 'enriched'] = 'documents',
-            search_level: Literal['chunks', 'sections', 'documents'] = 'chunks',
-            k: int = 10,
-            score_threshold: float = 0.0,
-            filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7,
-            context_window: int = 2,
-            semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: Optional[dict] = None,
-            reranker: Optional[Any] = None,
-            reranker_config: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
     ) -> List[QueryResult]:
         """Unified query interface for all search types."""
         pass
 
     @abstractmethod
     def filter(
-            self,
-            where: Optional[Dict[str, Any]] = None,
-            order_by: Optional[str] = None,
-            limit: Optional[int] = None,
-            offset: int = 0
+        self,
+        where: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[Document]:
         """Filter documents using metadata filtering."""
         pass
@@ -195,10 +190,10 @@ class BaseVectorDB(ABC):
     # Schema management
     @abstractmethod
     def update_metadata_schema(
-            self,
-            new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False,
-            column_mapping: Optional[dict] = None
+        self,
+        new_schema: Union[str, Dict[str, MetadataField]],
+        drop_columns: bool = False,
+        column_mapping: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Update the metadata schema."""
         pass
@@ -260,6 +255,7 @@ class BaseVectorDB(ABC):
                 .execute_async())
         """
         from localvectordb.query_builder import QueryBuilder
+
         return QueryBuilder(self)
 
     def ping(self) -> bool:
@@ -268,129 +264,129 @@ class BaseVectorDB(ABC):
 
     @abstractmethod
     def upsert_from_chunks(
-            self,
-            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None
+        self,
+        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         pass
 
     @abstractmethod
     def insert_from_chunks(
-            self,
-            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise",
+        self,
+        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         pass
 
     @abstractmethod
     def upsert_from_file(
-            self,
-            file_paths: Union[str, Path, List[Union[str, Path]]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            extractor_kwargs: Optional[Dict[str, Any]] = None,
+        self,
+        file_paths: Union[str, Path, List[Union[str, Path]]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
+        extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         pass
 
     @abstractmethod
     def insert_from_file(
-            self,
-            file_paths: Union[str, Path, List[Union[str, Path]]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise",
-            extractor_kwargs: Optional[Dict[str, Any]] = None
+        self,
+        file_paths: Union[str, Path, List[Union[str, Path]]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
+        extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         pass
 
     # Core async database operations
     @abstractmethod
     async def upsert_async(
-            self,
-            documents: Union[str, List[str]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            **kwargs: Any
+        self,
+        documents: Union[str, List[str]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
+        **kwargs: Any,
     ) -> List[str]:
         """Insert or update documents in the database asynchronously."""
         pass
 
     @abstractmethod
     async def insert_async(
-            self,
-            documents: Union[str, List[str]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = 100,
-            similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise",
-            **kwargs: Any
+        self,
+        documents: Union[str, List[str]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = 100,
+        similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
+        **kwargs: Any,
     ) -> List[str]:
         """Insert new documents into the database asynchronously."""
         pass
 
     @abstractmethod
     async def upsert_from_chunks_async(
-            self,
-            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = None,
-            similarity_threshold: Optional[float] = None,
-            max_concurrent_chunks: int = 3,
-            max_concurrent_embeddings: int = 2
+        self,
+        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+        batch_size: int = None,
+        similarity_threshold: Optional[float] = None,
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         pass
 
     @abstractmethod
     async def insert_from_chunks_async(
-            self,
-            chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
-            metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-            batch_size: int = None,
-            similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise",
-            max_concurrent_chunks: int = 3,
-            max_concurrent_embeddings: int = 2
+        self,
+        chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
+        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+        batch_size: int = None,
+        similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
     ) -> List[str]:
         pass
 
     @abstractmethod
     async def upsert_from_file_async(
-            self,
-            file_paths: Union[str, Path, List[Union[str, Path]]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = None,
-            similarity_threshold: Optional[float] = None,
-            max_concurrent_chunks: int = 3,
-            max_concurrent_embeddings: int = 2,
-            extractor_kwargs: Optional[Dict[str, Any]] = None
+        self,
+        file_paths: Union[str, Path, List[Union[str, Path]]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = None,
+        similarity_threshold: Optional[float] = None,
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
+        extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         pass
 
     @abstractmethod
     async def insert_from_file_async(
-            self,
-            file_paths: Union[str, Path, List[Union[str, Path]]],
-            metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-            ids: Optional[Union[str, List[str]]] = None,
-            batch_size: int = None,
-            similarity_threshold: Optional[float] = None,
-            errors: Literal["ignore", "raise"] = "raise",
-            max_concurrent_chunks: int = 3,
-            max_concurrent_embeddings: int = 2,
-            extractor_kwargs: Optional[Dict[str, Any]] = None
+        self,
+        file_paths: Union[str, Path, List[Union[str, Path]]],
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        ids: Optional[Union[str, List[str]]] = None,
+        batch_size: int = None,
+        similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
+        max_concurrent_chunks: int = 3,
+        max_concurrent_embeddings: int = 2,
+        extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         pass
 
@@ -410,51 +406,45 @@ class BaseVectorDB(ABC):
         pass
 
     @abstractmethod
-    async def count_async(
-            self,
-            filters: Optional[Dict[str, Any]] = None
-    ) -> int:
+    async def count_async(self, filters: Optional[Dict[str, Any]] = None) -> int:
         pass
 
     @abstractmethod
     async def update_async(
-            self,
-            doc_id: str,
-            content: Optional[str] = None,
-            metadata: Optional[Dict[str, Any]] = None
+        self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Update a document's content and/or metadata asynchronously."""
         pass
 
     @abstractmethod
     async def query_async(
-            self,
-            query: str,
-            *,
-            search_type: Literal['vector', 'keyword', 'hybrid'] = 'hybrid',
-            return_type: Literal['documents', 'chunks', 'sections', 'context', 'enriched'] = 'documents',
-            search_level: Literal['chunks', 'sections', 'documents'] = 'chunks',
-            k: int = 10,
-            score_threshold: float = 0.0,
-            filters: Optional[Dict[str, Any]] = None,
-            vector_weight: float = 0.7,
-            context_window: int = 2,
-            semantic_dedup_threshold: Optional[float] = None,
-            document_scoring_method: DocumentScoringMethod = "frequency_boost",
-            document_scoring_options: dict = None,
-            reranker: Optional[Any] = None,
-            reranker_config: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        *,
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
+        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        context_window: int = 2,
+        semantic_dedup_threshold: Optional[float] = None,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: dict = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
     ) -> List["QueryResult"]:
         """Unified query interface for all search types asynchronously."""
         pass
 
     @abstractmethod
     async def filter_async(
-            self,
-            where: Optional[Dict[str, Any]] = None,
-            order_by: Optional[str] = None,
-            limit: Optional[int] = None,
-            offset: int = 0
+        self,
+        where: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List["Document"]:
         """Filter documents using metadata filtering asynchronously."""
         pass
@@ -471,10 +461,10 @@ class BaseVectorDB(ABC):
 
     @abstractmethod
     async def update_metadata_schema_async(
-            self,
-            new_schema: Union[str, Dict[str, MetadataField]],
-            drop_columns: bool = False,
-            column_mapping: Optional[Dict[str, str]] = None
+        self,
+        new_schema: Union[str, Dict[str, MetadataField]],
+        drop_columns: bool = False,
+        column_mapping: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Update metadata schema asynchronously."""
         pass
@@ -496,36 +486,36 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
     """The abstract base class that defines the attributes and helper methods used by the various mixins."""
 
     def __init__(
-            self,
-            name: str,
-            base_path: Union[str, Path] = ".lvdb",
-            *,
-            # Metadata schema
-            metadata_schema: Optional[Dict[str, Any]] = None,
-            # ID generation patterns
-            doc_id_pattern: str = "doc_{idx}",
-            # Embedding configuration
-            embedding_provider: str = "ollama",
-            embedding_model: str = "nomic-embed-text",
-            embedding_config: Optional[Dict[str, Any]] = None,
-            # Chunking configuration
-            chunking_method: Union[str, Any] = "sentences",
-            chunk_size: int = 500,
-            chunk_overlap: int = 1,
-            batch_size: int = 100,
-            # Index type
-            faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
-            faiss_index_hnsw_flat_neighbors: Optional[int] = None,
-            faiss_index_lsh_bits: Optional[int] = None,
-            # Performance settings
-            enable_gpu: bool = False,
-            enable_fts: bool = True,
-            connection_pool_size: int = 10,
-            # SQLite tuning settings
-            sqlite_profile: SqliteProfile = "balanced",
-            sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
-            # Other
-            create_if_not_exists: bool = True,
+        self,
+        name: str,
+        base_path: Union[str, Path] = ".lvdb",
+        *,
+        # Metadata schema
+        metadata_schema: Optional[Dict[str, Any]] = None,
+        # ID generation patterns
+        doc_id_pattern: str = "doc_{idx}",
+        # Embedding configuration
+        embedding_provider: str = "ollama",
+        embedding_model: str = "nomic-embed-text",
+        embedding_config: Optional[Dict[str, Any]] = None,
+        # Chunking configuration
+        chunking_method: Union[str, Any] = "sentences",
+        chunk_size: int = 500,
+        chunk_overlap: int = 1,
+        batch_size: int = 100,
+        # Index type
+        faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
+        faiss_index_hnsw_flat_neighbors: Optional[int] = None,
+        faiss_index_lsh_bits: Optional[int] = None,
+        # Performance settings
+        enable_gpu: bool = False,
+        enable_fts: bool = True,
+        connection_pool_size: int = 10,
+        # SQLite tuning settings
+        sqlite_profile: SqliteProfile = "balanced",
+        sqlite_pragma_overrides: Optional[Dict[str, Any]] = None,
+        # Other
+        create_if_not_exists: bool = True,
     ):
         super().__init__()
         self._read_write_lock: ReadWriteLock = None
@@ -557,15 +547,12 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    def _get_embedding_enabled_fields(self) -> Dict[str, 'MetadataField']:
+    def _get_embedding_enabled_fields(self) -> Dict[str, "MetadataField"]:
         pass
 
     @abstractmethod
     def _generate_metadata_embeddings(
-            self,
-            metadata: Dict[str, Any],
-            embedding_enabled_fields: Dict[str, 'MetadataField'],
-            batch_size: int = 100
+        self, metadata: Dict[str, Any], embedding_enabled_fields: Dict[str, "MetadataField"], batch_size: int = 100
     ) -> Dict[str, np.ndarray]:
         pass
 
@@ -599,19 +586,13 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
 
     @abstractmethod
     async def _generate_metadata_embeddings_async(
-            self,
-            metadata: Dict[str, Any],
-            embedding_enabled_fields: Dict[str, 'MetadataField'],
-            batch_size: int = 100
+        self, metadata: Dict[str, Any], embedding_enabled_fields: Dict[str, "MetadataField"], batch_size: int = 100
     ) -> Dict[str, np.ndarray]:
         pass
 
     @abstractmethod
     async def _store_metadata_embeddings_async(
-            self,
-            conn: aiosqlite.Connection,
-            document_id: str,
-            field_embeddings: Dict[str, np.ndarray]
+        self, conn: aiosqlite.Connection, document_id: str, field_embeddings: Dict[str, np.ndarray]
     ) -> None:
         pass
 
@@ -621,10 +602,8 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
 
     @abstractmethod
     def _get_changed_embedding_fields(
-            self,
-            old_metadata: Dict[str, Any],
-            new_metadata: Dict[str, Any]
-    ) -> Dict[str, 'MetadataField']:
+        self, old_metadata: Dict[str, Any], new_metadata: Dict[str, Any]
+    ) -> Dict[str, "MetadataField"]:
         pass
 
     @abstractmethod

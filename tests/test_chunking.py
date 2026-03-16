@@ -234,7 +234,7 @@ class TestSentenceChunker:
             "Exclamation! Next sentence.",
             'Quoted "sentence." Next one.',
             "Abbreviation like Dr. Smith went home.",
-            "Multiple\nlines\nwith periods."
+            "Multiple\nlines\nwith periods.",
         ]
 
         for text in test_cases:
@@ -390,9 +390,9 @@ class TestLineChunker:
 
         # Each chunk should contain complete lines
         for chunk in chunks:
-            lines = chunk.content.split('\n')
+            lines = chunk.content.split("\n")
             # Each line should be complete (not cut off in middle)
-            assert all(len(line.strip()) == 0 or not line.endswith(' ') for line in lines)
+            assert all(len(line.strip()) == 0 or not line.endswith(" ") for line in lines)
 
     def test_chunk_single_line(self):
         """Test chunking single line text."""
@@ -427,7 +427,7 @@ class TestLineChunker:
 
         # Should preserve line endings
         reconstructed = "".join(chunk.content for chunk in chunks)
-        assert '\n' in reconstructed
+        assert "\n" in reconstructed
 
 
 @pytest.mark.unit
@@ -482,7 +482,7 @@ class TestCharChunker:
 
         # Verify exact character boundaries
         for chunk in chunks:
-            extracted = text[chunk.position.start:chunk.position.end]
+            extracted = text[chunk.position.start : chunk.position.end]
             assert extracted == chunk.content
 
 
@@ -509,7 +509,7 @@ class TestParagraphChunker:
         # Each chunk should contain complete paragraphs
         for chunk in chunks:
             # Should not break in middle of paragraphs
-            assert '\n\n' not in chunk.content or chunk.content.count('\n\n') <= 1
+            assert "\n\n" not in chunk.content or chunk.content.count("\n\n") <= 1
 
     def test_split_into_paragraphs(self):
         """Test paragraph splitting method."""
@@ -569,7 +569,7 @@ Content for section 2."""
         # Each chunk should contain complete sections
         for chunk in chunks:
             # Should start with header or content
-            lines = chunk.content.strip().split('\n')
+            lines = chunk.content.strip().split("\n")
             first_line = lines[0] if lines else ""
             # Should be either a header or regular content
             assert len(first_line) > 0
@@ -725,8 +725,14 @@ class TestChunkerFactory:
     def test_available_chunkers(self):
         """Test that all expected chunkers are available."""
         expected_chunkers = {
-            'sentences', 'tokens', 'words', 'lines', 'characters',
-            'paragraphs', 'sections', 'code-blocks'
+            "sentences",
+            "tokens",
+            "words",
+            "lines",
+            "characters",
+            "paragraphs",
+            "sections",
+            "code-blocks",
         }
 
         available = set(ChunkerFactory.CHUNKERS.keys())
@@ -734,56 +740,56 @@ class TestChunkerFactory:
 
     def test_create_sentence_chunker(self):
         """Test creating sentence chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('sentences', max_tokens=100, overlap=2)
+        chunker = ChunkerFactory.create_chunker("sentences", max_tokens=100, overlap=2)
         assert isinstance(chunker, SentenceChunker)
         assert chunker.max_tokens == 100
         assert chunker.overlap == 2
 
     def test_create_token_chunker(self):
         """Test creating token chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('tokens', max_tokens=50, overlap=10)
+        chunker = ChunkerFactory.create_chunker("tokens", max_tokens=50, overlap=10)
         assert isinstance(chunker, TokenChunker)
         assert chunker.max_tokens == 50
         assert chunker.overlap == 10
 
     def test_create_word_chunker(self):
         """Test creating word chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('words', max_tokens=200, overlap=5)
+        chunker = ChunkerFactory.create_chunker("words", max_tokens=200, overlap=5)
         assert isinstance(chunker, WordChunker)
         assert chunker.max_tokens == 200
         assert chunker.overlap == 5
 
     def test_create_line_chunker(self):
         """Test creating line chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('lines', max_tokens=75, overlap=3)
+        chunker = ChunkerFactory.create_chunker("lines", max_tokens=75, overlap=3)
         assert isinstance(chunker, LineChunker)
         assert chunker.max_tokens == 75
         assert chunker.overlap == 3
 
     def test_create_character_chunker(self):
         """Test creating character chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('characters', max_tokens=150, overlap=20)
+        chunker = ChunkerFactory.create_chunker("characters", max_tokens=150, overlap=20)
         assert isinstance(chunker, CharChunker)
         assert chunker.max_tokens == 150
         assert chunker.overlap == 20
 
     def test_create_paragraph_chunker(self):
         """Test creating paragraph chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('paragraphs', max_tokens=300, overlap=1)
+        chunker = ChunkerFactory.create_chunker("paragraphs", max_tokens=300, overlap=1)
         assert isinstance(chunker, ParagraphChunker)
         assert chunker.max_tokens == 300
         assert chunker.overlap == 1
 
     def test_create_section_chunker(self):
         """Test creating section chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('sections', max_tokens=500)
+        chunker = ChunkerFactory.create_chunker("sections", max_tokens=500)
         assert isinstance(chunker, SectionChunker)
         assert chunker.max_tokens == 500
         assert chunker.overlap == 0  # Sections don't overlap
 
     def test_create_code_chunker(self):
         """Test creating code block chunker via factory."""
-        chunker = ChunkerFactory.create_chunker('code-blocks', max_tokens=250, overlap=2, language='python')
+        chunker = ChunkerFactory.create_chunker("code-blocks", max_tokens=250, overlap=2, language="python")
         assert isinstance(chunker, CodeBlockChunker)
         assert chunker.max_tokens == 250
         assert chunker.overlap == 2
@@ -791,14 +797,14 @@ class TestChunkerFactory:
     def test_create_unknown_chunker(self):
         """Test creating unknown chunker raises error."""
         with pytest.raises(ValueError, match="Unknown chunking method: unknown"):
-            ChunkerFactory.create_chunker('unknown')
+            ChunkerFactory.create_chunker("unknown")
 
     def test_list_methods(self):
         """Test listing available chunking methods."""
         methods = ChunkerFactory.list_methods()
-        assert 'sentences' in methods
-        assert 'tokens' in methods
-        assert 'words' in methods
+        assert "sentences" in methods
+        assert "tokens" in methods
+        assert "words" in methods
         assert isinstance(methods, list)
 
 
@@ -818,7 +824,7 @@ class TestUtilityFunctions:
             content="Hello world",
             position=ChunkPosition(start=0, end=11, line=1, column=1, end_line=1, end_column=11),
             tokens=2,
-            index=0
+            index=0,
         )
 
         result = reconstruct_document([chunk], 11)
@@ -831,14 +837,14 @@ class TestUtilityFunctions:
                 content="Hello ",
                 position=ChunkPosition(start=0, end=6, line=1, column=1, end_line=1, end_column=6),
                 tokens=1,
-                index=0
+                index=0,
             ),
             Chunk(
                 content="world",
                 position=ChunkPosition(start=6, end=11, line=1, column=7, end_line=1, end_column=11),
                 tokens=1,
-                index=1
-            )
+                index=1,
+            ),
         ]
 
         result = reconstruct_document(chunks, 11)
@@ -851,14 +857,14 @@ class TestUtilityFunctions:
                 content="Hello world",
                 position=ChunkPosition(start=0, end=11, line=1, column=1, end_line=1, end_column=11),
                 tokens=2,
-                index=0
+                index=0,
             ),
             Chunk(
                 content="world test",
                 position=ChunkPosition(start=6, end=16, line=1, column=7, end_line=1, end_column=16),
                 tokens=2,
-                index=1
-            )
+                index=1,
+            ),
         ]
 
         result = reconstruct_document(chunks, 16)
@@ -874,14 +880,14 @@ class TestUtilityFunctions:
                 content="world",
                 position=ChunkPosition(start=6, end=11, line=1, column=7, end_line=1, end_column=11),
                 tokens=1,
-                index=1
+                index=1,
             ),
             Chunk(
                 content="Hello ",
                 position=ChunkPosition(start=0, end=6, line=1, column=1, end_line=1, end_column=6),
                 tokens=1,
-                index=0
-            )
+                index=0,
+            ),
         ]
 
         result = reconstruct_document(chunks, 11)

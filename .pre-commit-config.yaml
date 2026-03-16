@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 26.3.1
+    hooks:
+      - id: black
+        language_version: python3.12
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.12
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+
+  # mypy is run in CI but excluded from pre-commit hooks
+  # due to pre-existing type errors (605 errors in 33 files).
+  # Uncomment once type errors are resolved:
+  # - repo: local
+  #   hooks:
+  #     - id: mypy
+  #       name: mypy
+  #       entry: bash -c '.venv/Scripts/mypy.exe src/'
+  #       language: system
+  #       types: [python]
+  #       files: ^src/
+  #       pass_filenames: false

@@ -23,14 +23,16 @@ def _make_results(n=5):
     """Create a list of dummy QueryResult objects."""
     results = []
     for i in range(n):
-        results.append(QueryResult(
-            id=f"doc_{i}:0",
-            content=f"document about topic {i} with some words",
-            score=0.9 - i * 0.1,
-            document_id=f"doc_{i}",
-            metadata={"index": i},
-            type="chunk",
-        ))
+        results.append(
+            QueryResult(
+                id=f"doc_{i}:0",
+                content=f"document about topic {i} with some words",
+                score=0.9 - i * 0.1,
+                document_id=f"doc_{i}",
+                metadata={"index": i},
+                type="chunk",
+            )
+        )
     return results
 
 
@@ -66,12 +68,20 @@ class TestMockReranker:
     def test_rerank_word_overlap(self):
         reranker = MockReranker()
         results = [
-            QueryResult(id="1", content="python programming language", score=0.5, document_id="d1", metadata={},
-                        type="chunk"),
-            QueryResult(id="2", content="java enterprise development", score=0.8, document_id="d2", metadata={},
-                        type="chunk"),
-            QueryResult(id="3", content="python web development programming", score=0.3, document_id="d3", metadata={},
-                        type="chunk"),
+            QueryResult(
+                id="1", content="python programming language", score=0.5, document_id="d1", metadata={}, type="chunk"
+            ),
+            QueryResult(
+                id="2", content="java enterprise development", score=0.8, document_id="d2", metadata={}, type="chunk"
+            ),
+            QueryResult(
+                id="3",
+                content="python web development programming",
+                score=0.3,
+                document_id="d3",
+                metadata={},
+                type="chunk",
+            ),
         ]
 
         reranked = reranker.rerank("python programming", results)

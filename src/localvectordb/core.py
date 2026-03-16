@@ -14,6 +14,7 @@ LocalVectorDB v1.0 Core Components
 This module contains the foundational classes and data structures for the new
 document-first architecture.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -30,9 +31,19 @@ from .utils import parse_iso8601
 logger = logging.getLogger(__name__)
 
 # Type alias for the document-score aggregation that occurs when querying
-DocumentScoringMethod = Literal["best", "average", "worst", "weighted_average", "frequency_boost",
-"harmonic_mean", "diminishing_returns", "statistical", "robust_mean",
-"percentile", "geometric_mean"]
+DocumentScoringMethod = Literal[
+    "best",
+    "average",
+    "worst",
+    "weighted_average",
+    "frequency_boost",
+    "harmonic_mean",
+    "diminishing_returns",
+    "statistical",
+    "robust_mean",
+    "percentile",
+    "geometric_mean",
+]
 """
 Document scoring methods for aggregating chunk scores:
 
@@ -79,7 +90,7 @@ def _convert_datetime_with_tz(dt) -> Optional[datetime]:
         logger.warning(
             "Failed to parse timestamp value '%s' as datetime. "
             "This may indicate SQLite type detection mismatch. Returning None.",
-            s
+            s,
         )
         return None
 
@@ -146,6 +157,7 @@ class MetadataField:
         Only applicable to TEXT fields, by default False.
 
     """
+
     type: MetadataFieldType | str | Type
     indexed: bool = False
     required: bool = False
@@ -234,16 +246,16 @@ class ChunkPosition:
         {'start': 0, 'end': 10, 'line': 1, 'column': 1, 'end_line': 1, 'end_column': 10}
         """
         return {
-            'start': self.start,
-            'end': self.end,
-            'line': self.line,
-            'column': self.column,
-            'end_line': self.end_line,
-            'end_column': self.end_column
+            "start": self.start,
+            "end": self.end,
+            "line": self.line,
+            "column": self.column,
+            "end_line": self.end_line,
+            "end_column": self.end_column,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'ChunkPosition':
+    def from_dict(cls, data: dict) -> "ChunkPosition":
         """Create a ChunkPosition instance from a dictionary.
 
         Parameters
@@ -286,6 +298,7 @@ class Chunk:
         Identifier in the FAISS index, if applicable.
 
     """
+
     content: str
     position: ChunkPosition
     tokens: int
@@ -299,9 +312,9 @@ class Chunk:
 
     def calculate_content_hash(self) -> str:
         """Calculate SHA-256 hash of chunk content"""
-        return hashlib.sha256(self.content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
 
-    def content_equals(self, other: 'Chunk') -> bool:
+    def content_equals(self, other: "Chunk") -> bool:
         """Check if this chunk has the same content as another chunk"""
         return self.content_hash == other.content_hash
 
@@ -317,9 +330,9 @@ class Chunk:
 
     def highlight_in_original(self, original: str) -> str:
         """Return original text with chunk highlighted"""
-        before = original[:self.position.start]
-        chunk_text = original[self.position.start:self.position.end]
-        after = original[self.position.end:]
+        before = original[: self.position.start]
+        chunk_text = original[self.position.start : self.position.end]
+        after = original[self.position.end :]
 
         return f"{before}<<<{chunk_text}>>>{after}"
 
@@ -330,6 +343,7 @@ class SectionBoundary:
 
     Used during ingestion to track where sections start and end in the original text.
     """
+
     index: int
     heading: Optional[str]
     heading_level: Optional[int]
@@ -348,6 +362,7 @@ class Section:
     a mid-level abstraction between documents and chunks for hierarchical
     retrieval.
     """
+
     index: int
     heading: Optional[str]
     heading_level: Optional[int]
@@ -366,9 +381,13 @@ class Section:
             pass
 
     @classmethod
-    def from_boundary(cls, boundary: SectionBoundary, content_hash: str,
-                      faiss_id: Optional[int] = None,
-                      chunks: Optional[List[Chunk]] = None) -> "Section":
+    def from_boundary(
+        cls,
+        boundary: SectionBoundary,
+        content_hash: str,
+        faiss_id: Optional[int] = None,
+        chunks: Optional[List[Chunk]] = None,
+    ) -> "Section":
         """Create a Section from a SectionBoundary."""
         return cls(
             index=boundary.index,
@@ -388,6 +407,7 @@ class Section:
 @dataclass
 class Document:
     """A document in the vector database"""
+
     id: str
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -403,45 +423,46 @@ class Document:
 
     def _calculate_hash(self) -> str:
         """Calculate SHA-256 hash of document content"""
-        return hashlib.sha256(self.content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
 
     def needs_update(self, new_content: str) -> bool:
         """Check if document content has changed"""
-        new_hash = hashlib.sha256(new_content.encode('utf-8')).hexdigest()
+        new_hash = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
         return new_hash != self.content_hash
 
     @classmethod
-    def from_dict(cls, data: dict) -> Optional['Document']:
+    def from_dict(cls, data: dict) -> Optional["Document"]:
         """Create a Document from a dictionary response"""
         if not data:
             return None
 
         # Parse datetime fields
         created_at = None
-        if data.get('created_at'):
-            created_at = parse_iso8601(data['created_at'])
+        if data.get("created_at"):
+            created_at = parse_iso8601(data["created_at"])
 
         updated_at = None
-        if data.get('updated_at'):
-            updated_at = parse_iso8601(data['updated_at'])
+        if data.get("updated_at"):
+            updated_at = parse_iso8601(data["updated_at"])
 
         return cls(
-            id=data['id'],
-            content=data['content'],
-            metadata=data.get('metadata', {}),
+            id=data["id"],
+            content=data["content"],
+            metadata=data.get("metadata", {}),
             created_at=created_at,
             updated_at=updated_at,
-            content_hash=data.get('content_hash'),
-            chunks=data.get('chunks', [])
+            content_hash=data.get("content_hash"),
+            chunks=data.get("chunks", []),
         )
 
 
 @dataclass
 class QueryResult:
     """Result from a search query"""
+
     id: str
     score: float  # Normalized 0-1, higher=better
-    type: Literal['document', 'chunk', 'section', 'context', 'enriched', 'group', 'aggregation']
+    type: Literal["document", "chunk", "section", "context", "enriched", "group", "aggregation"]
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -451,7 +472,7 @@ class QueryResult:
 
     def get_context(self, original: str, window: int = 100) -> Optional[str]:
         """Get context around chunk (only for chunk results)"""
-        if self.type == 'chunk' and self.position:
+        if self.type == "chunk" and self.position:
             start = max(0, self.position.start - window)
             end = min(len(original), self.position.end + window)
 
@@ -475,9 +496,7 @@ class QueryResult:
         q_type = data.get("type", "document")
         valid_types = ("document", "chunk", "section", "context", "enriched", "group", "aggregation")
         if q_type not in valid_types:
-            raise ValueError(
-                f"`type` must be one of {valid_types}"
-            )
+            raise ValueError(f"`type` must be one of {valid_types}")
 
         return cls(
             id=data["id"],
@@ -517,4 +536,3 @@ class QueryResult:
 #
 #     def order_by(self, ) -> QueryResultList:
 #         pass
-

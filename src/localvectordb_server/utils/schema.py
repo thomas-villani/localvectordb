@@ -70,18 +70,14 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
     for field_name, field_config in schema_data.items():
         if not isinstance(field_name, str) or not field_name.strip():
             raise ValidationError(
-                "Metadata field names must be non-empty strings",
-                field=f"metadata_schema.{field_name}"
+                "Metadata field names must be non-empty strings", field=f"metadata_schema.{field_name}"
             )
 
         # Validate SQL identifier safety
         try:
             validate_sql_identifier(field_name)
         except ValueError as e:
-            raise ValidationError(
-                f"Invalid field name: {e}",
-                field=f"metadata_schema.{field_name}"
-            ) from e
+            raise ValidationError(f"Invalid field name: {e}", field=f"metadata_schema.{field_name}") from e
 
         try:
             if isinstance(field_config, str):
@@ -90,56 +86,48 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
                     field_type = MetadataFieldType(field_config)
                 except ValueError as e:
                     raise ValidationError(
-                        f"Invalid field type '{field_config}': {e}",
-                        field=f"metadata_schema.{field_name}.type"
+                        f"Invalid field type '{field_config}': {e}", field=f"metadata_schema.{field_name}.type"
                     ) from e
                 parsed_schema[field_name] = MetadataField(type=field_type)
 
             elif isinstance(field_config, dict):
                 # Full field configuration
-                if 'type' not in field_config:
+                if "type" not in field_config:
                     raise ValidationError(
-                        "Field configuration must include 'type'",
-                        field=f"metadata_schema.{field_name}"
+                        "Field configuration must include 'type'", field=f"metadata_schema.{field_name}"
                     )
 
                 try:
-                    field_type = MetadataFieldType(field_config['type'])
+                    field_type = MetadataFieldType(field_config["type"])
                 except ValueError as e:
                     raise ValidationError(
-                        f"Invalid field type '{field_config['type']}': {e}",
-                        field=f"metadata_schema.{field_name}.type"
+                        f"Invalid field type '{field_config['type']}': {e}", field=f"metadata_schema.{field_name}.type"
                     ) from e
 
                 # Validate boolean fields
-                indexed = field_config.get('indexed', False)
-                required = field_config.get('required', False)
+                indexed = field_config.get("indexed", False)
+                required = field_config.get("required", False)
 
                 if not isinstance(indexed, bool):
                     raise ValidationError(
-                        "Field 'indexed' must be a boolean",
-                        field=f"metadata_schema.{field_name}.indexed"
+                        "Field 'indexed' must be a boolean", field=f"metadata_schema.{field_name}.indexed"
                     )
 
                 if not isinstance(required, bool):
                     raise ValidationError(
-                        "Field 'required' must be a boolean",
-                        field=f"metadata_schema.{field_name}.required"
+                        "Field 'required' must be a boolean", field=f"metadata_schema.{field_name}.required"
                     )
 
                 # Handle default value if present
-                default_value = field_config.get('default_value')
+                default_value = field_config.get("default_value")
 
                 parsed_schema[field_name] = MetadataField(
-                    type=field_type,
-                    indexed=indexed,
-                    required=required,
-                    default_value=default_value
+                    type=field_type, indexed=indexed, required=required, default_value=default_value
                 )
             else:
                 raise ValidationError(
                     "Field configuration must be either a type string or configuration object",
-                    field=f"metadata_schema.{field_name}"
+                    field=f"metadata_schema.{field_name}",
                 )
 
         except ValidationError:
@@ -148,8 +136,7 @@ def parse_metadata_schema(schema_data: Dict[str, Any]) -> Dict[str, MetadataFiel
         except Exception as e:
             # Wrap other exceptions in ValidationError
             raise ValidationError(
-                f"Error parsing field configuration: {e}",
-                field=f"metadata_schema.{field_name}"
+                f"Error parsing field configuration: {e}", field=f"metadata_schema.{field_name}"
             ) from e
 
     return parsed_schema

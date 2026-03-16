@@ -2,6 +2,7 @@
 """
 Tests for hierarchical document vectors (sections, multi-level FAISS indices).
 """
+
 import hashlib
 import tempfile
 
@@ -65,6 +66,7 @@ def markdown_doc():
 
 # --- SectionDetector Tests ---
 
+
 class TestSectionDetector:
     """Test section detection with various document formats."""
 
@@ -118,7 +120,7 @@ class TestSectionDetector:
     def test_custom_pattern(self):
         """Test custom section pattern."""
         text = "SECTION 1: Intro\nSome text\nSECTION 2: Methods\nMore text"
-        detector = SectionDetector(pattern=r'^(SECTION \d+): (.+)$')
+        detector = SectionDetector(pattern=r"^(SECTION \d+): (.+)$")
         sections = detector.detect_sections(text)
         assert len(sections) == 2
         assert sections[0].heading == "Intro"
@@ -195,11 +197,12 @@ class TestChunkToSectionAssignment:
         sections = section_detector.detect_sections(text)
 
         content_hash = SectionDetector.compute_section_content_hash(text, sections[0])
-        expected = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
         assert content_hash == expected
 
 
 # --- Section Metadata Extractors ---
+
 
 class TestSectionMetadataExtractors:
     """Test section metadata extractors."""
@@ -262,8 +265,10 @@ class TestSectionMetadataExtractors:
 
     def test_custom_extractor(self):
         """Test user-provided callable extractor."""
+
         class MyExtractor(SectionMetadataExtractor):
             name = "custom"
+
             def extract(self, section_text, heading, context):
                 return {"has_heading": heading is not None}
 
@@ -277,13 +282,19 @@ class TestSectionMetadataExtractors:
 
 # --- Section dataclass ---
 
+
 class TestSectionDataclass:
     """Test Section and SectionBoundary dataclasses."""
 
     def test_section_from_boundary(self):
         boundary = SectionBoundary(
-            index=0, heading="Intro", heading_level=1,
-            start_pos=0, end_pos=100, start_line=1, end_line=10,
+            index=0,
+            heading="Intro",
+            heading_level=1,
+            start_pos=0,
+            end_pos=100,
+            start_line=1,
+            end_line=10,
         )
         section = Section.from_boundary(boundary, content_hash="abc123", faiss_id=42)
         assert section.index == 0
@@ -294,13 +305,18 @@ class TestSectionDataclass:
 
     def test_section_boundary_metadata(self):
         boundary = SectionBoundary(
-            index=0, heading="Test", heading_level=1,
-            start_pos=0, end_pos=50, metadata={"key": "value"},
+            index=0,
+            heading="Test",
+            heading_level=1,
+            start_pos=0,
+            end_pos=50,
+            metadata={"key": "value"},
         )
         assert boundary.metadata == {"key": "value"}
 
 
 # --- Integration tests with mock embeddings ---
+
 
 class TestHierarchicalIntegration:
     """Integration tests using MockEmbeddings."""
@@ -350,7 +366,7 @@ class TestHierarchicalIntegration:
         db.upsert(["Hello world. This is a test."], ids=["doc1"])
         results = db.query("hello", k=1)
         assert len(results) >= 1
-        assert results[0].type == 'document'
+        assert results[0].type == "document"
 
     def test_upsert_with_hierarchy(self, db_with_hierarchy):
         """Test that upsert populates sections table."""
@@ -358,12 +374,12 @@ class TestHierarchicalIntegration:
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
 
         stats = db.get_stats()
-        assert stats['documents'] == 1
-        assert stats['chunks'] > 0
-        assert stats['sections'] > 0
-        assert stats['hierarchical_embeddings'] is True
-        assert stats['section_index_vectors'] > 0
-        assert stats['document_index_vectors'] > 0
+        assert stats["documents"] == 1
+        assert stats["chunks"] > 0
+        assert stats["sections"] > 0
+        assert stats["hierarchical_embeddings"] is True
+        assert stats["section_index_vectors"] > 0
+        assert stats["document_index_vectors"] > 0
 
     def test_query_default_unchanged(self, db_with_hierarchy):
         """Default query behavior unchanged with hierarchical enabled."""
@@ -372,7 +388,7 @@ class TestHierarchicalIntegration:
         results = db.query("neural networks", k=3)
         assert len(results) >= 1
         # Default returns documents
-        assert results[0].type == 'document'
+        assert results[0].type == "document"
 
     def test_query_return_sections(self, db_with_hierarchy):
         """query(return_type='sections') returns section-level results."""
@@ -381,8 +397,8 @@ class TestHierarchicalIntegration:
         results = db.query("neural networks", return_type="sections", k=5)
         # Should get section results (if chunks map to sections)
         if results:
-            assert results[0].type == 'section'
-            assert ':section:' in results[0].id
+            assert results[0].type == "section"
+            assert ":section:" in results[0].id
 
     def test_query_search_level_sections(self, db_with_hierarchy):
         """query(search_level='sections') searches section FAISS index."""
@@ -390,9 +406,9 @@ class TestHierarchicalIntegration:
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
         results = db.query("neural networks", search_level="sections", k=5)
         assert len(results) >= 1
-        assert results[0].type == 'section'
+        assert results[0].type == "section"
         # Should contain section metadata
-        assert 'section_heading' in results[0].metadata
+        assert "section_heading" in results[0].metadata
 
     def test_query_search_level_documents(self, db_with_hierarchy):
         """query(search_level='documents') searches document FAISS index."""
@@ -400,7 +416,7 @@ class TestHierarchicalIntegration:
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
         results = db.query("neural networks", search_level="documents", k=5)
         assert len(results) >= 1
-        assert results[0].type == 'document'
+        assert results[0].type == "document"
 
     def test_section_metadata_populated(self, db_with_hierarchy):
         """Section metadata extractors populate section.metadata."""
@@ -411,7 +427,7 @@ class TestHierarchicalIntegration:
         results = db.query("introduction", search_level="sections", k=5)
         if results:
             # word_count extractor should have run
-            assert 'word_count' in results[0].metadata or True  # May be in section metadata
+            assert "word_count" in results[0].metadata or True  # May be in section metadata
 
     def test_delete_cascades_sections(self, db_with_hierarchy):
         """Document delete removes sections and FAISS vectors."""
@@ -419,14 +435,14 @@ class TestHierarchicalIntegration:
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
 
         stats_before = db.get_stats()
-        assert stats_before['sections'] > 0
-        assert stats_before['section_index_vectors'] > 0
+        assert stats_before["sections"] > 0
+        assert stats_before["section_index_vectors"] > 0
 
         db.delete("md_doc")
 
         stats_after = db.get_stats()
-        assert stats_after['documents'] == 0
-        assert stats_after['sections'] == 0
+        assert stats_after["documents"] == 0
+        assert stats_after["sections"] == 0
 
     def test_upsert_update_replaces_sections(self, db_with_hierarchy):
         """Upserting same doc ID replaces sections."""
@@ -438,9 +454,9 @@ class TestHierarchicalIntegration:
         db.upsert([new_doc], ids=["md_doc"])
         stats2 = db.get_stats()
 
-        assert stats2['documents'] == 1
+        assert stats2["documents"] == 1
         # Sections should reflect new doc
-        assert stats2['sections'] > 0
+        assert stats2["sections"] > 0
 
     def test_multiple_documents(self, db_with_hierarchy):
         """Test hierarchical with multiple documents."""
@@ -451,8 +467,8 @@ class TestHierarchicalIntegration:
         db.upsert([doc1, doc2], ids=["doc1", "doc2"])
 
         stats = db.get_stats()
-        assert stats['documents'] == 2
-        assert stats['sections'] >= 2
+        assert stats["documents"] == 2
+        assert stats["sections"] >= 2
 
         results = db.query("neural", search_level="documents", k=2)
         assert len(results) >= 1
@@ -472,21 +488,16 @@ class TestHierarchicalIntegration:
         db.rebuild_hierarchical_embeddings()
 
         stats = db.get_stats()
-        assert stats['sections'] > 0
+        assert stats["sections"] > 0
 
     def test_query_builder_search_level(self, db_with_hierarchy):
         """Test QueryBuilder .search_level() and .sections() methods."""
         db = db_with_hierarchy
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
 
-        results = (db.query_builder()
-                   .search("neural networks")
-                   .search_level("sections")
-                   .sections()
-                   .limit(5)
-                   .execute())
+        results = db.query_builder().search("neural networks").search_level("sections").sections().limit(5).execute()
         if results:
-            assert results[0].type == 'section'
+            assert results[0].type == "section"
 
     def test_save_and_reload(self):
         """Test that hierarchical indices persist across save/load."""
@@ -517,9 +528,9 @@ class TestHierarchicalIntegration:
             )
             stats2 = db2.get_stats()
 
-            assert stats2['sections'] == stats1['sections']
-            assert stats2['section_index_vectors'] == stats1['section_index_vectors']
-            assert stats2['document_index_vectors'] == stats1['document_index_vectors']
+            assert stats2["sections"] == stats1["sections"]
+            assert stats2["section_index_vectors"] == stats1["section_index_vectors"]
+            assert stats2["document_index_vectors"] == stats1["document_index_vectors"]
 
             # Should be able to query
             results = db2.query("neural", search_level="sections", k=3)

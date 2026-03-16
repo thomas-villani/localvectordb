@@ -133,6 +133,9 @@ dev = [
     "ruff>=0.12.12",
     "mypy>=1.17.1",
     "pytest-cov>=7.0.0",
+    "bandit[toml]>=1.8.0",
+    "black>=24.0.0",
+    "pre-commit>=4.0.0",
 ]
 
 
@@ -187,3 +190,12 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 warn_return_any = true
 no_implicit_optional = true
+
+[tool.bandit]
+targets = ["src"]
+exclude_dirs = ["tests", ".venv", "build", "dist"]
+skips = ["B101", "B110", "B112", "B108", "B608"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]

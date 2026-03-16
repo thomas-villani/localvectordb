@@ -15,7 +15,7 @@ import click
 from localvectordb_server.cli._utils import format_table, print_db_stats
 
 
-@click.command('shell')
+@click.command("shell")
 @click.pass_context
 def shell(ctx):
     """
@@ -30,7 +30,7 @@ def shell(ctx):
     import shlex
     from pathlib import Path
 
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     def parse_command(command_line):
         """Parse command line into command and arguments"""
@@ -46,7 +46,7 @@ def shell(ctx):
     def show_help():
         """Display help for all available commands"""
         click.echo("Available commands:")
-        click.echo("  search \"<query>\" [limit] [type] - Search for documents")
+        click.echo('  search "<query>" [limit] [type] - Search for documents')
         click.echo("    Types: vector (default), keyword, hybrid")
         click.echo("  get <id>                       - Get document by ID")
         click.echo("  add <file or glob>             - Add file(s) to database")
@@ -75,19 +75,21 @@ def shell(ctx):
         if not schema_fields:
             return "No schema defined"
 
-        headers = ['Field Name', 'Type', 'Indexed', 'Required', 'Default Value']
+        headers = ["Field Name", "Type", "Indexed", "Required", "Default Value"]
         rows = []
         for field_name, field_def in schema_fields.items():
-            default_val = str(field_def.default_value) if field_def.default_value is not None else 'None'
+            default_val = str(field_def.default_value) if field_def.default_value is not None else "None"
             if len(default_val) > 25:
                 default_val = default_val[:22] + "..."
-            rows.append([
-                field_name,
-                field_def.type.value.upper(),
-                "✓" if field_def.indexed else "✗",
-                "✓" if field_def.required else "✗",
-                default_val
-            ])
+            rows.append(
+                [
+                    field_name,
+                    field_def.type.value.upper(),
+                    "✓" if field_def.indexed else "✗",
+                    "✓" if field_def.required else "✗",
+                    default_val,
+                ]
+            )
 
         return format_table(headers, rows)
 
@@ -131,16 +133,16 @@ def shell(ctx):
 
             try:
                 schema_info = db.get_metadata_schema_info()
-                schema_fields = schema_info.get('fields', {})
+                schema_fields = schema_info.get("fields", {})
 
                 if format_type == "json":
                     schema_data = {}
                     for field_name, field_def in schema_fields.items():
                         schema_data[field_name] = {
-                            'type': field_def.type.value,
-                            'indexed': field_def.indexed,
-                            'required': field_def.required,
-                            'default_value': field_def.default_value
+                            "type": field_def.type.value,
+                            "indexed": field_def.indexed,
+                            "required": field_def.required,
+                            "default_value": field_def.default_value,
                         }
                     click.echo(json.dumps(schema_data, indent=2))
                 elif format_type == "table":
@@ -149,7 +151,7 @@ def shell(ctx):
                     click.echo(format_schema_pretty(schema_fields))
 
             except Exception as e:
-                click.secho(f"Error retrieving schema: {str(e)}", fg='bright_red')
+                click.secho(f"Error retrieving schema: {str(e)}", fg="bright_red")
 
         elif subcmd == "update":
             # Update schema from file
@@ -163,26 +165,27 @@ def shell(ctx):
                 return
 
             try:
-                with open(file_path, 'r') as f:
+                with open(file_path, "r") as f:
                     schema_data = json.load(f)
 
                 # Convert to MetadataField objects
                 from localvectordb.core import MetadataField, MetadataFieldType
+
                 new_schema = {}
                 for field_name, field_config in schema_data.items():
                     if isinstance(field_config, str):
                         new_schema[field_name] = MetadataField(type=MetadataFieldType(field_config))
                     elif isinstance(field_config, dict):
-                        field_type = MetadataFieldType(field_config['type'])
+                        field_type = MetadataFieldType(field_config["type"])
                         new_schema[field_name] = MetadataField(
                             type=field_type,
-                            indexed=field_config.get('indexed', False),
-                            required=field_config.get('required', False),
-                            default_value=field_config.get('default_value', None)
+                            indexed=field_config.get("indexed", False),
+                            required=field_config.get("required", False),
+                            default_value=field_config.get("default_value", None),
                         )
 
                 # Check if we have column mappings
-                column_mapping = getattr(handle_schema_command, '_column_mapping', None)
+                column_mapping = getattr(handle_schema_command, "_column_mapping", None)
 
                 # Show planned changes
                 click.echo(f"\n{click.style('Planned Changes:', fg='cyan', bold=True)}")
@@ -216,49 +219,48 @@ def shell(ctx):
 
                 # Apply update
                 click.echo(f"\n{click.style('Applying schema update...', fg='blue')}")
-                changes = db.update_metadata_schema(
-                    new_schema=new_schema,
-                    column_mapping=column_mapping
-                )
+                changes = db.update_metadata_schema(new_schema=new_schema, column_mapping=column_mapping)
 
                 # Clear column mapping after use
-                if hasattr(handle_schema_command, '_column_mapping'):
-                    delattr(handle_schema_command, '_column_mapping')
+                if hasattr(handle_schema_command, "_column_mapping"):
+                    delattr(handle_schema_command, "_column_mapping")
 
                 # Report results
                 click.echo(f"\n{click.style('Schema Update Complete!', fg='green', bold=True)}")
 
-                if changes['added_fields']:
+                if changes["added_fields"]:
                     click.echo(f"  {click.style('Added fields:', fg='green')} {', '.join(changes['added_fields'])}")
 
-                if changes['removed_fields']:
+                if changes["removed_fields"]:
                     click.echo(f"  {click.style('Removed fields:', fg='red')} {', '.join(changes['removed_fields'])}")
 
-                if changes['remapped_columns']:
+                if changes["remapped_columns"]:
                     click.echo(f"  {click.style('Remapped columns:', fg='cyan')}")
-                    for remap in changes['remapped_columns']:
-                        click.echo(f"    {remap['old_column']} → {remap['new_column']} "
-                                   f"({remap['rows_transferred']} rows transferred)")
+                    for remap in changes["remapped_columns"]:
+                        click.echo(
+                            f"    {remap['old_column']} → {remap['new_column']} "
+                            f"({remap['rows_transferred']} rows transferred)"
+                        )
 
-                if changes['populated_defaults']:
+                if changes["populated_defaults"]:
                     click.echo(f"  {click.style('Populated defaults:', fg='yellow')}")
-                    for default_info in changes['populated_defaults']:
+                    for default_info in changes["populated_defaults"]:
                         click.echo(f"    {default_info['field_name']}: {default_info['rows_updated']} rows updated")
 
-                if changes['warnings']:
+                if changes["warnings"]:
                     click.echo(f"\n{click.style('Warnings:', fg='yellow')}")
-                    for warning in changes['warnings']:
+                    for warning in changes["warnings"]:
                         click.echo(f"  ⚠ {warning}")
 
-                if changes['errors']:
+                if changes["errors"]:
                     click.echo(f"\n{click.style('Errors:', fg='red')}")
-                    for error in changes['errors']:
+                    for error in changes["errors"]:
                         click.echo(f"  ✗ {error}")
 
             except json.JSONDecodeError as e:
-                click.secho(f"Error: Invalid JSON in file: {str(e)}", fg='bright_red')
+                click.secho(f"Error: Invalid JSON in file: {str(e)}", fg="bright_red")
             except Exception as e:
-                click.secho(f"Error updating schema: {str(e)}", fg='bright_red')
+                click.secho(f"Error updating schema: {str(e)}", fg="bright_red")
 
         elif subcmd == "update-str":
             # Update schema from JSON string
@@ -273,41 +275,39 @@ def shell(ctx):
 
                 # Convert to MetadataField objects
                 from localvectordb.core import MetadataField, MetadataFieldType
+
                 new_schema = {}
                 for field_name, field_config in schema_data.items():
                     if isinstance(field_config, str):
                         new_schema[field_name] = MetadataField(type=MetadataFieldType(field_config))
                     elif isinstance(field_config, dict):
-                        field_type = MetadataFieldType(field_config['type'])
+                        field_type = MetadataFieldType(field_config["type"])
                         new_schema[field_name] = MetadataField(
                             type=field_type,
-                            indexed=field_config.get('indexed', False),
-                            required=field_config.get('required', False),
-                            default_value=field_config.get('default_value', None)
+                            indexed=field_config.get("indexed", False),
+                            required=field_config.get("required", False),
+                            default_value=field_config.get("default_value", None),
                         )
 
                 # Use same logic as file-based update
-                column_mapping = getattr(handle_schema_command, '_column_mapping', None)
+                column_mapping = getattr(handle_schema_command, "_column_mapping", None)
 
                 # Apply update with confirmation
                 if click.confirm(f"{click.style('Apply schema update?', fg='yellow')}"):
-                    changes = db.update_metadata_schema(
-                        new_schema=new_schema,
-                        column_mapping=column_mapping
-                    )
+                    changes = db.update_metadata_schema(new_schema=new_schema, column_mapping=column_mapping)
 
-                    if hasattr(handle_schema_command, '_column_mapping'):
-                        delattr(handle_schema_command, '_column_mapping')
+                    if hasattr(handle_schema_command, "_column_mapping"):
+                        delattr(handle_schema_command, "_column_mapping")
 
                     click.echo(f"{click.style('Schema updated successfully!', fg='green')}")
-                    if changes['remapped_columns']:
-                        for remap in changes['remapped_columns']:
+                    if changes["remapped_columns"]:
+                        for remap in changes["remapped_columns"]:
                             click.echo(f"  Remapped: {remap['old_column']} → {remap['new_column']}")
 
             except json.JSONDecodeError as e:
-                click.secho(f"Error: Invalid JSON string: {str(e)}", fg='bright_red')
+                click.secho(f"Error: Invalid JSON string: {str(e)}", fg="bright_red")
             except Exception as e:
-                click.secho(f"Error updating schema: {str(e)}", fg='bright_red')
+                click.secho(f"Error updating schema: {str(e)}", fg="bright_red")
 
         elif subcmd == "export":
             # Export current schema
@@ -319,7 +319,7 @@ def shell(ctx):
 
             try:
                 schema_info = db.get_metadata_schema_info()
-                schema_fields = schema_info.get('fields', {})
+                schema_fields = schema_info.get("fields", {})
 
                 if not schema_fields:
                     click.echo("No metadata schema to export.")
@@ -329,24 +329,24 @@ def shell(ctx):
                 export_data = {}
                 for field_name, field_def in schema_fields.items():
                     field_data = {
-                        'type': field_def.type.value,
-                        'indexed': field_def.indexed,
-                        'required': field_def.required
+                        "type": field_def.type.value,
+                        "indexed": field_def.indexed,
+                        "required": field_def.required,
                     }
 
                     if field_def.default_value is not None:
-                        field_data['default_value'] = field_def.default_value
+                        field_data["default_value"] = field_def.default_value
 
                     export_data[field_name] = field_data
 
-                with open(file_path, 'w') as f:
+                with open(file_path, "w") as f:
                     json.dump(export_data, f, indent=2)
 
                 click.echo(f"Schema exported to {file_path}")
                 click.echo(f"Fields exported: {len(export_data)}")
 
             except Exception as e:
-                click.secho(f"Error exporting schema: {str(e)}", fg='bright_red')
+                click.secho(f"Error exporting schema: {str(e)}", fg="bright_red")
 
         elif subcmd == "map":
             # Add column mapping
@@ -357,7 +357,7 @@ def shell(ctx):
             old_col, new_col = args[1], args[2]
 
             # Store mapping for next update
-            if not hasattr(handle_schema_command, '_column_mapping'):
+            if not hasattr(handle_schema_command, "_column_mapping"):
                 handle_schema_command._column_mapping = {}
 
             handle_schema_command._column_mapping[old_col] = new_col
@@ -366,13 +366,13 @@ def shell(ctx):
 
         elif subcmd == "map-clear":
             # Clear column mappings
-            if hasattr(handle_schema_command, '_column_mapping'):
-                delattr(handle_schema_command, '_column_mapping')
+            if hasattr(handle_schema_command, "_column_mapping"):
+                delattr(handle_schema_command, "_column_mapping")
             click.echo("Column mappings cleared")
 
         elif subcmd == "map-show":
             # Show current column mappings
-            column_mapping = getattr(handle_schema_command, '_column_mapping', None)
+            column_mapping = getattr(handle_schema_command, "_column_mapping", None)
             if column_mapping:
                 click.echo("Current column mappings:")
                 for old_col, new_col in column_mapping.items():
@@ -385,8 +385,9 @@ def shell(ctx):
             click.echo("Available schema commands: show, update, update-str, export, map, map-clear, map-show")
 
     try:
-        click.echo(click.style("Connected to database: ", fg="green")
-                   + click.style(db.name, fg="green", underline=True))
+        click.echo(
+            click.style("Connected to database: ", fg="green") + click.style(db.name, fg="green", underline=True)
+        )
 
         stats = db.get_stats()
         click.secho(f"Documents: {stats['documents']}, Chunks: {stats['chunks']}", fg="blue")
@@ -401,33 +402,34 @@ def shell(ctx):
                 if not command:
                     continue
 
-                if command.lower() in ('exit', 'quit', 'q'):
+                if command.lower() in ("exit", "quit", "q"):
                     break
 
-                elif command.lower() in ('help', '?'):
+                elif command.lower() in ("help", "?"):
                     show_help()
                     continue
 
-                elif command.lower() == 'schema':
+                elif command.lower() == "schema":
                     handle_schema_command(args)
                     continue
 
-                elif command.lower() == 'clear':
+                elif command.lower() == "clear":
                     # Clear the console
                     import os
-                    os.system('cls' if os.name == 'nt' else 'clear')
+
+                    os.system("cls" if os.name == "nt" else "clear")  # nosec B605
                     continue
 
-                elif command.lower() == 'count':
+                elif command.lower() == "count":
                     stats = db.get_stats()
                     click.echo(f"Total documents: {stats['documents']}")
                     continue
 
-                elif command.lower() == 'stats':
+                elif command.lower() == "stats":
                     print_db_stats(db)
                     continue
 
-                elif command.lower() == 'info':
+                elif command.lower() == "info":
                     stats = db.get_stats()
                     click.echo("Database Info")
                     click.echo("-------------")
@@ -438,7 +440,7 @@ def shell(ctx):
                     click.echo(f"  Schema fields: {len(db.metadata_schema)}")
                     continue
 
-                elif command.lower() == 'list':
+                elif command.lower() == "list":
                     limit = int(args[0]) if len(args) > 0 and args[0].isdigit() else 20
                     offset = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
 
@@ -450,7 +452,7 @@ def shell(ctx):
                         click.echo("No documents found")
                     continue
 
-                elif command.lower() == 'get':
+                elif command.lower() == "get":
                     if not args:
                         click.secho("Error: get command requires a document ID", fg="bright_red")
                         continue
@@ -471,7 +473,7 @@ def shell(ctx):
                         click.secho(f"Error retrieving document: {str(e)}", fg="bright_red")
                     continue
 
-                elif command.lower() == 'delete':
+                elif command.lower() == "delete":
                     if not args:
                         click.secho("Error: delete command requires a document ID", fg="bright_red")
                         continue
@@ -491,14 +493,14 @@ def shell(ctx):
                         click.secho(f"Error deleting document: {str(e)}", fg="bright_red")
                     continue
 
-                elif command.lower() == 'search':
+                elif command.lower() == "search":
                     if not args:
                         click.secho("Error: search command requires a query", fg="bright_red")
                         continue
 
                     query = args[0]
                     limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 5
-                    search_type = args[2] if len(args) > 2 and args[2] in ['vector', 'keyword', 'hybrid'] else 'vector'
+                    search_type = args[2] if len(args) > 2 and args[2] in ["vector", "keyword", "hybrid"] else "vector"
 
                     try:
                         results = db.search(query, limit=limit, search_type=search_type)
@@ -520,7 +522,7 @@ def shell(ctx):
                         click.secho(f"Error searching: {str(e)}", fg="bright_red")
                     continue
 
-                elif command.lower() == 'add':
+                elif command.lower() == "add":
                     if not args:
                         click.secho("Error: add command requires file path or glob pattern", fg="bright_red")
                         continue
@@ -545,19 +547,21 @@ def shell(ctx):
                                 continue
 
                             try:
-                                with open(file_path, 'r', encoding='utf-8') as f:
+                                with open(file_path, "r", encoding="utf-8") as f:
                                     content = f.read()
                             except UnicodeError:
                                 click.secho(f"Cannot decode {file_path} as unicode, skipping!", fg="yellow")
                                 continue
 
                             documents.append(content)
-                            metadata.append({
-                                "source": file_path,
-                                "filename": path.name,
-                                "extension": path.suffix,
-                                "added_at": datetime.now().isoformat()
-                            })
+                            metadata.append(
+                                {
+                                    "source": file_path,
+                                    "filename": path.name,
+                                    "extension": path.suffix,
+                                    "added_at": datetime.now().isoformat(),
+                                }
+                            )
 
                         except Exception as e:
                             click.secho(f"Error processing {file_path}: {str(e)}", fg="bright_red")

@@ -50,9 +50,7 @@ async def classify_polarity(
     if not chunks:
         return []
 
-    chunks_text = "\n\n".join(
-        f"[Chunk {i}]:\n{c['content'][:3000]}" for i, c in enumerate(chunks)
-    )
+    chunks_text = "\n\n".join(f"[Chunk {i}]:\n{c['content'][:3000]}" for i, c in enumerate(chunks))
 
     try:
         response = await llm.complete(

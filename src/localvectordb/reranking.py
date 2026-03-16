@@ -32,26 +32,14 @@ logger = logging.getLogger(__name__)
 class Reranker(ABC):
     """Abstract base class for reranking providers."""
 
-    def __init__(
-            self,
-            model: str,
-            *,
-            timeout: int = 90,
-            max_retries: int = 3,
-            **kwargs: Any
-    ) -> None:
+    def __init__(self, model: str, *, timeout: int = 90, max_retries: int = 3, **kwargs: Any) -> None:
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
         self.config = kwargs
 
     @abstractmethod
-    def rerank(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
-    ) -> List[QueryResult]:
+    def rerank(self, query: str, results: List[QueryResult], top_k: Optional[int] = None) -> List[QueryResult]:
         """Rerank search results synchronously.
 
         Parameters
@@ -72,10 +60,7 @@ class Reranker(ABC):
         pass
 
     async def rerank_async(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
+        self, query: str, results: List[QueryResult], top_k: Optional[int] = None
     ) -> List[QueryResult]:
         """Rerank search results asynchronously. Default delegates to sync."""
         return self.rerank(query, results, top_k)
@@ -108,13 +93,13 @@ class JinaReranker(Reranker):
     """
 
     def __init__(
-            self,
-            model: str = "jina-reranker-v2-base-multilingual",
-            *,
-            api_key: Optional[str] = None,
-            timeout: int = 90,
-            max_retries: int = 3,
-            **kwargs: Any
+        self,
+        model: str = "jina-reranker-v2-base-multilingual",
+        *,
+        api_key: Optional[str] = None,
+        timeout: int = 90,
+        max_retries: int = 3,
+        **kwargs: Any,
     ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
 
@@ -135,12 +120,7 @@ class JinaReranker(Reranker):
     def validate_model(self) -> bool:
         return True
 
-    def rerank(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
-    ) -> List[QueryResult]:
+    def rerank(self, query: str, results: List[QueryResult], top_k: Optional[int] = None) -> List[QueryResult]:
         if not results:
             return results
 
@@ -196,10 +176,7 @@ class JinaReranker(Reranker):
         raise RerankerError("All Jina reranking attempts failed")
 
     async def rerank_async(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
+        self, query: str, results: List[QueryResult], top_k: Optional[int] = None
     ) -> List[QueryResult]:
         if not results:
             return results
@@ -252,7 +229,7 @@ class JinaReranker(Reranker):
                 if attempt >= self.max_retries:
                     raise RerankerError(f"Jina reranking failed: {e}") from e
                 logger.warning(f"Jina rerank attempt {attempt + 1} failed: {e}")
-                await asyncio.sleep(1.0 * (2 ** attempt))
+                await asyncio.sleep(1.0 * (2**attempt))
 
         raise RerankerError("All Jina reranking attempts failed")
 
@@ -269,13 +246,13 @@ class SentenceTransformersReranker(Reranker):
     """
 
     def __init__(
-            self,
-            model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
-            *,
-            device: Optional[str] = None,
-            timeout: int = 90,
-            max_retries: int = 3,
-            **kwargs: Any
+        self,
+        model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        *,
+        device: Optional[str] = None,
+        timeout: int = 90,
+        max_retries: int = 3,
+        **kwargs: Any,
     ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
         self.device = device
@@ -308,12 +285,7 @@ class SentenceTransformersReranker(Reranker):
         except Exception:
             return False
 
-    def rerank(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
-    ) -> List[QueryResult]:
+    def rerank(self, query: str, results: List[QueryResult], top_k: Optional[int] = None) -> List[QueryResult]:
         if not results:
             return results
 
@@ -351,14 +323,14 @@ class HuggingFaceReranker(Reranker):
     """
 
     def __init__(
-            self,
-            model: str = "BAAI/bge-reranker-v2-m3",
-            *,
-            api_key: Optional[str] = None,
-            base_url: Optional[str] = None,
-            timeout: int = 90,
-            max_retries: int = 3,
-            **kwargs: Any
+        self,
+        model: str = "BAAI/bge-reranker-v2-m3",
+        *,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: int = 90,
+        max_retries: int = 3,
+        **kwargs: Any,
     ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
 
@@ -375,12 +347,7 @@ class HuggingFaceReranker(Reranker):
     def validate_model(self) -> bool:
         return True
 
-    def rerank(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
-    ) -> List[QueryResult]:
+    def rerank(self, query: str, results: List[QueryResult], top_k: Optional[int] = None) -> List[QueryResult]:
         if not results:
             return results
 
@@ -444,14 +411,7 @@ class HuggingFaceReranker(Reranker):
 class MockReranker(Reranker):
     """Mock reranker for testing. Uses word-overlap scoring."""
 
-    def __init__(
-            self,
-            model: str = "mock-reranker",
-            *,
-            timeout: int = 90,
-            max_retries: int = 3,
-            **kwargs: Any
-    ) -> None:
+    def __init__(self, model: str = "mock-reranker", *, timeout: int = 90, max_retries: int = 3, **kwargs: Any) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
 
     @property
@@ -461,12 +421,7 @@ class MockReranker(Reranker):
     def validate_model(self) -> bool:
         return True
 
-    def rerank(
-            self,
-            query: str,
-            results: List[QueryResult],
-            top_k: Optional[int] = None
-    ) -> List[QueryResult]:
+    def rerank(self, query: str, results: List[QueryResult], top_k: Optional[int] = None) -> List[QueryResult]:
         if not results:
             return results
 
@@ -528,19 +483,11 @@ class RerankerRegistry:
         name = name.lower()
         if name not in cls._providers:
             available = ", ".join(cls._providers.keys())
-            raise ValueError(
-                f"Unknown reranker provider: {name}. "
-                f"Available providers: {available}"
-            )
+            raise ValueError(f"Unknown reranker provider: {name}. " f"Available providers: {available}")
         return cls._providers[name]
 
     @classmethod
-    def create_reranker(
-            cls,
-            provider_name: str,
-            model: Optional[str] = None,
-            **kwargs: Any
-    ) -> Reranker:
+    def create_reranker(cls, provider_name: str, model: Optional[str] = None, **kwargs: Any) -> Reranker:
         """Create a reranker instance."""
         provider_class = cls.get(provider_name)
         if model is not None:
@@ -568,11 +515,7 @@ RerankerRegistry.register("mock", MockReranker)
 
 
 # Convenience functions
-def create_reranker(
-        provider: str,
-        model: Optional[str] = None,
-        **kwargs: Any
-) -> Reranker:
+def create_reranker(provider: str, model: Optional[str] = None, **kwargs: Any) -> Reranker:
     """Create a reranker instance."""
     return RerankerRegistry.create_reranker(provider, model, **kwargs)
 

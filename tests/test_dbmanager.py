@@ -192,7 +192,7 @@ class TestDatabaseNameValidation:
         assert manager._validate_database_name(".hidden") is False
 
     def test_invalid_characters_rejected(self, manager):
-        for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']:
+        for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " "]:
             assert manager._validate_database_name(f"db{char}name") is False
 
     def test_null_byte_rejected(self, manager):

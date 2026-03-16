@@ -28,10 +28,6 @@ async def extract_claims(llm: LLMProvider, text: str) -> list[dict]:
         claims = extract_json(response)
         if not isinstance(claims, list):
             return []
-        return [
-            c
-            for c in claims
-            if isinstance(c, dict) and "claim" in c and "sentence" in c
-        ]
+        return [c for c in claims if isinstance(c, dict) and "claim" in c and "sentence" in c]
     except Exception:
         return []

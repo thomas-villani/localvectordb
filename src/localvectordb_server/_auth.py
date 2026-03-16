@@ -52,21 +52,18 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
     key_manager = current_app.key_manager
     if not key_manager:
         security_logger.log_auth_attempt(
-            success=False,
-            reason="KeyManager not available",
-            token_prefix=_mask_token(token)
+            success=False, reason="KeyManager not available", token_prefix=_mask_token(token)
         )
         return False, PermissionLevel.READ_WRITE
 
     try:
         # Check if we should auto-prune expired keys
-        auto_prune = (hasattr(current_app, 'config_obj') and
-                      getattr(current_app.config_obj.server.security, 'auto_prune_expired_keys', False))
+        auto_prune = hasattr(current_app, "config_obj") and getattr(
+            current_app.config_obj.server.security, "auto_prune_expired_keys", False
+        )
 
         is_valid, permission_level, key_id = key_manager.validate_key_with_permissions(
-            token,
-            update_last_used=True,
-            prune_expired=auto_prune
+            token, update_last_used=True, prune_expired=auto_prune
         )
 
         if is_valid:
@@ -76,7 +73,7 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
                 token_prefix=_mask_token(token),
                 validation_method="database",
                 permission_level=permission_level.value,
-                key_id=key_id
+                key_id=key_id,
             )
             logger.debug(
                 f"Token validated against database keys with permission: {permission_level.value}, key_id: {key_id}"
@@ -86,7 +83,7 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
                 success=False,
                 reason="Invalid or expired database key",
                 token_prefix=_mask_token(token),
-                validation_method="database"
+                validation_method="database",
             )
 
         return is_valid, permission_level or PermissionLevel.READ_WRITE
@@ -98,7 +95,7 @@ def _validate_database_key(token: str) -> tuple[bool, PermissionLevel]:
             reason="Database key validation error",
             token_prefix=_mask_token(token),
             validation_method="database",
-            error=str(e)
+            error=str(e),
         )
         return False, PermissionLevel.READ_WRITE
 
@@ -141,20 +138,12 @@ def validate_api_key(token: str) -> bool:
         True if token is valid from any source, False otherwise
     """
     if not token:
-        security_logger.log_auth_attempt(
-            success=False,
-            reason="No token provided",
-            token_prefix="empty"
-        )
+        security_logger.log_auth_attempt(success=False, reason="No token provided", token_prefix="empty")  # nosec B106
         return False
 
     # Validate token format
-    if not token.startswith('lvdb_'):
-        security_logger.log_auth_attempt(
-            success=False,
-            reason="Invalid token format",
-            token_prefix=_mask_token(token)
-        )
+    if not token.startswith("lvdb_"):
+        security_logger.log_auth_attempt(success=False, reason="Invalid token format", token_prefix=_mask_token(token))
         return False
 
     # Try database keys
@@ -163,9 +152,7 @@ def validate_api_key(token: str) -> bool:
         return True
     # Log final failure
     security_logger.log_auth_attempt(
-        success=False,
-        reason="Token validation failed for all sources",
-        token_prefix=_mask_token(token)
+        success=False, reason="Token validation failed for all sources", token_prefix=_mask_token(token)
     )
     logger.debug("Token validation failed for all sources")
     return False
@@ -186,20 +173,12 @@ def validate_api_key_with_permissions(token: str) -> tuple[bool, PermissionLevel
         (is_valid, permission_level) - permission_level defaults to READ_write if invalid
     """
     if not token:
-        security_logger.log_auth_attempt(
-            success=False,
-            reason="No token provided",
-            token_prefix="empty"
-        )
+        security_logger.log_auth_attempt(success=False, reason="No token provided", token_prefix="empty")  # nosec B106
         return False, PermissionLevel.READ_WRITE
 
     # Validate token format
-    if not token.startswith('lvdb_'):
-        security_logger.log_auth_attempt(
-            success=False,
-            reason="Invalid token format",
-            token_prefix=_mask_token(token)
-        )
+    if not token.startswith("lvdb_"):
+        security_logger.log_auth_attempt(success=False, reason="Invalid token format", token_prefix=_mask_token(token))
         return False, PermissionLevel.READ_WRITE
 
     # Try database keys
@@ -209,9 +188,7 @@ def validate_api_key_with_permissions(token: str) -> tuple[bool, PermissionLevel
 
     # Log final failure
     security_logger.log_auth_attempt(
-        success=False,
-        reason="Token validation failed for all sources",
-        token_prefix=_mask_token(token)
+        success=False, reason="Token validation failed for all sources", token_prefix=_mask_token(token)
     )
     logger.debug("Token validation failed for all sources")
     return False, PermissionLevel.READ_WRITE
@@ -358,17 +335,17 @@ def _require_permission(required_permission: PermissionLevel):
             if not auth_required:
                 return f(*args, **kwargs)
 
-            auth_header_key = getattr(current_app.config_obj.server.security, 'api_key_header',
-                                      'Authorization') if hasattr(
-                current_app, 'config_obj') else 'Authorization'
+            auth_header_key = (
+                getattr(current_app.config_obj.server.security, "api_key_header", "Authorization")
+                if hasattr(current_app, "config_obj")
+                else "Authorization"
+            )
 
             # Extract Authorization header
             auth_header = request.headers.get(auth_header_key)
             if not auth_header:
                 security_logger.log_auth_attempt(
-                    success=False,
-                    reason="Missing Authorization header",
-                    endpoint=request.endpoint
+                    success=False, reason="Missing Authorization header", endpoint=request.endpoint
                 )
                 raise Unauthorized("Authorization header required")
 
@@ -380,7 +357,7 @@ def _require_permission(required_permission: PermissionLevel):
                     success=False,
                     reason="Invalid Authorization header format",
                     endpoint=request.endpoint,
-                    auth_header_preview=auth_header[:20] + "..." if len(auth_header) > 20 else auth_header
+                    auth_header_preview=auth_header[:20] + "..." if len(auth_header) > 20 else auth_header,
                 )
                 raise Unauthorized("Invalid Authorization header format. Expected: Bearer <token>") from None
 
@@ -389,7 +366,7 @@ def _require_permission(required_permission: PermissionLevel):
                     success=False,
                     reason=f"Invalid auth type: {auth_type}",
                     endpoint=request.endpoint,
-                    auth_type=auth_type
+                    auth_type=auth_type,
                 )
                 raise Unauthorized("Bearer token required")
 
@@ -404,7 +381,7 @@ def _require_permission(required_permission: PermissionLevel):
                     reason="Invalid Bearer token",
                     endpoint=request.endpoint,
                     token_prefix=_mask_token(token),
-                    validation_time_ms=validation_time * 1000
+                    validation_time_ms=validation_time * 1000,
                 )
                 raise Unauthorized("Invalid Bearer token")
 
@@ -419,10 +396,11 @@ def _require_permission(required_permission: PermissionLevel):
                     endpoint=request.endpoint,
                     token_prefix=_mask_token(token),
                     required_permission=required_permission.value,
-                    actual_permission=permission_level.value
+                    actual_permission=permission_level.value,
                 )
                 raise Unauthorized(
-                    f"Insufficient permissions. This endpoint requires {required_permission.value} access.")
+                    f"Insufficient permissions. This endpoint requires {required_permission.value} access."
+                )
 
             # Success logging
             security_logger.log_auth_attempt(
@@ -431,7 +409,7 @@ def _require_permission(required_permission: PermissionLevel):
                 endpoint=request.endpoint,
                 token_prefix=_mask_token(token),
                 validation_time_ms=validation_time * 1000,
-                permission_level=permission_level.value
+                permission_level=permission_level.value,
             )
 
             logger.debug(f"API key authentication successful with permission: {permission_level.value}")

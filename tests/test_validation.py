@@ -248,9 +248,11 @@ class TestExtractClaims:
 class TestClassifyPolarity:
     @pytest.mark.asyncio
     async def test_supports(self):
-        response = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.95, "excerpt": "evidence"},
-        ])
+        response = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.95, "excerpt": "evidence"},
+            ]
+        )
         llm = MockLLM(response)
         chunks = [{"content": "chunk text"}]
         results = await classify_polarity(llm, "claim", chunks)
@@ -260,9 +262,11 @@ class TestClassifyPolarity:
 
     @pytest.mark.asyncio
     async def test_contradicts(self):
-        response = json.dumps([
-            {"index": 0, "polarity": "contradicts", "confidence": 0.9, "excerpt": "nope"},
-        ])
+        response = json.dumps(
+            [
+                {"index": 0, "polarity": "contradicts", "confidence": 0.9, "excerpt": "nope"},
+            ]
+        )
         llm = MockLLM(response)
         results = await classify_polarity(llm, "claim", [{"content": "c"}])
         assert results[0].polarity == Polarity.CONTRADICTS
@@ -283,10 +287,12 @@ class TestClassifyPolarity:
 
     @pytest.mark.asyncio
     async def test_missing_index_uses_default(self):
-        response = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.8, "excerpt": "ok"},
-            # index 1 is missing from response
-        ])
+        response = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.8, "excerpt": "ok"},
+                # index 1 is missing from response
+            ]
+        )
         llm = MockLLM(response)
         results = await classify_polarity(llm, "claim", [{"content": "a"}, {"content": "b"}])
         assert results[0].polarity == Polarity.SUPPORTS
@@ -294,9 +300,11 @@ class TestClassifyPolarity:
 
     @pytest.mark.asyncio
     async def test_invalid_polarity_string(self):
-        response = json.dumps([
-            {"index": 0, "polarity": "maybe", "confidence": 0.5, "excerpt": None},
-        ])
+        response = json.dumps(
+            [
+                {"index": 0, "polarity": "maybe", "confidence": 0.5, "excerpt": None},
+            ]
+        )
         llm = MockLLM(response)
         results = await classify_polarity(llm, "claim", [{"content": "c"}])
         assert results[0].polarity == Polarity.UNRELATED
@@ -317,7 +325,7 @@ class TestFindBestMatch:
         text = "Hello world. This is a test."
         result = _find_best_match(text, "This is a tset.", threshold=0.7)
         assert result is not None
-        assert text[result[0]:result[1]] == "This is a test."
+        assert text[result[0] : result[1]] == "This is a test."
 
     def test_no_match(self):
         text = "Hello world."
@@ -353,8 +361,11 @@ class TestAnnotateResponse:
     def test_no_source_id(self):
         claims = [
             ClaimResult(
-                claim="x", grounded=True, confidence=0.9,
-                source_id=None, original_sentence="x.",
+                claim="x",
+                grounded=True,
+                confidence=0.9,
+                source_id=None,
+                original_sentence="x.",
             ),
         ]
         result = annotate_response("x.", claims)
@@ -364,13 +375,19 @@ class TestAnnotateResponse:
         text = "Fact A is true. Fact B is also true."
         claims = [
             ClaimResult(
-                claim="A", grounded=True, confidence=0.9,
-                source_id="docA", source_excerpt="A excerpt",
+                claim="A",
+                grounded=True,
+                confidence=0.9,
+                source_id="docA",
+                source_excerpt="A excerpt",
                 original_sentence="Fact A is true.",
             ),
             ClaimResult(
-                claim="B", grounded=True, confidence=0.8,
-                source_id="docB", source_excerpt="B excerpt",
+                claim="B",
+                grounded=True,
+                confidence=0.8,
+                source_id="docB",
+                source_excerpt="B excerpt",
                 original_sentence="Fact B is also true.",
             ),
         ]
@@ -388,9 +405,7 @@ class TestAnnotateResponse:
 
 
 class TestFactChecker:
-    def _make_checker(
-        self, llm_responses: list[str] | None = None, query_results=None
-    ):
+    def _make_checker(self, llm_responses: list[str] | None = None, query_results=None):
         """Create a FactChecker with mocked LLM and DB."""
         responses = list(llm_responses or ["[]"])
         call_idx = {"i": 0}
@@ -429,9 +444,11 @@ class TestFactChecker:
     @pytest.mark.asyncio
     async def test_supported_claim(self):
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.95, "excerpt": "X equals 5"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.95, "excerpt": "X equals 5"},
+            ]
+        )
         qr = [FakeQueryResult(id="chunk_0", score=0.9, content="X equals 5", document_id="doc1")]
         checker = self._make_checker(
             llm_responses=[claims, polarity],
@@ -445,9 +462,11 @@ class TestFactChecker:
     @pytest.mark.asyncio
     async def test_contradicted_claim(self):
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "contradicts", "confidence": 0.9, "excerpt": "X is 3"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "contradicts", "confidence": 0.9, "excerpt": "X is 3"},
+            ]
+        )
         qr = [FakeQueryResult(id="chunk_0", score=0.8, content="X is 3", document_id="doc1")]
         # First polarity response (scoped or expanded) returns contradiction,
         # second call on expanded search also returns contradiction
@@ -463,9 +482,11 @@ class TestFactChecker:
     @pytest.mark.asyncio
     async def test_scoped_search_with_support(self):
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X=5"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X=5"},
+            ]
+        )
         qr = [FakeQueryResult(id="chunk_0", score=0.85, content="X=5", document_id="src_doc")]
         checker = self._make_checker(
             llm_responses=[claims, polarity],
@@ -479,9 +500,11 @@ class TestFactChecker:
     async def test_scoped_search_falls_through(self):
         """When scoped search finds no matching docs, expanded search runs."""
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.85, "excerpt": "X=5"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.85, "excerpt": "X=5"},
+            ]
+        )
         # doc_id is "other_doc" which doesn't match source "src_doc"
         qr = [FakeQueryResult(id="chunk_0", score=0.8, content="X=5", document_id="other_doc")]
         checker = self._make_checker(
@@ -495,16 +518,22 @@ class TestFactChecker:
 
     @pytest.mark.asyncio
     async def test_multiple_claims(self):
-        claims = json.dumps([
-            {"claim": "A is 1", "sentence": "A is 1."},
-            {"claim": "B is 2", "sentence": "B is 2."},
-        ])
-        pol1 = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "A=1"},
-        ])
-        pol2 = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.8, "excerpt": "B=2"},
-        ])
+        claims = json.dumps(
+            [
+                {"claim": "A is 1", "sentence": "A is 1."},
+                {"claim": "B is 2", "sentence": "B is 2."},
+            ]
+        )
+        pol1 = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "A=1"},
+            ]
+        )
+        pol2 = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.8, "excerpt": "B=2"},
+            ]
+        )
         qr = [FakeQueryResult(id="c0", score=0.85, content="A=1 B=2", document_id="doc1")]
         checker = self._make_checker(
             llm_responses=[claims, pol1, pol2],
@@ -517,9 +546,11 @@ class TestFactChecker:
     @pytest.mark.asyncio
     async def test_citation_text_format(self):
         claims = json.dumps([{"claim": "X", "sentence": "X."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X evidence"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X evidence"},
+            ]
+        )
         qr = [FakeQueryResult(id="c0", score=0.8, content="X evidence", document_id="doc1")]
         checker = self._make_checker(
             llm_responses=[claims, polarity],
@@ -532,9 +563,11 @@ class TestFactChecker:
     @pytest.mark.asyncio
     async def test_contradiction_in_citation_text(self):
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "contradicts", "confidence": 0.9, "excerpt": "X is 3"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "contradicts", "confidence": 0.9, "excerpt": "X is 3"},
+            ]
+        )
         qr = [FakeQueryResult(id="c0", score=0.8, content="X is 3", document_id="doc1")]
         checker = self._make_checker(
             llm_responses=[claims, polarity, polarity],
@@ -545,9 +578,11 @@ class TestFactChecker:
 
     def test_sync_check(self):
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X=5"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X=5"},
+            ]
+        )
         qr = [FakeQueryResult(id="c0", score=0.8, content="X=5", document_id="doc1")]
         checker = self._make_checker(
             llm_responses=[claims, polarity],
@@ -568,9 +603,11 @@ class TestFactChecker:
     @pytest.mark.asyncio
     async def test_multi_db_search(self):
         claims = json.dumps([{"claim": "X is 5", "sentence": "X is 5."}])
-        polarity = json.dumps([
-            {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X=5"},
-        ])
+        polarity = json.dumps(
+            [
+                {"index": 0, "polarity": "supports", "confidence": 0.9, "excerpt": "X=5"},
+            ]
+        )
 
         responses = [claims, polarity]
         call_idx = {"i": 0}

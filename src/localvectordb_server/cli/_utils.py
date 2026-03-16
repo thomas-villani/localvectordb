@@ -48,7 +48,7 @@ def find_config_file(config_path: str = None) -> str:
         "./instance/.lvdb-config.toml",
         "./instance/.lvdb-config.json",
         os.path.expanduser("~/.lvdb/.lvdb-config.toml"),
-        os.path.expanduser("~/.lvdb/.lvdb-config.json")
+        os.path.expanduser("~/.lvdb/.lvdb-config.json"),
     ]
 
     for path in default_locations:
@@ -61,13 +61,13 @@ def find_config_file(config_path: str = None) -> str:
 def get_stdin_input(input_required=True, err_msg=None):
     err_msg = err_msg or "Error: No input data in stdin!"
 
-    input_data_stream = click.get_text_stream('stdin')
+    input_data_stream = click.get_text_stream("stdin")
     if input_data_stream.isatty():
-        click.secho(err_msg, fg='bright_red', err=True)
+        click.secho(err_msg, fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
     data_from_stdin = input_data_stream.read().rstrip()
     if not data_from_stdin and input_required:
-        click.secho(err_msg, fg='bright_red', err=True)
+        click.secho(err_msg, fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     return data_from_stdin
@@ -89,7 +89,7 @@ def print_db_stats(db: LocalVectorDB):
         click.echo(f"  Name: {db.name}")
         click.echo(f"  Total documents: {stats['documents']:,}")
         click.echo(f"  Total chunks: {stats['chunks']:,}")
-        if stats['documents'] > 0:
+        if stats["documents"] > 0:
             click.echo(f"  Avg. chunks per document: {stats['chunks'] / stats['documents']:.2f}")
 
         click.secho("\nVector Information:", fg="cyan")
@@ -105,7 +105,7 @@ def print_db_stats(db: LocalVectorDB):
         click.echo(f"  FTS search: {'enabled' if stats['fts_enabled'] else 'disabled'}")
 
         # Show metadata schema if available
-        if hasattr(db, 'metadata_schema') and db.metadata_schema:
+        if hasattr(db, "metadata_schema") and db.metadata_schema:
             click.secho("\nMetadata Schema:", fg="cyan")
             for field_name, field_def in db.metadata_schema.items():
                 indexed = " (indexed)" if field_def.indexed else ""
@@ -124,19 +124,19 @@ def print_db_stats(db: LocalVectorDB):
 
 def get_nested_value(config: "Config", key_path: str) -> Any:
     """Get value from config using dot notation."""
-    parts = key_path.split('.')
+    parts = key_path.split(".")
 
     if len(parts) < 2:
         raise ValueError("Key must be in format 'section.key' or 'section.subsection.key'")
 
     section_name = parts[0]
-    if section_name not in ['database', 'embedding', 'server']:
+    if section_name not in ["database", "embedding", "server"]:
         raise ValueError(f"Invalid section '{section_name}'. Must be one of: database, embedding, server")
 
     section_obj = getattr(config, section_name)
 
     # Handle server.security.* as server.*
-    if len(parts) == 3 and section_name == 'server' and parts[1] == 'security':
+    if len(parts) == 3 and section_name == "server" and parts[1] == "security":
         attr_name = parts[2]
         if hasattr(section_obj.security, attr_name):
             return getattr(section_obj.security, attr_name)
@@ -144,9 +144,9 @@ def get_nested_value(config: "Config", key_path: str) -> Any:
             raise ValueError(f"Server setting '{attr_name}' not found")
 
     # Handle database.metadata_schema.*
-    if len(parts) == 3 and section_name == 'database' and parts[1] == 'metadata_schema':
+    if len(parts) == 3 and section_name == "database" and parts[1] == "metadata_schema":
         schema_field = parts[2]
-        metadata_schema = getattr(section_obj, 'default_metadata_schema', {})
+        metadata_schema = getattr(section_obj, "default_metadata_schema", {})
         if schema_field in metadata_schema:
             return metadata_schema[schema_field]
         else:
@@ -165,19 +165,19 @@ def get_nested_value(config: "Config", key_path: str) -> Any:
 
 def set_nested_value(config: "Config", key_path: str, value_str: str) -> None:
     """Set value in config using dot notation with intelligent type conversion."""
-    parts = key_path.split('.')
+    parts = key_path.split(".")
 
     if len(parts) < 2:
         raise ValueError("Key must be in format 'section.key' or 'section.subsection.key'")
 
     section_name = parts[0]
-    if section_name not in ['database', 'embedding', 'server']:
+    if section_name not in ["database", "embedding", "server"]:
         raise ValueError(f"Invalid section '{section_name}'. Must be one of: database, embedding, server")
 
     section_obj = getattr(config, section_name)
 
     # Handle server.security.* as server.*
-    if len(parts) == 3 and section_name == 'server' and parts[1] == 'security':
+    if len(parts) == 3 and section_name == "server" and parts[1] == "security":
         attr_name = parts[2]
         if not hasattr(section_obj.security, attr_name):
             raise ValueError(f"Server setting '{attr_name}' not found")
@@ -188,10 +188,11 @@ def set_nested_value(config: "Config", key_path: str, value_str: str) -> None:
         return
 
     # Handle database.metadata_schema.*
-    if len(parts) == 3 and section_name == 'database' and parts[1] == 'metadata_schema':
+    if len(parts) == 3 and section_name == "database" and parts[1] == "metadata_schema":
         schema_field = parts[2]
-        metadata_schema = getattr(section_obj, 'default_metadata_schema', {})
+        metadata_schema = getattr(section_obj, "default_metadata_schema", {})
         from localvectordb.core import MetadataField, MetadataFieldType
+
         try:
             field_config = json.loads(value_str)
             if isinstance(field_config, dict):
@@ -238,18 +239,18 @@ def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_na
     if attr_name in hints:
         hint = hints[attr_name]
         # Handle Optional[T] (Union[T, None])
-        if hasattr(hint, '__origin__') and hint.__origin__ is Union:
+        if hasattr(hint, "__origin__") and hint.__origin__ is Union:
             non_none_types = [arg for arg in hint.__args__ if arg is not type(None)]
             if non_none_types:
                 target_type = non_none_types[0]
 
     # Handle special "null" or "none" values
-    if value_str.lower() in ['null', 'none', '']:
+    if value_str.lower() in ["null", "none", ""]:
         return None
 
     # Boolean conversion
     if target_type is bool:
-        return value_str.lower() in ['true', 'yes', '1', 'on', 'y']
+        return value_str.lower() in ["true", "yes", "1", "on", "y"]
 
     # Integer conversion
     if target_type is int:
@@ -270,22 +271,22 @@ def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_na
         return value_str
 
     # List conversion
-    if target_type is list or (hasattr(target_type, '__origin__') and target_type.__origin__ is list):
+    if target_type is list or (hasattr(target_type, "__origin__") and target_type.__origin__ is list):
         # Try JSON first
-        if value_str.startswith('[') and value_str.endswith(']'):
+        if value_str.startswith("[") and value_str.endswith("]"):
             try:
                 return json.loads(value_str)
             except json.JSONDecodeError:
                 pass
 
         # Fallback to comma-separated
-        if ',' in value_str:
-            return [item.strip().strip('"\'') for item in value_str.split(',') if item.strip()]
+        if "," in value_str:
+            return [item.strip().strip("\"'") for item in value_str.split(",") if item.strip()]
         else:
-            return [value_str.strip().strip('"\'')]
+            return [value_str.strip().strip("\"'")]
 
     # Dict conversion
-    if target_type is dict or (hasattr(target_type, '__origin__') and target_type.__origin__ is dict):
+    if target_type is dict or (hasattr(target_type, "__origin__") and target_type.__origin__ is dict):
         try:
             return json.loads(value_str)
         except json.JSONDecodeError as e:
@@ -301,6 +302,7 @@ def _convert_string_to_type(value_str: str, target_type: type, obj: Any, attr_na
 def _format_value_for_display(value: Any) -> str:
     """Format a value for human-readable display."""
     from localvectordb import MetadataField
+
     if value is None:
         return "null"
     elif isinstance(value, bool):
@@ -308,12 +310,15 @@ def _format_value_for_display(value: Any) -> str:
     elif isinstance(value, (list, dict)):
         return json.dumps(value, indent=2)
     elif isinstance(value, MetadataField):
-        return json.dumps({
-            'type': value.type.value if hasattr(value.type, 'value') else str(value.type),
-            'indexed': value.indexed,
-            'required': value.required,
-            'default_value': value.default_value
-        }, indent=2)
+        return json.dumps(
+            {
+                "type": value.type.value if hasattr(value.type, "value") else str(value.type),
+                "indexed": value.indexed,
+                "required": value.required,
+                "default_value": value.default_value,
+            },
+            indent=2,
+        )
     else:
         return str(value)
 

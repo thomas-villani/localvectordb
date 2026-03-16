@@ -11,6 +11,7 @@
 """
 MCP server CLI commands for LocalVectorDB
 """
+
 import asyncio
 import json
 import logging
@@ -29,33 +30,38 @@ def mcp_commands():
 
 
 @mcp_commands.command()
-@click.option('--mode', type=click.Choice(['read-only', 'read-write']),
-              default='read-only', help='Server mode (default: read-only)')
-@click.option('--config', help='Configuration file path (TOML format)')
-@click.option('--databases-root', help='Root directory for databases')
-@click.option('--databases-map', help='Database name to path/URL mapping (JSON format)')
-@click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
-              default='INFO', help='Logging level')
+@click.option(
+    "--mode",
+    type=click.Choice(["read-only", "read-write"]),
+    default="read-only",
+    help="Server mode (default: read-only)",
+)
+@click.option("--config", help="Configuration file path (TOML format)")
+@click.option("--databases-root", help="Root directory for databases")
+@click.option("--databases-map", help="Database name to path/URL mapping (JSON format)")
+@click.option(
+    "--log-level", type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]), default="INFO", help="Logging level"
+)
 def serve(mode, config, databases_root, databases_map, log_level):
     """Start the MCP server (stdio-based for Claude Desktop)"""
     import os
 
     # Set environment variables
-    os.environ['LVDB_MCP_MODE'] = mode
-    os.environ['LVDB_MCP_LOG_LEVEL'] = log_level
+    os.environ["LVDB_MCP_MODE"] = mode
+    os.environ["LVDB_MCP_LOG_LEVEL"] = log_level
 
     if config:
-        os.environ['LVDB_MCP_CONFIG'] = config
+        os.environ["LVDB_MCP_CONFIG"] = config
 
     if databases_root:
-        os.environ['LVDB_MCP_DATABASES_ROOT'] = databases_root
+        os.environ["LVDB_MCP_DATABASES_ROOT"] = databases_root
 
     if databases_map:
         try:
             # Parse JSON and convert to environment variable format
             mapping = json.loads(databases_map)
             env_format = ",".join(f"{k}={v}" for k, v in mapping.items())
-            os.environ['LVDB_MCP_DATABASES_MAP'] = env_format
+            os.environ["LVDB_MCP_DATABASES_MAP"] = env_format
         except json.JSONDecodeError as e:
             click.echo("Error: Invalid JSON for databases-map", err=True)
             raise click.Abort() from e
@@ -64,25 +70,27 @@ def serve(mode, config, databases_root, databases_map, log_level):
     logging.basicConfig(
         level=getattr(logging, log_level),
         stream=sys.stderr,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
     click.echo(f"Starting LocalVectorDB MCP server in {mode} mode...", err=True)
 
     # Import and run server
     from localvectordb_server.mcp.server import run_mcp_server
+
     asyncio.run(run_mcp_server(mode=mode))
 
 
 @mcp_commands.command()
-@click.option('--config', help='Configuration file path')
+@click.option("--config", help="Configuration file path")
 def status(config):
     """Check MCP server status and configuration"""
     try:
         # Load configuration
         if config:
             import os
-            os.environ['LVDB_MCP_CONFIG'] = config
+
+            os.environ["LVDB_MCP_CONFIG"] = config
 
         config_obj = MCPConfig.load(config_path=config)
 
@@ -125,9 +133,8 @@ def status(config):
 
 
 @mcp_commands.command()
-@click.option('--mode', type=click.Choice(['read-only', 'read-write']),
-              default='read-only', help='Server mode to test')
-@click.option('--config', help='Configuration file path')
+@click.option("--mode", type=click.Choice(["read-only", "read-write"]), default="read-only", help="Server mode to test")
+@click.option("--config", help="Configuration file path")
 def test(mode, config):
     """Test MCP server functionality"""
     click.echo(f"Testing MCP server in {mode} mode...")
@@ -136,9 +143,9 @@ def test(mode, config):
         import os
 
         # Set environment
-        os.environ['LVDB_MCP_MODE'] = mode
+        os.environ["LVDB_MCP_MODE"] = mode
         if config:
-            os.environ['LVDB_MCP_CONFIG'] = config
+            os.environ["LVDB_MCP_CONFIG"] = config
 
         # Test configuration loading
         config_obj = MCPConfig.load(config_path=config)
@@ -214,7 +221,7 @@ def tools():
 
 
 @mcp_commands.command()
-@click.option('--output', default='-', help='Output file (default: stdout)')
+@click.option("--output", default="-", help="Output file (default: stdout)")
 def config_example(output):
     """Generate example MCP configuration file"""
     example_config = """# LocalVectorDB MCP Server Configuration
@@ -273,13 +280,13 @@ max_retries = 3
 retry_delay = 1.0
 """
 
-    if output == '-':
+    if output == "-":
         click.echo(example_config)
     else:
-        with open(output, 'w') as f:
+        with open(output, "w") as f:
             f.write(example_config)
         click.echo(f"Example configuration written to {output}")
 
 
 # Export the command group
-__all__ = ['mcp_commands']
+__all__ = ["mcp_commands"]

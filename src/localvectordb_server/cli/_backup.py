@@ -37,7 +37,7 @@ from localvectordb.utils import parse_iso8601
 from localvectordb_server.cli._utils import EXIT_CODE_ERROR, format_table, print_json_output
 
 
-@click.group('backup')
+@click.group("backup")
 @click.pass_context
 def backup_group(ctx):
     """
@@ -58,32 +58,37 @@ def backup_group(ctx):
     pass
 
 
-@backup_group.command('create')
-@click.argument('database_name')
-@click.option('--type', '-t', 'backup_type',
-              type=click.Choice(['full', 'incremental']),
-              default='full',
-              help='Type of backup to create')
-@click.option('--parent', '-p',
-              help='Parent backup ID for incremental backups')
-@click.option('--location', '-l',
-              type=click.Path(exists=False, file_okay=False),
-              help='Backup storage location (default: ./backups)')
-@click.option('--compression', '-c',
-              type=click.Choice(['none', 'gzip', 'lzma', 'bzip2']),
-              default='gzip',
-              help='Compression algorithm to use')
-@click.option('--no-verify', is_flag=True,
-              help='Skip backup integrity verification')
-@click.option('--exclude-faiss', is_flag=True,
-              help='Exclude FAISS index from backup')
-@click.option('--json', 'output_json', is_flag=True,
-              help='Output result in JSON format')
+@backup_group.command("create")
+@click.argument("database_name")
+@click.option(
+    "--type",
+    "-t",
+    "backup_type",
+    type=click.Choice(["full", "incremental"]),
+    default="full",
+    help="Type of backup to create",
+)
+@click.option("--parent", "-p", help="Parent backup ID for incremental backups")
+@click.option(
+    "--location",
+    "-l",
+    type=click.Path(exists=False, file_okay=False),
+    help="Backup storage location (default: ./backups)",
+)
+@click.option(
+    "--compression",
+    "-c",
+    type=click.Choice(["none", "gzip", "lzma", "bzip2"]),
+    default="gzip",
+    help="Compression algorithm to use",
+)
+@click.option("--no-verify", is_flag=True, help="Skip backup integrity verification")
+@click.option("--exclude-faiss", is_flag=True, help="Exclude FAISS index from backup")
+@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
 @click.pass_context
 def create_backup(
-        ctx, database_name, backup_type, parent, location,
-        compression, no_verify, exclude_faiss, output_json
-        ):
+    ctx, database_name, backup_type, parent, location, compression, no_verify, exclude_faiss, output_json
+):
     """
     Create a backup of the specified database.
 
@@ -110,8 +115,7 @@ def create_backup(
         faiss_path = Path(db_folder) / f"{database_name}.faiss"
 
         if not db_path.exists():
-            click.secho(f"Database '{database_name}' not found in {db_folder}",
-                        fg="red", err=True)
+            click.secho(f"Database '{database_name}' not found in {db_folder}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         # Configure backup settings
@@ -121,28 +125,27 @@ def create_backup(
             backup_location=backup_location,
             compression_algorithm=CompressionAlgorithm(compression),
             verify_integrity=not no_verify,
-            include_faiss_index=not exclude_faiss
+            include_faiss_index=not exclude_faiss,
         )
 
         # Create backup manager
         backup_manager = BackupManager(db_path, faiss_path, config)
 
-        if backup_type == 'full':
+        if backup_type == "full":
             # Create full backup
             backup_id = backup_manager.create_backup(BackupType.FULL)
 
             result = {
-                'success': True,
-                'backup_id': backup_id,
-                'backup_type': 'full',
-                'database': database_name,
-                'location': str(backup_location)
+                "success": True,
+                "backup_id": backup_id,
+                "backup_type": "full",
+                "database": database_name,
+                "location": str(backup_location),
             }
 
         else:  # incremental
             if not parent:
-                click.secho("Parent backup ID required for incremental backups",
-                            fg="red", err=True)
+                click.secho("Parent backup ID required for incremental backups", fg="red", err=True)
                 raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
             # Create incremental backup
@@ -150,12 +153,12 @@ def create_backup(
             backup_id = inc_manager.create_incremental_backup(parent)
 
             result = {
-                'success': True,
-                'backup_id': backup_id,
-                'backup_type': 'incremental',
-                'parent_backup_id': parent,
-                'database': database_name,
-                'location': str(backup_location)
+                "success": True,
+                "backup_id": backup_id,
+                "backup_type": "incremental",
+                "parent_backup_id": parent,
+                "database": database_name,
+                "location": str(backup_location),
             }
 
         if output_json:
@@ -166,15 +169,11 @@ def create_backup(
             click.echo(f"  Type: {backup_type}")
             click.echo(f"  Database: {database_name}")
             click.echo(f"  Location: {backup_location}")
-            if backup_type == 'incremental':
+            if backup_type == "incremental":
                 click.echo(f"  Parent: {parent}")
 
     except Exception as e:
-        result = {
-            'success': False,
-            'error': str(e),
-            'database': database_name
-        }
+        result = {"success": False, "error": str(e), "database": database_name}
 
         if output_json:
             print_json_output(result)
@@ -184,19 +183,17 @@ def create_backup(
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@backup_group.command('list')
-@click.option('--database', '-d',
-              help='Filter backups for specific database')
-@click.option('--type', '-t',
-              type=click.Choice(['full', 'incremental']),
-              help='Filter by backup type')
-@click.option('--limit', '-n', type=int,
-              help='Limit number of backups shown')
-@click.option('--json', 'output_json', is_flag=True,
-              help='Output in JSON format')
-@click.option('--location', '-l',
-              type=click.Path(exists=True, file_okay=False),
-              help='Backup storage location to scan (default: ./backups)')
+@backup_group.command("list")
+@click.option("--database", "-d", help="Filter backups for specific database")
+@click.option("--type", "-t", type=click.Choice(["full", "incremental"]), help="Filter by backup type")
+@click.option("--limit", "-n", type=int, help="Limit number of backups shown")
+@click.option("--json", "output_json", is_flag=True, help="Output in JSON format")
+@click.option(
+    "--location",
+    "-l",
+    type=click.Path(exists=True, file_okay=False),
+    help="Backup storage location to scan (default: ./backups)",
+)
 @click.pass_context
 def list_backups(ctx, database, type, limit, output_json, location):
     """
@@ -218,7 +215,7 @@ def list_backups(ctx, database, type, limit, output_json, location):
 
         if not backup_location.exists():
             if output_json:
-                print_json_output({'backups': []})
+                print_json_output({"backups": []})
             else:
                 click.echo("No backups directory found")
             return
@@ -228,7 +225,7 @@ def list_backups(ctx, database, type, limit, output_json, location):
 
         if not backup_files:
             if output_json:
-                print_json_output({'backups': []})
+                print_json_output({"backups": []})
             else:
                 click.echo("No backups found")
             return
@@ -245,40 +242,43 @@ def list_backups(ctx, database, type, limit, output_json, location):
                     manifest_file = tar.extractfile("manifest.json")
                     if manifest_file:
                         import json
+
                         manifest_data = json.load(manifest_file)
 
                         # Filter by criteria
-                        if database and manifest_data['database_name'] != database:
+                        if database and manifest_data["database_name"] != database:
                             continue
 
-                        if type and manifest_data['backup_type'] != type:
+                        if type and manifest_data["backup_type"] != type:
                             continue
 
-                        backups.append({
-                            'backup_id': manifest_data['backup_id'],
-                            'database_name': manifest_data['database_name'],
-                            'backup_type': manifest_data['backup_type'],
-                            'created_at': manifest_data['created_at'],
-                            'database_version': manifest_data['database_version'],
-                            'size_bytes': manifest_data.get('size_bytes', 0),
-                            'parent_backup_id': manifest_data.get('parent_backup_id'),
-                            'compression': manifest_data.get('compression_algorithm', 'unknown'),
-                            'file_path': str(backup_file)
-                        })
+                        backups.append(
+                            {
+                                "backup_id": manifest_data["backup_id"],
+                                "database_name": manifest_data["database_name"],
+                                "backup_type": manifest_data["backup_type"],
+                                "created_at": manifest_data["created_at"],
+                                "database_version": manifest_data["database_version"],
+                                "size_bytes": manifest_data.get("size_bytes", 0),
+                                "parent_backup_id": manifest_data.get("parent_backup_id"),
+                                "compression": manifest_data.get("compression_algorithm", "unknown"),
+                                "file_path": str(backup_file),
+                            }
+                        )
 
             except Exception as e:
                 click.echo(f"Warning: Could not read backup {backup_file}: {e}", err=True)
                 continue
 
         # Sort by creation time (newest first)
-        backups.sort(key=lambda x: x['created_at'], reverse=True)
+        backups.sort(key=lambda x: x["created_at"], reverse=True)
 
         # Apply limit
         if limit:
             backups = backups[:limit]
 
         if output_json:
-            print_json_output({'backups': backups, 'total_count': len(backups)})
+            print_json_output({"backups": backups, "total_count": len(backups)})
 
         else:
             if not backups:
@@ -288,47 +288,53 @@ def list_backups(ctx, database, type, limit, output_json, location):
             click.echo(f"Found {len(backups)} backup(s):\n")
 
             # Format as table
-            headers = ['Backup ID', 'Database', 'Type', 'Created', 'Size', 'Parent']
+            headers = ["Backup ID", "Database", "Type", "Created", "Size", "Parent"]
             rows = []
 
             for backup in backups:
-                size_mb = backup['size_bytes'] / (1024 * 1024) if backup['size_bytes'] else 0
-                created_dt = parse_iso8601(backup['created_at'])
-                created_str = created_dt.strftime('%Y-%m-%d %H:%M:%S')
-                parent_short = backup['parent_backup_id'][:8] if backup['parent_backup_id'] else '-'
+                size_mb = backup["size_bytes"] / (1024 * 1024) if backup["size_bytes"] else 0
+                created_dt = parse_iso8601(backup["created_at"])
+                created_str = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+                parent_short = backup["parent_backup_id"][:8] if backup["parent_backup_id"] else "-"
 
-                rows.append([
-                    backup['backup_id'][:8],
-                    backup['database_name'],
-                    backup['backup_type'],
-                    created_str,
-                    f"{size_mb:.1f}MB",
-                    parent_short
-                ])
+                rows.append(
+                    [
+                        backup["backup_id"][:8],
+                        backup["database_name"],
+                        backup["backup_type"],
+                        created_str,
+                        f"{size_mb:.1f}MB",
+                        parent_short,
+                    ]
+                )
 
             click.echo(format_table(headers, rows))
 
     except Exception as e:
         if output_json:
-            print_json_output({'error': str(e), 'backups': []})
+            print_json_output({"error": str(e), "backups": []})
         else:
             click.secho(f"Error listing backups: {e}", fg="red", err=True)
 
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@backup_group.command('restore')
-@click.argument('backup_id')
-@click.option('--to-location', '-t',
-              type=click.Path(exists=False, file_okay=False),
-              help='Directory to restore to (default: original location)')
-@click.option('--overwrite', is_flag=True,
-              help='Overwrite existing files without confirmation')
-@click.option('--location', '-l',
-              type=click.Path(exists=True, file_okay=False),
-              help='Backup storage location (default: ./backups)')
-@click.option('--json', 'output_json', is_flag=True,
-              help='Output result in JSON format')
+@backup_group.command("restore")
+@click.argument("backup_id")
+@click.option(
+    "--to-location",
+    "-t",
+    type=click.Path(exists=False, file_okay=False),
+    help="Directory to restore to (default: original location)",
+)
+@click.option("--overwrite", is_flag=True, help="Overwrite existing files without confirmation")
+@click.option(
+    "--location",
+    "-l",
+    type=click.Path(exists=True, file_okay=False),
+    help="Backup storage location (default: ./backups)",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
 @click.pass_context
 def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json):
     """
@@ -352,7 +358,7 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
         if not backup_location.exists():
             error = f"Backup location not found: {backup_location}"
             if output_json:
-                print_json_output({'success': False, 'error': error})
+                print_json_output({"success": False, "error": error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
@@ -367,7 +373,7 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
         if not backup_file:
             error = f"Backup not found: {backup_id}"
             if output_json:
-                print_json_output({'success': False, 'error': error})
+                print_json_output({"success": False, "error": error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
@@ -380,8 +386,8 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
             manifest_file = tar.extractfile("manifest.json")
             manifest_data = json.load(manifest_file)
 
-        database_name = manifest_data['database_name']
-        backup_type = manifest_data['backup_type']
+        database_name = manifest_data["database_name"]
+        backup_type = manifest_data["backup_type"]
 
         # Determine restore location
         if not to_location:
@@ -399,36 +405,31 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
         config = BackupConfig(backup_location=backup_location)
         backup_manager = BackupManager(temp_db_path, temp_faiss_path, config)
 
-        if backup_type == 'full':
+        if backup_type == "full":
             # Simple full backup restore
             restored_path = backup_manager.restore_backup(
-                manifest_data['backup_id'],
-                to_location,
-                overwrite_existing=overwrite
+                manifest_data["backup_id"], to_location, overwrite_existing=overwrite
             )
 
         else:
             # Incremental backup restore
             inc_manager = IncrementalBackupManager(backup_manager)
-            restored_path = inc_manager.restore_incremental_backup_chain(
-                manifest_data['backup_id'],
-                to_location
-            )
+            restored_path = inc_manager.restore_incremental_backup_chain(manifest_data["backup_id"], to_location)
 
         result = {
-            'success': True,
-            'backup_id': manifest_data['backup_id'],
-            'database_name': database_name,
-            'backup_type': backup_type,
-            'restored_to': str(restored_path),
-            'files_restored': [
+            "success": True,
+            "backup_id": manifest_data["backup_id"],
+            "database_name": database_name,
+            "backup_type": backup_type,
+            "restored_to": str(restored_path),
+            "files_restored": [
                 f"{database_name}.sqlite",
-                f"{database_name}.faiss" if (restored_path / f"{database_name}.faiss").exists() else None
-            ]
+                f"{database_name}.faiss" if (restored_path / f"{database_name}.faiss").exists() else None,
+            ],
         }
 
         # Remove None values
-        result['files_restored'] = [f for f in result['files_restored'] if f]
+        result["files_restored"] = [f for f in result["files_restored"] if f]
 
         if output_json:
             print_json_output(result)
@@ -438,15 +439,11 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
             click.echo(f"  Database: {database_name}")
             click.echo(f"  Type: {backup_type}")
             click.echo(f"  Restored to: {restored_path}")
-            for file in result['files_restored']:
+            for file in result["files_restored"]:
                 click.echo(f"  - {file}")
 
     except Exception as e:
-        result = {
-            'success': False,
-            'error': str(e),
-            'backup_id': backup_id
-        }
+        result = {"success": False, "error": str(e), "backup_id": backup_id}
 
         if output_json:
             print_json_output(result)
@@ -456,13 +453,15 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@backup_group.command('verify')
-@click.argument('backup_id')
-@click.option('--location', '-l',
-              type=click.Path(exists=True, file_okay=False),
-              help='Backup storage location (default: ./backups)')
-@click.option('--json', 'output_json', is_flag=True,
-              help='Output result in JSON format')
+@backup_group.command("verify")
+@click.argument("backup_id")
+@click.option(
+    "--location",
+    "-l",
+    type=click.Path(exists=True, file_okay=False),
+    help="Backup storage location (default: ./backups)",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
 def verify_backup(backup_id, location, output_json):
     """
     Verify backup integrity.
@@ -490,7 +489,7 @@ def verify_backup(backup_id, location, output_json):
         if not backup_file:
             error = f"Backup not found: {backup_id}"
             if output_json:
-                print_json_output({'success': False, 'error': error})
+                print_json_output({"success": False, "error": error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
@@ -504,7 +503,7 @@ def verify_backup(backup_id, location, output_json):
             manifest_file = tar.extractfile("manifest.json")
             manifest_data = json.load(manifest_file)
 
-        database_name = manifest_data['database_name']
+        database_name = manifest_data["database_name"]
 
         # Create temporary backup manager for verification
         temp_db_path = Path("/tmp") / f"{database_name}.sqlite"
@@ -512,16 +511,16 @@ def verify_backup(backup_id, location, output_json):
         backup_manager = BackupManager(temp_db_path, config=config)
 
         # Perform verification
-        is_valid = backup_manager.verify_backup(manifest_data['backup_id'])
+        is_valid = backup_manager.verify_backup(manifest_data["backup_id"])
 
         result = {
-            'success': is_valid,
-            'backup_id': manifest_data['backup_id'],
-            'database_name': database_name,
-            'backup_type': manifest_data['backup_type'],
-            'created_at': manifest_data['created_at'],
-            'file_path': str(backup_file),
-            'verification_passed': is_valid
+            "success": is_valid,
+            "backup_id": manifest_data["backup_id"],
+            "database_name": database_name,
+            "backup_type": manifest_data["backup_type"],
+            "created_at": manifest_data["created_at"],
+            "file_path": str(backup_file),
+            "verification_passed": is_valid,
         }
 
         if output_json:
@@ -538,12 +537,7 @@ def verify_backup(backup_id, location, output_json):
             click.echo(f"  Created: {manifest_data['created_at']}")
 
     except Exception as e:
-        result = {
-            'success': False,
-            'error': str(e),
-            'backup_id': backup_id,
-            'verification_passed': False
-        }
+        result = {"success": False, "error": str(e), "backup_id": backup_id, "verification_passed": False}
 
         if output_json:
             print_json_output(result)
@@ -553,18 +547,17 @@ def verify_backup(backup_id, location, output_json):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@backup_group.command('cleanup')
-@click.option('--older-than', type=int, default=30,
-              help='Delete backups older than N days (default: 30)')
-@click.option('--keep-full', type=int, default=3,
-              help='Minimum number of full backups to keep (default: 3)')
-@click.option('--location', '-l',
-              type=click.Path(exists=True, file_okay=False),
-              help='Backup storage location (default: ./backups)')
-@click.option('--dry-run', is_flag=True,
-              help='Show what would be deleted without actually deleting')
-@click.option('--json', 'output_json', is_flag=True,
-              help='Output result in JSON format')
+@backup_group.command("cleanup")
+@click.option("--older-than", type=int, default=30, help="Delete backups older than N days (default: 30)")
+@click.option("--keep-full", type=int, default=3, help="Minimum number of full backups to keep (default: 3)")
+@click.option(
+    "--location",
+    "-l",
+    type=click.Path(exists=True, file_okay=False),
+    help="Backup storage location (default: ./backups)",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted without actually deleting")
+@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
 def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
     """
     Clean up old backups based on retention policy.
@@ -585,7 +578,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
 
         if not backup_location.exists():
             if output_json:
-                print_json_output({'deleted_count': 0, 'message': 'No backup location found'})
+                print_json_output({"deleted_count": 0, "message": "No backup location found"})
             else:
                 click.echo("No backup location found")
             return
@@ -595,7 +588,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
 
         if not backup_files:
             if output_json:
-                print_json_output({'deleted_count': 0, 'message': 'No backups found'})
+                print_json_output({"deleted_count": 0, "message": "No backups found"})
             else:
                 click.echo("No backups found")
             return
@@ -610,7 +603,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
                 manifest_file = tar.extractfile("manifest.json")
                 manifest_data = json.load(manifest_file)
 
-            database_name = manifest_data['database_name']
+            database_name = manifest_data["database_name"]
 
             # Create temporary paths for managers
             temp_db_path = Path("/tmp") / f"{database_name}.sqlite"
@@ -622,9 +615,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
 
             # Perform cleanup
             cleanup_result = pitr_manager.cleanup_recovery_timeline(
-                max_age_days=older_than,
-                keep_full_backups=keep_full,
-                dry_run=dry_run
+                max_age_days=older_than, keep_full_backups=keep_full, dry_run=dry_run
             )
 
             if output_json:
@@ -632,8 +623,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
 
             else:
                 if dry_run:
-                    click.secho(f"Dry run: Would delete {cleanup_result['backups_to_delete']} backup(s)",
-                                fg="yellow")
+                    click.secho(f"Dry run: Would delete {cleanup_result['backups_to_delete']} backup(s)", fg="yellow")
                 else:
                     click.secho(f"✓ Deleted {cleanup_result['deleted_count']} backup(s)", fg="green")
 
@@ -641,17 +631,13 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
                 click.echo(f"  Would delete: {cleanup_result['backups_to_delete']}")
                 click.echo(f"  Keeping: {cleanup_result['backups_to_keep']}")
 
-                if cleanup_result.get('deletion_errors'):
+                if cleanup_result.get("deletion_errors"):
                     click.echo("\nErrors:")
-                    for error in cleanup_result['deletion_errors']:
+                    for error in cleanup_result["deletion_errors"]:
                         click.secho(f"  - {error}", fg="red")
 
     except Exception as e:
-        result = {
-            'success': False,
-            'error': str(e),
-            'deleted_count': 0
-        }
+        result = {"success": False, "error": str(e), "deleted_count": 0}
 
         if output_json:
             print_json_output(result)
@@ -661,21 +647,20 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@backup_group.command('pitr')
-@click.argument('timestamp')
-@click.option('--to-location', '-t',
-              type=click.Path(exists=False, file_okay=False),
-              required=True,
-              help='Directory to restore to')
-@click.option('--tolerance', type=int, default=60,
-              help='Tolerance in minutes for finding recovery point (default: 60)')
-@click.option('--location', '-l',
-              type=click.Path(exists=True, file_okay=False),
-              help='Backup storage location (default: ./backups)')
-@click.option('--dry-run', is_flag=True,
-              help='Validate recovery without actually restoring')
-@click.option('--json', 'output_json', is_flag=True,
-              help='Output result in JSON format')
+@backup_group.command("pitr")
+@click.argument("timestamp")
+@click.option(
+    "--to-location", "-t", type=click.Path(exists=False, file_okay=False), required=True, help="Directory to restore to"
+)
+@click.option("--tolerance", type=int, default=60, help="Tolerance in minutes for finding recovery point (default: 60)")
+@click.option(
+    "--location",
+    "-l",
+    type=click.Path(exists=True, file_okay=False),
+    help="Backup storage location (default: ./backups)",
+)
+@click.option("--dry-run", is_flag=True, help="Validate recovery without actually restoring")
+@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
 def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run, output_json):
     """
     Perform point-in-time recovery to a specific timestamp.
@@ -698,7 +683,7 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
         # Parse timestamp
         try:
             # Try ISO format first
-            if 'T' in timestamp:
+            if "T" in timestamp:
                 target_dt = parse_iso8601(timestamp)
             else:
                 # Try simple format
@@ -707,7 +692,7 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
         except ValueError:
             error = f"Invalid timestamp format: {timestamp}. Use 'YYYY-MM-DD HH:MM:SS' or ISO format"
             if output_json:
-                print_json_output({'success': False, 'error': error})
+                print_json_output({"success": False, "error": error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR) from None
@@ -721,7 +706,7 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
         if not backup_files:
             error = "No backups available for point-in-time recovery"
             if output_json:
-                print_json_output({'success': False, 'error': error})
+                print_json_output({"success": False, "error": error})
             else:
                 click.secho(f"✗ {error}", fg="red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
@@ -734,7 +719,7 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
             manifest_file = tar.extractfile("manifest.json")
             manifest_data = json.load(manifest_file)
 
-        database_name = manifest_data['database_name']
+        database_name = manifest_data["database_name"]
 
         # Create managers
         temp_db_path = to_location / f"{database_name}.sqlite"
@@ -746,33 +731,30 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
 
         # Perform point-in-time recovery
         recovery_result = pitr_manager.restore_to_point_in_time(
-            target_dt,
-            to_location,
-            tolerance_minutes=tolerance,
-            dry_run=dry_run
+            target_dt, to_location, tolerance_minutes=tolerance, dry_run=dry_run
         )
 
         if output_json:
             # Convert datetime objects to strings for JSON serialization
-            if 'target_timestamp' in recovery_result:
-                recovery_result['target_timestamp'] = recovery_result['target_timestamp'].isoformat()
-            if 'actual_timestamp' in recovery_result:
-                recovery_result['actual_timestamp'] = recovery_result['actual_timestamp'].isoformat()
+            if "target_timestamp" in recovery_result:
+                recovery_result["target_timestamp"] = recovery_result["target_timestamp"].isoformat()
+            if "actual_timestamp" in recovery_result:
+                recovery_result["actual_timestamp"] = recovery_result["actual_timestamp"].isoformat()
 
             print_json_output(recovery_result)
 
         else:
-            if recovery_result['success']:
+            if recovery_result["success"]:
                 if dry_run:
                     click.secho("✓ Point-in-time recovery validation passed", fg="green")
                 else:
                     click.secho("✓ Point-in-time recovery completed", fg="green")
 
                 click.echo(f"  Target timestamp: {timestamp}")
-                if 'actual_timestamp' in recovery_result:
+                if "actual_timestamp" in recovery_result:
                     click.echo(f"  Actual recovery point: {recovery_result['actual_timestamp']}")
-                if 'time_difference_seconds' in recovery_result:
-                    diff_min = recovery_result['time_difference_seconds'] / 60
+                if "time_difference_seconds" in recovery_result:
+                    diff_min = recovery_result["time_difference_seconds"] / 60
                     click.echo(f"  Time difference: {diff_min:.1f} minutes")
 
                 if not dry_run:
@@ -780,22 +762,18 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
 
             else:
                 click.secho("✗ Point-in-time recovery failed", fg="red")
-                if 'error' in recovery_result:
+                if "error" in recovery_result:
                     click.echo(f"  Error: {recovery_result['error']}")
 
-                if 'available_timeline' in recovery_result:
-                    timeline = recovery_result['available_timeline']
+                if "available_timeline" in recovery_result:
+                    timeline = recovery_result["available_timeline"]
                     if timeline:
                         click.echo("\nAvailable recovery points:")
                         for point in timeline[-5:]:  # Show last 5 points
                             click.echo(f"  - {point['timestamp']} ({point['backup_type']})")
 
     except Exception as e:
-        result = {
-            'success': False,
-            'error': str(e),
-            'timestamp': timestamp
-        }
+        result = {"success": False, "error": str(e), "timestamp": timestamp}
 
         if output_json:
             print_json_output(result)

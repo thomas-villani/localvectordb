@@ -58,9 +58,11 @@ class TestDatabasePerformance:
     @pytest.fixture(scope="function")
     def perf_db(self, temp_dir):
         """Create a database optimized for performance testing."""
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+        ):
             mock_provider = MockEmbeddings("test-model", dimension=128)  # Smaller for speed
             mock_embedding.return_value = mock_provider
 
@@ -75,7 +77,7 @@ class TestDatabasePerformance:
             mock_conn = create_mock_connection()
             mock_pooled_conn = create_mock_pooled_connection(mock_conn)
 
-            with patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
+            with patch("localvectordb._pools.ConnectionPool.get_connection") as mock_get_conn:
                 mock_get_conn.return_value = mock_pooled_conn
 
                 db = LocalVectorDB(
@@ -84,7 +86,7 @@ class TestDatabasePerformance:
                     chunk_size=200,
                     chunk_overlap=20,
                     enable_fts=False,  # Disable for simpler testing
-                    connection_pool_size=5
+                    connection_pool_size=5,
                 )
                 db.index = mock_index
                 db._embedding_provider = mock_provider
@@ -125,7 +127,7 @@ class TestDatabasePerformance:
 
             # Insert in batches
             for i in range(0, len(documents), batch_size):
-                batch = documents[i:i + batch_size]
+                batch = documents[i : i + batch_size]
                 perf_db.upsert(batch)
 
             end_time = time.time()
@@ -236,7 +238,7 @@ class TestChunkingPerformance:
         # Create a large document
         large_doc = " ".join([f"This is sentence {i} in a large document." for i in range(1000)])
 
-        methods = ['sentences', 'words', 'lines', 'tokens']
+        methods = ["sentences", "words", "lines", "tokens"]
         results = {}
 
         for method in methods:
@@ -247,11 +249,7 @@ class TestChunkingPerformance:
             end_time = time.time()
 
             chunk_time = end_time - start_time
-            results[method] = {
-                'time': chunk_time,
-                'chunks': len(chunks),
-                'throughput': len(large_doc) / chunk_time
-            }
+            results[method] = {"time": chunk_time, "chunks": len(chunks), "throughput": len(large_doc) / chunk_time}
 
             # Should complete quickly
             assert chunk_time < 8.0, f"{method} chunking took {chunk_time:.2f}s"
@@ -261,11 +259,11 @@ class TestChunkingPerformance:
 
         # All methods should be reasonably fast
         for method, result in results.items():
-            assert result['throughput'] > 1000, f"{method} throughput too low: {result['throughput']:.1f} chars/sec"
+            assert result["throughput"] > 1000, f"{method} throughput too low: {result['throughput']:.1f} chars/sec"
 
     def test_chunking_scaling(self):
         """Test how chunking performance scales with document size."""
-        chunker = ChunkerFactory.create_chunker('sentences', max_tokens=100)
+        chunker = ChunkerFactory.create_chunker("sentences", max_tokens=100)
 
         doc_sizes = [100, 500, 1000, 5000]  # Number of sentences
         times = []
@@ -298,7 +296,7 @@ class TestChunkingPerformance:
         times = []
 
         for overlap in overlap_values:
-            chunker = ChunkerFactory.create_chunker('sentences', max_tokens=50, overlap=overlap)
+            chunker = ChunkerFactory.create_chunker("sentences", max_tokens=50, overlap=overlap)
 
             start_time = time.time()
             chunker.chunk(doc)
@@ -406,14 +404,17 @@ class TestMemoryPerformance:
     def test_large_document_memory_usage(self, temp_dir):
         """Test memory usage with large documents."""
         import os
+
         try:
             import psutil
         except ImportError:
             pytest.skip("psutil not available for memory testing")
 
-        with patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
+        with (
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+            patch("localvectordb._pools.ConnectionPool.get_connection") as mock_get_conn,
+        ):
 
             # mock_provider = MockEmbeddings("test-model", dimension=128)
             # mock_embedding.return_value = mock_provider
@@ -433,7 +434,7 @@ class TestMemoryPerformance:
                 chunk_size=200,
                 chunk_overlap=0,
                 embedding_provider="mock",
-                embedding_model="test-model"
+                embedding_model="test-model",
             )
             db.index = mock_index
 
@@ -457,8 +458,9 @@ class TestMemoryPerformance:
             # Allow for chunking overhead, embeddings, etc.
             max_expected_increase = doc_size_mb * 20
 
-            assert memory_increase < max_expected_increase, \
-                f"Memory increased by {memory_increase:.1f}MB for {doc_size_mb:.1f}MB document"
+            assert (
+                memory_increase < max_expected_increase
+            ), f"Memory increased by {memory_increase:.1f}MB for {doc_size_mb:.1f}MB document"
 
             db.close()
 
@@ -522,10 +524,12 @@ class TestScalabilityBenchmarks:
 
     def test_document_count_scaling(self, temp_dir):
         """Test how performance scales with document count."""
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+            patch("localvectordb._pools.ConnectionPool.get_connection") as mock_get_conn,
+        ):
 
             mock_provider = MockEmbeddings("test-model", dimension=128)
             mock_embedding.return_value = mock_provider
@@ -541,11 +545,7 @@ class TestScalabilityBenchmarks:
             mock_pooled_conn = create_mock_pooled_connection(mock_conn)
             mock_get_conn.return_value = mock_pooled_conn
 
-            db = LocalVectorDB(
-                name="scale_test",
-                base_path=temp_dir,
-                chunk_size=100
-            )
+            db = LocalVectorDB(name="scale_test", base_path=temp_dir, chunk_size=100)
             db.index = mock_index
             db._embedding_provider = mock_provider
             db._embedding_dimension = mock_provider.get_dimension()
@@ -590,10 +590,12 @@ class TestScalabilityBenchmarks:
 
     def test_concurrent_user_simulation(self, temp_dir):
         """Simulate multiple concurrent users."""
-        with patch('localvectordb.embeddings.EmbeddingRegistry.create_provider') as mock_embedding, \
-                patch('faiss.IndexFlatL2') as mock_faiss, \
-                patch('faiss.IndexIDMap2') as mock_faiss_idmap, \
-                patch('localvectordb._pools.ConnectionPool.get_connection') as mock_get_conn:
+        with (
+            patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
+            patch("faiss.IndexFlatL2") as mock_faiss,
+            patch("faiss.IndexIDMap2") as mock_faiss_idmap,
+            patch("localvectordb._pools.ConnectionPool.get_connection") as mock_get_conn,
+        ):
 
             mock_provider = MockEmbeddings("test-model", dimension=128)
             mock_embedding.return_value = mock_provider
@@ -608,11 +610,7 @@ class TestScalabilityBenchmarks:
             mock_pooled_conn = create_mock_pooled_connection(mock_conn)
             mock_get_conn.return_value = mock_pooled_conn
 
-            db = LocalVectorDB(
-                name="concurrent_test",
-                base_path=temp_dir,
-                connection_pool_size=10
-            )
+            db = LocalVectorDB(name="concurrent_test", base_path=temp_dir, connection_pool_size=10)
             db._embedding_provider = mock_provider
             db._embedding_dimension = mock_provider.get_dimension()
 
@@ -634,12 +632,9 @@ class TestScalabilityBenchmarks:
                         op_type = "query"
                     else:
                         # Update operation - mock the get method to return a document
-                        with patch.object(db, 'get') as mock_get:
-                            mock_get.return_value = Document(
-                                id=f'user_{user_id}_doc_{i}',
-                                content='existing content'
-                            )
-                            db.update(f'user_{user_id}_doc_{i}', content=f"Updated by user {user_id}")
+                        with patch.object(db, "get") as mock_get:
+                            mock_get.return_value = Document(id=f"user_{user_id}_doc_{i}", content="existing content")
+                            db.update(f"user_{user_id}_doc_{i}", content=f"Updated by user {user_id}")
                         op_type = "update"
 
                     end_time = time.time()
@@ -653,10 +648,7 @@ class TestScalabilityBenchmarks:
             start_time = time.time()
 
             with ThreadPoolExecutor(max_workers=num_users) as executor:
-                futures = [
-                    executor.submit(simulate_user, user_id, operations_per_user)
-                    for user_id in range(num_users)
-                ]
+                futures = [executor.submit(simulate_user, user_id, operations_per_user) for user_id in range(num_users)]
 
                 all_operations = []
                 for future in as_completed(futures):

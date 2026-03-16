@@ -31,17 +31,15 @@ class DocxExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.docx']
+        return [".docx"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return [
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        ]
+        return ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['python-docx']
+        return ["python-docx"]
 
     @property
     def priority(self) -> int:
@@ -54,15 +52,16 @@ class DocxExtractor(BaseExtractor):
             "paragraph_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "table_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
             "file_size_bytes": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
-            "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False)
+            "character_count": MetadataField(type=MetadataFieldType.INTEGER, indexed=False, required=False),
         }
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("docx") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from DOCX files."""
         try:
@@ -72,17 +71,11 @@ class DocxExtractor(BaseExtractor):
             except ZipBombError as e:
                 logger.warning(f"ZIP bomb detected in '{filename}': {e}")
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='DocxExtractor',
-                    error=f"ZIP bomb protection triggered: {str(e)}"
+                    text="", success=False, method="DocxExtractor", error=f"ZIP bomb protection triggered: {str(e)}"
                 )
             except ValueError as e:
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='DocxExtractor',
-                    error=f"Invalid DOCX file: {str(e)}"
+                    text="", success=False, method="DocxExtractor", error=f"Invalid DOCX file: {str(e)}"
                 )
 
             from docx import Document
@@ -112,42 +105,31 @@ class DocxExtractor(BaseExtractor):
                             if cell_text:
                                 row_text.append(cell_text)
                         if row_text:
-                            table_text.append('\t'.join(row_text))
+                            table_text.append("\t".join(row_text))
 
                     if table_text:
-                        text_parts.append(f"\n[Table {table_count}]\n" + '\n'.join(table_text))
+                        text_parts.append(f"\n[Table {table_count}]\n" + "\n".join(table_text))
 
                 if not text_parts:
                     return ExtractionResult(
-                        text="",
-                        success=False,
-                        method='DocxExtractor',
-                        error="No text content found in Word document"
+                        text="", success=False, method="DocxExtractor", error="No text content found in Word document"
                     )
 
-                full_text = '\n\n'.join(text_parts)
+                full_text = "\n\n".join(text_parts)
 
                 metadata = {
-                    'filename': filename,
-                    'paragraph_count': paragraph_count,
-                    'table_count': table_count,
-                    'file_size_bytes': len(file_content),
-                    'character_count': len(full_text)
+                    "filename": filename,
+                    "paragraph_count": paragraph_count,
+                    "table_count": table_count,
+                    "file_size_bytes": len(file_content),
+                    "character_count": len(full_text),
                 }
 
-                return ExtractionResult(
-                    text=full_text,
-                    success=True,
-                    method='DocxExtractor',
-                    metadata=metadata
-                )
+                return ExtractionResult(text=full_text, success=True, method="DocxExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='DocxExtractor',
-                error=f"DOCX extraction failed: {str(e)}"
+                text="", success=False, method="DocxExtractor", error=f"DOCX extraction failed: {str(e)}"
             )
 
 
@@ -158,17 +140,15 @@ class PptxExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.pptx']
+        return [".pptx"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return [
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-        ]
+        return ["application/vnd.openxmlformats-officedocument.presentationml.presentation"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['python-pptx']
+        return ["python-pptx"]
 
     @property
     def priority(self) -> int:
@@ -187,10 +167,11 @@ class PptxExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("pptx") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from PPTX files."""
         try:
@@ -200,17 +181,11 @@ class PptxExtractor(BaseExtractor):
             except ZipBombError as e:
                 logger.warning(f"ZIP bomb detected in '{filename}': {e}")
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='PptxExtractor',
-                    error=f"ZIP bomb protection triggered: {str(e)}"
+                    text="", success=False, method="PptxExtractor", error=f"ZIP bomb protection triggered: {str(e)}"
                 )
             except ValueError as e:
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='PptxExtractor',
-                    error=f"Invalid PPTX file: {str(e)}"
+                    text="", success=False, method="PptxExtractor", error=f"Invalid PPTX file: {str(e)}"
                 )
 
             from pptx import Presentation
@@ -243,48 +218,40 @@ class PptxExtractor(BaseExtractor):
                                     if cell_text:
                                         row_text.append(cell_text)
                                 if row_text:
-                                    table_text.append('\t'.join(row_text))
+                                    table_text.append("\t".join(row_text))
 
                             if table_text:
-                                slide_content.append("[Table]\n" + '\n'.join(table_text))
+                                slide_content.append("[Table]\n" + "\n".join(table_text))
                                 shapes_with_text += 1
 
                     if slide_content:
-                        slide_text = f"[Slide {slide_num}]\n" + '\n'.join(slide_content)
+                        slide_text = f"[Slide {slide_num}]\n" + "\n".join(slide_content)
                         slide_texts.append(slide_text)
 
                 if not slide_texts:
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='PptxExtractor',
-                        error="No text content found in PowerPoint presentation"
+                        method="PptxExtractor",
+                        error="No text content found in PowerPoint presentation",
                     )
 
-                full_text = '\n\n---\n\n'.join(slide_texts)
+                full_text = "\n\n---\n\n".join(slide_texts)
 
                 metadata = {
-                    'filename': filename,
-                    'slide_count': len(prs.slides),
-                    'slides_with_text': len(slide_texts),
-                    'total_shapes': total_shapes,
-                    'file_size_bytes': len(file_content),
-                    'character_count': len(full_text)
+                    "filename": filename,
+                    "slide_count": len(prs.slides),
+                    "slides_with_text": len(slide_texts),
+                    "total_shapes": total_shapes,
+                    "file_size_bytes": len(file_content),
+                    "character_count": len(full_text),
                 }
 
-                return ExtractionResult(
-                    text=full_text,
-                    success=True,
-                    method='PptxExtractor',
-                    metadata=metadata
-                )
+                return ExtractionResult(text=full_text, success=True, method="PptxExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='PptxExtractor',
-                error=f"PPTX extraction failed: {str(e)}"
+                text="", success=False, method="PptxExtractor", error=f"PPTX extraction failed: {str(e)}"
             )
 
 
@@ -295,17 +262,15 @@ class XlsxExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.xlsx']
+        return [".xlsx"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return [
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        ]
+        return ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['openpyxl']
+        return ["openpyxl"]
 
     @property
     def priority(self) -> int:
@@ -325,10 +290,11 @@ class XlsxExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("openpyxl") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from XLSX files."""
         try:
@@ -338,17 +304,11 @@ class XlsxExtractor(BaseExtractor):
             except ZipBombError as e:
                 logger.warning(f"ZIP bomb detected in '{filename}': {e}")
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='XlsxExtractor',
-                    error=f"ZIP bomb protection triggered: {str(e)}"
+                    text="", success=False, method="XlsxExtractor", error=f"ZIP bomb protection triggered: {str(e)}"
                 )
             except ValueError as e:
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='XlsxExtractor',
-                    error=f"Invalid XLSX file: {str(e)}"
+                    text="", success=False, method="XlsxExtractor", error=f"Invalid XLSX file: {str(e)}"
                 )
 
             from openpyxl import load_workbook
@@ -391,43 +351,35 @@ class XlsxExtractor(BaseExtractor):
 
                         # Only add rows that have some content
                         if any(cell.strip() for cell in row_data):
-                            sheet_content.append('\t'.join(row_data))
+                            sheet_content.append("\t".join(row_data))
 
                     # Only add sheets that have content beyond the header
                     if len(sheet_content) > 1:
-                        sheet_texts.append('\n'.join(sheet_content))
+                        sheet_texts.append("\n".join(sheet_content))
 
                 if not sheet_texts:
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='XlsxExtractor',
-                        error="No text content found in Excel spreadsheet"
+                        method="XlsxExtractor",
+                        error="No text content found in Excel spreadsheet",
                     )
 
-                full_text = '\n\n'.join(sheet_texts)
+                full_text = "\n\n".join(sheet_texts)
 
                 metadata = {
-                    'filename': filename,
-                    'sheet_count': len(wb.sheetnames),
-                    'sheets_with_data': len(sheet_texts),
-                    'total_cells': total_cells,
-                    'non_empty_cells': non_empty_cells,
-                    'file_size_bytes': len(file_content),
-                    'character_count': len(full_text)
+                    "filename": filename,
+                    "sheet_count": len(wb.sheetnames),
+                    "sheets_with_data": len(sheet_texts),
+                    "total_cells": total_cells,
+                    "non_empty_cells": non_empty_cells,
+                    "file_size_bytes": len(file_content),
+                    "character_count": len(full_text),
                 }
 
-                return ExtractionResult(
-                    text=full_text,
-                    success=True,
-                    method='XlsxExtractor',
-                    metadata=metadata
-                )
+                return ExtractionResult(text=full_text, success=True, method="XlsxExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='XlsxExtractor',
-                error=f"XLSX extraction failed: {str(e)}"
+                text="", success=False, method="XlsxExtractor", error=f"XLSX extraction failed: {str(e)}"
             )

@@ -363,5 +363,6 @@ class TestIntegrationSecurityScenarios:
         ]
 
         for attack_host in attack_hosts:
-            assert validate_host_against_patterns(attack_host,
-                                                  patterns) is False, f"Attack host '{attack_host}' should not match"
+            assert (
+                validate_host_against_patterns(attack_host, patterns) is False
+            ), f"Attack host '{attack_host}' should not match"

@@ -36,14 +36,18 @@ def auth(ctx):
     pass
 
 
-@auth.command('create-key')
-@click.option('--description', '-d', help='Description of the key purpose')
-@click.option('--expires-days', type=int, help='Number of days until key expires')
-@click.option('--created-by', help='Identifier of who is creating the key')
-@click.option('--permission-level', '-p', type=click.Choice(['read_only', 'read_write']),
-              default='read_write', help='Permission level for the key (default: read_write)')
-@click.option('--output', '-o', type=click.Choice(['table', 'json', 'key-only']),
-              default='table', help='Output format')
+@auth.command("create-key")
+@click.option("--description", "-d", help="Description of the key purpose")
+@click.option("--expires-days", type=int, help="Number of days until key expires")
+@click.option("--created-by", help="Identifier of who is creating the key")
+@click.option(
+    "--permission-level",
+    "-p",
+    type=click.Choice(["read_only", "read_write"]),
+    default="read_write",
+    help="Permission level for the key (default: read_write)",
+)
+@click.option("--output", "-o", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format")
 @click.pass_context
 def create_api_key(ctx, description, expires_days, created_by, permission_level, output):
     """
@@ -62,7 +66,7 @@ def create_api_key(ctx, description, expires_days, created_by, permission_level,
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        api_key_db_path = ctx.obj.get("api_key_db_path")
         key_manager = get_key_manager(api_key_db_path)
 
         # Convert string to enum
@@ -70,20 +74,18 @@ def create_api_key(ctx, description, expires_days, created_by, permission_level,
 
         # Create the key
         key_record = key_manager.create_key(
-            description=description,
-            expires_days=expires_days,
-            created_by=created_by,
-            permission_level=perm_enum
+            description=description, expires_days=expires_days, created_by=created_by, permission_level=perm_enum
         )
 
-        if output == 'key-only':
+        if output == "key-only":
             # Just output the key for scripting
             click.echo(key_record.plain_key)
-        elif output == 'json':
+        elif output == "json":
             # JSON output
             import json
+
             output_data = key_record.to_dict()
-            output_data['plain_key'] = key_record.plain_key
+            output_data["plain_key"] = key_record.plain_key
             click.echo(json.dumps(output_data, indent=2))
         else:
             # Table format (default)
@@ -112,12 +114,11 @@ def create_api_key(ctx, description, expires_days, created_by, permission_level,
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@auth.command('list-keys')
-@click.option('--active-only', '-a', is_flag=True, help='Show only active keys')
-@click.option('--include-expired/--no-expired', default=True, help='Include expired keys')
-@click.option('--output', '-o', type=click.Choice(['table', 'json']),
-              default='table', help='Output format')
-@click.option('--show-stats', '-s', is_flag=True, help='Show key management statistics')
+@auth.command("list-keys")
+@click.option("--active-only", "-a", is_flag=True, help="Show only active keys")
+@click.option("--include-expired/--no-expired", default=True, help="Include expired keys")
+@click.option("--output", "-o", type=click.Choice(["table", "json"]), default="table", help="Output format")
+@click.option("--show-stats", "-s", is_flag=True, help="Show key management statistics")
 @click.pass_context
 def list_api_keys(ctx, active_only, include_expired, output, show_stats):
     """
@@ -135,25 +136,20 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        api_key_db_path = ctx.obj.get("api_key_db_path")
         key_manager = get_key_manager(api_key_db_path)
 
         # Get keys
-        keys = key_manager.list_keys(
-            active_only=active_only,
-            include_expired=include_expired
-        )
+        keys = key_manager.list_keys(active_only=active_only, include_expired=include_expired)
 
-        if output == 'json':
+        if output == "json":
             import json
+
             keys_data = [key.to_dict() for key in keys]
 
             if show_stats:
                 stats = key_manager.get_stats()
-                output_data = {
-                    'keys': keys_data,
-                    'stats': stats
-                }
+                output_data = {"keys": keys_data, "stats": stats}
             else:
                 output_data = keys_data
 
@@ -182,7 +178,8 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
             click.secho(
                 f"{'ID':<20} {'Description':<25} {'Permission':<12} {'Status':<10}"
                 f" {'Created':<12} {'Expires':<12} {'Last Used':<12}",
-                fg="cyan")
+                fg="cyan",
+            )
             click.secho("-" * 135, fg="cyan")
 
             for key in keys:
@@ -195,16 +192,16 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
                     status = click.style("ACTIVE", fg="green")
 
                 # Dates
-                created = key.created_at.strftime('%Y-%m-%d') if key.created_at else 'Unknown'
+                created = key.created_at.strftime("%Y-%m-%d") if key.created_at else "Unknown"
 
                 if key.expires_at:
-                    expires = key.expires_at.strftime('%Y-%m-%d')
+                    expires = key.expires_at.strftime("%Y-%m-%d")
                     if key.days_until_expiry is not None and key.days_until_expiry <= 7 and not key.is_expired:
                         expires = click.style(expires, fg="yellow")
                 else:
                     expires = "Never"
 
-                last_used = key.last_used.strftime('%Y-%m-%d') if key.last_used else "Never"
+                last_used = key.last_used.strftime("%Y-%m-%d") if key.last_used else "Never"
 
                 # Description truncation
                 desc = (key.description or "")[:23]
@@ -220,16 +217,17 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
 
                 click.echo(
                     f"{key.id:<20} {desc:<25} {perm_display:<22} {status:<20}"
-                    f" {created:<12} {expires:<22} {last_used:<12}")
+                    f" {created:<12} {expires:<22} {last_used:<12}"
+                )
 
     except Exception as e:
         click.secho(f"Error listing API keys: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@auth.command('revoke-key')
-@click.argument('key_id')
-@click.option('--confirm', '-y', is_flag=True, help='Skip confirmation prompt')
+@auth.command("revoke-key")
+@click.argument("key_id")
+@click.option("--confirm", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def revoke_api_key(ctx, key_id, confirm):
     """
@@ -247,7 +245,7 @@ def revoke_api_key(ctx, key_id, confirm):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        api_key_db_path = ctx.obj.get("api_key_db_path")
         key_manager = get_key_manager(api_key_db_path)
 
         # Get key details for confirmation
@@ -268,9 +266,7 @@ def revoke_api_key(ctx, key_id, confirm):
             click.echo(f"  Created: {key_record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
             click.echo()
 
-            if not click.confirm(
-                    click.style(f"Are you sure you want to revoke key '{key_id}'?", fg="red")
-            ):
+            if not click.confirm(click.style(f"Are you sure you want to revoke key '{key_id}'?", fg="red")):
                 click.echo("Revocation cancelled.")
                 return
 
@@ -287,10 +283,9 @@ def revoke_api_key(ctx, key_id, confirm):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@auth.command('rotate-key')
-@click.argument('key_id')
-@click.option('--output', '-o', type=click.Choice(['table', 'json', 'key-only']),
-              default='table', help='Output format')
+@auth.command("rotate-key")
+@click.argument("key_id")
+@click.option("--output", "-o", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format")
 @click.pass_context
 def rotate_api_key(ctx, key_id, output):
     """
@@ -308,7 +303,7 @@ def rotate_api_key(ctx, key_id, output):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        api_key_db_path = ctx.obj.get("api_key_db_path")
         key_manager = get_key_manager(api_key_db_path)
 
         # Get original key details
@@ -327,15 +322,13 @@ def rotate_api_key(ctx, key_id, output):
             click.secho(f"Failed to rotate key '{key_id}'.", fg="bright_red")
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
-        if output == 'key-only':
+        if output == "key-only":
             click.echo(new_key.plain_key)
-        elif output == 'json':
+        elif output == "json":
             import json
-            output_data = {
-                'original_key_id': key_id,
-                'new_key': new_key.to_dict()
-            }
-            output_data['new_key']['plain_key'] = new_key.plain_key
+
+            output_data = {"original_key_id": key_id, "new_key": new_key.to_dict()}
+            output_data["new_key"]["plain_key"] = new_key.plain_key
             click.echo(json.dumps(output_data, indent=2))
         else:
             click.secho("✓ API Key Rotated Successfully", fg="green", bold=True)
@@ -373,11 +366,12 @@ def rotate_api_key(ctx, key_id, output):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@auth.command('prune-expired')
-@click.option('--soft-delete/--hard-delete', default=True,
-              help='Soft delete (deactivate) vs hard delete (remove from database)')
-@click.option('--dry-run', '-n', is_flag=True, help='Show what would be pruned without actually doing it')
-@click.option('--confirm', '-y', is_flag=True, help='Skip confirmation prompt')
+@auth.command("prune-expired")
+@click.option(
+    "--soft-delete/--hard-delete", default=True, help="Soft delete (deactivate) vs hard delete (remove from database)"
+)
+@click.option("--dry-run", "-n", is_flag=True, help="Show what would be pruned without actually doing it")
+@click.option("--confirm", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
     """
@@ -398,7 +392,7 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
 
         from localvectordb_server.keymanager import get_key_manager
 
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        api_key_db_path = ctx.obj.get("api_key_db_path")
         key_manager = get_key_manager(api_key_db_path)
 
         # Find expired keys
@@ -415,8 +409,7 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
 
         for key in expired_keys:
             expired_days = (datetime.now(UTC) - key.expires_at).days
-            click.echo(f"  {key.id}: {key.description or 'No description'} "
-                       f"(expired {expired_days} days ago)")
+            click.echo(f"  {key.id}: {key.description or 'No description'} " f"(expired {expired_days} days ago)")
 
         click.echo()
 
@@ -429,8 +422,7 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
         action = "deactivate" if soft_delete else "permanently delete"
         if not confirm:
             if not click.confirm(
-                    click.style(f"Are you sure you want to {action} these {len(expired_keys)} expired keys?",
-                                fg="red")
+                click.style(f"Are you sure you want to {action} these {len(expired_keys)} expired keys?", fg="red")
             ):
                 click.echo("Operation cancelled.")
                 return
@@ -446,10 +438,9 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@auth.command('key-info')
-@click.argument('key_id')
-@click.option('--output', '-o', type=click.Choice(['table', 'json']),
-              default='table', help='Output format')
+@auth.command("key-info")
+@click.argument("key_id")
+@click.option("--output", "-o", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.pass_context
 def show_key_info(ctx, key_id, output):
     """
@@ -466,7 +457,7 @@ def show_key_info(ctx, key_id, output):
     try:
         from localvectordb_server.keymanager import get_key_manager
 
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        api_key_db_path = ctx.obj.get("api_key_db_path")
         key_manager = get_key_manager(api_key_db_path)
 
         key_record = key_manager.get_key(key_id)
@@ -474,8 +465,9 @@ def show_key_info(ctx, key_id, output):
             click.secho(f"Key '{key_id}' not found.", fg="bright_red")
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
-        if output == 'json':
+        if output == "json":
             import json
+
             click.echo(json.dumps(key_record.to_dict(), indent=2))
         else:
             click.secho(f"API Key Information: {key_id}", fg="blue", bold=True)
@@ -525,8 +517,7 @@ def show_key_info(ctx, key_id, output):
                         days_desc = f"{key_record.days_until_expiry} days"
                         color = "green"
 
-                    click.echo("  Days until expiry: " +
-                               click.style(days_desc, fg=color))
+                    click.echo("  Days until expiry: " + click.style(days_desc, fg=color))
             else:
                 click.echo("  Expires: Never")
 
@@ -540,9 +531,8 @@ def show_key_info(ctx, key_id, output):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@auth.command('status')
-@click.option('--output', '-o', type=click.Choice(['table', 'json']),
-              default='table', help='Output format')
+@auth.command("status")
+@click.option("--output", "-o", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.pass_context
 def auth_status(ctx, output):
     """
@@ -558,9 +548,9 @@ def auth_status(ctx, output):
         lvdb auth status --output json
     """
     try:
-        cfg = ctx.obj['config']
-        config_path = ctx.obj['config_path']
-        api_key_db_path = ctx.obj.get('api_key_db_path')
+        cfg = ctx.obj["config"]
+        config_path = ctx.obj["config_path"]
+        api_key_db_path = ctx.obj.get("api_key_db_path")
 
         # Get basic auth status
         auth_enabled = cfg.server.security.require_api_key
@@ -570,26 +560,25 @@ def auth_status(ctx, output):
         db_status = {"available": False, "stats": {}}
         try:
             from localvectordb_server.keymanager import get_key_manager
+
             key_manager = get_key_manager(api_key_db_path)
             db_status["available"] = True
             db_status["stats"] = key_manager.get_stats()
         except Exception as e:
             db_status["error"] = str(e)
 
-        if output == 'json':
+        if output == "json":
             import json
-            status_data = {
-                "config_file": config_path,
-                "auth_enabled": auth_enabled,
-                "database_keys": db_status
-            }
+
+            status_data = {"config_file": config_path, "auth_enabled": auth_enabled, "database_keys": db_status}
             click.echo(json.dumps(status_data, indent=2))
         else:
             click.secho("Authentication Status", fg="blue", bold=True)
             click.echo("Configuration file: " + click.style(f"{config_path}", fg="blue"))
-            click.echo("API Authentication: " +
-                       click.style(f"{'Enabled' if auth_enabled else 'Disabled'}",
-                                   fg="green" if auth_enabled else "red"))
+            click.echo(
+                "API Authentication: "
+                + click.style(f"{'Enabled' if auth_enabled else 'Disabled'}", fg="green" if auth_enabled else "red")
+            )
             click.echo()
 
             click.secho("Database-managed Keys:", fg="cyan")
@@ -602,7 +591,7 @@ def auth_status(ctx, output):
                 click.echo(f"  Expiring soon (7 days): {stats.get('expiring_soon', 0)}")
                 click.echo(f"  Recently used (24h): {stats.get('recently_used', 0)}")
 
-                if stats.get('expiring_soon', 0) > 0:
+                if stats.get("expiring_soon", 0) > 0:
                     click.echo()
                     click.secho(f"  ⚠️  {stats['expiring_soon']} key(s) expiring within 7 days", fg="yellow")
             else:

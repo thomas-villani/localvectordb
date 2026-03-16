@@ -14,6 +14,7 @@ Shared database utilities for sync/async operations.
 This module provides common abstractions used across the database layer to eliminate
 code duplication between synchronous and asynchronous database operations.
 """
+
 from __future__ import annotations
 
 

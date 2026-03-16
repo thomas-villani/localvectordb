@@ -4,8 +4,9 @@
 localvectordb_server/utils/checkdeps.py
 Utility functions for checking system dependencies.
 """
+
 import logging
-import subprocess
+import subprocess  # nosec B404
 import time
 from typing import Optional
 
@@ -31,7 +32,9 @@ def check_ollama_installation() -> Optional[str]:
         If Ollama is not installed or not accessible
     """
     try:
-        result = subprocess.run(['ollama', '-v'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(
+            ["ollama", "-v"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )  # nosec B603 B607
         if result.returncode == 0:
             return result.stdout.strip()
     except FileNotFoundError:

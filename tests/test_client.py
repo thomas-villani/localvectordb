@@ -24,7 +24,7 @@ def mock_httpx_client():
     Module-level fixture that automatically mocks httpx.Client for all tests.
     Provides sensible defaults that work for most tests, can be customized per test.
     """
-    with patch('httpx.Client') as mock_client_class:
+    with patch("httpx.Client") as mock_client_class:
         mock_client = Mock()
 
         # Default successful response that works for most tests
@@ -39,13 +39,9 @@ def mock_httpx_client():
                 "chunk_size": 500,
                 "chunk_overlap": 1,
                 "fts_enabled": True,
-                "metadata_schema": {}
+                "metadata_schema": {},
             },
-            "stats": {
-                "documents": 0,
-                "chunks": 0,
-                "index_vectors": 0
-            }
+            "stats": {"documents": 0, "chunks": 0, "index_vectors": 0},
         }
         mock_response.text = "OK"
 
@@ -84,8 +80,8 @@ class TestRemoteVectorDBInitialization:
                 "fts_enabled": True,
                 "metadata_schema": {
                     "author": {"type": "text", "indexed": True},
-                    "rating": {"type": "real", "indexed": False}
-                }
+                    "rating": {"type": "real", "indexed": False},
+                },
             }
         }
         mock_httpx_client.get.return_value = mock_httpx_client.request.return_value  # For database info check
@@ -95,7 +91,7 @@ class TestRemoteVectorDBInitialization:
             base_url="http://localhost:5000",
             api_key="test-key",
             metadata_schema=sample_metadata_schema,
-            create_if_not_exists=True
+            create_if_not_exists=True,
         )
 
         assert db.name == "test_db"
@@ -105,11 +101,7 @@ class TestRemoteVectorDBInitialization:
 
     def test_connect_existing_database(self, mock_httpx_client):
         """Test connecting to existing database."""
-        db = RemoteVectorDB(
-            name="existing_db",
-            base_url="http://localhost:5000",
-            create_if_not_exists=False
-        )
+        db = RemoteVectorDB(name="existing_db", base_url="http://localhost:5000", create_if_not_exists=False)
 
         assert db.name == "existing_db"
         # Should call get to load database info
@@ -124,11 +116,7 @@ class TestRemoteVectorDBInitialization:
         mock_httpx_client.request.return_value = mock_response
 
         with pytest.raises(DatabaseNotFoundError):
-            RemoteVectorDB(
-                name="nonexistent",
-                base_url="http://localhost:5000",
-                create_if_not_exists=False
-            )
+            RemoteVectorDB(name="nonexistent", base_url="http://localhost:5000", create_if_not_exists=False)
 
     def test_default_parameters(self, mock_httpx_client):
         """Test default parameters."""
@@ -191,11 +179,7 @@ class TestRemoteVectorDBDocumentOperations:
         """Test inserting new documents."""
         mock_httpx_client.request.return_value.json.return_value = {"ids": ["doc_1", "doc_2"]}
 
-        result = mock_db.insert(
-            ["Doc 1", "Doc 2"],
-            errors="ignore",
-            similarity_threshold=0.95
-        )
+        result = mock_db.insert(["Doc 1", "Doc 2"], errors="ignore", similarity_threshold=0.95)
 
         assert result == ["doc_1", "doc_2"]
 
@@ -212,10 +196,7 @@ class TestRemoteVectorDBDocumentOperations:
         mock_response = Mock()
         mock_response.status_code = 409
         mock_response.json.return_value = {
-            "error": {
-                "code": "duplicate_document_id",
-                "message": "Document already exists"
-            }
+            "error": {"code": "duplicate_document_id", "message": "Document already exists"}
         }
         mock_httpx_client.request.return_value = mock_response
 
@@ -230,7 +211,7 @@ class TestRemoteVectorDBDocumentOperations:
             "metadata": {"author": "Test"},
             "created_at": "2024-01-01T00:00:00",
             "updated_at": "2024-01-01T00:00:00",
-            "content_hash": "hash123"
+            "content_hash": "hash123",
         }
 
         result = mock_db.get("doc_1")
@@ -242,9 +223,7 @@ class TestRemoteVectorDBDocumentOperations:
         assert isinstance(result.created_at, datetime)
 
         # Check endpoint
-        mock_httpx_client.request.assert_called_with("GET",
-                                                     "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1"
-                                                     )
+        mock_httpx_client.request.assert_called_with("GET", "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1")
 
     def test_get_multiple_documents(self, mock_httpx_client, mock_db):
         """Test getting multiple documents."""
@@ -253,21 +232,11 @@ class TestRemoteVectorDBDocumentOperations:
         mock_response1.status_code = 200
         mock_response1.json.return_value = {
             "documents": [
-                {
-                    "id": "doc_1",
-                    "content": "Content 1",
-                    "metadata": {},
-                    "content_hash": "hash1"
-                },
-                {
-                    "id": "doc_2",
-                    "content": "Content 2",
-                    "metadata": {},
-                    "content_hash": "hash2"
-                }
+                {"id": "doc_1", "content": "Content 1", "metadata": {}, "content_hash": "hash1"},
+                {"id": "doc_2", "content": "Content 2", "metadata": {}, "content_hash": "hash2"},
             ],
             "returned_ids": ["doc_1", "doc_2"],
-            "missing_ids": []
+            "missing_ids": [],
         }
         # mock_response2 = Mock()
         # mock_response2.status_code = 200
@@ -296,9 +265,9 @@ class TestRemoteVectorDBDocumentOperations:
         mock_response = Mock()
         mock_response.status_code = 404
         mock_response.json.return_value = {
-            'error': {
+            "error": {
                 "message": f"Document 'nonexistent' not found in database '{mock_db.name}'",
-                "code": "DOCUMENT_NOT_FOUND"
+                "code": "DOCUMENT_NOT_FOUND",
             }
         }
         mock_httpx_client.request.return_value = mock_response
@@ -342,11 +311,7 @@ class TestRemoteVectorDBDocumentOperations:
         """Test updating a document."""
         mock_httpx_client.request.return_value.json.return_value = {"updated": True}
 
-        result = mock_db.update(
-            "doc_1",
-            content="New content",
-            metadata={"author": "New Author"}
-        )
+        result = mock_db.update("doc_1", content="New content", metadata={"author": "New Author"})
 
         assert result is True
 
@@ -387,7 +352,7 @@ class TestRemoteVectorDBQuery:
                     "score": 0.95,
                     "type": "document",
                     "content": "Test content",
-                    "metadata": {"author": "Test"}
+                    "metadata": {"author": "Test"},
                 }
             ]
         }
@@ -424,11 +389,7 @@ class TestRemoteVectorDBQuery:
             ]
         }
 
-        results = mock_db.query(
-            "test",
-            search_type="keyword",
-            return_type="chunks"
-        )
+        results = mock_db.query("test", search_type="keyword", return_type="chunks")
 
         assert len(results) == 1
         result = results[0]
@@ -441,11 +402,7 @@ class TestRemoteVectorDBQuery:
         mock_httpx_client.request.return_value.json.return_value = {"results": []}
 
         mock_db.query(
-            "test query",
-            search_type="hybrid",
-            vector_weight=0.7,
-            score_threshold=0.5,
-            filters={"author": "Test"}
+            "test query", search_type="hybrid", vector_weight=0.7, score_threshold=0.5, filters={"author": "Test"}
         )
 
         # Check request payload
@@ -459,21 +416,11 @@ class TestRemoteVectorDBQuery:
         """Test filtering documents."""
         mock_httpx_client.request.return_value.json.return_value = {
             "documents": [
-                {
-                    "id": "doc_1",
-                    "content": "Test content",
-                    "metadata": {"author": "Test"},
-                    "content_hash": "hash1"
-                }
+                {"id": "doc_1", "content": "Test content", "metadata": {"author": "Test"}, "content_hash": "hash1"}
             ]
         }
 
-        results = mock_db.filter(
-            where={"author": "Test"},
-            order_by="created_at DESC",
-            limit=10,
-            offset=5
-        )
+        results = mock_db.filter(where={"author": "Test"}, order_by="created_at DESC", limit=10, offset=5)
 
         assert len(results) == 1
         assert isinstance(results[0], Document)
@@ -519,11 +466,7 @@ class TestRemoteVectorDBProperties:
     def test_stats_property(self, mock_httpx_client, mock_db):
         """Test stats property."""
         mock_httpx_client.get.return_value.json.return_value = {
-            "stats": {
-                "documents": 100,
-                "chunks": 500,
-                "index_vectors": 500
-            }
+            "stats": {"documents": 100, "chunks": 500, "index_vectors": 500}
         }
 
         stats = mock_db.get_stats()
@@ -549,41 +492,23 @@ class TestRemoteVectorDBLegacyMethods:
 
     def test_hybrid_query_method(self, mock_httpx_client, mock_db):
         """Test legacy hybrid_query method."""
-        with patch.object(mock_db, 'query') as mock_query:
+        with patch.object(mock_db, "query") as mock_query:
             mock_query.return_value = []
 
-            mock_db.hybrid_query(
-                "test query",
-                k=10,
-                vector_weight=0.8,
-                metadata_filters={"author": "Test"}
-            )
+            mock_db.hybrid_query("test query", k=10, vector_weight=0.8, metadata_filters={"author": "Test"})
 
             mock_query.assert_called_once_with(
-                "test query",
-                search_type="hybrid",
-                k=10,
-                filters={"author": "Test"},
-                vector_weight=0.8
+                "test query", search_type="hybrid", k=10, filters={"author": "Test"}, vector_weight=0.8
             )
 
     def test_keyword_search_method(self, mock_httpx_client, mock_db):
         """Test legacy keyword_search method."""
-        with patch.object(mock_db, 'query') as mock_query:
+        with patch.object(mock_db, "query") as mock_query:
             mock_query.return_value = []
 
-            mock_db.keyword_search(
-                "test query",
-                k=5,
-                metadata_filters={"category": "test"}
-            )
+            mock_db.keyword_search("test query", k=5, metadata_filters={"category": "test"})
 
-            mock_query.assert_called_once_with(
-                "test query",
-                search_type="keyword",
-                k=5,
-                filters={"category": "test"}
-            )
+            mock_query.assert_called_once_with("test query", search_type="keyword", k=5, filters={"category": "test"})
 
 
 @pytest.mark.client
@@ -610,10 +535,7 @@ class TestRemoteVectorDBErrorHandling:
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.json.return_value = {
-            "error": {
-                "code": "embedding_error",
-                "message": "Embedding model not available"
-            }
+            "error": {"code": "embedding_error", "message": "Embedding model not available"}
         }
         mock_httpx_client.request.return_value = mock_response
 
@@ -655,7 +577,7 @@ class TestRemoteVectorDBUtilityMethods:
         assert result is True
         mock_httpx_client.get.assert_called_with(
             "http://127.0.0.1:5000/api/v1/databases",
-            headers={"Content-Type": "application/json", "Authorization": "Bearer test-key"}
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-key"},
         )
 
     def test_database_exists_false(self, mock_httpx_client):
@@ -711,7 +633,7 @@ class TestDocumentClass:
             "metadata": {"author": "Test"},
             "created_at": "2024-01-01T00:00:00",
             "updated_at": "2024-01-01T00:00:00",
-            "content_hash": "hash123"
+            "content_hash": "hash123",
         }
 
         doc = Document.from_dict(data)
@@ -725,10 +647,7 @@ class TestDocumentClass:
 
     def test_from_dict_minimal(self):
         """Test creating Document from minimal dict."""
-        data = {
-            "id": "doc_1",
-            "content": "Test content"
-        }
+        data = {"id": "doc_1", "content": "Test content"}
 
         doc = Document.from_dict(data)
 
@@ -761,7 +680,7 @@ class TestQueryResultClass:
             "score": 0.95,
             "type": "document",
             "content": "Test content",
-            "metadata": {"author": "Test"}
+            "metadata": {"author": "Test"},
         }
 
         result = QueryResult.from_dict(data)
@@ -802,10 +721,7 @@ class TestQueryResultClass:
 
     def test_from_dict_minimal(self):
         """Test creating QueryResult from minimal dict."""
-        data = {
-            "id": "doc_1",
-            "content": "Test content"
-        }
+        data = {"id": "doc_1", "content": "Test content"}
 
         result = QueryResult.from_dict(data)
 
@@ -830,13 +746,10 @@ class TestRemoteVectorDBFileOperations:
         # Mock the response for request method (used when files are involved)
         mock_httpx_client.request.return_value.json.return_value = {
             "document_ids": ["doc1", "doc2"],
-            "status": "success"
+            "status": "success",
         }
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
         # Test single file
         result = db.upsert_from_file(test_file1)
@@ -847,9 +760,7 @@ class TestRemoteVectorDBFileOperations:
 
         # Test multiple files with metadata
         result = db.upsert_from_file(
-            [test_file1, test_file2],
-            metadata=[{"author": "user1"}, {"author": "user2"}],
-            ids=["custom1", "custom2"]
+            [test_file1, test_file2], metadata=[{"author": "user1"}, {"author": "user2"}], ids=["custom1", "custom2"]
         )
         assert result == ["doc1", "doc2"]
 
@@ -860,21 +771,11 @@ class TestRemoteVectorDBFileOperations:
         test_file.write_text("Test content")
 
         # Mock the response for request method (used when files are involved)
-        mock_httpx_client.request.return_value.json.return_value = {
-            "document_ids": ["new_doc"],
-            "status": "success"
-        }
+        mock_httpx_client.request.return_value.json.return_value = {"document_ids": ["new_doc"], "status": "success"}
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
-        result = db.insert_from_file(
-            test_file,
-            metadata={"author": "test"},
-            errors="raise"
-        )
+        result = db.insert_from_file(test_file, metadata={"author": "test"}, errors="raise")
         assert result == ["new_doc"]
 
         # Verify the request was made
@@ -882,10 +783,7 @@ class TestRemoteVectorDBFileOperations:
 
     def test_file_not_found_error(self, mock_httpx_client):
         """Test error when file doesn't exist."""
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
         with pytest.raises(FileNotFoundError, match="File not found"):
             db.upsert_from_file("/nonexistent/file.txt")
@@ -895,24 +793,15 @@ class TestRemoteVectorDBFileOperations:
         test_file = tmp_path / "test.txt"
         test_file.write_text("Test")
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
         # Test metadata count mismatch
         with pytest.raises(ValueError, match="Number of metadata entries must match"):
-            db.upsert_from_file(
-                [test_file],
-                metadata=[{"a": 1}, {"b": 2}]  # 2 metadata for 1 file
-            )
+            db.upsert_from_file([test_file], metadata=[{"a": 1}, {"b": 2}])  # 2 metadata for 1 file
 
         # Test ID count mismatch
         with pytest.raises(ValueError, match="Number of IDs must match"):
-            db.insert_from_file(
-                [test_file],
-                ids=["id1", "id2"]  # 2 IDs for 1 file
-            )
+            db.insert_from_file([test_file], ids=["id1", "id2"])  # 2 IDs for 1 file
 
 
 @pytest.mark.client
@@ -924,15 +813,9 @@ class TestRemoteVectorDBChunkOperations:
         from localvectordb.core import Chunk, ChunkPosition
 
         # Mock the response
-        mock_httpx_client.post.return_value.json.return_value = {
-            "ids": ["doc1", "doc2"],
-            "status": "success"
-        }
+        mock_httpx_client.post.return_value.json.return_value = {"ids": ["doc1", "doc2"], "status": "success"}
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
         # Test with Chunk objects
         chunks_with_objects = {
@@ -941,28 +824,27 @@ class TestRemoteVectorDBChunkOperations:
                     content="Chunk 1",
                     position=ChunkPosition(start=0, end=7, line=1, column=1, end_line=1, end_column=8),
                     tokens=2,
-                    index=0
+                    index=0,
                 ),
                 Chunk(
                     content="Chunk 2",
                     position=ChunkPosition(start=8, end=15, line=1, column=9, end_line=1, end_column=16),
                     tokens=2,
-                    index=1
-                )
+                    index=1,
+                ),
             ],
             "doc2": [
                 Chunk(
                     content="Chunk A",
                     position=ChunkPosition(start=0, end=7, line=1, column=1, end_line=1, end_column=8),
                     tokens=2,
-                    index=0
+                    index=0,
                 )
-            ]
+            ],
         }
 
         result = db.upsert_from_chunks(
-            chunks_with_objects,
-            metadata={"doc1": {"author": "user1"}, "doc2": {"author": "user2"}}
+            chunks_with_objects, metadata={"doc1": {"author": "user1"}, "doc2": {"author": "user2"}}
         )
         assert result == ["doc1", "doc2"]
 
@@ -970,7 +852,7 @@ class TestRemoteVectorDBChunkOperations:
         call_args = mock_httpx_client.post.call_args
         if call_args:
             assert call_args[0][0].endswith("/documents/chunks")
-            payload = call_args[1]['json']
+            payload = call_args[1]["json"]
             assert "chunks_by_document" in payload
             # Check that content field is correctly mapped
             assert payload["chunks_by_document"]["doc1"][0]["text"] == "Chunk 1"
@@ -978,20 +860,12 @@ class TestRemoteVectorDBChunkOperations:
     def test_upsert_from_chunks_with_strings(self, mock_httpx_client):
         """Test upserting documents from string chunks."""
         # Mock the response
-        mock_httpx_client.post.return_value.json.return_value = {
-            "ids": ["doc1"],
-            "status": "success"
-        }
+        mock_httpx_client.post.return_value.json.return_value = {"ids": ["doc1"], "status": "success"}
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
         # Test with plain strings
-        chunks_with_strings = {
-            "doc1": ["String chunk 1", "String chunk 2"]
-        }
+        chunks_with_strings = {"doc1": ["String chunk 1", "String chunk 2"]}
 
         result = db.upsert_from_chunks(chunks_with_strings)
         assert result == ["doc1"]
@@ -999,7 +873,7 @@ class TestRemoteVectorDBChunkOperations:
         # Verify the chunks were passed as-is
         call_args = mock_httpx_client.post.call_args
         if call_args:
-            payload = call_args[1]['json']
+            payload = call_args[1]["json"]
             assert payload["chunks_by_document"]["doc1"] == ["String chunk 1", "String chunk 2"]
 
     def test_insert_from_chunks(self, mock_httpx_client):
@@ -1007,15 +881,9 @@ class TestRemoteVectorDBChunkOperations:
         from localvectordb.core import Chunk, ChunkPosition
 
         # Mock the response
-        mock_httpx_client.post.return_value.json.return_value = {
-            "ids": ["new_doc"],
-            "status": "success"
-        }
+        mock_httpx_client.post.return_value.json.return_value = {"ids": ["new_doc"], "status": "success"}
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
         chunks = {
             "new_doc": [
@@ -1023,23 +891,19 @@ class TestRemoteVectorDBChunkOperations:
                     content="New chunk",
                     position=ChunkPosition(start=0, end=9, line=1, column=1, end_line=1, end_column=10),
                     tokens=2,
-                    index=0
+                    index=0,
                 )
             ]
         }
 
-        result = db.insert_from_chunks(
-            chunks,
-            errors="raise",
-            similarity_threshold=0.9
-        )
+        result = db.insert_from_chunks(chunks, errors="raise", similarity_threshold=0.9)
         assert result == ["new_doc"]
 
         # Verify the request
         call_args = mock_httpx_client.post.call_args
         if call_args:
             assert call_args[0][0].endswith("/documents/chunks/insert")
-            payload = call_args[1]['json']
+            payload = call_args[1]["json"]
             assert payload["errors"] == "raise"
             assert payload["similarity_threshold"] == 0.9
 
@@ -1048,17 +912,12 @@ class TestRemoteVectorDBChunkOperations:
         # Mock the response
         mock_httpx_client.post.return_value.json.return_value = {
             "ids": [],  # No documents inserted due to conflicts
-            "status": "success"
+            "status": "success",
         }
 
-        db = RemoteVectorDB(
-            name="test_db",
-            base_url="http://localhost:5000"
-        )
+        db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
-        chunks = {
-            "existing_doc": ["chunk1", "chunk2"]
-        }
+        chunks = {"existing_doc": ["chunk1", "chunk2"]}
 
         result = db.insert_from_chunks(chunks, errors="ignore")
         assert result == []
@@ -1066,7 +925,7 @@ class TestRemoteVectorDBChunkOperations:
         # Verify errors parameter was sent
         call_args = mock_httpx_client.post.call_args
         if call_args:
-            assert call_args[1]['json']['errors'] == "ignore"
+            assert call_args[1]["json"]["errors"] == "ignore"
 
 
 @pytest.mark.asyncio
@@ -1082,22 +941,16 @@ class TestRemoteVectorDBAsyncFileOperations:
         test_file = tmp_path / "async_test.txt"
         test_file.write_text("Async test content")
 
-        with patch('httpx.AsyncClient') as mock_client_class:
+        with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_response = Mock()
             mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "document_ids": ["async_doc"],
-                "status": "success"
-            }
+            mock_response.json.return_value = {"document_ids": ["async_doc"], "status": "success"}
 
             mock_client.request.return_value = mock_response
             mock_client_class.return_value = mock_client
 
-            db = RemoteVectorDB(
-                name="test_db",
-                base_url="http://localhost:5000"
-            )
+            db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
             result = await db.upsert_from_file_async(test_file)
             assert result == ["async_doc"]
@@ -1110,28 +963,18 @@ class TestRemoteVectorDBAsyncFileOperations:
         test_file = tmp_path / "async_test.txt"
         test_file.write_text("Async test content")
 
-        with patch('httpx.AsyncClient') as mock_client_class:
+        with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_response = Mock()
             mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "document_ids": ["new_async_doc"],
-                "status": "success"
-            }
+            mock_response.json.return_value = {"document_ids": ["new_async_doc"], "status": "success"}
 
             mock_client.request.return_value = mock_response
             mock_client_class.return_value = mock_client
 
-            db = RemoteVectorDB(
-                name="test_db",
-                base_url="http://localhost:5000"
-            )
+            db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
-            result = await db.insert_from_file_async(
-                test_file,
-                metadata={"async": True},
-                errors="ignore"
-            )
+            result = await db.insert_from_file_async(test_file, metadata={"async": True}, errors="ignore")
             assert result == ["new_async_doc"]
 
 
@@ -1146,25 +989,19 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
         from localvectordb.core import Chunk, ChunkPosition
 
-        with patch('httpx.AsyncClient') as mock_client_class:
+        with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
 
             # Create a proper mock response that won't interfere with status_code checks
             mock_response = Mock()
             mock_response.status_code = 200  # This needs to be a plain int
-            mock_response.json.return_value = {
-                "ids": ["async_chunk_doc"],
-                "status": "success"
-            }
+            mock_response.json.return_value = {"ids": ["async_chunk_doc"], "status": "success"}
 
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
             mock_client_class.return_value = mock_client
 
-            db = RemoteVectorDB(
-                name="test_db",
-                base_url="http://localhost:5000"
-            )
+            db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
             chunks = {
                 "async_chunk_doc": [
@@ -1172,7 +1009,7 @@ class TestRemoteVectorDBAsyncChunkOperations:
                         content="Async chunk",
                         position=ChunkPosition(start=0, end=11, line=1, column=1, end_line=1, end_column=12),
                         tokens=2,
-                        index=0
+                        index=0,
                     )
                 ]
             }
@@ -1184,33 +1021,21 @@ class TestRemoteVectorDBAsyncChunkOperations:
         """Test async chunk insert."""
         from unittest.mock import AsyncMock
 
-        with patch('httpx.AsyncClient') as mock_client_class:
+        with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
 
             # Create a proper mock response
             mock_response = Mock()
             mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "ids": ["new_async_chunk"],
-                "status": "success"
-            }
+            mock_response.json.return_value = {"ids": ["new_async_chunk"], "status": "success"}
 
             # Make sure the async client methods return our mock response
             mock_client.request.return_value = mock_response
             mock_client_class.return_value = mock_client
 
-            db = RemoteVectorDB(
-                name="test_db",
-                base_url="http://localhost:5000"
-            )
+            db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
 
-            chunks = {
-                "new_async_chunk": ["Simple string chunk"]
-            }
+            chunks = {"new_async_chunk": ["Simple string chunk"]}
 
-            result = await db.insert_from_chunks_async(
-                chunks,
-                errors="raise",
-                batch_size=50
-            )
+            result = await db.insert_from_chunks_async(chunks, errors="raise", batch_size=50)
             assert result == ["new_async_chunk"]

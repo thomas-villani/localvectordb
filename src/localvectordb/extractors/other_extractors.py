@@ -29,15 +29,15 @@ class RTFExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.rtf']
+        return [".rtf"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return ['application/rtf', 'text/rtf']
+        return ["application/rtf", "text/rtf"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['striprtf']
+        return ["striprtf"]
 
     @property
     def priority(self) -> int:
@@ -55,10 +55,11 @@ class RTFExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("striprtf") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from RTF files."""
         try:
@@ -66,10 +67,10 @@ class RTFExtractor(BaseExtractor):
 
             # RTF files are typically encoded as text
             try:
-                rtf_content = file_content.decode('utf-8')
+                rtf_content = file_content.decode("utf-8")
             except UnicodeDecodeError:
                 # Try other encodings
-                for encoding in ['latin-1', 'cp1252']:
+                for encoding in ["latin-1", "cp1252"]:
                     try:
                         rtf_content = file_content.decode(encoding)
                         break
@@ -79,8 +80,8 @@ class RTFExtractor(BaseExtractor):
                     return ExtractionResult(
                         text="",
                         success=False,
-                        method='RTFExtractor',
-                        error="Could not decode RTF file with supported encodings"
+                        method="RTFExtractor",
+                        error="Could not decode RTF file with supported encodings",
                     )
 
             # Extract plain text from RTF
@@ -88,34 +89,23 @@ class RTFExtractor(BaseExtractor):
 
             if not plain_text or not plain_text.strip():
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='RTFExtractor',
-                    error="No text content found in RTF document"
+                    text="", success=False, method="RTFExtractor", error="No text content found in RTF document"
                 )
 
             metadata = {
-                'filename': filename,
-                'file_size_bytes': len(file_content),
-                'character_count': len(plain_text),
-                'rtf_size': len(rtf_content),
-                'compression_ratio': len(plain_text) / len(rtf_content) if rtf_content else 0,
-                'extraction_library': 'striprtf'
+                "filename": filename,
+                "file_size_bytes": len(file_content),
+                "character_count": len(plain_text),
+                "rtf_size": len(rtf_content),
+                "compression_ratio": len(plain_text) / len(rtf_content) if rtf_content else 0,
+                "extraction_library": "striprtf",
             }
 
-            return ExtractionResult(
-                text=plain_text,
-                success=True,
-                method='RTFExtractor',
-                metadata=metadata
-            )
+            return ExtractionResult(text=plain_text, success=True, method="RTFExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='RTFExtractor',
-                error=f"RTF extraction failed: {str(e)}"
+                text="", success=False, method="RTFExtractor", error=f"RTF extraction failed: {str(e)}"
             )
 
 
@@ -127,15 +117,15 @@ class EPubExtractor(BaseExtractor):
 
     @property
     def supported_extensions(self) -> List[str]:
-        return ['.epub']
+        return [".epub"]
 
     @property
     def supported_mimetypes(self) -> List[str]:
-        return ['application/epub+zip']
+        return ["application/epub+zip"]
 
     @property
     def required_packages(self) -> List[str]:
-        return ['ebooklib']
+        return ["ebooklib"]
 
     @property
     def priority(self) -> int:
@@ -154,10 +144,11 @@ class EPubExtractor(BaseExtractor):
 
     def _check_availability(self) -> bool:
         import importlib.util
+
         return importlib.util.find_spec("ebooklib") is not None
 
     def _extract_text_impl(
-            self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
+        self, file_content: bytes, filename: str, mimetype: Optional[str], **kwargs
     ) -> ExtractionResult:
         """Extract text from EPUB files."""
         try:
@@ -169,17 +160,11 @@ class EPubExtractor(BaseExtractor):
             except ZipBombError as e:
                 logger.warning(f"ZIP bomb detected in '{filename}': {e}")
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='EPubExtractor',
-                    error=f"ZIP bomb protection triggered: {str(e)}"
+                    text="", success=False, method="EPubExtractor", error=f"ZIP bomb protection triggered: {str(e)}"
                 )
             except ValueError as e:
                 return ExtractionResult(
-                    text="",
-                    success=False,
-                    method='EPubExtractor',
-                    error=f"Invalid EPUB file: {str(e)}"
+                    text="", success=False, method="EPubExtractor", error=f"Invalid EPUB file: {str(e)}"
                 )
 
             import ebooklib
@@ -202,12 +187,12 @@ class EPubExtractor(BaseExtractor):
                             import re
                             from html import unescape
 
-                            content = item.get_content().decode('utf-8')
+                            content = item.get_content().decode("utf-8")
 
                             # Remove HTML tags (basic implementation)
-                            text = re.sub('<[^<]+?>', '', content)
+                            text = re.sub("<[^<]+?>", "", content)
                             text = unescape(text)
-                            text = re.sub(r'\s+', ' ', text).strip()
+                            text = re.sub(r"\s+", " ", text).strip()
 
                             if text:
                                 text_parts.append(f"[Chapter {chapter_count}]\n{text}")
@@ -218,48 +203,37 @@ class EPubExtractor(BaseExtractor):
 
                 if not text_parts:
                     return ExtractionResult(
-                        text="",
-                        success=False,
-                        method='EPubExtractor',
-                        error="No text content found in EPUB file"
+                        text="", success=False, method="EPubExtractor", error="No text content found in EPUB file"
                     )
 
-                full_text = '\n\n'.join(text_parts)
+                full_text = "\n\n".join(text_parts)
 
                 # Get metadata from book
                 book_metadata = {}
                 try:
-                    title_meta = book.get_metadata('DC', 'title')
-                    author_meta = book.get_metadata('DC', 'creator')
-                    lang_meta = book.get_metadata('DC', 'language')
+                    title_meta = book.get_metadata("DC", "title")
+                    author_meta = book.get_metadata("DC", "creator")
+                    lang_meta = book.get_metadata("DC", "language")
                     book_metadata = {
-                        'title': title_meta[0][0] if title_meta else 'Unknown',
-                        'author': author_meta[0][0] if author_meta else 'Unknown',
-                        'language': lang_meta[0][0] if lang_meta else 'Unknown',
+                        "title": title_meta[0][0] if title_meta else "Unknown",
+                        "author": author_meta[0][0] if author_meta else "Unknown",
+                        "language": lang_meta[0][0] if lang_meta else "Unknown",
                     }
                 except Exception:
                     pass
 
                 metadata = {
-                    'filename': filename,
-                    'chapter_count': chapter_count,
-                    'file_size_bytes': len(file_content),
-                    'character_count': len(full_text),
-                    'book_metadata': book_metadata,
-                    'extraction_library': 'ebooklib'
+                    "filename": filename,
+                    "chapter_count": chapter_count,
+                    "file_size_bytes": len(file_content),
+                    "character_count": len(full_text),
+                    "book_metadata": book_metadata,
+                    "extraction_library": "ebooklib",
                 }
 
-                return ExtractionResult(
-                    text=full_text,
-                    success=True,
-                    method='EPubExtractor',
-                    metadata=metadata
-                )
+                return ExtractionResult(text=full_text, success=True, method="EPubExtractor", metadata=metadata)
 
         except Exception as e:
             return ExtractionResult(
-                text="",
-                success=False,
-                method='EPubExtractor',
-                error=f"EPUB extraction failed: {str(e)}"
+                text="", success=False, method="EPubExtractor", error=f"EPUB extraction failed: {str(e)}"
             )

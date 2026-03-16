@@ -94,20 +94,28 @@ Notes:
     - Database files are stored in the directory specified by DB_ROOT_DIR in the configuration
     - Authentication can be enabled with the auth commands
 """
+
 import os
 
 import click
 
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
-@click.option('--config', '-c',
-              type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
-              help='Path to config file.',
-              envvar='LVDB_SERVER_CONFIG')
-@click.option('--db-folder', '-d', default=None,
-              type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
-              help='The directory containing vector databases.',
-              envvar='LVDB_DATABASE_ROOT_DIR')
+@click.option(
+    "--config",
+    "-c",
+    type=click.Path(file_okay=True, dir_okay=False, exists=True, resolve_path=True),
+    help="Path to config file.",
+    envvar="LVDB_SERVER_CONFIG",
+)
+@click.option(
+    "--db-folder",
+    "-d",
+    default=None,
+    type=click.Path(dir_okay=True, exists=True, resolve_path=True, file_okay=False),
+    help="The directory containing vector databases.",
+    envvar="LVDB_DATABASE_ROOT_DIR",
+)
 @click.version_option(None, "-V", "--version", package_name="localvectordb", message="%(version)s")
 @click.pass_context
 def cli(ctx, config, db_folder):
@@ -124,6 +132,7 @@ def cli(ctx, config, db_folder):
 
     # Centralized config resolution — subcommands inherit config from this group callback.
     from localvectordb_server.cli._utils import find_config_file
+
     config_path = find_config_file(config)
 
     if not config_path:
@@ -133,6 +142,7 @@ def cli(ctx, config, db_folder):
         cfg = config_path = api_key_path = db_folder = None
     else:
         from localvectordb_server.config import load_config
+
         cfg = load_config(config_path)
         api_key_path = cfg.server.security.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
 
@@ -141,7 +151,7 @@ def cli(ctx, config, db_folder):
         else:
             cfg.database.root_dir = db_folder
 
-    ctx.obj = {'config': cfg, 'config_path': config_path, 'api_key_db_path': api_key_path, 'db_folder': db_folder}
+    ctx.obj = {"config": cfg, "config_path": config_path, "api_key_db_path": api_key_path, "db_folder": db_folder}
 
 
 from localvectordb_server.cli._auth import auth  # noqa: E402
@@ -168,5 +178,5 @@ cli.add_command(maintenance_group)
 
 __all__ = ["cli"]
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

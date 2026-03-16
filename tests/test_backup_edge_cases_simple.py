@@ -42,12 +42,7 @@ def temp_backup_dirs():
     backup_dir.mkdir()
     restore_dir.mkdir()
 
-    yield {
-        'base': Path(base_temp),
-        'db': db_dir,
-        'backup': backup_dir,
-        'restore': restore_dir
-    }
+    yield {"base": Path(base_temp), "db": db_dir, "backup": backup_dir, "restore": restore_dir}
 
     shutil.rmtree(base_temp, ignore_errors=True)
 
@@ -68,30 +63,23 @@ def test_database(temp_backup_dirs):
         Test database instance
     """
     metadata_schema = {
-        'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-        'importance': MetadataField(type=MetadataFieldType.INTEGER),
-        'timestamp': MetadataField(type=MetadataFieldType.DATE)
+        "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+        "importance": MetadataField(type=MetadataFieldType.INTEGER),
+        "timestamp": MetadataField(type=MetadataFieldType.DATE),
     }
 
     db = LocalVectorDB(
         "test_backup",
-        str(temp_backup_dirs['db']),
+        str(temp_backup_dirs["db"]),
         metadata_schema=metadata_schema,
         embedding_provider="mock",
         embedding_model="mock-model",
-        chunk_size=100
+        chunk_size=100,
     )
 
     # Add test documents
     documents = [f"Test document {i} with sample content for backup testing." for i in range(3)]
-    metadata = [
-        {
-            'category': f'cat_{i % 2}',
-            'importance': i,
-            'timestamp': '2024-01-01'
-        }
-        for i in range(3)
-    ]
+    metadata = [{"category": f"cat_{i % 2}", "importance": i, "timestamp": "2024-01-01"} for i in range(3)]
     ids = [f"doc_{i}" for i in range(3)]
 
     db.upsert(documents, metadata=metadata, ids=ids)
@@ -107,22 +95,21 @@ class TestCompressionAlgorithms:
         Test backup with GZIP compression (default).
         """
         backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            compression_algorithm=CompressionAlgorithm.GZIP
+            backup_location=temp_backup_dirs["backup"], compression_algorithm=CompressionAlgorithm.GZIP
         )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create backup with GZIP
         backup_id = backup_manager.create_backup(BackupType.FULL)
 
         # Verify backup was created
-        backup_files = list(temp_backup_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_backup_dirs["backup"].glob("*.lvdb-backup"))
         assert len(backup_files) > 0
 
         # Test restoration
-        restore_path = backup_manager.restore_backup(backup_id, temp_backup_dirs['restore'])
+        restore_path = backup_manager.restore_backup(backup_id, temp_backup_dirs["restore"])
         assert restore_path.exists()
 
     def test_lzma_compression(self, temp_backup_dirs, test_database):
@@ -130,22 +117,21 @@ class TestCompressionAlgorithms:
         Test backup with LZMA compression.
         """
         backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            compression_algorithm=CompressionAlgorithm.LZMA
+            backup_location=temp_backup_dirs["backup"], compression_algorithm=CompressionAlgorithm.LZMA
         )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create backup with LZMA
         backup_id = backup_manager.create_backup(BackupType.FULL)
 
         # Verify backup was created
-        backup_files = list(temp_backup_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_backup_dirs["backup"].glob("*.lvdb-backup"))
         assert len(backup_files) > 0
 
         # Test restoration
-        restore_path = backup_manager.restore_backup(backup_id, temp_backup_dirs['restore'])
+        restore_path = backup_manager.restore_backup(backup_id, temp_backup_dirs["restore"])
         assert restore_path.exists()
 
     def test_no_compression(self, temp_backup_dirs, test_database):
@@ -153,22 +139,21 @@ class TestCompressionAlgorithms:
         Test backup with no compression.
         """
         backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            compression_algorithm=CompressionAlgorithm.NONE
+            backup_location=temp_backup_dirs["backup"], compression_algorithm=CompressionAlgorithm.NONE
         )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create uncompressed backup
         backup_id = backup_manager.create_backup(BackupType.FULL)
 
         # Verify backup was created
-        backup_files = list(temp_backup_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_backup_dirs["backup"].glob("*.lvdb-backup"))
         assert len(backup_files) > 0
 
         # Test restoration
-        restore_path = backup_manager.restore_backup(backup_id, temp_backup_dirs['restore'])
+        restore_path = backup_manager.restore_backup(backup_id, temp_backup_dirs["restore"])
         assert restore_path.exists()
 
     def test_compression_size_differences(self, temp_backup_dirs, test_database):
@@ -179,15 +164,12 @@ class TestCompressionAlgorithms:
 
         for algo in [CompressionAlgorithm.NONE, CompressionAlgorithm.GZIP, CompressionAlgorithm.LZMA]:
             # Create separate backup directories for each algorithm
-            algo_backup_dir = temp_backup_dirs['backup'] / algo.value
+            algo_backup_dir = temp_backup_dirs["backup"] / algo.value
             algo_backup_dir.mkdir()
 
-            backup_config = BackupConfig(
-                backup_location=algo_backup_dir,
-                compression_algorithm=algo
-            )
-            db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-            faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+            backup_config = BackupConfig(backup_location=algo_backup_dir, compression_algorithm=algo)
+            db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+            faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
             backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
             _backup_id = backup_manager.create_backup(BackupType.FULL)
@@ -210,11 +192,9 @@ class TestBackupErrorHandling:
         """
         Test backup of non-existent database.
         """
-        backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup']
-        )
-        nonexistent_db = temp_backup_dirs['db'] / "nonexistent.sqlite"
-        nonexistent_faiss = temp_backup_dirs['db'] / "nonexistent.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"])
+        nonexistent_db = temp_backup_dirs["db"] / "nonexistent.sqlite"
+        nonexistent_faiss = temp_backup_dirs["db"] / "nonexistent.faiss"
 
         backup_manager = BackupManager(nonexistent_db, nonexistent_faiss, backup_config)
 
@@ -226,23 +206,21 @@ class TestBackupErrorHandling:
         """
         Test restoration of non-existent backup.
         """
-        backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup']
-        )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"])
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Try to restore non-existent backup
         with pytest.raises((FileNotFoundError, ValueError)):
-            backup_manager.restore_backup("nonexistent_backup_id", temp_backup_dirs['restore'])
+            backup_manager.restore_backup("nonexistent_backup_id", temp_backup_dirs["restore"])
 
     def test_invalid_backup_directory(self, temp_backup_dirs):
         """
         Test handling of invalid backup directory permissions.
         """
         # Create a file where we want a directory (simulating permission issues)
-        invalid_backup_path = temp_backup_dirs['base'] / "invalid_backup"
+        invalid_backup_path = temp_backup_dirs["base"] / "invalid_backup"
         invalid_backup_path.touch()  # Create file instead of directory
 
         with pytest.raises((PermissionError, FileExistsError, OSError)):
@@ -257,12 +235,9 @@ class TestBackupIntegrity:
         """
         Test backup integrity verification.
         """
-        backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            verify_integrity=True
-        )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"], verify_integrity=True)
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create backup
@@ -276,12 +251,9 @@ class TestBackupIntegrity:
         """
         Test backup creation without verification.
         """
-        backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            verify_integrity=False
-        )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"], verify_integrity=False)
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create backup without verification
@@ -301,12 +273,9 @@ class TestBackupConfiguration:
         """
         Test backup retention configuration.
         """
-        backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            retention_days=30
-        )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"], retention_days=30)
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create multiple backups
@@ -326,12 +295,9 @@ class TestBackupConfiguration:
         """
         Test backup with FAISS index exclusion.
         """
-        backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            include_faiss_index=False
-        )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"], include_faiss_index=False)
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create backup without FAISS index
@@ -347,11 +313,11 @@ class TestBackupConfiguration:
         Test backup with size limit configuration.
         """
         backup_config = BackupConfig(
-            backup_location=temp_backup_dirs['backup'],
-            max_backup_size_gb=1.0  # 1GB limit (our test backup is much smaller)
+            backup_location=temp_backup_dirs["backup"],
+            max_backup_size_gb=1.0,  # 1GB limit (our test backup is much smaller)
         )
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create backup within size limit
@@ -372,7 +338,7 @@ class TestBackupPaths:
         Test automatic backup directory creation.
         """
         # Create nested backup path that doesn't exist
-        nested_backup_path = temp_backup_dirs['base'] / "deep" / "nested" / "backup"
+        nested_backup_path = temp_backup_dirs["base"] / "deep" / "nested" / "backup"
 
         _backup_config = BackupConfig(backup_location=nested_backup_path)
 
@@ -385,15 +351,16 @@ class TestBackupPaths:
         Test backup with relative paths.
         """
         import os
+
         original_cwd = os.getcwd()
 
         try:
             # Change to temp directory
-            os.chdir(temp_backup_dirs['base'])
+            os.chdir(temp_backup_dirs["base"])
 
             backup_config = BackupConfig(backup_location="./backups")
-            db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-            faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+            db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+            faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
             backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
             # Create backup with relative path
@@ -416,9 +383,9 @@ class TestBackupEdgeCases:
         """
         Test handling of multiple backup operations.
         """
-        backup_config = BackupConfig(backup_location=temp_backup_dirs['backup'])
-        db_path = temp_backup_dirs['db'] / "test_backup.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "test_backup.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"])
+        db_path = temp_backup_dirs["db"] / "test_backup.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "test_backup.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Create multiple backups rapidly
@@ -441,19 +408,19 @@ class TestBackupEdgeCases:
         Test backup of empty database.
         """
         # Create empty database
-        metadata_schema = {'test': MetadataField(type=MetadataFieldType.TEXT)}
+        metadata_schema = {"test": MetadataField(type=MetadataFieldType.TEXT)}
         db = LocalVectorDB(
             "empty_test",
-            str(temp_backup_dirs['db']),
+            str(temp_backup_dirs["db"]),
             metadata_schema=metadata_schema,
             embedding_provider="mock",
-            embedding_model="mock-model"
+            embedding_model="mock-model",
         )
         db.close()
 
-        backup_config = BackupConfig(backup_location=temp_backup_dirs['backup'])
-        db_path = temp_backup_dirs['db'] / "empty_test.sqlite"
-        faiss_path = temp_backup_dirs['db'] / "empty_test.faiss"
+        backup_config = BackupConfig(backup_location=temp_backup_dirs["backup"])
+        db_path = temp_backup_dirs["db"] / "empty_test.sqlite"
+        faiss_path = temp_backup_dirs["db"] / "empty_test.faiss"
         backup_manager = BackupManager(db_path, faiss_path, backup_config)
 
         # Should be able to backup empty database

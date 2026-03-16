@@ -48,7 +48,7 @@ class TestDatabaseNotFoundError:
         """Test creating database not found error."""
         exc = DatabaseNotFoundError("Database 'test' not found")
         # Note: for some reason the string chars are escaped?
-        assert str(exc) == '"Database \'test\' not found"'
+        assert str(exc) == "\"Database 'test' not found\""
         assert isinstance(exc, BaseLocalVectorDBException)
         assert isinstance(exc, KeyError)
 
@@ -152,7 +152,7 @@ class TestOllamaNotFoundError:
         messages = [
             "Ollama is not installed or not running.",
             "Could not connect to Ollama at http://localhost:11434",
-            "Ollama service is not available"
+            "Ollama service is not available",
         ]
 
         for message in messages:
@@ -196,7 +196,7 @@ class TestEmbeddingError:
             "Failed to generate embeddings for text",
             "Embedding model 'unknown-model' not found",
             "Embedding dimension mismatch: expected 384, got 512",
-            "OpenAI API key is invalid or expired"
+            "OpenAI API key is invalid or expired",
         ]
 
         for message in messages:
@@ -240,7 +240,7 @@ class TestConfigurationError:
             "Invalid chunk_size: must be positive integer",
             "Unsupported embedding provider: 'unknown'",
             "Invalid metadata field type: 'custom'",
-            "Conflicting configuration: enable_gpu=True but FAISS GPU not available"
+            "Conflicting configuration: enable_gpu=True but FAISS GPU not available",
         ]
 
         for message in messages:
@@ -273,7 +273,7 @@ class TestExceptionUsagePractices:
             DuplicateDocumentIDError("Duplicate ID"),
             EmbeddingError("Embedding failed"),
             ConfigurationError("Bad config"),
-            OllamaNotFoundError("Ollama not found")
+            OllamaNotFoundError("Ollama not found"),
         ]
 
         for exc in exceptions_to_test:
@@ -288,9 +288,7 @@ class TestExceptionUsagePractices:
             """Simulate database operation that can fail in different ways."""
             import random
 
-            error_type = random.choice([
-                "not_found", "duplicate", "embedding", "config", "ollama"
-            ])
+            error_type = random.choice(["not_found", "duplicate", "embedding", "config", "ollama"])
 
             if error_type == "not_found":
                 raise DatabaseNotFoundError("Database not found")
@@ -330,7 +328,7 @@ class TestExceptionUsagePractices:
             DuplicateDocumentIDError(),
             EmbeddingError(),
             ConfigurationError(),
-            OllamaNotFoundError()
+            OllamaNotFoundError(),
         ]
 
         for exc in exceptions:
@@ -342,15 +340,12 @@ class TestExceptionUsagePractices:
     def test_exception_with_additional_context(self):
         """Test exceptions with additional context information."""
         # Create exceptions with detailed context
-        context = {
-            "database_name": "my_db",
-            "operation": "upsert",
-            "document_count": 5,
-            "error_code": "DB001"
-        }
+        context = {"database_name": "my_db", "operation": "upsert", "document_count": 5, "error_code": "DB001"}
 
-        message = f"Operation '{context['operation']}' failed on database '{context['database_name']}' " \
-                  f"while processing {context['document_count']} documents. Error code: {context['error_code']}"
+        message = (
+            f"Operation '{context['operation']}' failed on database '{context['database_name']}' "
+            f"while processing {context['document_count']} documents. Error code: {context['error_code']}"
+        )
 
         exc = DatabaseNotFoundError(message)
 
@@ -417,7 +412,7 @@ class TestExceptionDocumentation:
             DuplicateDocumentIDError,
             OllamaNotFoundError,
             EmbeddingError,
-            ConfigurationError
+            ConfigurationError,
         ]
 
         for exc_class in exceptions:
@@ -432,13 +427,13 @@ class TestExceptionDocumentation:
             "DuplicateDocumentIDError",
             "OllamaNotFoundError",
             "EmbeddingError",
-            "ConfigurationError"
+            "ConfigurationError",
         ]
 
         for name in exception_names:
             # Should end with 'Error' or 'Exception'
-            assert name.endswith('Error') or name.endswith('Exception')
+            assert name.endswith("Error") or name.endswith("Exception")
 
             # Should be PascalCase
             assert name[0].isupper()
-            assert '_' not in name or name.startswith('Base')  # Allow underscore only in base class
+            assert "_" not in name or name.startswith("Base")  # Allow underscore only in base class

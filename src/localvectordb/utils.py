@@ -25,28 +25,47 @@ def get_system_version() -> str:
 
 def make_filename_safe(name: str, max_length: int = 255) -> str:
     # Define invalid characters based on the operating system
-    if os.name == 'nt':  # Windows
+    if os.name == "nt":  # Windows
         invalid_chars = r'[<>:"/\\|?*]'
         reserved_names = {
-            "CON", "PRN", "AUX", "NUL",
-            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
         }
     else:  # POSIX-compliant systems (Linux, macOS)
-        invalid_chars = r'[/:]'
+        invalid_chars = r"[/:]"
         reserved_names = set()  # No reserved names typically on POSIX
 
     # Replace invalid characters with an underscore
     safe_name = re.sub(invalid_chars, "_", name)
 
     # Strip leading/trailing spaces and periods (applies to Windows)
-    if os.name == 'nt':
+    if os.name == "nt":
         safe_name = safe_name.strip(" .")
     else:
         safe_name = safe_name.strip()
 
     # Ensure the name is not a reserved name (Windows only)
-    if os.name == 'nt' and safe_name.upper() in reserved_names:
+    if os.name == "nt" and safe_name.upper() in reserved_names:
         safe_name += "_safe"
 
     # Truncate to maximum length (ensure allowance for file extensions)
@@ -99,7 +118,7 @@ def parse_iso8601(s: Union[str, datetime]) -> datetime:
 
     # Handle the common case where ISO 8601 strings end with 'Z' (UTC)
     # datetime.fromisoformat() can't parse 'Z', but can parse '+00:00'
-    normalized_string = s.replace('Z', '+00:00')
+    normalized_string = s.replace("Z", "+00:00")
 
     try:
         return datetime.fromisoformat(normalized_string)

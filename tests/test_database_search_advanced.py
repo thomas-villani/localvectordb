@@ -30,10 +30,10 @@ def search_db():
     temp_dir = tempfile.mkdtemp()
 
     metadata_schema = {
-        'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-        'priority': MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
-        'tags': MetadataField(type=MetadataFieldType.TEXT),
-        'score': MetadataField(type=MetadataFieldType.REAL),
+        "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+        "priority": MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
+        "tags": MetadataField(type=MetadataFieldType.TEXT),
+        "score": MetadataField(type=MetadataFieldType.REAL),
     }
 
     db = LocalVectorDB(
@@ -43,7 +43,7 @@ def search_db():
         embedding_provider="mock",
         embedding_model="mock-model",
         chunk_size=50,  # Small chunks for testing
-        chunk_overlap=10
+        chunk_overlap=10,
     )
 
     # Add documents with multiple chunks
@@ -71,11 +71,11 @@ def search_db():
     ]
 
     metadata = [
-        {'category': 'AI', 'priority': 1, 'tags': 'ml,ai', 'score': 0.9},
-        {'category': 'Database', 'priority': 2, 'tags': 'db,vector', 'score': 0.85},
-        {'category': 'AI', 'priority': 3, 'tags': 'nlp,ai', 'score': 0.88},
-        {'category': 'DataScience', 'priority': 1, 'tags': 'data,stats', 'score': 0.82},
-        {'category': 'Cloud', 'priority': 2, 'tags': 'cloud,devops', 'score': 0.79},
+        {"category": "AI", "priority": 1, "tags": "ml,ai", "score": 0.9},
+        {"category": "Database", "priority": 2, "tags": "db,vector", "score": 0.85},
+        {"category": "AI", "priority": 3, "tags": "nlp,ai", "score": 0.88},
+        {"category": "DataScience", "priority": 1, "tags": "data,stats", "score": 0.82},
+        {"category": "Cloud", "priority": 2, "tags": "cloud,devops", "score": 0.79},
     ]
 
     ids = ["doc1", "doc2", "doc3", "doc4", "doc5"]
@@ -98,16 +98,16 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "machine learning neural networks",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='best'
+            document_scoring_method="best",
         )
 
         assert len(results) > 0
         # Best method should pick the highest scoring chunk
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_worst(self, search_db):
@@ -116,16 +116,16 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "database vector search",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='worst'
+            document_scoring_method="worst",
         )
 
         assert len(results) > 0
         # Worst method should pick the lowest scoring chunk
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_average(self, search_db):
@@ -134,15 +134,15 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "natural language processing",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='average'
+            document_scoring_method="average",
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_weighted_average(self, search_db):
@@ -151,20 +151,20 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "data science visualization",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='weighted_average'
+            document_scoring_method="weighted_average",
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
             # Weighted average should have weights in metadata
-            if hasattr(result, 'metadata') and result.metadata:
-                if 'method_metadata' in result.metadata:
-                    assert 'weights' in result.metadata['method_metadata'] or True
+            if hasattr(result, "metadata") and result.metadata:
+                if "method_metadata" in result.metadata:
+                    assert "weights" in result.metadata["method_metadata"] or True
 
     def test_scoring_method_frequency_boost(self, search_db):
         """
@@ -172,17 +172,17 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "AI machine learning deep learning",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='frequency_boost',
-            document_scoring_options={'frequency_bias': 0.4}
+            document_scoring_method="frequency_boost",
+            document_scoring_options={"frequency_bias": 0.4},
         )
 
         assert len(results) > 0
         # Should return valid documents
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_harmonic_mean(self, search_db):
@@ -191,20 +191,17 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "vector database FAISS",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='harmonic_mean',
-            document_scoring_options={
-                'max_chunks': 3,
-                'coverage_threshold': 0.6
-            }
+            document_scoring_method="harmonic_mean",
+            document_scoring_options={"max_chunks": 3, "coverage_threshold": 0.6},
         )
 
         assert len(results) > 0
         # All results should be valid documents
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_diminishing_returns(self, search_db):
@@ -213,16 +210,16 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "cloud computing kubernetes",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='diminishing_returns',
-            document_scoring_options={'decay_factor': 0.7}
+            document_scoring_method="diminishing_returns",
+            document_scoring_options={"decay_factor": 0.7},
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_statistical(self, search_db):
@@ -231,21 +228,21 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "machine learning AI",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='statistical',
+            document_scoring_method="statistical",
             document_scoring_options={
-                'best_weight': 0.5,
-                'mean_weight': 0.3,
-                'consistency_weight': 0.1,
-                'coverage_weight': 0.1
-            }
+                "best_weight": 0.5,
+                "mean_weight": 0.3,
+                "consistency_weight": 0.1,
+                "coverage_weight": 0.1,
+            },
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_robust_mean(self, search_db):
@@ -254,19 +251,16 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "data science statistics",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='robust_mean',
-            document_scoring_options={
-                'outlier_threshold': 1.5,
-                'position_decay': 0.85
-            }
+            document_scoring_method="robust_mean",
+            document_scoring_options={"outlier_threshold": 1.5, "position_decay": 0.85},
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_percentile(self, search_db):
@@ -275,20 +269,16 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "natural language NLP",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='percentile',
-            document_scoring_options={
-                'primary_percentile': 0.8,
-                'secondary_percentile': 0.6,
-                'primary_weight': 0.6
-            }
+            document_scoring_method="percentile",
+            document_scoring_options={"primary_percentile": 0.8, "secondary_percentile": 0.6, "primary_weight": 0.6},
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
     def test_scoring_method_geometric_mean(self, search_db):
@@ -297,15 +287,15 @@ class TestDocumentScoringMethods:
         """
         results = search_db.query(
             "DevOps deployment cloud",
-            search_type='vector',
-            return_type='documents',
+            search_type="vector",
+            return_type="documents",
             k=3,
-            document_scoring_method='geometric_mean'
+            document_scoring_method="geometric_mean",
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
 
@@ -320,19 +310,19 @@ class TestSemanticDeduplication:
         # First get results without deduplication
         results_no_dedup = search_db.query(
             "AI artificial intelligence machine learning",
-            search_type='vector',
-            return_type='chunks',
+            search_type="vector",
+            return_type="chunks",
             k=20,
-            semantic_dedup_threshold=None
+            semantic_dedup_threshold=None,
         )
 
         # Then with high threshold deduplication
         results_with_dedup = search_db.query(
             "AI artificial intelligence machine learning",
-            search_type='vector',
-            return_type='chunks',
+            search_type="vector",
+            return_type="chunks",
             k=20,
-            semantic_dedup_threshold=0.95
+            semantic_dedup_threshold=0.95,
         )
 
         # High threshold should remove very few duplicates
@@ -344,19 +334,11 @@ class TestSemanticDeduplication:
         Test semantic deduplication with medium similarity threshold (0.85).
         """
         results_no_dedup = search_db.query(
-            "database storage system",
-            search_type='vector',
-            return_type='chunks',
-            k=20,
-            semantic_dedup_threshold=None
+            "database storage system", search_type="vector", return_type="chunks", k=20, semantic_dedup_threshold=None
         )
 
         results_with_dedup = search_db.query(
-            "database storage system",
-            search_type='vector',
-            return_type='chunks',
-            k=20,
-            semantic_dedup_threshold=0.85
+            "database storage system", search_type="vector", return_type="chunks", k=20, semantic_dedup_threshold=0.85
         )
 
         # Medium threshold should remove some duplicates (or at least not add any)
@@ -373,11 +355,11 @@ class TestSemanticDeduplication:
         """
         results = search_db.query(
             "vector database search",
-            search_type='hybrid',
-            return_type='chunks',
+            search_type="hybrid",
+            return_type="chunks",
             k=10,
             vector_weight=0.6,
-            semantic_dedup_threshold=0.9
+            semantic_dedup_threshold=0.9,
         )
 
         assert len(results) > 0
@@ -396,22 +378,22 @@ class TestReturnTypes:
         """
         results = search_db.query(
             "neural networks deep learning",
-            search_type='vector',
-            return_type='context',
+            search_type="vector",
+            return_type="context",
             k=5,
-            context_window=2  # Include 2 chunks before/after
+            context_window=2,  # Include 2 chunks before/after
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type in ['chunk', 'context']  # Accept both types
+            assert result.type in ["chunk", "context"]  # Accept both types
             # Context results should have expanded content
             assert result.content is not None
 
             # Check for context indicators in metadata
-            if hasattr(result, 'metadata') and result.metadata:
+            if hasattr(result, "metadata") and result.metadata:
                 # Context window may add surrounding chunks
-                assert 'position' in result.metadata or 'chunk_index' in result.metadata or True
+                assert "position" in result.metadata or "chunk_index" in result.metadata or True
 
     def test_return_type_enriched(self, search_db):
         """
@@ -419,19 +401,19 @@ class TestReturnTypes:
         """
         results = search_db.query(
             "machine learning algorithms",
-            search_type='vector',
-            return_type='enriched',
+            search_type="vector",
+            return_type="enriched",
             k=5,
-            context_window=3  # Number of similar chunks to enrich with
+            context_window=3,  # Number of similar chunks to enrich with
         )
 
         assert len(results) > 0
         for result in results:
-            assert result.type in ['chunk', 'enriched']  # Accept both types
+            assert result.type in ["chunk", "enriched"]  # Accept both types
             assert result.content is not None
 
             # Enriched results should have additional context
-            if hasattr(result, 'metadata') and result.metadata:
+            if hasattr(result, "metadata") and result.metadata:
                 # May contain enrichment metadata
                 assert result.document_id is not None
 
@@ -439,16 +421,11 @@ class TestReturnTypes:
         """
         Test 'chunks' return type returns individual chunks.
         """
-        results = search_db.query(
-            "data science Python",
-            search_type='vector',
-            return_type='chunks',
-            k=10
-        )
+        results = search_db.query("data science Python", search_type="vector", return_type="chunks", k=10)
 
         assert len(results) > 0
         for result in results:
-            assert result.type == 'chunk'
+            assert result.type == "chunk"
             assert result.content is not None
             assert result.document_id is not None
             assert 0 <= result.score <= 1.0
@@ -458,20 +435,10 @@ class TestReturnTypes:
         Verify documents return type aggregates chunks properly.
         """
         # Get chunk results
-        chunk_results = search_db.query(
-            "AI technology",
-            search_type='vector',
-            return_type='chunks',
-            k=20
-        )
+        chunk_results = search_db.query("AI technology", search_type="vector", return_type="chunks", k=20)
 
         # Get document results
-        doc_results = search_db.query(
-            "AI technology",
-            search_type='vector',
-            return_type='documents',
-            k=5
-        )
+        doc_results = search_db.query("AI technology", search_type="vector", return_type="documents", k=5)
 
         assert len(doc_results) <= len(chunk_results)
 
@@ -481,7 +448,7 @@ class TestReturnTypes:
 
         # All documents should be complete
         for doc in doc_results:
-            assert doc.type == 'document'
+            assert doc.type == "document"
             assert doc.content is not None
             assert len(doc.content) > 50  # Should be full document
 
@@ -495,10 +462,7 @@ class TestMultiColumnSearch:
         Test basic multi-column search across content and metadata.
         """
         results = search_db.query_multi_column(
-            "AI priority:1",
-            columns=['content', 'category'],
-            search_type='vector',
-            k=5
+            "AI priority:1", columns=["content", "category"], search_type="vector", k=5
         )
 
         assert len(results) > 0
@@ -512,12 +476,7 @@ class TestMultiColumnSearch:
         """
         # Since metadata columns need to be embedding-enabled,
         # let's test with content column only
-        results = search_db.query_multi_column(
-            "machine learning",
-            columns=['content'],
-            search_type='vector',
-            k=5
-        )
+        results = search_db.query_multi_column("machine learning", columns=["content"], search_type="vector", k=5)
 
         assert len(results) > 0
         # Should find valid results
@@ -529,11 +488,7 @@ class TestMultiColumnSearch:
         Test multi-column search with hybrid search type.
         """
         results = search_db.query_multi_column(
-            "database cloud",
-            columns=['content', 'category', 'tags'],
-            search_type='hybrid',
-            k=5,
-            vector_weight=0.5
+            "database cloud", columns=["content", "category", "tags"], search_type="hybrid", k=5, vector_weight=0.5
         )
 
         assert len(results) > 0
@@ -546,17 +501,13 @@ class TestMultiColumnSearch:
         Test multi-column search combined with metadata filters.
         """
         results = search_db.query_multi_column(
-            "technology",
-            columns=['content'],
-            search_type='vector',
-            k=10,
-            filters={'priority': {'$lte': 2}}
+            "technology", columns=["content"], search_type="vector", k=10, filters={"priority": {"$lte": 2}}
         )
 
         assert len(results) > 0
         # All results should satisfy the filter
         for result in results:
-            assert result.metadata.get('priority', 0) <= 2
+            assert result.metadata.get("priority", 0) <= 2
 
     def test_multi_column_scoring_methods(self, search_db):
         """
@@ -564,18 +515,18 @@ class TestMultiColumnSearch:
         """
         results_best = search_db.query_multi_column(
             "AI machine learning",
-            columns=['content', 'tags'],
-            return_type='documents',
+            columns=["content", "tags"],
+            return_type="documents",
             k=3,
-            document_scoring_method='best'
+            document_scoring_method="best",
         )
 
         results_avg = search_db.query_multi_column(
             "AI machine learning",
-            columns=['content', 'tags'],
-            return_type='documents',
+            columns=["content", "tags"],
+            return_type="documents",
             k=3,
-            document_scoring_method='average'
+            document_scoring_method="average",
         )
 
         assert len(results_best) > 0
@@ -584,7 +535,7 @@ class TestMultiColumnSearch:
         # Different scoring methods may produce different rankings
         # but both should return valid results
         for result in results_best + results_avg:
-            assert result.type == 'document'
+            assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
 
@@ -596,11 +547,7 @@ class TestSearchEdgeCases:
         """
         Test behavior with empty query string.
         """
-        results = search_db.query(
-            "",
-            search_type='vector',
-            k=5
-        )
+        results = search_db.query("", search_type="vector", k=5)
 
         # Empty query should return empty results or handle gracefully
         assert isinstance(results, list)
@@ -610,10 +557,7 @@ class TestSearchEdgeCases:
         Test search with k larger than total documents.
         """
         results = search_db.query(
-            "test query",
-            search_type='vector',
-            return_type='documents',
-            k=1000  # Much larger than document count
+            "test query", search_type="vector", return_type="documents", k=1000  # Much larger than document count
         )
 
         # Should return all available documents
@@ -625,18 +569,12 @@ class TestSearchEdgeCases:
         """
         # Get results without threshold
         all_results = search_db.query(
-            "obscure query unlikely to match",
-            search_type='vector',
-            k=10,
-            score_threshold=0.0
+            "obscure query unlikely to match", search_type="vector", k=10, score_threshold=0.0
         )
 
         # Get results with high threshold
         filtered_results = search_db.query(
-            "obscure query unlikely to match",
-            search_type='vector',
-            k=10,
-            score_threshold=0.7
+            "obscure query unlikely to match", search_type="vector", k=10, score_threshold=0.7
         )
 
         # Filtered should have fewer or equal results
@@ -651,31 +589,17 @@ class TestSearchEdgeCases:
         Test handling of invalid search type.
         """
         with pytest.raises(ValueError):
-            search_db.query(
-                "test query",
-                search_type='invalid_type',  # type: ignore
-                k=5
-            )
+            search_db.query("test query", search_type="invalid_type", k=5)  # type: ignore
 
     def test_hybrid_search_extreme_weights(self, search_db):
         """
         Test hybrid search with extreme vector weights.
         """
         # Vector weight = 1.0 (essentially vector-only)
-        vector_only = search_db.query(
-            "machine learning",
-            search_type='hybrid',
-            k=5,
-            vector_weight=1.0
-        )
+        vector_only = search_db.query("machine learning", search_type="hybrid", k=5, vector_weight=1.0)
 
         # Vector weight = 0.0 (essentially keyword-only)
-        keyword_only = search_db.query(
-            "machine learning",
-            search_type='hybrid',
-            k=5,
-            vector_weight=0.0
-        )
+        keyword_only = search_db.query("machine learning", search_type="hybrid", k=5, vector_weight=0.0)
 
         assert len(vector_only) > 0
         assert len(keyword_only) > 0

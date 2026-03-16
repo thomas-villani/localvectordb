@@ -23,7 +23,7 @@ from localvectordb_server.cli._utils import (
 )
 
 
-@click.group('config', invoke_without_command=True)
+@click.group("config", invoke_without_command=True)
 @click.pass_context
 def config_group(ctx):
     """
@@ -47,14 +47,28 @@ def config_group(ctx):
         ctx.invoke(show_config)
 
 
-@config_group.command('show')
-@click.option('--format', '-f', type=click.Choice(['toml', 'json', ]), default=None,
-              help='Output format (defaults to format of config file)')
-@click.option('--toml', 'format', flag_value='toml', help="Output in `toml` format")
-@click.option('--json', 'format', flag_value='json', help="Output in `json` format")
-@click.option('--section', '-s', type=click.Choice(['database', 'embedding', 'server', 'backup', 'migration']),
-              default=None,
-              help='Only show specific section')
+@config_group.command("show")
+@click.option(
+    "--format",
+    "-f",
+    type=click.Choice(
+        [
+            "toml",
+            "json",
+        ]
+    ),
+    default=None,
+    help="Output format (defaults to format of config file)",
+)
+@click.option("--toml", "format", flag_value="toml", help="Output in `toml` format")
+@click.option("--json", "format", flag_value="json", help="Output in `json` format")
+@click.option(
+    "--section",
+    "-s",
+    type=click.Choice(["database", "embedding", "server", "backup", "migration"]),
+    default=None,
+    help="Only show specific section",
+)
 @click.pass_context
 def show_config(ctx, format, section):
     """
@@ -70,54 +84,54 @@ def show_config(ctx, format, section):
         lvdb config show --format json
         lvdb config show --section database
     """
-    cfg = ctx.obj['config']
-    config_path = ctx.obj['config_path']
+    cfg = ctx.obj["config"]
+    config_path = ctx.obj["config_path"]
 
     # Determine output format based on file extension if not specified
     if not format:
         suffix = Path(config_path).suffix.lower()
-        if suffix == '.toml':
-            format = 'toml'
-        elif suffix == '.json':
-            format = 'json'
+        if suffix == ".toml":
+            format = "toml"
+        elif suffix == ".json":
+            format = "json"
         else:
-            format = 'toml'  # Default to TOML for unknown formats
+            format = "toml"  # Default to TOML for unknown formats
 
     # Generate configuration string
-    if format == 'toml':
+    if format == "toml":
         config_str = cfg.generate_toml()
     else:
         # For other formats, convert to dict and handle appropriately
         config_dict = {
-            'database': asdict(cfg.database),
-            'embedding': asdict(cfg.embedding),
-            'server': asdict(cfg.server),
-            'backup': asdict(cfg.backup),
-            'migration': asdict(cfg.migration),
+            "database": asdict(cfg.database),
+            "embedding": asdict(cfg.embedding),
+            "server": asdict(cfg.server),
+            "backup": asdict(cfg.backup),
+            "migration": asdict(cfg.migration),
         }
 
-        if format == 'json':
+        if format == "json":
             config_str = json.dumps(config_dict, indent=2)
         else:
             config_str = cfg.generate_toml()  # Fallback to TOML
 
     # Filter by section if requested
     if section:
-        if format == 'toml':
+        if format == "toml":
             section_header = f"[{section}]"
-            lines = config_str.split('\n')
+            lines = config_str.split("\n")
             section_start = -1
             section_end = len(lines)
 
             for i, line in enumerate(lines):
                 if line.strip() == section_header:
                     section_start = i
-                elif section_start >= 0 and line.strip().startswith('[') and i > section_start:
+                elif section_start >= 0 and line.strip().startswith("[") and i > section_start:
                     section_end = i
                     break
 
             if section_start >= 0:
-                config_str = '\n'.join(lines[section_start:section_end])
+                config_str = "\n".join(lines[section_start:section_end])
             else:
                 click.secho(f"Section '{section}' not found in configuration", fg="bright_red")
                 return
@@ -137,10 +151,9 @@ def show_config(ctx, format, section):
     click.echo(config_str)
 
 
-@config_group.command('get')
-@click.argument('key')
-@click.option('--format', '-f', type=click.Choice(['raw', 'json', 'pretty']),
-              default='pretty', help='Output format')
+@config_group.command("get")
+@click.argument("key")
+@click.option("--format", "-f", type=click.Choice(["raw", "json", "pretty"]), default="pretty", help="Output format")
 @click.pass_context
 def get_config_value(ctx, key, format):
     """
@@ -157,10 +170,10 @@ def get_config_value(ctx, key, format):
         lvdb config get embedding.model
     """
     try:
-        cfg = ctx.obj['config']
+        cfg = ctx.obj["config"]
         value = get_nested_value(cfg, key)
 
-        if format == 'raw':
+        if format == "raw":
             # Raw value as string
             if isinstance(value, bool):
                 click.echo("true" if value else "false")
@@ -168,15 +181,16 @@ def get_config_value(ctx, key, format):
                 click.echo("null")
             else:
                 click.echo(str(value))
-        elif format == 'json':
+        elif format == "json":
             # JSON format
             from localvectordb import MetadataField
+
             if isinstance(value, MetadataField):
                 json_value = {
-                    'type': value.type.value if hasattr(value.type, 'value') else str(value.type),
-                    'indexed': value.indexed,
-                    'required': value.required,
-                    'default_value': value.default_value
+                    "type": value.type.value if hasattr(value.type, "value") else str(value.type),
+                    "indexed": value.indexed,
+                    "required": value.required,
+                    "default_value": value.default_value,
                 }
             else:
                 json_value = value
@@ -195,13 +209,11 @@ def get_config_value(ctx, key, format):
         raise click.exceptions.Exit(1) from e
 
 
-@config_group.command('set')
-@click.argument('key')
-@click.argument('value')
-@click.option('--dry-run', '-n', is_flag=True,
-              help='Show what would be changed without saving')
-@click.option('--force', '-f', is_flag=True,
-              help='Skip confirmation prompt')
+@config_group.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.option("--dry-run", "-n", is_flag=True, help="Show what would be changed without saving")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def set_config_value(ctx, key, value, dry_run, force):
     """
@@ -220,8 +232,8 @@ def set_config_value(ctx, key, value, dry_run, force):
 
     """
     try:
-        cfg = ctx.obj['config']
-        config_path = ctx.obj['config_path']
+        cfg = ctx.obj["config"]
+        config_path = ctx.obj["config_path"]
 
         # Get current value for comparison
         try:
@@ -253,7 +265,7 @@ def set_config_value(ctx, key, value, dry_run, force):
         # Validate and save
         cfg.validate()
         config_text = cfg.generate_toml()
-        with open(config_path, 'w', encoding='utf-8') as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             f.write(config_text)
 
         click.secho(f"\n✓ Configuration updated and saved to {config_path}", fg="green")
@@ -274,42 +286,63 @@ def set_config_value(ctx, key, value, dry_run, force):
         raise click.exceptions.Exit(1) from e
 
 
-@config_group.command('init')
-@click.option('--format', '-f', type=click.Choice(['toml', 'json']), default='toml',
-              help='Configuration file format (default: toml)')
-@click.option('--output', type=click.Path(resolve_path=True), help='Path to create config file')
-@click.option('--schema',
-              type=click.Choice(['files', 'documents', 'research_papers', 'code_repository', 'customer_support']),
-              help='Apply a predefined metadata schema')
+@config_group.command("init")
+@click.option(
+    "--format",
+    "-f",
+    type=click.Choice(["toml", "json"]),
+    default="toml",
+    help="Configuration file format (default: toml)",
+)
+@click.option("--output", type=click.Path(resolve_path=True), help="Path to create config file")
+@click.option(
+    "--schema",
+    type=click.Choice(["files", "documents", "research_papers", "code_repository", "customer_support"]),
+    help="Apply a predefined metadata schema",
+)
 # Multi-worker options
-@click.option('--multi-worker', is_flag=True, help='Configure for multi-worker deployment with file-based registry')
-@click.option('--redis-registry', help='Configure Redis-based registry (provide Redis URL)')
+@click.option("--multi-worker", is_flag=True, help="Configure for multi-worker deployment with file-based registry")
+@click.option("--redis-registry", help="Configure Redis-based registry (provide Redis URL)")
 # Cache options
-@click.option('--enable-cache', is_flag=True, help='Enable response caching')
-@click.option('--cache-type', type=click.Choice(['file', 'redis', 'memory', 'memcached']),
-              help='Cache backend type')
-@click.option('--cache-redis-url', help='Redis URL for cache (e.g. redis://localhost:6379/0)')
+@click.option("--enable-cache", is_flag=True, help="Enable response caching")
+@click.option("--cache-type", type=click.Choice(["file", "redis", "memory", "memcached"]), help="Cache backend type")
+@click.option("--cache-redis-url", help="Redis URL for cache (e.g. redis://localhost:6379/0)")
 # Rate limiting options
-@click.option('--enable-rate-limiting', is_flag=True, help='Enable API rate limiting')
-@click.option('--rate-limit', help='Rate limit (e.g. "100 per minute", "1000 per hour")')
+@click.option("--enable-rate-limiting", is_flag=True, help="Enable API rate limiting")
+@click.option("--rate-limit", help='Rate limit (e.g. "100 per minute", "1000 per hour")')
 # CORS options
-@click.option('--enable-cors', is_flag=True, help='Enable CORS for web applications')
-@click.option('--cors-origins', help='Allowed CORS origins (comma-separated or "all" for "*")')
+@click.option("--enable-cors", is_flag=True, help="Enable CORS for web applications")
+@click.option("--cors-origins", help='Allowed CORS origins (comma-separated or "all" for "*")')
 # Security options
-@click.option('--enable-auth', is_flag=True, help='Enable API key authentication')
+@click.option("--enable-auth", is_flag=True, help="Enable API key authentication")
 # Server options
-@click.option('--host', help='Server host (default: 127.0.0.1)')
-@click.option('--port', type=int, help='Server port (default: 5000)')
-@click.option('--enable-file-upload', is_flag=True, help='Enable file upload routes on the server')
-@click.option('--max-request-size-mb', type=int, help='Set the maximum request size in MB', default=100)
+@click.option("--host", help="Server host (default: 127.0.0.1)")
+@click.option("--port", type=int, help="Server port (default: 5000)")
+@click.option("--enable-file-upload", is_flag=True, help="Enable file upload routes on the server")
+@click.option("--max-request-size-mb", type=int, help="Set the maximum request size in MB", default=100)
 # Interactive mode
-@click.option('--interactive', '-I', is_flag=True, help='Interactive guided configuration')
+@click.option("--interactive", "-I", is_flag=True, help="Interactive guided configuration")
 @click.pass_context
 def init_config(
-        ctx, format, output, schema, multi_worker, redis_registry,
-        enable_cache, cache_type, cache_redis_url, enable_rate_limiting,
-        rate_limit, enable_cors, cors_origins, enable_auth, host, port, enable_file_upload, max_request_size_mb,
-        interactive
+    ctx,
+    format,
+    output,
+    schema,
+    multi_worker,
+    redis_registry,
+    enable_cache,
+    cache_type,
+    cache_redis_url,
+    enable_rate_limiting,
+    rate_limit,
+    enable_cors,
+    cors_origins,
+    enable_auth,
+    host,
+    port,
+    enable_file_upload,
+    max_request_size_mb,
+    interactive,
 ):
     """
     Initialize a new configuration file with default settings.
@@ -412,6 +445,7 @@ def _interactive_config_init(format, output):
     click.echo("This wizard will guide you through setting up your LocalVectorDB server configuration.\n")
 
     from localvectordb_server.config import Config
+
     config = Config()
 
     # Basic settings
@@ -441,7 +475,7 @@ def _interactive_config_init(format, output):
 
     # Metadata schema
     if click.confirm("Apply a predefined metadata schema?", default=False):
-        schema_choices = ['files', 'documents', 'research_papers', 'code_repository', 'customer_support']
+        schema_choices = ["files", "documents", "research_papers", "code_repository", "customer_support"]
         click.echo("Available schemas:")
         for i, schema in enumerate(schema_choices, 1):
             click.echo(f"  {i}. {schema}")
@@ -465,14 +499,14 @@ def _interactive_config_init(format, output):
 
     deployment_type = click.prompt(
         "Deployment type",
-        type=click.Choice(['single', 'multi-file', 'multi-redis'], case_sensitive=False),
-        default='single',
-        help_text="single=single worker, multi-file=multiple workers on one machine, multi-redis=distributed workers"
+        type=click.Choice(["single", "multi-file", "multi-redis"], case_sensitive=False),
+        default="single",
+        help_text="single=single worker, multi-file=multiple workers on one machine, multi-redis=distributed workers",
     )
 
-    if deployment_type == 'multi-file':
+    if deployment_type == "multi-file":
         _configure_file_registry(config)
-    elif deployment_type == 'multi-redis':
+    elif deployment_type == "multi-redis":
         redis_url = click.prompt("Redis URL for registry", default="redis://localhost:6379/1")
         _configure_redis_registry(config, redis_url)
 
@@ -481,7 +515,7 @@ def _interactive_config_init(format, output):
     click.secho("4. Response Caching", fg="cyan", bold=True)
 
     if click.confirm("Enable response caching?", default=False):
-        if deployment_type == 'multi-redis':
+        if deployment_type == "multi-redis":
             # Suggest Redis cache for consistency
             if click.confirm("Use Redis for caching (recommended for distributed setup)?", default=True):
                 cache_redis_url = click.prompt("Redis URL for cache", default="redis://localhost:6379/0")
@@ -489,16 +523,12 @@ def _interactive_config_init(format, output):
                 config.server.cache_type = "RedisCache"
                 config.server.cache_settings = _parse_redis_url(cache_redis_url)
             else:
-                cache_type = click.prompt("Cache type", type=click.Choice(['file', 'memcached']), default='file')
+                cache_type = click.prompt("Cache type", type=click.Choice(["file", "memcached"]), default="file")
                 _configure_cache(config, cache_type, None, None)
         else:
-            cache_type = click.prompt(
-                "Cache type",
-                type=click.Choice(['file', 'redis', 'memcached']),
-                default='file'
-            )
+            cache_type = click.prompt("Cache type", type=click.Choice(["file", "redis", "memcached"]), default="file")
 
-            if cache_type == 'redis':
+            if cache_type == "redis":
                 cache_redis_url = click.prompt("Redis URL for cache", default="redis://localhost:6379/0")
                 _configure_cache(config, cache_type, cache_redis_url, None)
             else:
@@ -519,13 +549,13 @@ def _interactive_config_init(format, output):
     if click.confirm("Enable CORS for web applications?", default=True):
         cors_type = click.prompt(
             "CORS configuration (all=allow all origins (*), localhost=allow localhost only, custom=specify origins)",
-            type=click.Choice(['all', 'localhost', 'custom'], case_sensitive=False),
-            default='localhost',
+            type=click.Choice(["all", "localhost", "custom"], case_sensitive=False),
+            default="localhost",
         )
 
-        if cors_type == 'all':
+        if cors_type == "all":
             _configure_cors(config, "all")
-        elif cors_type == 'localhost':
+        elif cors_type == "localhost":
             _configure_cors(config, "http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000")
         else:  # custom
             origins = click.prompt("Allowed origins (comma-separated)")
@@ -543,18 +573,17 @@ def _interactive_config_init(format, output):
     click.secho("8. Default Embedding Provider", fg="cyan", bold=True)
 
     from localvectordb.embeddings import EmbeddingRegistry
+
     provider = click.prompt(
-        "Embedding provider",
-        type=click.Choice(EmbeddingRegistry.list(), case_sensitive=False),
-        default='ollama'
+        "Embedding provider", type=click.Choice(EmbeddingRegistry.list(), case_sensitive=False), default="ollama"
     )
     config.embedding.provider = provider
 
     # Model prompts are provider-specific; new providers need a branch here.
-    if provider == 'ollama':
+    if provider == "ollama":
         model = click.prompt("Ollama model", default="nomic-embed-text")
         config.embedding.model = model
-    elif provider == 'openai':
+    elif provider == "openai":
         model = click.prompt("OpenAI model", default="text-embedding-3-small")
         config.embedding.model = model
 
@@ -581,7 +610,7 @@ def _interactive_config_init(format, output):
 
     # Print summary
     click.echo()
-    _print_config_summary(config, output, deployment_type != 'single')
+    _print_config_summary(config, output, deployment_type != "single")
 
     # Post-setup recommendations
     _print_setup_recommendations(config, deployment_type, output)
@@ -591,8 +620,9 @@ def _configure_redis_registry(config, redis_url):
     """Configure Redis-based database registry"""
     try:
         import urllib.parse
+
         parsed = urllib.parse.urlparse(redis_url)
-        if parsed.scheme != 'redis':
+        if parsed.scheme != "redis":
             raise ValueError("Redis URL must start with 'redis://'")
 
         config.server.db_registry_type = "RedisCache"
@@ -607,9 +637,7 @@ def _configure_redis_registry(config, redis_url):
 def _configure_file_registry(config):
     """Configure file-based database registry"""
     config.server.db_registry_type = "FileSystemCache"
-    config.server.db_registry_settings = {
-        "cache_dir": "./.lvdb/registry_cache"
-    }
+    config.server.db_registry_settings = {"cache_dir": "./.lvdb/registry_cache"}
     click.secho("Configured file-based registry for multi-worker deployment", fg="green")
 
 
@@ -617,7 +645,7 @@ def _configure_cache(config, cache_type, cache_redis_url, redis_registry_url):
     """Configure response caching"""
     config.server.cache_enabled = True
 
-    if cache_type == 'redis':
+    if cache_type == "redis":
         config.server.cache_type = "RedisCache"
         if cache_redis_url:
             config.server.cache_settings = _parse_redis_url(cache_redis_url)
@@ -625,20 +653,20 @@ def _configure_cache(config, cache_type, cache_redis_url, redis_registry_url):
             # Use same Redis but different DB
             registry_settings = _parse_redis_url(redis_registry_url)
             cache_settings = registry_settings.copy()
-            cache_settings['db'] = cache_settings.get('db', 1) - 1  # Use DB 0 for cache
+            cache_settings["db"] = cache_settings.get("db", 1) - 1  # Use DB 0 for cache
             config.server.cache_settings = cache_settings
         else:
             config.server.cache_settings = {"host": "localhost", "port": 6379, "db": 0}
         click.secho("Configured Redis cache", fg="green")
-    elif cache_type == 'memory':
+    elif cache_type == "memory":
         config.server.cache_type = "SimpleCache"
         click.secho("Configured memory-based cache - NOT RECOMMENDED FOR MULTIPLE WORKERS", fg="green")
-    elif cache_type == 'file':
+    elif cache_type == "file":
         config.server.cache_type = "FileSystemCache"
         config.server.cache_settings = {"cache_dir": "./.lvdb/cache"}
         click.secho("Configured file-based cache", fg="green")
 
-    elif cache_type == 'memcached':
+    elif cache_type == "memcached":
         config.server.cache_type = "MemcachedCache"
         config.server.cache_settings = {"servers": ["127.0.0.1:11211"]}
         click.secho("Configured Memcached cache", fg="green")
@@ -662,19 +690,21 @@ def _configure_cors(config, cors_origins):
     config.server.cors_enabled = True
 
     if cors_origins:
-        if cors_origins.lower() in ['all', '*']:
+        if cors_origins.lower() in ["all", "*"]:
             config.server.cors_allowed_origins = "*"
             click.secho("Configured CORS: Allow all origins (*)", fg="yellow")
             click.secho("Warning: Allowing all origins may be insecure in production", fg="red")
         else:
-            origins = [origin.strip() for origin in cors_origins.split(',')]
+            origins = [origin.strip() for origin in cors_origins.split(",")]
             config.server.cors_allowed_origins = origins
             click.secho(f"Configured CORS origins: {origins}", fg="green")
     else:
         # Default to localhost for development
         config.server.cors_allowed_origins = ["http://localhost:3000", "http://localhost:8080"]
-        click.secho("Configured CORS: localhost development origins: "
-                    f"{', '.join(config.server.cors_allowed_origins)}", fg="green")
+        click.secho(
+            "Configured CORS: localhost development origins: " f"{', '.join(config.server.cors_allowed_origins)}",
+            fg="green",
+        )
 
 
 def _configure_auth(config):
@@ -714,13 +744,16 @@ def _save_config(config, output, format):
     if format == "toml":
         config_text = config.generate_toml()
     elif format == "json":
-        config_text = json.dumps({
-            "database": asdict(config.database),
-            "embedding": asdict(config.embedding),
-            "server": asdict(config.server),
-            "backup": asdict(config.backup),
-            "migration": asdict(config.migration)
-        }, indent=2)
+        config_text = json.dumps(
+            {
+                "database": asdict(config.database),
+                "embedding": asdict(config.embedding),
+                "server": asdict(config.server),
+                "backup": asdict(config.backup),
+                "migration": asdict(config.migration),
+            },
+            indent=2,
+        )
 
     with open(output, "w", encoding="utf-8") as f:
         f.write(config_text)
@@ -767,13 +800,13 @@ def _print_setup_recommendations(config, deployment_type, output):
     click.echo("1. Start the server:")
     click.echo(f"   $ lvdb serve --config {output}")
 
-    if deployment_type != 'single':
+    if deployment_type != "single":
         click.echo()
         click.echo("2. Multi-worker deployment notes:")
-        if deployment_type == 'multi-file':
+        if deployment_type == "multi-file":
             click.echo("   • Ensure all workers can access the same database directory")
             click.echo("   • File-based registry requires shared filesystem")
-        elif deployment_type == 'multi-redis':
+        elif deployment_type == "multi-redis":
             click.echo("   • Ensure Redis server is running and accessible")
             click.echo("   • Start multiple worker processes with the same config")
 

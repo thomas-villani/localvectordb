@@ -53,12 +53,8 @@ class FactChecker:
         top_k: int = 5,
         max_concurrent: int = 5,
     ) -> None:
-        self._databases: list[LocalVectorDB] = (
-            databases if isinstance(databases, list) else [databases]
-        )
-        self._llm: LLMProvider = (
-            llm if isinstance(llm, LLMProvider) else detect_provider(llm, model)
-        )
+        self._databases: list[LocalVectorDB] = databases if isinstance(databases, list) else [databases]
+        self._llm: LLMProvider = llm if isinstance(llm, LLMProvider) else detect_provider(llm, model)
         self._similarity_threshold = similarity_threshold
         self._min_grounding_score = min_grounding_score
         self._search_type = search_type
@@ -102,9 +98,7 @@ class FactChecker:
             async with sem:
                 return await self._check_claim(claim_data, sources)
 
-        claim_results = list(
-            await asyncio.gather(*(_guarded(c) for c in claims_data))
-        )
+        claim_results = list(await asyncio.gather(*(_guarded(c) for c in claims_data)))
 
         return self._build_result(text, claim_results)
 
@@ -120,9 +114,7 @@ class FactChecker:
     # Internal pipeline
     # ------------------------------------------------------------------
 
-    async def _check_claim(
-        self, claim_data: dict, sources: list[str] | None
-    ) -> ClaimResult:
+    async def _check_claim(self, claim_data: dict, sources: list[str] | None) -> ClaimResult:
         claim = claim_data["claim"]
         sentence = claim_data.get("sentence")
 
@@ -133,28 +125,20 @@ class FactChecker:
         if sources:
             scoped_chunks = await self._search_scoped(claim, sources)
             if scoped_chunks:
-                polarities = await classify_polarity(
-                    self._llm, claim, scoped_chunks
-                )
+                polarities = await classify_polarity(self._llm, claim, scoped_chunks)
                 all_chunks.extend(scoped_chunks)
                 all_polarities.extend(polarities)
 
                 has_support = any(
-                    p.polarity == Polarity.SUPPORTS
-                    and p.confidence >= self._min_grounding_score
-                    for p in polarities
+                    p.polarity == Polarity.SUPPORTS and p.confidence >= self._min_grounding_score for p in polarities
                 )
                 if has_support:
-                    return self._best_result(
-                        claim, sentence, all_chunks, all_polarities
-                    )
+                    return self._best_result(claim, sentence, all_chunks, all_polarities)
 
         # Phase 2: expanded search (all documents across all databases)
         expanded_chunks = await self._search_all(claim)
         if expanded_chunks:
-            polarities = await classify_polarity(
-                self._llm, claim, expanded_chunks
-            )
+            polarities = await classify_polarity(self._llm, claim, expanded_chunks)
             all_chunks.extend(expanded_chunks)
             all_polarities.extend(polarities)
 
@@ -172,9 +156,7 @@ class FactChecker:
     # Retrieval helpers
     # ------------------------------------------------------------------
 
-    async def _search_scoped(
-        self, query: str, source_ids: list[str]
-    ) -> list[dict]:
+    async def _search_scoped(self, query: str, source_ids: list[str]) -> list[dict]:
         source_set = set(source_ids)
         results: list[dict] = []
 
@@ -294,17 +276,13 @@ class FactChecker:
             database_name=best_chunk["database"] if best_chunk else None,
         )
 
-    def _build_result(
-        self, text: str, claim_results: list[ClaimResult]
-    ) -> FactCheckResult:
+    def _build_result(self, text: str, claim_results: list[ClaimResult]) -> FactCheckResult:
         has_contradictions = any(cr.contradiction for cr in claim_results)
 
         if has_contradictions:
             overall_score = 0.0
         elif claim_results:
-            overall_score = sum(cr.confidence for cr in claim_results) / len(
-                claim_results
-            )
+            overall_score = sum(cr.confidence for cr in claim_results) / len(claim_results)
         else:
             overall_score = 1.0
 
@@ -341,18 +319,14 @@ class FactChecker:
             lines.append("Contradictions detected:")
             for cr in contradictions:
                 excerpt = f' -- "{cr.source_excerpt}"' if cr.source_excerpt else ""
-                lines.append(f"  ! \"{cr.claim}\" contradicts {cr.source_id}{excerpt}")
+                lines.append(f'  ! "{cr.claim}" contradicts {cr.source_id}{excerpt}')
 
         # Low-confidence claims
-        low_conf = [
-            cr
-            for cr in claim_results
-            if not cr.contradiction and not cr.grounded
-        ]
+        low_conf = [cr for cr in claim_results if not cr.contradiction and not cr.grounded]
         if low_conf:
             lines.append("")
             lines.append("Ungrounded claims:")
             for cr in low_conf:
-                lines.append(f"  ? \"{cr.claim}\"")
+                lines.append(f'  ? "{cr.claim}"')
 
         return "\n".join(lines) if lines else "No sources found."

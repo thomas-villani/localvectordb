@@ -14,6 +14,7 @@ LocalVectorDB MCP Server (stdio-based)
 Provides Model Context Protocol server for LocalVectorDB, enabling LLMs
 to interact with vector databases through a unified tool interface.
 """
+
 import asyncio
 import logging
 import os
@@ -36,7 +37,7 @@ from localvectordb_server.utils.schema import parse_metadata_schema
 logger = logging.getLogger(__name__)
 
 # Global manager instance
-mcp_manager: Optional['MCPManager'] = None
+mcp_manager: Optional["MCPManager"] = None
 
 
 class MCPManager:
@@ -58,7 +59,7 @@ class MCPManager:
                 kwargs = self.config.db_defaults.copy()
 
                 # If it's a URL, add remote defaults
-                if db_path.startswith(('http://', 'https://')):
+                if db_path.startswith(("http://", "https://")):
                     kwargs.update(self.config.remote_defaults)
 
                 # Create database using factory
@@ -67,7 +68,7 @@ class MCPManager:
                         name=name,
                         base_path=db_path,
                         create_if_not_exists=False,  # Don't auto-create in read mode
-                        **kwargs
+                        **kwargs,
                     )
                 except Exception as e:
                     logger.error(f"Failed to connect to database '{name}': {e}")
@@ -93,12 +94,7 @@ class MCPManager:
 
         return sorted(databases)
 
-    async def create_database(
-            self,
-            name: str,
-            metadata_schema: Optional[Dict[str, Any]] = None,
-            **kwargs
-    ):
+    async def create_database(self, name: str, metadata_schema: Optional[Dict[str, Any]] = None, **kwargs):
         """Create a new database (write mode only)"""
         self.config.check_write_permission("create_database")
 
@@ -116,11 +112,7 @@ class MCPManager:
 
         # Create database
         db = VectorDB(
-            name=name,
-            base_path=db_path,
-            metadata_schema=parsed_schema,
-            create_if_not_exists=True,
-            **db_kwargs
+            name=name, base_path=db_path, metadata_schema=parsed_schema, create_if_not_exists=True, **db_kwargs
         )
 
         # Cache it
@@ -138,13 +130,13 @@ class MCPManager:
             if name in self.databases:
                 # Close if it's a local database
                 db = self.databases[name]
-                if hasattr(db, 'close'):
+                if hasattr(db, "close"):
                     db.close()
                 del self.databases[name]
 
         # Delete files if it's a local database
         db_path = self.config.get_database_path(name)
-        if not db_path.startswith(('http://', 'https://')):
+        if not db_path.startswith(("http://", "https://")):
             # Local database - delete files
             db_file = Path(db_path) / f"{name}.sqlite"
             if db_file.exists():
@@ -159,7 +151,7 @@ class MCPManager:
         """Cleanup resources on shutdown"""
         async with self._lock:
             for db in self.databases.values():
-                if hasattr(db, 'close'):
+                if hasattr(db, "close"):
                     db.close()
             self.databases.clear()
 
@@ -175,9 +167,7 @@ async def lifespan(mcp):
 
     # Configure logging to stderr
     logging.basicConfig(
-        level=logging.INFO,
-        stream=sys.stderr,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        level=logging.INFO, stream=sys.stderr, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Load configuration
@@ -197,15 +187,15 @@ async def lifespan(mcp):
         # Check if tool should be enabled
         if tool_name in enabled_tools:
             # Check if it's a write tool and we're in read-only mode
-            if not tool_info['read_only'] and config.mode == "read-only":
+            if not tool_info["read_only"] and config.mode == "read-only":
                 logger.debug(f"Skipping write tool '{tool_name}' in read-only mode")
                 continue
 
             # Register the tool with MCP using the decorator
-            if not tool_info['registered']:
-                mcp.tool()(tool_info['function'])
+            if not tool_info["registered"]:
+                mcp.tool()(tool_info["function"])
                 # The tool is now registered with MCP
-                tool_info['registered'] = True
+                tool_info["registered"] = True
                 registered_count += 1
                 logger.debug(f"Registered tool: {tool_name}")
         else:
@@ -234,11 +224,7 @@ def register_tool(name: str, read_only: bool = True):
     """Decorator to register tools in the registry"""
 
     def decorator(func):
-        TOOL_REGISTRY[name] = {
-            'function': func,
-            'read_only': read_only,
-            'registered': False
-        }
+        TOOL_REGISTRY[name] = {"function": func, "read_only": read_only, "registered": False}
         return func
 
     return decorator
@@ -251,6 +237,7 @@ def register_mcp_tool(func):
 
 # ============= READ-ONLY TOOLS =============
 
+
 @register_tool("list_databases", read_only=True)
 async def list_databases() -> Dict[str, Any]:
     """
@@ -261,11 +248,7 @@ async def list_databases() -> Dict[str, Any]:
     """
     try:
         databases = await mcp_manager.list_databases()
-        return {
-            "databases": databases,
-            "count": len(databases),
-            "mode": mcp_manager.config.mode
-        }
+        return {"databases": databases, "count": len(databases), "mode": mcp_manager.config.mode}
     except Exception as e:
         logger.error(f"Error listing databases: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -294,26 +277,21 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
             "stats": stats,
             "config": {
                 "embedding_provider": (
-                    db.embedding_provider.provider_name
-                    if hasattr(db, 'embedding_provider') else "unknown"
+                    db.embedding_provider.provider_name if hasattr(db, "embedding_provider") else "unknown"
                 ),
-                "embedding_model": db.embedding_provider.model if hasattr(db, 'embedding_provider') else "unknown",
-                "embedding_dimension": db.embedding_dimension if hasattr(db, 'embedding_dimension') else None,
-                "chunking_method": db.chunking_method if hasattr(db, 'chunking_method') else "unknown",
-                "chunk_size": db.chunk_size if hasattr(db, 'chunk_size') else None,
-                "chunk_overlap": db.chunk_overlap if hasattr(db, 'chunk_overlap') else None,
-                "fts_enabled": db.fts_enabled if hasattr(db, 'fts_enabled') else False
-            }
+                "embedding_model": db.embedding_provider.model if hasattr(db, "embedding_provider") else "unknown",
+                "embedding_dimension": db.embedding_dimension if hasattr(db, "embedding_dimension") else None,
+                "chunking_method": db.chunking_method if hasattr(db, "chunking_method") else "unknown",
+                "chunk_size": db.chunk_size if hasattr(db, "chunk_size") else None,
+                "chunk_overlap": db.chunk_overlap if hasattr(db, "chunk_overlap") else None,
+                "fts_enabled": db.fts_enabled if hasattr(db, "fts_enabled") else False,
+            },
         }
 
         # Add metadata schema if available
-        if hasattr(db, 'metadata_schema') and db.metadata_schema:
+        if hasattr(db, "metadata_schema") and db.metadata_schema:
             info["metadata_schema"] = {
-                field_name: {
-                    "type": field.type.value,
-                    "indexed": field.indexed,
-                    "required": field.required
-                }
+                field_name: {"type": field.type.value, "indexed": field.indexed, "required": field.required}
                 for field_name, field in db.metadata_schema.items()
             }
 
@@ -328,17 +306,17 @@ async def get_database_info(database_name: str) -> Dict[str, Any]:
 
 @register_tool("query_database", read_only=True)
 async def query_database(
-        database_name: str,
-        query: str,
-        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-        return_type: Literal["documents", "chunks", "context"] = "documents",
-        k: int = 10,
-        score_threshold: float = 0.0,
-        filters: Optional[Dict] = None,
-        vector_weight: float = 0.7,
-        context_window: int = 2,
-        semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: str = "frequency_boost"
+    database_name: str,
+    query: str,
+    search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
+    return_type: Literal["documents", "chunks", "context"] = "documents",
+    k: int = 10,
+    score_threshold: float = 0.0,
+    filters: Optional[Dict] = None,
+    vector_weight: float = 0.7,
+    context_window: int = 2,
+    semantic_dedup_threshold: Optional[float] = None,
+    document_scoring_method: str = "frequency_boost",
 ) -> Dict[str, Any]:
     """
     Search a database using vector, keyword, or hybrid search
@@ -363,7 +341,7 @@ async def query_database(
         db = await mcp_manager.get_database(database_name)
 
         # Use async query if available
-        if hasattr(db, 'query_async'):
+        if hasattr(db, "query_async"):
             results = await db.query_async(
                 query=query,
                 search_type=search_type,
@@ -374,7 +352,7 @@ async def query_database(
                 vector_weight=vector_weight,
                 context_window=context_window,
                 semantic_dedup_threshold=semantic_dedup_threshold,
-                document_scoring_method=document_scoring_method
+                document_scoring_method=document_scoring_method,
             )
         else:
             # Fallback to sync query
@@ -388,7 +366,7 @@ async def query_database(
                 vector_weight=vector_weight,
                 context_window=context_window,
                 semantic_dedup_threshold=semantic_dedup_threshold,
-                document_scoring_method=document_scoring_method
+                document_scoring_method=document_scoring_method,
             )
 
         # Serialize results
@@ -399,16 +377,16 @@ async def query_database(
                 "score": float(result.score),
                 "type": result.type,
                 "content": result.content,
-                "metadata": result.metadata
+                "metadata": result.metadata,
             }
-            if hasattr(result, 'document_id') and result.document_id:
+            if hasattr(result, "document_id") and result.document_id:
                 data["document_id"] = result.document_id
-            if hasattr(result, 'position') and result.position:
+            if hasattr(result, "position") and result.position:
                 data["position"] = {
                     "index": result.position.index,
                     "total": result.position.total,
                     "start_char": result.position.start_char,
-                    "end_char": result.position.end_char
+                    "end_char": result.position.end_char,
                 }
             serialized_results.append(data)
 
@@ -416,7 +394,7 @@ async def query_database(
             "results": serialized_results,
             "search_type": search_type,
             "return_type": return_type,
-            "total_results": len(serialized_results)
+            "total_results": len(serialized_results),
         }
 
     except DatabaseNotFoundError as e:
@@ -428,10 +406,7 @@ async def query_database(
 
 @register_tool("filter_documents", read_only=True)
 async def filter_documents(
-        database_name: str,
-        filters: Dict[str, Any],
-        limit: int = 100,
-        offset: int = 0
+    database_name: str, filters: Dict[str, Any], limit: int = 100, offset: int = 0
 ) -> Dict[str, Any]:
     """
     Filter documents by metadata
@@ -449,35 +424,25 @@ async def filter_documents(
         db = await mcp_manager.get_database(database_name)
 
         # Use filter method
-        if hasattr(db, 'filter_async'):
-            documents = await db.filter_async(
-                where=filters,
-                limit=limit,
-                offset=offset
-            )
+        if hasattr(db, "filter_async"):
+            documents = await db.filter_async(where=filters, limit=limit, offset=offset)
         else:
-            documents = db.filter(
-                where=filters,
-                limit=limit,
-                offset=offset
-            )
+            documents = db.filter(where=filters, limit=limit, offset=offset)
 
         # Serialize documents
         serialized_docs = []
         for doc in documents:
-            serialized_docs.append({
-                "id": doc.id,
-                "content": doc.content,
-                "metadata": doc.metadata,
-                "created_at": doc.created_at.isoformat() if doc.created_at else None,
-                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None
-            })
+            serialized_docs.append(
+                {
+                    "id": doc.id,
+                    "content": doc.content,
+                    "metadata": doc.metadata,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+                }
+            )
 
-        return {
-            "documents": serialized_docs,
-            "count": len(serialized_docs),
-            "filters": filters
-        }
+        return {"documents": serialized_docs, "count": len(serialized_docs), "filters": filters}
 
     except Exception as e:
         logger.error(f"Error filtering documents: {e}")
@@ -485,10 +450,7 @@ async def filter_documents(
 
 
 @register_tool("get_document", read_only=True)
-async def get_document(
-        database_name: str,
-        document_id: str
-) -> Dict[str, Any]:
+async def get_document(database_name: str, document_id: str) -> Dict[str, Any]:
     """
     Retrieve a specific document by ID
 
@@ -503,16 +465,13 @@ async def get_document(
         db = await mcp_manager.get_database(database_name)
 
         # Get document
-        if hasattr(db, 'get_async'):
+        if hasattr(db, "get_async"):
             doc = await db.get_async(document_id)
         else:
             doc = db.get(document_id)
 
         if doc is None:
-            return {
-                "error": f"Document '{document_id}' not found",
-                "error_code": "DOCUMENT_NOT_FOUND"
-            }
+            return {"error": f"Document '{document_id}' not found", "error_code": "DOCUMENT_NOT_FOUND"}
 
         return {
             "id": doc.id,
@@ -520,7 +479,7 @@ async def get_document(
             "metadata": doc.metadata,
             "created_at": doc.created_at.isoformat() if doc.created_at else None,
             "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-            "content_hash": doc.content_hash if hasattr(doc, 'content_hash') else None
+            "content_hash": doc.content_hash if hasattr(doc, "content_hash") else None,
         }
 
     except Exception as e:
@@ -529,10 +488,7 @@ async def get_document(
 
 
 @register_tool("check_documents_exist", read_only=True)
-async def check_documents_exist(
-        database_name: str,
-        document_ids: List[str]
-) -> Dict[str, Any]:
+async def check_documents_exist(database_name: str, document_ids: List[str]) -> Dict[str, Any]:
     """
     Check if documents exist in the database
 
@@ -547,16 +503,12 @@ async def check_documents_exist(
         db = await mcp_manager.get_database(database_name)
 
         # Check existence
-        if hasattr(db, 'exists_async'):
+        if hasattr(db, "exists_async"):
             exists_map = await db.exists_async(document_ids)
         else:
             exists_map = db.exists(document_ids)
 
-        return {
-            "exists": exists_map,
-            "total_checked": len(document_ids),
-            "total_found": sum(exists_map.values())
-        }
+        return {"exists": exists_map, "total_checked": len(document_ids), "total_found": sum(exists_map.values())}
 
     except Exception as e:
         logger.error(f"Error checking document existence: {e}")
@@ -577,14 +529,10 @@ async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
     try:
         db = await mcp_manager.get_database(database_name)
 
-        if hasattr(db, 'metadata_schema') and db.metadata_schema:
+        if hasattr(db, "metadata_schema") and db.metadata_schema:
             schema = {}
             for field_name, field in db.metadata_schema.items():
-                schema[field_name] = {
-                    "type": field.type.value,
-                    "indexed": field.indexed,
-                    "required": field.required
-                }
+                schema[field_name] = {"type": field.type.value, "indexed": field.indexed, "required": field.required}
             return {"schema": schema}
         else:
             return {"schema": {}, "message": "No metadata schema defined"}
@@ -609,7 +557,7 @@ async def get_system_info() -> Dict[str, Any]:
             "database_root": mcp_manager.config.databases_root if mcp_manager else None,
             "available_providers": EmbeddingRegistry.list(),
             "databases_count": len(await mcp_manager.list_databases()) if mcp_manager else 0,
-            "enabled_tools": mcp_manager.config.get_enabled_tools() if mcp_manager else []
+            "enabled_tools": mcp_manager.config.get_enabled_tools() if mcp_manager else [],
         }
     except Exception as e:
         logger.error(f"Error getting system info: {e}")
@@ -618,15 +566,16 @@ async def get_system_info() -> Dict[str, Any]:
 
 # ============= WRITE TOOLS (only available in read-write mode) =============
 
+
 @register_tool("create_database", read_only=False)
 async def create_database(
-        name: str,
-        metadata_schema: Optional[Dict[str, Any]] = None,
-        embedding_provider: Optional[str] = None,
-        embedding_model: Optional[str] = None,
-        chunking_method: Optional[str] = None,
-        chunk_size: Optional[int] = None,
-        chunk_overlap: Optional[int] = None
+    name: str,
+    metadata_schema: Optional[Dict[str, Any]] = None,
+    embedding_provider: Optional[str] = None,
+    embedding_model: Optional[str] = None,
+    chunking_method: Optional[str] = None,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Create a new vector database
@@ -660,24 +609,21 @@ async def create_database(
             kwargs["chunk_overlap"] = chunk_overlap
 
         # Create database
-        db = await mcp_manager.create_database(
-            name=name,
-            metadata_schema=metadata_schema,
-            **kwargs
-        )
+        db = await mcp_manager.create_database(name=name, metadata_schema=metadata_schema, **kwargs)
 
         return {
             "message": f"Successfully created database '{name}'",
             "status": "success",
             "config": {
                 "name": db.name,
-                "embedding_provider": kwargs.get("embedding_provider",
-                                                 mcp_manager.config.db_defaults["embedding_provider"]),
+                "embedding_provider": kwargs.get(
+                    "embedding_provider", mcp_manager.config.db_defaults["embedding_provider"]
+                ),
                 "embedding_model": kwargs.get("embedding_model", mcp_manager.config.db_defaults["embedding_model"]),
                 "chunking_method": kwargs.get("chunking_method", mcp_manager.config.db_defaults["chunking_method"]),
                 "chunk_size": kwargs.get("chunk_size", mcp_manager.config.db_defaults["chunk_size"]),
-                "chunk_overlap": kwargs.get("chunk_overlap", mcp_manager.config.db_defaults["chunk_overlap"])
-            }
+                "chunk_overlap": kwargs.get("chunk_overlap", mcp_manager.config.db_defaults["chunk_overlap"]),
+            },
         }
 
     except PermissionError as e:
@@ -703,10 +649,7 @@ async def delete_database(name: str) -> Dict[str, Any]:
 
         await mcp_manager.delete_database(name)
 
-        return {
-            "message": f"Successfully deleted database '{name}'",
-            "status": "success"
-        }
+        return {"message": f"Successfully deleted database '{name}'", "status": "success"}
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
@@ -717,12 +660,12 @@ async def delete_database(name: str) -> Dict[str, Any]:
 
 @register_tool("upsert_documents", read_only=False)
 async def upsert_documents(
-        database_name: str,
-        documents: Union[str, List[str]],
-        metadata: Optional[Union[Dict, List[Dict]]] = None,
-        ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
-        similarity_threshold: Optional[float] = None
+    database_name: str,
+    documents: Union[str, List[str]],
+    metadata: Optional[Union[Dict, List[Dict]]] = None,
+    ids: Optional[Union[str, List[str]]] = None,
+    batch_size: int = 100,
+    similarity_threshold: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Insert or update documents in the database
@@ -753,13 +696,13 @@ async def upsert_documents(
         db = await mcp_manager.get_database(database_name)
 
         # Upsert documents
-        if hasattr(db, 'upsert_async'):
+        if hasattr(db, "upsert_async"):
             result_ids = await db.upsert_async(
                 documents=documents,
                 metadata=metadata,
                 ids=ids,
                 batch_size=batch_size,
-                similarity_threshold=similarity_threshold
+                similarity_threshold=similarity_threshold,
             )
         else:
             result_ids = db.upsert(
@@ -767,14 +710,10 @@ async def upsert_documents(
                 metadata=metadata,
                 ids=ids,
                 batch_size=batch_size,
-                similarity_threshold=similarity_threshold
+                similarity_threshold=similarity_threshold,
             )
 
-        return {
-            "message": f"Successfully processed {len(documents)} documents",
-            "ids": result_ids,
-            "status": "success"
-        }
+        return {"message": f"Successfully processed {len(documents)} documents", "ids": result_ids, "status": "success"}
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
@@ -785,10 +724,7 @@ async def upsert_documents(
 
 @register_tool("update_document", read_only=False)
 async def update_document(
-        database_name: str,
-        document_id: str,
-        content: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+    database_name: str, document_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Update a document's content and/or metadata
@@ -808,23 +744,12 @@ async def update_document(
         db = await mcp_manager.get_database(database_name)
 
         # Update document
-        if hasattr(db, 'update_async'):
-            await db.update_async(
-                doc_id=document_id,
-                content=content,
-                metadata=metadata
-            )
+        if hasattr(db, "update_async"):
+            await db.update_async(doc_id=document_id, content=content, metadata=metadata)
         else:
-            db.update(
-                doc_id=document_id,
-                content=content,
-                metadata=metadata
-            )
+            db.update(doc_id=document_id, content=content, metadata=metadata)
 
-        return {
-            "message": f"Successfully updated document '{document_id}'",
-            "status": "success"
-        }
+        return {"message": f"Successfully updated document '{document_id}'", "status": "success"}
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
@@ -836,10 +761,7 @@ async def update_document(
 
 
 @register_tool("delete_document", read_only=False)
-async def delete_document(
-        database_name: str,
-        document_id: str
-) -> Dict[str, Any]:
+async def delete_document(database_name: str, document_id: str) -> Dict[str, Any]:
     """
     Delete a document from the database
 
@@ -856,21 +778,18 @@ async def delete_document(
         db = await mcp_manager.get_database(database_name)
 
         # Delete document
-        if hasattr(db, 'delete_async'):
+        if hasattr(db, "delete_async"):
             deleted_count = await db.delete_async(document_id)
         else:
             deleted_count = db.delete(document_id)
 
         if deleted_count == 0:
-            return {
-                "error": f"Document '{document_id}' not found",
-                "error_code": "DOCUMENT_NOT_FOUND"
-            }
+            return {"error": f"Document '{document_id}' not found", "error_code": "DOCUMENT_NOT_FOUND"}
 
         return {
             "message": f"Successfully deleted document '{document_id}'",
             "status": "success",
-            "deleted_count": deleted_count
+            "deleted_count": deleted_count,
         }
 
     except PermissionError as e:
@@ -881,10 +800,7 @@ async def delete_document(
 
 
 @register_tool("update_metadata_schema", read_only=False)
-async def update_metadata_schema(
-        database_name: str,
-        metadata_schema: Dict[str, Any]
-) -> Dict[str, Any]:
+async def update_metadata_schema(database_name: str, metadata_schema: Dict[str, Any]) -> Dict[str, Any]:
     """
     Update the metadata schema for a database
 
@@ -904,20 +820,14 @@ async def update_metadata_schema(
         parsed_schema = parse_metadata_schema(metadata_schema)
 
         # Update schema
-        if hasattr(db, 'update_metadata_schema_async'):
+        if hasattr(db, "update_metadata_schema_async"):
             await db.update_metadata_schema_async(parsed_schema)
-        elif hasattr(db, 'update_metadata_schema'):
+        elif hasattr(db, "update_metadata_schema"):
             db.update_metadata_schema(parsed_schema)
         else:
-            return {
-                "error": "Database does not support metadata schema updates",
-                "error_code": "NOT_SUPPORTED"
-            }
+            return {"error": "Database does not support metadata schema updates", "error_code": "NOT_SUPPORTED"}
 
-        return {
-            "message": f"Successfully updated metadata schema for database '{database_name}'",
-            "status": "success"
-        }
+        return {"message": f"Successfully updated metadata schema for database '{database_name}'", "status": "success"}
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}

@@ -54,12 +54,7 @@ def temp_dirs():
     backup_dir.mkdir()
     restore_dir.mkdir()
 
-    yield {
-        'base': Path(base_temp),
-        'db': db_dir,
-        'backup': backup_dir,
-        'restore': restore_dir
-    }
+    yield {"base": Path(base_temp), "db": db_dir, "backup": backup_dir, "restore": restore_dir}
 
     # Cleanup
     shutil.rmtree(base_temp)
@@ -70,31 +65,31 @@ def sample_database(temp_dirs):
     """Create a sample LocalVectorDB for testing."""
     # Create database with sample data
     metadata_schema = {
-        'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
-        'priority': MetadataField(type=MetadataFieldType.INTEGER, default_value=1),
-        'created_date': MetadataField(type=MetadataFieldType.DATE)
+        "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+        "priority": MetadataField(type=MetadataFieldType.INTEGER, default_value=1),
+        "created_date": MetadataField(type=MetadataFieldType.DATE),
     }
 
     db = LocalVectorDB(
         "test",
-        str(temp_dirs['db']),
+        str(temp_dirs["db"]),
         metadata_schema=metadata_schema,
         embedding_provider="mock",
         embedding_model="mock-model",
-        chunk_size=100
+        chunk_size=100,
     )
 
     # Add sample documents
     documents = [
         "This is a test document about machine learning algorithms.",
         "Vector databases are essential for AI applications.",
-        "LocalVectorDB provides efficient vector storage and retrieval."
+        "LocalVectorDB provides efficient vector storage and retrieval.",
     ]
 
     metadata = [
-        {'category': 'tech', 'priority': 1, 'created_date': '2024-01-01'},
-        {'category': 'ai', 'priority': 2, 'created_date': '2024-01-02'},
-        {'category': 'database', 'priority': 3, 'created_date': '2024-01-03'}
+        {"category": "tech", "priority": 1, "created_date": "2024-01-01"},
+        {"category": "ai", "priority": 2, "created_date": "2024-01-02"},
+        {"category": "database", "priority": 3, "created_date": "2024-01-03"},
     ]
 
     db.upsert(documents, metadata=metadata)
@@ -109,25 +104,21 @@ def sample_database(temp_dirs):
 def backup_config(temp_dirs):
     """Create backup configuration for testing."""
     return BackupConfig(
-        backup_location=temp_dirs['backup'],
+        backup_location=temp_dirs["backup"],
         compression_algorithm=CompressionAlgorithm.GZIP,
         verify_integrity=True,
         retention_days=30,
-        include_faiss_index=True
+        include_faiss_index=True,
     )
 
 
 @pytest.fixture
 def backup_manager(sample_database, backup_config, temp_dirs):
     """Create BackupManager instance for testing."""
-    db_path = temp_dirs['db'] / "test.sqlite"
-    faiss_path = temp_dirs['db'] / "test.faiss"
+    db_path = temp_dirs["db"] / "test.sqlite"
+    faiss_path = temp_dirs["db"] / "test.faiss"
 
-    return BackupManager(
-        database_path=db_path,
-        faiss_index_path=faiss_path,
-        config=backup_config
-    )
+    return BackupManager(database_path=db_path, faiss_index_path=faiss_path, config=backup_config)
 
 
 @pytest.mark.unit
@@ -143,7 +134,7 @@ class TestBackupManager:
         assert len(backup_id) == 36  # UUID length
 
         # Check backup file exists
-        backup_files = list(temp_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_dirs["backup"].glob("*.lvdb-backup"))
         assert len(backup_files) == 1
         assert backup_id[:8] in backup_files[0].name
 
@@ -152,10 +143,11 @@ class TestBackupManager:
         backup_id = backup_manager.create_backup(BackupType.FULL)
 
         # Read backup metadata
-        backup_files = list(temp_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_dirs["backup"].glob("*.lvdb-backup"))
         backup_file = backup_files[0]
 
         import tarfile
+
         with tarfile.open(backup_file, "r:*") as tar:
             manifest_file = tar.extractfile("manifest.json")
             manifest_data = json.load(manifest_file)
@@ -200,27 +192,19 @@ class TestBackupManager:
         backup_id = backup_manager.create_backup(BackupType.FULL)
 
         # Restore backup
-        restore_path = backup_manager.restore_backup(
-            backup_id,
-            temp_dirs['restore'],
-            overwrite_existing=True
-        )
+        restore_path = backup_manager.restore_backup(backup_id, temp_dirs["restore"], overwrite_existing=True)
 
-        assert restore_path == temp_dirs['restore']
+        assert restore_path == temp_dirs["restore"]
 
         # Verify restored files exist
-        restored_db = temp_dirs['restore'] / "test.sqlite"
-        restored_faiss = temp_dirs['restore'] / "test.faiss"
+        restored_db = temp_dirs["restore"] / "test.sqlite"
+        restored_faiss = temp_dirs["restore"] / "test.faiss"
 
         assert restored_db.exists()
         assert restored_faiss.exists()
 
         # Verify restored data
-        restored_db_instance = LocalVectorDB(
-            "test",
-            str(temp_dirs['restore']),
-            create_if_not_exists=False
-        )
+        restored_db_instance = LocalVectorDB("test", str(temp_dirs["restore"]), create_if_not_exists=False)
 
         # Check document count
         docs = restored_db_instance.filter()
@@ -241,13 +225,13 @@ class TestBackupManager:
         assert success is True
 
         # Verify backup is deleted
-        backup_files = list(temp_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_dirs["backup"].glob("*.lvdb-backup"))
         assert len(backup_files) == 0
 
     def test_cleanup_old_backups(self, backup_manager):
         """Test cleanup of old backups based on retention policy."""
         # Create multiple backups with different ages (mocked)
-        with patch('localvectordb.backup.datetime') as mock_datetime:
+        with patch("localvectordb.backup.datetime") as mock_datetime:
             # Create old backup
             old_time = datetime.now(UTC) - timedelta(days=35)
             mock_datetime.now.return_value = old_time
@@ -285,8 +269,7 @@ class TestIncrementalBackup:
 
         # Modify database
         sample_database.upsert(
-            ["New document for incremental backup test"],
-            metadata=[{'category': 'new', 'priority': 1}]
+            ["New document for incremental backup test"], metadata=[{"category": "new", "priority": 1}]
         )
         sample_database.save()
 
@@ -297,7 +280,7 @@ class TestIncrementalBackup:
         assert inc_backup_id != full_backup_id
 
         # Verify incremental backup file exists
-        backup_files = list(temp_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_dirs["backup"].glob("*.lvdb-backup"))
         assert len(backup_files) == 2  # Full + incremental
 
     def test_incremental_backup_chain_restore(self, incremental_manager, sample_database, temp_dirs):
@@ -306,35 +289,22 @@ class TestIncrementalBackup:
         full_backup_id = incremental_manager.backup_manager.create_backup(BackupType.FULL)
 
         # Modify database and create incremental backup
-        sample_database.upsert(
-            ["Incremental document 1"],
-            metadata=[{'category': 'inc1', 'priority': 1}]
-        )
+        sample_database.upsert(["Incremental document 1"], metadata=[{"category": "inc1", "priority": 1}])
         sample_database.save()
         inc_backup_id1 = incremental_manager.create_incremental_backup(full_backup_id)
 
         # Another modification and incremental backup
-        sample_database.upsert(
-            ["Incremental document 2"],
-            metadata=[{'category': 'inc2', 'priority': 2}]
-        )
+        sample_database.upsert(["Incremental document 2"], metadata=[{"category": "inc2", "priority": 2}])
         sample_database.save()
         inc_backup_id2 = incremental_manager.create_incremental_backup(inc_backup_id1)
 
         # Restore incremental backup chain
-        restore_path = incremental_manager.restore_incremental_backup_chain(
-            inc_backup_id2,
-            temp_dirs['restore']
-        )
+        restore_path = incremental_manager.restore_incremental_backup_chain(inc_backup_id2, temp_dirs["restore"])
 
-        assert restore_path == temp_dirs['restore']
+        assert restore_path == temp_dirs["restore"]
 
         # Verify restored database contains all data
-        restored_db = LocalVectorDB(
-            "test",
-            str(temp_dirs['restore']),
-            create_if_not_exists=False
-        )
+        restored_db = LocalVectorDB("test", str(temp_dirs["restore"]), create_if_not_exists=False)
 
         docs = restored_db.filter()
         assert len(docs) >= 5  # Original 3 + 2 incremental
@@ -363,9 +333,9 @@ class TestPointInTimeRecovery:
         timeline = pitr_manager.get_recovery_timeline()
 
         assert len(timeline) == 2
-        assert timeline[0]['timestamp'] <= timeline[1]['timestamp']  # Sorted by time
+        assert timeline[0]["timestamp"] <= timeline[1]["timestamp"]  # Sorted by time
 
-        backup_ids = {point['backup_id'] for point in timeline}
+        backup_ids = {point["backup_id"] for point in timeline}
         assert backup_id1 in backup_ids
         assert backup_id2 in backup_ids
 
@@ -381,7 +351,7 @@ class TestPointInTimeRecovery:
         recovery_point = pitr_manager.find_recovery_point(target_time, tolerance_minutes=10)
 
         assert recovery_point is not None
-        assert recovery_point['backup_id'] == backup_id
+        assert recovery_point["backup_id"] == backup_id
 
     def test_point_in_time_recovery_dry_run(self, pitr_manager, sample_database, temp_dirs):
         """Test point-in-time recovery dry run."""
@@ -392,16 +362,12 @@ class TestPointInTimeRecovery:
 
         # Perform dry-run recovery
         target_time = backup_time + timedelta(minutes=1)
-        result = pitr_manager.restore_to_point_in_time(
-            target_time,
-            temp_dirs['restore'],
-            dry_run=True
-        )
+        result = pitr_manager.restore_to_point_in_time(target_time, temp_dirs["restore"], dry_run=True)
 
-        assert result['success'] is True
-        assert result['dry_run'] is True
-        assert 'recovery_point' in result
-        assert result['recovery_point']['backup_id'] == backup_id
+        assert result["success"] is True
+        assert result["dry_run"] is True
+        assert "recovery_point" in result
+        assert result["recovery_point"]["backup_id"] == backup_id
 
     def test_validate_recovery_timeline(self, pitr_manager, sample_database):
         """Test recovery timeline validation."""
@@ -410,10 +376,10 @@ class TestPointInTimeRecovery:
 
         validation_result = pitr_manager.validate_recovery_timeline()
 
-        assert validation_result['valid'] is True
-        assert validation_result['full_backups'] >= 1
-        assert validation_result['total_backups'] >= 1
-        assert len(validation_result['issues']) == 0
+        assert validation_result["valid"] is True
+        assert validation_result["full_backups"] >= 1
+        assert validation_result["total_backups"] >= 1
+        assert len(validation_result["issues"]) == 0
 
 
 class TestBackupConfiguration:
@@ -421,13 +387,12 @@ class TestBackupConfiguration:
 
     def test_compression_algorithms(self, sample_database, temp_dirs):
         """Test different compression algorithms."""
-        db_path = temp_dirs['db'] / "test.sqlite"
-        faiss_path = temp_dirs['db'] / "test.faiss"
+        db_path = temp_dirs["db"] / "test.sqlite"
+        faiss_path = temp_dirs["db"] / "test.faiss"
 
         # Test GZIP compression
         gzip_config = BackupConfig(
-            backup_location=temp_dirs['backup'] / "gzip",
-            compression_algorithm=CompressionAlgorithm.GZIP
+            backup_location=temp_dirs["backup"] / "gzip", compression_algorithm=CompressionAlgorithm.GZIP
         )
         gzip_config.backup_location.mkdir(exist_ok=True)
         gzip_manager = BackupManager(db_path, faiss_path, gzip_config)
@@ -435,8 +400,7 @@ class TestBackupConfiguration:
 
         # Test no compression
         none_config = BackupConfig(
-            backup_location=temp_dirs['backup'] / "none",
-            compression_algorithm=CompressionAlgorithm.NONE
+            backup_location=temp_dirs["backup"] / "none", compression_algorithm=CompressionAlgorithm.NONE
         )
         none_config.backup_location.mkdir(exist_ok=True)
         none_manager = BackupManager(db_path, faiss_path, none_config)
@@ -447,35 +411,28 @@ class TestBackupConfiguration:
         assert none_backup_id is not None
 
         # Verify files exist
-        gzip_files = list((temp_dirs['backup'] / "gzip").glob("*.lvdb-backup"))
-        none_files = list((temp_dirs['backup'] / "none").glob("*.lvdb-backup"))
+        gzip_files = list((temp_dirs["backup"] / "gzip").glob("*.lvdb-backup"))
+        none_files = list((temp_dirs["backup"] / "none").glob("*.lvdb-backup"))
 
         assert len(gzip_files) == 1
         assert len(none_files) == 1
 
     def test_faiss_exclusion(self, sample_database, temp_dirs):
         """Test backup without FAISS index."""
-        db_path = temp_dirs['db'] / "test.sqlite"
-        faiss_path = temp_dirs['db'] / "test.faiss"
+        db_path = temp_dirs["db"] / "test.sqlite"
+        faiss_path = temp_dirs["db"] / "test.faiss"
 
-        config = BackupConfig(
-            backup_location=temp_dirs['backup'],
-            include_faiss_index=False
-        )
+        config = BackupConfig(backup_location=temp_dirs["backup"], include_faiss_index=False)
 
         manager = BackupManager(db_path, faiss_path, config)
         backup_id = manager.create_backup(BackupType.FULL)
 
         # Restore backup
-        manager.restore_backup(
-            backup_id,
-            temp_dirs['restore'],
-            overwrite_existing=True
-        )
+        manager.restore_backup(backup_id, temp_dirs["restore"], overwrite_existing=True)
 
         # Verify only SQLite file was restored
-        restored_db = temp_dirs['restore'] / "test.sqlite"
-        restored_faiss = temp_dirs['restore'] / "test.faiss"
+        restored_db = temp_dirs["restore"] / "test.sqlite"
+        restored_faiss = temp_dirs["restore"] / "test.faiss"
 
         assert restored_db.exists()
         assert not restored_faiss.exists()
@@ -487,7 +444,7 @@ class TestErrorHandling:
 
     def test_backup_nonexistent_database(self, temp_dirs, backup_config):
         """Test backup of non-existent database."""
-        nonexistent_path = temp_dirs['db'] / "nonexistent.sqlite"
+        nonexistent_path = temp_dirs["db"] / "nonexistent.sqlite"
 
         manager = BackupManager(nonexistent_path, config=backup_config)
 
@@ -499,11 +456,11 @@ class TestErrorHandling:
         fake_backup_id = "nonexistent-backup-id"
 
         with pytest.raises(FileNotFoundError):
-            backup_manager.restore_backup(fake_backup_id, temp_dirs['restore'])
+            backup_manager.restore_backup(fake_backup_id, temp_dirs["restore"])
 
     def test_incremental_backup_without_parent(self, temp_dirs, backup_config):
         """Test incremental backup with invalid parent ID."""
-        db_path = temp_dirs['db'] / "test.sqlite"
+        db_path = temp_dirs["db"] / "test.sqlite"
         manager = BackupManager(db_path, config=backup_config)
         inc_manager = IncrementalBackupManager(manager)
 
@@ -516,11 +473,11 @@ class TestErrorHandling:
         backup_id = backup_manager.create_backup(BackupType.FULL)
 
         # Corrupt the backup file
-        backup_files = list(temp_dirs['backup'].glob("*.lvdb-backup"))
+        backup_files = list(temp_dirs["backup"].glob("*.lvdb-backup"))
         backup_file = backup_files[0]
 
         # Write invalid data to corrupt the file
-        with open(backup_file, 'wb') as f:
+        with open(backup_file, "wb") as f:
             f.write(b"corrupted data")
 
         # Verification should fail
@@ -534,8 +491,8 @@ class TestIntegration:
 
     def test_full_backup_restore_cycle(self, sample_database, temp_dirs, backup_config):
         """Test complete backup and restore cycle."""
-        db_path = temp_dirs['db'] / "test.sqlite"
-        faiss_path = temp_dirs['db'] / "test.faiss"
+        db_path = temp_dirs["db"] / "test.sqlite"
+        faiss_path = temp_dirs["db"] / "test.faiss"
 
         # Create backup manager
         manager = BackupManager(db_path, faiss_path, backup_config)
@@ -553,18 +510,10 @@ class TestIntegration:
         assert backups[0].backup_id == backup_id
 
         # Restore backup
-        manager.restore_backup(
-            backup_id,
-            temp_dirs['restore'],
-            overwrite_existing=True
-        )
+        manager.restore_backup(backup_id, temp_dirs["restore"], overwrite_existing=True)
 
         # Verify restoration
-        restored_db = LocalVectorDB(
-            "test",
-            str(temp_dirs['restore']),
-            create_if_not_exists=False
-        )
+        restored_db = LocalVectorDB("test", str(temp_dirs["restore"]), create_if_not_exists=False)
 
         original_docs = sample_database.filter()
         restored_docs = restored_db.filter()

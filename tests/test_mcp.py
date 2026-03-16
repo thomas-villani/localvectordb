@@ -24,6 +24,7 @@ from localvectordb_server.mcp.config import MCPConfig
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _run(coro):
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
@@ -53,8 +54,13 @@ def _make_document(doc_id="doc1", content="hello world", metadata=None):
 
 
 def _make_query_result(
-    result_id="r1", score=0.95, content="result text", result_type="document",
-    document_id=None, position=None, metadata=None,
+    result_id="r1",
+    score=0.95,
+    content="result text",
+    result_type="document",
+    document_id=None,
+    position=None,
+    metadata=None,
 ):
     """Create a lightweight mock query result."""
     r = SimpleNamespace(
@@ -72,6 +78,7 @@ def _make_query_result(
 # ---------------------------------------------------------------------------
 # MCPConfig tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestMCPConfig:
@@ -222,6 +229,7 @@ class TestMCPConfig:
 # TOOL_REGISTRY tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestToolRegistry:
     """Verify the TOOL_REGISTRY is properly populated."""
@@ -275,6 +283,7 @@ class TestToolRegistry:
 # ---------------------------------------------------------------------------
 # MCPManager tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestMCPManager:
@@ -393,6 +402,7 @@ class TestMCPManager:
 # Tool function tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def mcp_manager_fixture():
     """Set up a mock MCPManager as the global mcp_manager for tool tests."""
@@ -423,9 +433,7 @@ class TestListDatabasesTool:
     def test_handles_error(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import list_databases
 
-        mcp_manager_fixture.list_databases = AsyncMock(
-            side_effect=RuntimeError("boom")
-        )
+        mcp_manager_fixture.list_databases = AsyncMock(side_effect=RuntimeError("boom"))
         result = _run(list_databases())
         assert "error" in result
         assert "boom" in result["error"]
@@ -459,9 +467,7 @@ class TestGetDatabaseInfoTool:
     def test_database_not_found(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import get_database_info
 
-        mcp_manager_fixture.get_database = AsyncMock(
-            side_effect=DatabaseNotFoundError("not found")
-        )
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=DatabaseNotFoundError("not found"))
         result = _run(get_database_info("missing"))
         assert result["error_code"] == "DATABASE_NOT_FOUND"
 
@@ -471,9 +477,7 @@ class TestQueryDatabaseTool:
     def test_basic_query(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import query_database
 
-        mock_result = _make_query_result(
-            result_id="r1", score=0.9, content="match"
-        )
+        mock_result = _make_query_result(result_id="r1", score=0.9, content="match")
         mock_db = MagicMock()
         mock_db.query.return_value = [mock_result]
         # Ensure it uses sync path
@@ -491,9 +495,7 @@ class TestQueryDatabaseTool:
         from localvectordb_server.mcp.server import query_database
 
         position = SimpleNamespace(index=0, total=3, start_char=0, end_char=100)
-        mock_result = _make_query_result(
-            document_id="doc1", position=position
-        )
+        mock_result = _make_query_result(document_id="doc1", position=position)
         mock_db = MagicMock()
         mock_db.query.return_value = [mock_result]
         del mock_db.query_async
@@ -519,18 +521,14 @@ class TestQueryDatabaseTool:
     def test_query_database_not_found(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import query_database
 
-        mcp_manager_fixture.get_database = AsyncMock(
-            side_effect=DatabaseNotFoundError("no db")
-        )
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=DatabaseNotFoundError("no db"))
         result = _run(query_database("missing", "query"))
         assert result["error_code"] == "DATABASE_NOT_FOUND"
 
     def test_query_unexpected_error(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import query_database
 
-        mcp_manager_fixture.get_database = AsyncMock(
-            side_effect=RuntimeError("unexpected")
-        )
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=RuntimeError("unexpected"))
         result = _run(query_database("testdb", "query"))
         assert "error" in result
         assert result["error_type"] == "RuntimeError"
@@ -563,16 +561,12 @@ class TestFilterDocumentsTool:
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(filter_documents("testdb", {"x": 1}, limit=50, offset=10))
         assert result["count"] == 1
-        mock_db.filter_async.assert_called_once_with(
-            where={"x": 1}, limit=50, offset=10
-        )
+        mock_db.filter_async.assert_called_once_with(where={"x": 1}, limit=50, offset=10)
 
     def test_filter_error(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import filter_documents
 
-        mcp_manager_fixture.get_database = AsyncMock(
-            side_effect=RuntimeError("fail")
-        )
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=RuntimeError("fail"))
         result = _run(filter_documents("testdb", {}))
         assert "error" in result
 
@@ -645,9 +639,7 @@ class TestCheckDocumentsExistTool:
     def test_check_error(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import check_documents_exist
 
-        mcp_manager_fixture.get_database = AsyncMock(
-            side_effect=RuntimeError("fail")
-        )
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=RuntimeError("fail"))
         result = _run(check_documents_exist("testdb", ["d1"]))
         assert "error" in result
 
@@ -687,12 +679,13 @@ class TestGetSystemInfoTool:
 
         mcp_manager_fixture.list_databases = AsyncMock(return_value=["a", "b"])
 
-        with patch(
-            "localvectordb_server.mcp.server.get_system_version",
-            return_value="1.0.0",
-        ), patch(
-            "localvectordb_server.mcp.server.EmbeddingRegistry"
-        ) as mock_registry:
+        with (
+            patch(
+                "localvectordb_server.mcp.server.get_system_version",
+                return_value="1.0.0",
+            ),
+            patch("localvectordb_server.mcp.server.EmbeddingRegistry") as mock_registry,
+        ):
             mock_registry.list.return_value = ["ollama", "openai"]
             result = _run(get_system_info())
 
@@ -704,16 +697,15 @@ class TestGetSystemInfoTool:
     def test_handles_error(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import get_system_info
 
-        mcp_manager_fixture.list_databases = AsyncMock(
-            side_effect=RuntimeError("boom")
-        )
+        mcp_manager_fixture.list_databases = AsyncMock(side_effect=RuntimeError("boom"))
 
-        with patch(
-            "localvectordb_server.mcp.server.get_system_version",
-            return_value="1.0.0",
-        ), patch(
-            "localvectordb_server.mcp.server.EmbeddingRegistry"
-        ) as mock_registry:
+        with (
+            patch(
+                "localvectordb_server.mcp.server.get_system_version",
+                return_value="1.0.0",
+            ),
+            patch("localvectordb_server.mcp.server.EmbeddingRegistry") as mock_registry,
+        ):
             mock_registry.list.return_value = []
             result = _run(get_system_info())
 
@@ -723,6 +715,7 @@ class TestGetSystemInfoTool:
 # ---------------------------------------------------------------------------
 # Write tool tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestCreateDatabaseTool:
@@ -751,12 +744,14 @@ class TestCreateDatabaseTool:
         mock_db.name = "custom"
         mcp_manager_fixture.create_database = AsyncMock(return_value=mock_db)
 
-        result = _run(create_database(
-            "custom",
-            embedding_provider="openai",
-            embedding_model="text-embedding-3-small",
-            chunk_size=1000,
-        ))
+        result = _run(
+            create_database(
+                "custom",
+                embedding_provider="openai",
+                embedding_model="text-embedding-3-small",
+                chunk_size=1000,
+            )
+        )
         assert result["status"] == "success"
         assert result["config"]["embedding_provider"] == "openai"
         assert result["config"]["embedding_model"] == "text-embedding-3-small"
@@ -765,9 +760,7 @@ class TestCreateDatabaseTool:
     def test_create_error(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import create_database
 
-        mcp_manager_fixture.create_database = AsyncMock(
-            side_effect=RuntimeError("disk full")
-        )
+        mcp_manager_fixture.create_database = AsyncMock(side_effect=RuntimeError("disk full"))
         result = _run(create_database("newdb"))
         assert "error" in result
         assert "disk full" in result["error"]
@@ -816,12 +809,14 @@ class TestUpsertDocumentsTool:
         del mock_db.upsert_async
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
-        result = _run(upsert_documents(
-            "testdb",
-            ["doc one", "doc two"],
-            metadata=[{"a": 1}, {"a": 2}],
-            ids=["id1", "id2"],
-        ))
+        result = _run(
+            upsert_documents(
+                "testdb",
+                ["doc one", "doc two"],
+                metadata=[{"a": 1}, {"a": 2}],
+                ids=["id1", "id2"],
+            )
+        )
         assert result["status"] == "success"
         assert len(result["ids"]) == 2
 
@@ -850,9 +845,7 @@ class TestUpsertDocumentsTool:
         del mock_db.upsert_async
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
-        result = _run(upsert_documents(
-            "testdb", "doc", metadata={"key": "val"}, ids="single_id"
-        ))
+        result = _run(upsert_documents("testdb", "doc", metadata={"key": "val"}, ids="single_id"))
         assert result["status"] == "success"
         call_kwargs = mock_db.upsert.call_args.kwargs
         assert call_kwargs["metadata"] == [{"key": "val"}]
@@ -870,9 +863,7 @@ class TestUpdateDocumentTool:
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(update_document("testdb", "doc1", content="new text"))
         assert result["status"] == "success"
-        mock_db.update.assert_called_once_with(
-            doc_id="doc1", content="new text", metadata=None
-        )
+        mock_db.update.assert_called_once_with(doc_id="doc1", content="new text", metadata=None)
 
     def test_update_async_path(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import update_document

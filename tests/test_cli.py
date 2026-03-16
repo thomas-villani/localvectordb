@@ -23,6 +23,7 @@ from localvectordb_server.cli import cli
 # Helper fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def runner():
     """Click CLI test runner."""
@@ -144,9 +145,7 @@ def _patch_cli_init(fake_config, config_file, tmp_db_folder):
             self_._stack.enter_context(
                 patch("localvectordb_server.cli._utils.find_config_file", return_value=config_file)
             )
-            self_._stack.enter_context(
-                patch("localvectordb_server.config.load_config", return_value=fake_config)
-            )
+            self_._stack.enter_context(patch("localvectordb_server.config.load_config", return_value=fake_config))
             return self_
 
         def __exit__(self_, *exc):
@@ -158,6 +157,7 @@ def _patch_cli_init(fake_config, config_file, tmp_db_folder):
 # ============================================================================
 # Priority 1: lvdb list
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestListDatabases:
@@ -203,8 +203,10 @@ class TestListDatabases:
             "chunking_method": "sentences",
         }
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb.database.LocalVectorDB", return_value=mock_db):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb.database.LocalVectorDB", return_value=mock_db),
+        ):
             result = runner.invoke(cli, ["list", "--details"])
         assert result.exit_code == 0
         assert "Name" in result.output
@@ -215,14 +217,17 @@ class TestListDatabases:
 # Priority 1: lvdb create
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestCreateDatabase:
 
     def test_create_success(self, runner, fake_config, config_file, tmp_db_folder):
         """Creating a database should print a success message."""
         mock_db = MagicMock()
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb.database.LocalVectorDB", return_value=mock_db):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb.database.LocalVectorDB", return_value=mock_db),
+        ):
             result = runner.invoke(cli, ["create", "newdb"])
         assert result.exit_code == 0
         assert "Created database" in result.output
@@ -230,11 +235,13 @@ class TestCreateDatabase:
 
     def test_create_already_exists(self, runner, fake_config, config_file, tmp_db_folder):
         """If LocalVectorDB raises an error, the CLI should report it."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb.database.LocalVectorDB",
-                    side_effect=Exception("Database already exists"),
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb.database.LocalVectorDB",
+                side_effect=Exception("Database already exists"),
+            ),
+        ):
             result = runner.invoke(cli, ["create", "existing"])
         assert result.exit_code != 0
         assert "Error creating database" in result.stderr
@@ -242,17 +249,26 @@ class TestCreateDatabase:
     def test_create_with_options(self, runner, fake_config, config_file, tmp_db_folder):
         """Ensure CLI options are forwarded to LocalVectorDB constructor."""
         mock_db = MagicMock()
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb.database.LocalVectorDB",
-                    return_value=mock_db,
-                ) as mock_cls:
-            result = runner.invoke(cli, [
-                "create", "newdb",
-                "--embedding-model", "all-minilm",
-                "--chunk-size", "200",
-                "--chunking-method", "tokens",
-            ])
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb.database.LocalVectorDB",
+                return_value=mock_db,
+            ) as mock_cls,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "create",
+                    "newdb",
+                    "--embedding-model",
+                    "all-minilm",
+                    "--chunk-size",
+                    "200",
+                    "--chunking-method",
+                    "tokens",
+                ],
+            )
         assert result.exit_code == 0
         call_kwargs = mock_cls.call_args[1]
         assert call_kwargs["embedding_model"] == "all-minilm"
@@ -262,8 +278,10 @@ class TestCreateDatabase:
     def test_create_shows_settings(self, runner, fake_config, config_file, tmp_db_folder):
         """Success output should display the configuration used."""
         mock_db = MagicMock()
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb.database.LocalVectorDB", return_value=mock_db):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb.database.LocalVectorDB", return_value=mock_db),
+        ):
             result = runner.invoke(cli, ["create", "mydb"])
         assert "embedding_model" in result.output
         assert "chunk_size" in result.output
@@ -272,6 +290,7 @@ class TestCreateDatabase:
 # ============================================================================
 # Priority 1: lvdb delete
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestDeleteDatabase:
@@ -313,6 +332,7 @@ class TestDeleteDatabase:
 # Priority 1: lvdb config show
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestConfigShow:
 
@@ -334,8 +354,10 @@ class TestConfigShow:
             "backup": {},
             "migration": {},
         }
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.cli._config.asdict", return_value=mock_dict):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.cli._config.asdict", return_value=mock_dict),
+        ):
             result = runner.invoke(cli, ["config", "show", "--json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output.split("\n", 2)[-1])  # skip header lines
@@ -353,47 +375,75 @@ class TestConfigShow:
 # Priority 1: lvdb config set
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestConfigSet:
 
     def test_config_set_dry_run(self, runner, fake_config, config_file, tmp_db_folder):
         """config set --dry-run should not write changes."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    return_value="127.0.0.1",
-                ):
-            result = runner.invoke(cli, [
-                "config", "set", "server.host", "0.0.0.0", "--dry-run",
-            ])
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                return_value="127.0.0.1",
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "config",
+                    "set",
+                    "server.host",
+                    "0.0.0.0",
+                    "--dry-run",
+                ],
+            )
         assert result.exit_code == 0
         assert "DRY RUN" in result.output
 
     def test_config_set_force(self, runner, fake_config, config_file, tmp_db_folder):
         """config set --force should skip the confirmation prompt."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    return_value="127.0.0.1",
-                ), \
-                patch("localvectordb_server.cli._config.set_nested_value") as mock_set:
-            result = runner.invoke(cli, [
-                "config", "set", "server.host", "0.0.0.0", "--force",
-            ])
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                return_value="127.0.0.1",
+            ),
+            patch("localvectordb_server.cli._config.set_nested_value") as mock_set,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "config",
+                    "set",
+                    "server.host",
+                    "0.0.0.0",
+                    "--force",
+                ],
+            )
         assert result.exit_code == 0
         assert "updated" in result.output.lower() or "Configuration" in result.output
         mock_set.assert_called_once()
 
     def test_config_set_invalid_key(self, runner, fake_config, config_file, tmp_db_folder):
         """Setting an invalid key should fail gracefully."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    side_effect=ValueError("Invalid key path"),
-                ):
-            result = runner.invoke(cli, [
-                "config", "set", "invalid.key", "value", "--force",
-            ])
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                side_effect=ValueError("Invalid key path"),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "config",
+                    "set",
+                    "invalid.key",
+                    "value",
+                    "--force",
+                ],
+            )
         assert result.exit_code != 0
 
 
@@ -401,49 +451,58 @@ class TestConfigSet:
 # Priority 1: lvdb config get
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestConfigGet:
 
     def test_config_get_value(self, runner, fake_config, config_file, tmp_db_folder):
         """config get should retrieve and display a config value."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    return_value="127.0.0.1",
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                return_value="127.0.0.1",
+            ),
+        ):
             result = runner.invoke(cli, ["config", "get", "server.host"])
         assert result.exit_code == 0
         assert "127.0.0.1" in result.output
 
     def test_config_get_raw_format(self, runner, fake_config, config_file, tmp_db_folder):
         """config get --format raw should print just the value."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    return_value=5000,
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                return_value=5000,
+            ),
+        ):
             result = runner.invoke(cli, ["config", "get", "server.port", "--format", "raw"])
         assert result.exit_code == 0
         assert result.output.strip() == "5000"
 
     def test_config_get_json_format(self, runner, fake_config, config_file, tmp_db_folder):
         """config get --format json should print JSON."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    return_value=True,
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                return_value=True,
+            ),
+        ):
             result = runner.invoke(cli, ["config", "get", "server.security.require_api_key", "--format", "json"])
         assert result.exit_code == 0
         assert json.loads(result.output.strip()) is True
 
     def test_config_get_invalid_key(self, runner, fake_config, config_file, tmp_db_folder):
         """Getting a nonexistent key should fail."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.cli._config.get_nested_value",
-                    side_effect=ValueError("not found"),
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.cli._config.get_nested_value",
+                side_effect=ValueError("not found"),
+            ),
+        ):
             result = runner.invoke(cli, ["config", "get", "bad.key"])
         assert result.exit_code != 0
 
@@ -451,6 +510,7 @@ class TestConfigGet:
 # ============================================================================
 # Priority 1: lvdb auth create-key
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestAuthCreateKey:
@@ -481,8 +541,10 @@ class TestAuthCreateKey:
         mock_km = MagicMock()
         mock_km.create_key.return_value = self._make_key_record()
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "create-key", "--description", "Test key"])
         assert result.exit_code == 0
         assert "lvdb_test_key_abc123" in result.output
@@ -493,8 +555,10 @@ class TestAuthCreateKey:
         mock_km = MagicMock()
         mock_km.create_key.return_value = self._make_key_record()
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "create-key", "--output", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -505,8 +569,10 @@ class TestAuthCreateKey:
         mock_km = MagicMock()
         mock_km.create_key.return_value = self._make_key_record()
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "create-key", "--output", "key-only"])
         assert result.exit_code == 0
         assert result.output.strip() == "lvdb_test_key_abc123"
@@ -516,24 +582,34 @@ class TestAuthCreateKey:
         mock_km = MagicMock()
         mock_km.create_key.return_value = self._make_key_record()
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
-            result = runner.invoke(cli, [
-                "auth", "create-key",
-                "--expires-days", "30",
-                "--output", "key-only",
-            ])
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "create-key",
+                    "--expires-days",
+                    "30",
+                    "--output",
+                    "key-only",
+                ],
+            )
         assert result.exit_code == 0
         mock_km.create_key.assert_called_once()
         assert mock_km.create_key.call_args[1]["expires_days"] == 30
 
     def test_create_key_error(self, runner, fake_config, config_file, tmp_db_folder):
         """create-key should handle errors gracefully."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.keymanager.get_key_manager",
-                    side_effect=Exception("DB error"),
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.keymanager.get_key_manager",
+                side_effect=Exception("DB error"),
+            ),
+        ):
             result = runner.invoke(cli, ["auth", "create-key"])
         assert result.exit_code != 0
         assert "Error" in result.output
@@ -542,6 +618,7 @@ class TestAuthCreateKey:
 # ============================================================================
 # Priority 1: lvdb auth list-keys
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestAuthListKeys:
@@ -581,8 +658,10 @@ class TestAuthListKeys:
         mock_km = MagicMock()
         mock_km.list_keys.return_value = self._make_key_records()
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "list-keys"])
         assert result.exit_code == 0
         assert "key-001" in result.output
@@ -593,8 +672,10 @@ class TestAuthListKeys:
         mock_km = MagicMock()
         mock_km.list_keys.return_value = self._make_key_records()
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "list-keys", "--output", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -606,8 +687,10 @@ class TestAuthListKeys:
         mock_km = MagicMock()
         mock_km.list_keys.return_value = []
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "list-keys"])
         assert result.exit_code == 0
         assert "No API keys found" in result.output
@@ -624,19 +707,23 @@ class TestAuthListKeys:
             "recently_used": 1,
         }
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "list-keys", "--show-stats"])
         assert result.exit_code == 0
         assert "Total keys" in result.output
 
     def test_list_keys_error(self, runner, fake_config, config_file, tmp_db_folder):
         """list-keys should handle errors gracefully."""
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.keymanager.get_key_manager",
-                    side_effect=Exception("Connection failed"),
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.keymanager.get_key_manager",
+                side_effect=Exception("Connection failed"),
+            ),
+        ):
             result = runner.invoke(cli, ["auth", "list-keys"])
         assert result.exit_code != 0
         assert "Error" in result.output
@@ -645,6 +732,7 @@ class TestAuthListKeys:
 # ============================================================================
 # Priority 1: lvdb auth revoke-key
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestAuthRevokeKey:
@@ -660,8 +748,10 @@ class TestAuthRevokeKey:
         mock_km.get_key.return_value = key_rec
         mock_km.revoke_key.return_value = True
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "revoke-key", "key-001", "--confirm"])
         assert result.exit_code == 0
         assert "revoked" in result.output.lower()
@@ -671,8 +761,10 @@ class TestAuthRevokeKey:
         mock_km = MagicMock()
         mock_km.get_key.return_value = None
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "revoke-key", "bad-key", "--confirm"])
         assert result.exit_code != 0
         assert "not found" in result.output.lower()
@@ -681,6 +773,7 @@ class TestAuthRevokeKey:
 # ============================================================================
 # Priority 2: lvdb db <name> add
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestDbAdd:
@@ -708,6 +801,7 @@ class TestDbAdd:
             ctx.obj.update({"db_name": name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
+
         return (
             patch.object(cli, "callback", _patched_cli_callback),
             patch.object(db_group, "callback", _patched_db_group_callback),
@@ -757,10 +851,17 @@ class TestDbAdd:
 
         p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, [
-                "db", "testdb", "add", "some text",
-                "--metadata", '{"author": "Test"}',
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "db",
+                    "testdb",
+                    "add",
+                    "some text",
+                    "--metadata",
+                    '{"author": "Test"}',
+                ],
+            )
         assert result.exit_code == 0
         call_args = mock_db.upsert.call_args
         assert call_args[1]["metadata"] == [{"author": "Test"}]
@@ -772,10 +873,17 @@ class TestDbAdd:
 
         p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, [
-                "db", "testdb", "add", "some text",
-                "--id", "custom-id",
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "db",
+                    "testdb",
+                    "add",
+                    "some text",
+                    "--id",
+                    "custom-id",
+                ],
+            )
         assert result.exit_code == 0
         call_args = mock_db.upsert.call_args
         assert call_args[1]["ids"] == ["custom-id"]
@@ -784,6 +892,7 @@ class TestDbAdd:
 # ============================================================================
 # Priority 2: lvdb db <name> search
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestDbSearch:
@@ -809,6 +918,7 @@ class TestDbSearch:
             ctx.obj.update({"db_name": name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
+
         return (
             patch.object(cli, "callback", _patched_cli_callback),
             patch.object(db_group, "callback", _patched_db_group_callback),
@@ -867,11 +977,19 @@ class TestDbSearch:
 
         p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, [
-                "db", "testdb", "search", "query",
-                "--limit", "3",
-                "--search-type", "hybrid",
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "db",
+                    "testdb",
+                    "search",
+                    "query",
+                    "--limit",
+                    "3",
+                    "--search-type",
+                    "hybrid",
+                ],
+            )
         assert result.exit_code == 0
         call_kwargs = mock_db.query.call_args[1]
         assert call_kwargs["k"] == 3
@@ -893,6 +1011,7 @@ class TestDbSearch:
 # Priority 2: lvdb serve
 # ============================================================================
 
+
 @pytest.mark.unit
 class TestServe:
 
@@ -901,11 +1020,13 @@ class TestServe:
         mock_app = MagicMock()
         mock_app.config_obj = fake_config
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.create_app",
-                    return_value=mock_app,
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.create_app",
+                return_value=mock_app,
+            ),
+        ):
             result = runner.invoke(cli, ["serve", "--disable-ollama-check"])
         assert result.exit_code == 0
         mock_app.run.assert_called_once()
@@ -914,11 +1035,13 @@ class TestServe:
         """serve should report configuration errors."""
         from localvectordb.exceptions import ConfigurationError
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch(
-                    "localvectordb_server.create_app",
-                    side_effect=ConfigurationError("bad config"),
-                ):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch(
+                "localvectordb_server.create_app",
+                side_effect=ConfigurationError("bad config"),
+            ),
+        ):
             result = runner.invoke(cli, ["serve", "--disable-ollama-check"])
         assert result.exit_code != 0
         assert "Configuration error" in result.output
@@ -927,6 +1050,7 @@ class TestServe:
 # ============================================================================
 # Priority 2: lvdb config init
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestConfigInit:
@@ -945,9 +1069,17 @@ class TestConfigInit:
         output_path = str(tmp_path / "new-config.json")
 
         with _patch_cli_init(fake_config, config_file, tmp_db_folder):
-            result = runner.invoke(cli, [
-                "config", "init", "--format", "json", "--output", output_path,
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "config",
+                    "init",
+                    "--format",
+                    "json",
+                    "--output",
+                    output_path,
+                ],
+            )
         assert result.exit_code == 0
         assert os.path.exists(output_path)
         # Verify it's valid JSON
@@ -959,6 +1091,7 @@ class TestConfigInit:
 # ============================================================================
 # Priority 2: lvdb auth status
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestAuthStatus:
@@ -974,8 +1107,10 @@ class TestAuthStatus:
             "recently_used": 1,
         }
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "status"])
         assert result.exit_code == 0
         assert "Authentication Status" in result.output
@@ -991,8 +1126,10 @@ class TestAuthStatus:
             "recently_used": 0,
         }
 
-        with _patch_cli_init(fake_config, config_file, tmp_db_folder), \
-                patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km):
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
+        ):
             result = runner.invoke(cli, ["auth", "status", "--output", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -1002,6 +1139,7 @@ class TestAuthStatus:
 # ============================================================================
 # Edge cases / miscellaneous
 # ============================================================================
+
 
 @pytest.mark.unit
 class TestCLIHelpMessages:

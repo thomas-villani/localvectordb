@@ -98,6 +98,7 @@ logger = logging.getLogger(__name__)
 
 class PermissionLevel(Enum):
     """API key permission levels"""
+
     READ_ONLY = "read_only"
     READ_WRITE = "read_write"
 
@@ -105,6 +106,7 @@ class PermissionLevel(Enum):
 @dataclass
 class KeyRecord:
     """Represents an API key record with metadata"""
+
     id: str
     key_hash: str
     description: Optional[str] = None
@@ -136,40 +138,40 @@ class KeyRecord:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
-            'id': self.id,
-            'description': self.description,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
-            'last_used': self.last_used.isoformat() if self.last_used else None,
-            'active': self.active,
-            'created_by': self.created_by,
-            'permission_level': self.permission_level.value,
-            'is_expired': self.is_expired,
-            'days_until_expiry': self.days_until_expiry
+            "id": self.id,
+            "description": self.description,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "last_used": self.last_used.isoformat() if self.last_used else None,
+            "active": self.active,
+            "created_by": self.created_by,
+            "permission_level": self.permission_level.value,
+            "is_expired": self.is_expired,
+            "days_until_expiry": self.days_until_expiry,
         }
 
     @classmethod
-    def from_db_row(cls, row: sqlite3.Row) -> 'KeyRecord':
+    def from_db_row(cls, row: sqlite3.Row) -> "KeyRecord":
         """Create KeyRecord from database row"""
         # Handle permission_level with backward compatibility
         permission_level = PermissionLevel.READ_WRITE  # Default for backward compatibility
-        if 'permission_level' in row.keys() and row['permission_level']:
+        if "permission_level" in row.keys() and row["permission_level"]:
             try:
-                permission_level = PermissionLevel(row['permission_level'])
+                permission_level = PermissionLevel(row["permission_level"])
             except ValueError:
                 # If invalid permission level in DB, default to read_write
                 permission_level = PermissionLevel.READ_WRITE
 
         return cls(
-            id=row['id'],
-            key_hash=row['key_hash'],
-            description=row['description'],
-            created_at=parse_iso8601(row['created_at']) if row['created_at'] else None,
-            expires_at=parse_iso8601(row['expires_at']) if row['expires_at'] else None,
-            last_used=parse_iso8601(row['last_used']) if row['last_used'] else None,
-            active=bool(row['active']),
-            created_by=row['created_by'],
-            permission_level=permission_level
+            id=row["id"],
+            key_hash=row["key_hash"],
+            description=row["description"],
+            created_at=parse_iso8601(row["created_at"]) if row["created_at"] else None,
+            expires_at=parse_iso8601(row["expires_at"]) if row["expires_at"] else None,
+            last_used=parse_iso8601(row["last_used"]) if row["last_used"] else None,
+            active=bool(row["active"]),
+            created_by=row["created_by"],
+            permission_level=permission_level,
         )
 
 
@@ -265,10 +267,9 @@ class KeyManager:
 
             if not version_row:
                 # New database - set current version
-                conn.execute("INSERT INTO schema_version (version) VALUES (?)",
-                             (self.SCHEMA_VERSION,))
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (self.SCHEMA_VERSION,))
             else:
-                current_version = version_row['version']
+                current_version = version_row["version"]
                 if current_version < self.SCHEMA_VERSION:
                     self._migrate_database(conn, current_version)
                     # Update schema version
@@ -287,7 +288,7 @@ class KeyManager:
                 cursor = conn.execute("PRAGMA table_info(api_keys)")
                 columns = [row[1] for row in cursor.fetchall()]
 
-                if 'permission_level' not in columns:
+                if "permission_level" not in columns:
                     logger.info("Adding permission_level column to api_keys table")
                     conn.execute("""
                         ALTER TABLE api_keys
@@ -312,7 +313,7 @@ class KeyManager:
                 cursor = conn.execute("PRAGMA table_info(api_keys)")
                 columns = [row[1] for row in cursor.fetchall()]
 
-                if 'key_fingerprint' not in columns:
+                if "key_fingerprint" not in columns:
                     logger.info("Adding key_fingerprint column to api_keys table")
                     conn.execute("""
                         ALTER TABLE api_keys
@@ -351,14 +352,12 @@ class KeyManager:
         """Generate a unique key ID"""
         # Use timestamp + random suffix for readability
         timestamp = datetime.now(UTC).strftime("%Y%m%d")
-        random_suffix = ''.join(secrets.choice(string.ascii_lowercase + string.digits)
-                                for _ in range(6))
+        random_suffix = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
         return f"key_{timestamp}_{random_suffix}"
 
     def _generate_api_key(self) -> str:
         """Generate a cryptographically secure API key"""
-        random_part = ''.join(secrets.choice(self.KEY_CHARSET)
-                              for _ in range(self.KEY_LENGTH))
+        random_part = "".join(secrets.choice(self.KEY_CHARSET) for _ in range(self.KEY_LENGTH))
         return f"{self.KEY_PREFIX}{random_part}"
 
     @staticmethod
@@ -375,28 +374,28 @@ class KeyManager:
         str
             SHA-256 hash of the key (hex digest)
         """
-        return hashlib.sha256(key.encode('utf-8')).hexdigest()
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
     def _hash_key(self, key: str) -> str:
         """Hash an API key using bcrypt"""
         # Use bcrypt with a reasonable cost factor
         salt = bcrypt.gensalt(rounds=14)
-        return bcrypt.hashpw(key.encode('utf-8'), salt).decode('utf-8')
+        return bcrypt.hashpw(key.encode("utf-8"), salt).decode("utf-8")
 
     def _verify_key(self, key: str, key_hash: str) -> bool:
         """Verify an API key against its hash"""
         try:
-            return bcrypt.checkpw(key.encode('utf-8'), key_hash.encode('utf-8'))
+            return bcrypt.checkpw(key.encode("utf-8"), key_hash.encode("utf-8"))
         except Exception as e:
             logger.warning(f"Error verifying key: {e}")
             return False
 
     def create_key(
-            self,
-            description: Optional[str] = None,
-            expires_days: Optional[int] = None,
-            created_by: Optional[str] = None,
-            permission_level: PermissionLevel = PermissionLevel.READ_WRITE
+        self,
+        description: Optional[str] = None,
+        expires_days: Optional[int] = None,
+        created_by: Optional[str] = None,
+        permission_level: PermissionLevel = PermissionLevel.READ_WRITE,
     ) -> KeyRecord:
         """
         Create a new API key
@@ -429,15 +428,24 @@ class KeyManager:
 
         # Store in database
         with self._get_connection() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO api_keys (id, key_hash, key_fingerprint,
                 description, created_at, expires_at, created_by, active, permission_level)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                key_id, key_hash, key_fingerprint, description, created_at.isoformat(),
-                expires_at.isoformat() if expires_at else None,
-                created_by, True, permission_level.value
-            ))
+            """,
+                (
+                    key_id,
+                    key_hash,
+                    key_fingerprint,
+                    description,
+                    created_at.isoformat(),
+                    expires_at.isoformat() if expires_at else None,
+                    created_by,
+                    True,
+                    permission_level.value,
+                ),
+            )
             conn.commit()
 
         logger.info(f"Created API key {key_id} with description: {description}, permission: {permission_level.value}")
@@ -452,7 +460,7 @@ class KeyManager:
             created_by=created_by,
             permission_level=permission_level,
             active=True,
-            plain_key=plain_key  # Only included during creation
+            plain_key=plain_key,  # Only included during creation
         )
 
     def validate_key(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> bool:
@@ -479,10 +487,13 @@ class KeyManager:
 
         with self._get_connection() as conn:
             # First try fast lookup by fingerprint
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT id, key_hash, expires_at FROM api_keys
                 WHERE active = TRUE AND key_fingerprint = ?
-            """, (key_fingerprint,))
+            """,
+                (key_fingerprint,),
+            )
 
             candidates = cursor.fetchall()
 
@@ -497,23 +508,26 @@ class KeyManager:
 
             for row in candidates:
                 # Check if key matches using bcrypt
-                if self._verify_key(key, row['key_hash']):
+                if self._verify_key(key, row["key_hash"]):
                     # Check expiration
-                    if row['expires_at']:
-                        expires_at = parse_iso8601(row['expires_at'])
+                    if row["expires_at"]:
+                        expires_at = parse_iso8601(row["expires_at"])
                         if datetime.now(UTC) > expires_at:
                             logger.info(f"Key {row['id']} is expired")
                             if prune_expired:
                                 logger.info(f"Pruning expired key: {row['id']}")
-                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'],))
+                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row["id"],))
                                 conn.commit()
                             return False
 
                     # Update last used timestamp
                     if update_last_used:
-                        conn.execute("""
+                        conn.execute(
+                            """
                             UPDATE api_keys SET last_used = ? WHERE id = ?
-                        """, (datetime.now(UTC).isoformat(), row['id']))
+                        """,
+                            (datetime.now(UTC).isoformat(), row["id"]),
+                        )
                         conn.commit()
 
                     logger.debug(f"Key {row['id']} validated successfully")
@@ -522,8 +536,9 @@ class KeyManager:
         logger.debug("Key validation failed")
         return False
 
-    def validate_key_with_permissions(self, key: str, update_last_used: bool = True, prune_expired: bool = False) -> \
-    tuple[bool, Optional[PermissionLevel], Optional[str]]:
+    def validate_key_with_permissions(
+        self, key: str, update_last_used: bool = True, prune_expired: bool = False
+    ) -> tuple[bool, Optional[PermissionLevel], Optional[str]]:
         """
         Validate an API key and return its permission level and key_id
 
@@ -549,10 +564,13 @@ class KeyManager:
 
         with self._get_connection() as conn:
             # First try fast lookup by fingerprint
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT id, key_hash, expires_at, permission_level FROM api_keys
                 WHERE active = TRUE AND key_fingerprint = ?
-            """, (key_fingerprint,))
+            """,
+                (key_fingerprint,),
+            )
 
             candidates = cursor.fetchall()
 
@@ -567,34 +585,37 @@ class KeyManager:
 
             for row in candidates:
                 # Check if key matches using bcrypt
-                if self._verify_key(key, row['key_hash']):
+                if self._verify_key(key, row["key_hash"]):
                     # Check expiration
-                    if row['expires_at']:
-                        expires_at = parse_iso8601(row['expires_at'])
+                    if row["expires_at"]:
+                        expires_at = parse_iso8601(row["expires_at"])
                         if datetime.now(UTC) > expires_at:
                             logger.info(f"Key {row['id']} is expired")
                             if prune_expired:
                                 logger.info(f"Pruning expired key: {row['id']}")
-                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row['id'],))
+                                conn.execute("DELETE FROM api_keys WHERE id = ?", (row["id"],))
                                 conn.commit()
                             return False, None, None
 
                     # Update last used timestamp
                     if update_last_used:
-                        conn.execute("""
+                        conn.execute(
+                            """
                             UPDATE api_keys SET last_used = ? WHERE id = ?
-                        """, (datetime.now(UTC).isoformat(), row['id']))
+                        """,
+                            (datetime.now(UTC).isoformat(), row["id"]),
+                        )
                         conn.commit()
 
                     # Get permission level
                     try:
-                        permission_level = PermissionLevel(row['permission_level'])
+                        permission_level = PermissionLevel(row["permission_level"])
                     except (ValueError, KeyError):
                         # If invalid permission level in DB, default to read_write for safety
                         permission_level = PermissionLevel.READ_WRITE
 
                     logger.debug(f"Key {row['id']} validated successfully with permission: {permission_level.value}")
-                    return True, permission_level, row['id']
+                    return True, permission_level, row["id"]
 
         logger.debug("Key validation failed")
         return False, None, None
@@ -614,20 +635,19 @@ class KeyManager:
             The key record if found, None otherwise
         """
         with self._get_connection() as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT * FROM api_keys WHERE id = ?
-            """, (key_id,))
+            """,
+                (key_id,),
+            )
 
             row = cursor.fetchone()
             if row:
                 return KeyRecord.from_db_row(row)
             return None
 
-    def list_keys(
-            self,
-            active_only: bool = False,
-            include_expired: bool = True
-    ) -> List[KeyRecord]:
+    def list_keys(self, active_only: bool = False, include_expired: bool = True) -> List[KeyRecord]:
         """
         List API keys
 
@@ -658,10 +678,13 @@ class KeyManager:
             where_clause = "WHERE " + " AND ".join(conditions)
 
         with self._get_connection() as conn:
-            cursor = conn.execute(f"""
+            cursor = conn.execute(
+                f"""
                 SELECT * FROM api_keys {where_clause}
                 ORDER BY created_at DESC
-            """, params)
+            """,
+                params,
+            )
 
             return [KeyRecord.from_db_row(row) for row in cursor.fetchall()]
 
@@ -680,9 +703,12 @@ class KeyManager:
             True if key was revoked, False if not found
         """
         with self._get_connection() as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 UPDATE api_keys SET active = FALSE WHERE id = ?
-            """, (key_id,))
+            """,
+                (key_id,),
+            )
             conn.commit()
 
             if cursor.rowcount > 0:
@@ -715,7 +741,7 @@ class KeyManager:
         new_key = self.create_key(
             description=f"Rotated from {key_id}: {original_key.description}",
             expires_days=original_key.days_until_expiry,
-            created_by=original_key.created_by
+            created_by=original_key.created_by,
         )
 
         # Revoke original key
@@ -742,15 +768,21 @@ class KeyManager:
 
         with self._get_connection() as conn:
             if soft_delete:
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     UPDATE api_keys SET active = FALSE
                     WHERE expires_at IS NOT NULL AND expires_at <= ? AND active = TRUE
-                """, (now,))
+                """,
+                    (now,),
+                )
             else:
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     DELETE FROM api_keys
                     WHERE expires_at IS NOT NULL AND expires_at <= ?
-                """, (now,))
+                """,
+                    (now,),
+                )
 
             conn.commit()
             count = int(cursor.rowcount)
@@ -775,35 +807,44 @@ class KeyManager:
 
             # Total keys
             cursor = conn.execute("SELECT COUNT(*) as count FROM api_keys")
-            stats['total_keys'] = cursor.fetchone()['count']
+            stats["total_keys"] = cursor.fetchone()["count"]
 
             # Active keys
             cursor = conn.execute("SELECT COUNT(*) as count FROM api_keys WHERE active = TRUE")
-            stats['active_keys'] = cursor.fetchone()['count']
+            stats["active_keys"] = cursor.fetchone()["count"]
 
             # Expired keys
             now = datetime.now(UTC).isoformat()
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT COUNT(*) as count FROM api_keys
                 WHERE expires_at IS NOT NULL AND expires_at <= ?
-            """, (now,))
-            stats['expired_keys'] = cursor.fetchone()['count']
+            """,
+                (now,),
+            )
+            stats["expired_keys"] = cursor.fetchone()["count"]
 
             # Keys expiring soon (next 7 days)
             future = (datetime.now(UTC) + timedelta(days=7)).isoformat()
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT COUNT(*) as count FROM api_keys
                 WHERE expires_at IS NOT NULL AND expires_at <= ? AND expires_at > ? AND active = TRUE
-            """, (future, now))
-            stats['expiring_soon'] = cursor.fetchone()['count']
+            """,
+                (future, now),
+            )
+            stats["expiring_soon"] = cursor.fetchone()["count"]
 
             # Recently used keys (last 24 hours)
             recent = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT COUNT(*) as count FROM api_keys
                 WHERE last_used IS NOT NULL AND last_used >= ? AND active = TRUE
-            """, (recent,))
-            stats['recently_used'] = cursor.fetchone()['count']
+            """,
+                (recent,),
+            )
+            stats["recently_used"] = cursor.fetchone()["count"]
 
             return stats
 

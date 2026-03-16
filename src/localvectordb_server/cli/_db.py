@@ -22,7 +22,7 @@ from localvectordb_server.cli._utils import (
 )
 
 
-@click.group('db')
+@click.group("db")
 @click.argument("name")
 @click.pass_context
 def db_group(ctx, name):
@@ -46,23 +46,25 @@ def db_group(ctx, name):
     if not db_folder or not os.path.exists(db_folder):
         click.secho(
             f"DB_FOLDER {'not specified and not found in configuration' if not db_folder else 'does not exist'}.",
-            fg="bright_red", err=True
+            fg="bright_red",
+            err=True,
         )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     from localvectordb.exceptions import DatabaseNotFoundError
+
     try:
         from localvectordb.database import LocalVectorDB
+
         db = LocalVectorDB(name=name, base_path=db_folder, create_if_not_exists=False)
     except DatabaseNotFoundError as e:
-        click.secho(f"Database '{name}' was not found in {os.path.abspath(db_folder)}!",
-                    fg="bright_red", err=True)
+        click.secho(f"Database '{name}' was not found in {os.path.abspath(db_folder)}!", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
     ctx.obj.update({"db_name": name, "db": db})
 
 
-@db_group.command('info')
+@db_group.command("info")
 @click.pass_context
 def show_db_info(ctx):
     """
@@ -80,8 +82,7 @@ def show_db_info(ctx):
 
     try:
         stats = db.get_stats()
-        click.echo("Database Info\n"
-                   "-------------")
+        click.echo("Database Info\n" "-------------")
         click.echo(f"  Database: {db.name}")
         click.echo(f"  Path: {os.path.abspath(ctx.obj['db_folder'])}")
         click.echo(f"  Embedding model: {stats['embedding_model']}")
@@ -94,17 +95,17 @@ def show_db_info(ctx):
         click.echo(f"  Total Chunks: {stats['chunks']}")
 
         # Show metadata schema if available
-        if hasattr(db, 'metadata_schema') and db.metadata_schema:
+        if hasattr(db, "metadata_schema") and db.metadata_schema:
             click.echo(f"  Metadata fields: {len(db.metadata_schema)}")
             for field_name in db.metadata_schema:
                 click.echo(f"    - {field_name} {db.metadata_schema[field_name].type.upper()}")
 
     except Exception as e:
-        click.secho(f"Error reading database info: {str(repr(e))}", fg='bright_red', err=True)
+        click.secho(f"Error reading database info: {str(repr(e))}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@db_group.command('stats')
+@db_group.command("stats")
 @click.pass_context
 def show_db_stats(ctx):
     """
@@ -122,11 +123,11 @@ def show_db_stats(ctx):
     print_db_stats(db)
 
 
-@db_group.command('list')
-@click.option('--limit', '-n', type=int, default=None, help="Limit number of ids returned")
-@click.option('--offset', '-s', type=int, default=0, help="Offset of ids returned")
-@click.option('--output', '-o', type=click.Path(exists=False, file_okay=True), default=None, help="Output to file")
-@click.option('--json', '-j', 'output_as_json', is_flag=True, default=False, help="Output in json format")
+@db_group.command("list")
+@click.option("--limit", "-n", type=int, default=None, help="Limit number of ids returned")
+@click.option("--offset", "-s", type=int, default=0, help="Offset of ids returned")
+@click.option("--output", "-o", type=click.Path(exists=False, file_okay=True), default=None, help="Output to file")
+@click.option("--json", "-j", "output_as_json", is_flag=True, default=False, help="Output in json format")
 @click.pass_context
 def list_document_ids(ctx, limit, offset, output, output_as_json):
     """
@@ -150,7 +151,7 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
     if output_as_json:
         output_str = json.dumps(ids)
     else:
-        output_str = '\n'.join(ids)
+        output_str = "\n".join(ids)
 
     if output:
         with open(output, "w", encoding="utf-8") as f:
@@ -161,26 +162,44 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
         click.echo(output_str)
 
 
-@db_group.command('search')
-@click.argument('query')
-@click.option('--limit', '-k', '-n', default=5, help='Maximum number of results')
-@click.option('--search-type', '-t', default='vector',
-              type=click.Choice(['vector', 'keyword', 'hybrid']),
-              help='Type of search to perform')
-@click.option('--return-type', '-r', default='documents',
-              type=click.Choice(['documents', 'chunks']),
-              help='Whether to return documents or chunks')
-@click.option('--score-threshold', default=0.0, type=float, help='Minimum score threshold')
-@click.option('--vector-weight', default=0.7, type=float, help='Weight for vector search in hybrid mode')
-@click.option('--metadata-filter', help='Metadata filter in JSON format')
-@click.option('--json', '-j', 'output_as_json', is_flag=True, default=False)
-@click.option('--output', '-o', type=click.Path(file_okay=True, dir_okay=False), help='Output file for results')
-@click.option('--metadata/--no-metadata', '-m', default=False, help='Include metadata in output')
-@click.option('--pretty', '-p', default=False, is_flag=True)
+@db_group.command("search")
+@click.argument("query")
+@click.option("--limit", "-k", "-n", default=5, help="Maximum number of results")
+@click.option(
+    "--search-type",
+    "-t",
+    default="vector",
+    type=click.Choice(["vector", "keyword", "hybrid"]),
+    help="Type of search to perform",
+)
+@click.option(
+    "--return-type",
+    "-r",
+    default="documents",
+    type=click.Choice(["documents", "chunks"]),
+    help="Whether to return documents or chunks",
+)
+@click.option("--score-threshold", default=0.0, type=float, help="Minimum score threshold")
+@click.option("--vector-weight", default=0.7, type=float, help="Weight for vector search in hybrid mode")
+@click.option("--metadata-filter", help="Metadata filter in JSON format")
+@click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
+@click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
+@click.option("--metadata/--no-metadata", "-m", default=False, help="Include metadata in output")
+@click.option("--pretty", "-p", default=False, is_flag=True)
 @click.pass_context
 def search(
-        ctx, query, limit, search_type, return_type, score_threshold, vector_weight,
-        metadata_filter, output_as_json, output, metadata, pretty
+    ctx,
+    query,
+    limit,
+    search_type,
+    return_type,
+    score_threshold,
+    vector_weight,
+    metadata_filter,
+    output_as_json,
+    output,
+    metadata,
+    pretty,
 ):
     """
     Search a vector database using the unified query interface.
@@ -201,7 +220,7 @@ def search(
         try:
             filter_dict = json.loads(metadata_filter)
         except json.JSONDecodeError as e:
-            click.secho("Error: Metadata filter must be valid JSON", fg='red', err=True)
+            click.secho("Error: Metadata filter must be valid JSON", fg="red", err=True)
             raise click.Abort() from e
 
     db = ctx.obj["db"]
@@ -220,7 +239,7 @@ def search(
             k=limit,
             score_threshold=score_threshold,
             filters=filter_dict,
-            vector_weight=vector_weight
+            vector_weight=vector_weight,
         )
     except Exception as e:
         click.secho(f"Search error: {str(e)}", fg="bright_red", err=True)
@@ -273,13 +292,16 @@ def search(
             if i < len(results):
                 output_str += click.style(f"\n{'-' * 40}\n\n", fg="cyan") if (pretty and not output) else "\n-----\n\n"
     else:
-        result_data = [{
-            'id': result.id,
-            'type': result.type,
-            'content': result.content,
-            'score': result.score,
-            'metadata': result.metadata
-        } for result in results]
+        result_data = [
+            {
+                "id": result.id,
+                "type": result.type,
+                "content": result.content,
+                "score": result.score,
+                "metadata": result.metadata,
+            }
+            for result in results
+        ]
 
         if not metadata:
             for d in result_data:
@@ -287,18 +309,17 @@ def search(
         output_str = json.dumps(result_data, indent=2 if pretty else None)
 
     if output:
-        with open(output, 'w') as f:
+        with open(output, "w") as f:
             f.write(output_str)
         click.echo(f"Results saved to {output}", err=True)
     else:
         click.echo(output_str)
 
 
-@db_group.command('add')
-@click.argument('files_or_text', nargs=-1)
-@click.option('--metadata', '-m', default=None,
-              help='Metadata for the document in JSON format or path to .json file.')
-@click.option('--id', '-i', default=None, help='Set the id(s) for the document, separated by ",".')
+@db_group.command("add")
+@click.argument("files_or_text", nargs=-1)
+@click.option("--metadata", "-m", default=None, help="Metadata for the document in JSON format or path to .json file.")
+@click.option("--id", "-i", default=None, help='Set the id(s) for the document, separated by ",".')
 @click.pass_context
 def add_to_database(ctx, files_or_text, metadata, id):
     """
@@ -315,7 +336,7 @@ def add_to_database(ctx, files_or_text, metadata, id):
         cat file.txt | lvdb db mydb add -
         lvdb db mydb add file1.txt file2.txt --metadata '[{"author":"A"},{"author":"B"}]' --id "id1,id2"
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     all_inputs = []
     auto_metadata = []
@@ -328,11 +349,12 @@ def add_to_database(ctx, files_or_text, metadata, id):
             "   $ lvdb db <DB_NAME> add path/to/the/file.txt [OPTIONS]\n"
             "   $ lvdb db <DB_NAME> add path/to/the/*.glob [OPTIONS]\n"
             "   $ echo 'text to add' | lvdb db <DB_NAME> add - [OPTIONS]",
-            fg='bright_red', err=True
+            fg="bright_red",
+            err=True,
         )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
-    if len(files_or_text) == 1 and files_or_text[0] == '-':
+    if len(files_or_text) == 1 and files_or_text[0] == "-":
         input_data = get_stdin_input(True, "No input provided to stdin")
         all_inputs.append(input_data)
         auto_metadata.append({"source": "stdin"})
@@ -345,15 +367,17 @@ def add_to_database(ctx, files_or_text, metadata, id):
                 with open(file_or_text_input, "r", encoding="utf-8") as f:
                     data = f.read()
                 all_inputs.append(data)
-                auto_metadata.append({
-                    "filename": os.path.basename(file_or_text_input),
-                    "path": os.path.abspath(file_or_text_input),
-                    "ext": os.path.splitext(file_or_text_input)[1],
-                    "bytes": len(data.encode("utf-8"))
-                })
+                auto_metadata.append(
+                    {
+                        "filename": os.path.basename(file_or_text_input),
+                        "path": os.path.abspath(file_or_text_input),
+                        "ext": os.path.splitext(file_or_text_input)[1],
+                        "bytes": len(data.encode("utf-8")),
+                    }
+                )
             elif os.path.isdir(os.path.dirname(file_or_text_input)):
                 glob_pattern = os.path.basename(file_or_text_input)
-                if any(c in glob_pattern for c in '*?[]'):
+                if any(c in glob_pattern for c in "*?[]"):
                     matching_files = glob.glob(file_or_text_input, recursive=True)
                     for file in matching_files:
                         click.echo(f"Reading {file}...", err=True)
@@ -361,16 +385,21 @@ def add_to_database(ctx, files_or_text, metadata, id):
                             with open(file, "r", encoding="utf-8") as f:
                                 data = f.read()
                         except UnicodeDecodeError:
-                            click.secho(f"Unicode Decoding error, file `{file}` is probably binary, skipping!",
-                                        fg="bright_red", err=True)
+                            click.secho(
+                                f"Unicode Decoding error, file `{file}` is probably binary, skipping!",
+                                fg="bright_red",
+                                err=True,
+                            )
                             continue
                         all_inputs.append(data)
-                        auto_metadata.append({
-                            "filename": os.path.basename(file),
-                            "path": os.path.abspath(file),
-                            "ext": os.path.splitext(file)[1],
-                            "bytes": len(data.encode("utf-8"))
-                        })
+                        auto_metadata.append(
+                            {
+                                "filename": os.path.basename(file),
+                                "path": os.path.abspath(file),
+                                "ext": os.path.splitext(file)[1],
+                                "bytes": len(data.encode("utf-8")),
+                            }
+                        )
                 else:
                     click.secho(f"Error: invalid pattern: {file_or_text_input}", fg="bright_red", err=True)
             else:
@@ -388,15 +417,18 @@ def add_to_database(ctx, files_or_text, metadata, id):
             try:
                 metadata = json.loads(metadata)
             except json.JSONDecodeError as e:
-                click.secho("Error: if `--metadata` is provided, must be valid JSON", fg='bright_red', err=True)
+                click.secho("Error: if `--metadata` is provided, must be valid JSON", fg="bright_red", err=True)
                 raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
         if isinstance(metadata, dict):
             metadata = [metadata]
         if len(metadata) != len(all_inputs):
-            click.secho("Error: if providing `--metadata`, length must match number of documents. "
-                        f"Found: {len(metadata)}, expected: {len(all_inputs)}.",
-                        fg='bright_red', err=True)
+            click.secho(
+                "Error: if providing `--metadata`, length must match number of documents. "
+                f"Found: {len(metadata)}, expected: {len(all_inputs)}.",
+                fg="bright_red",
+                err=True,
+            )
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     # Handle IDs
@@ -415,33 +447,30 @@ def add_to_database(ctx, files_or_text, metadata, id):
             click.secho(
                 "Error: if providing `--id`, length must match number of documents. "
                 f"Found: {len(id)}, expected: {len(all_inputs)}.",
-                fg='bright_red', err=True
+                fg="bright_red",
+                err=True,
             )
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     try:
         click.secho(f"Adding {len(all_inputs)} document(s)...", fg="blue", err=True)
 
-        new_ids = db.upsert(
-            documents=all_inputs,
-            metadata=metadata,
-            ids=id
-        )
+        new_ids = db.upsert(documents=all_inputs, metadata=metadata, ids=id)
 
         click.echo(f"Successfully added {len(all_inputs)} document(s)!\nCreated ids:", err=True)
-        click.echo(','.join(new_ids))
+        click.echo(",".join(new_ids))
 
     except Exception as e:
-        click.secho(f"Error: Unexpected error while adding documents: {str(repr(e))}", fg='bright_red')
+        click.secho(f"Error: Unexpected error while adding documents: {str(repr(e))}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@db_group.command('get')
-@click.argument('doc_id')
-@click.option('--json', '-j', 'output_as_json', is_flag=True, default=False)
-@click.option('--output', '-o', type=click.Path(file_okay=True, dir_okay=False), help='Output file for results')
-@click.option('--metadata/--no-metadata', '-m', default=False, help='Enable/Disable retrieving document metadata')
-@click.option('--pretty', '-p', is_flag=True, default=False, help='Output results with title and formatting')
+@db_group.command("get")
+@click.argument("doc_id")
+@click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
+@click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
+@click.option("--metadata/--no-metadata", "-m", default=False, help="Enable/Disable retrieving document metadata")
+@click.option("--pretty", "-p", is_flag=True, default=False, help="Output results with title and formatting")
 @click.pass_context
 def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
     """
@@ -456,7 +485,7 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
         lvdb db mydb get doc_1
         lvdb db mydb get doc_1 --json --metadata
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     try:
         doc = db.get(doc_id)
@@ -468,12 +497,9 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
         meta = doc.metadata
 
         if output_as_json:
-            output_dict = {
-                'id': doc_id,
-                'content': content
-            }
+            output_dict = {"id": doc_id, "content": content}
             if metadata:
-                output_dict['metadata'] = meta
+                output_dict["metadata"] = meta
 
             output_str = json.dumps(output_dict)
         else:
@@ -501,7 +527,7 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
                 output_str += json.dumps(meta, indent=2 if pretty else None) + "\n"
 
         if output:
-            with open(output, 'w', encoding="utf-8") as f:
+            with open(output, "w", encoding="utf-8") as f:
                 f.write(output_str)
             click.echo(f"Results saved to {output}", err=True)
         else:
@@ -512,10 +538,10 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@db_group.command('update')
-@click.argument('doc_id')
-@click.argument('file_or_text')
-@click.option('--metadata', '-m', default=None, help='Metadata for the document in JSON format')
+@db_group.command("update")
+@click.argument("doc_id")
+@click.argument("file_or_text")
+@click.option("--metadata", "-m", default=None, help="Metadata for the document in JSON format")
 @click.pass_context
 def update_document(ctx, doc_id, file_or_text, metadata):
     """
@@ -530,7 +556,7 @@ def update_document(ctx, doc_id, file_or_text, metadata):
         lvdb db mydb update doc_1 new_content.txt
         echo "new content" | lvdb db mydb update doc_1 -
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     if file_or_text == "-":
         file_or_text = get_stdin_input(True, "Error: No data found in stdin")
@@ -548,7 +574,7 @@ def update_document(ctx, doc_id, file_or_text, metadata):
             try:
                 metadata_dict = json.loads(metadata)
             except json.JSONDecodeError as e:
-                click.secho("Error: if `--metadata` is provided, must be valid JSON", fg='bright_red', err=True)
+                click.secho("Error: if `--metadata` is provided, must be valid JSON", fg="bright_red", err=True)
                 raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
     try:
@@ -559,12 +585,12 @@ def update_document(ctx, doc_id, file_or_text, metadata):
             click.echo(f"Document {doc_id} not found")
 
     except Exception as e:
-        click.secho(f"Error: Unexpected error while updating document: {str(repr(e))}", fg='bright_red')
+        click.secho(f"Error: Unexpected error while updating document: {str(repr(e))}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@db_group.command('delete')
-@click.argument('doc_id')
+@db_group.command("delete")
+@click.argument("doc_id")
 @click.pass_context
 def delete_document(ctx, doc_id):
     """
@@ -578,7 +604,7 @@ def delete_document(ctx, doc_id):
         lvdb db mydb delete doc_1
 
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     try:
         if not db.exists(doc_id):
@@ -592,11 +618,11 @@ def delete_document(ctx, doc_id):
             click.echo("No documents were deleted")
 
     except Exception as e:
-        click.secho(f"Error: Unexpected error while deleting document: {str(repr(e))}", fg='bright_red')
+        click.secho(f"Error: Unexpected error while deleting document: {str(repr(e))}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@db_group.group('schema')
+@db_group.group("schema")
 @click.pass_context
 def schema_group(ctx):
     """
@@ -615,11 +641,11 @@ def schema_group(ctx):
     pass
 
 
-@schema_group.command('show')
-@click.option('--format', '-f', type=click.Choice(['pretty', 'json', 'table']), default='pretty',
-              help='Output format')
-@click.option('--output', '-o', type=click.Path(file_okay=True, dir_okay=False),
-              help='Output to file instead of stdout')
+@schema_group.command("show")
+@click.option("--format", "-f", type=click.Choice(["pretty", "json", "table"]), default="pretty", help="Output format")
+@click.option(
+    "--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output to file instead of stdout"
+)
 @click.pass_context
 def show_schema(ctx, format, output):
     """
@@ -635,11 +661,11 @@ def show_schema(ctx, format, output):
         lvdb db mydb schema show --format json
         lvdb db mydb schema show --format table --output schema.json
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     try:
         schema_info = db.get_metadata_schema_info()
-        schema_fields = schema_info.get('fields', {})
+        schema_fields = schema_info.get("fields", {})
 
         if not schema_fields:
             click.echo("No metadata schema defined for this database.")
@@ -647,33 +673,35 @@ def show_schema(ctx, format, output):
 
         output_str = ""
 
-        if format == 'json':
+        if format == "json":
             # JSON format - suitable for programmatic use
             schema_data = {}
             for field_name, field_def in schema_fields.items():
                 schema_data[field_name] = {
-                    'type': field_def.type.value,
-                    'indexed': field_def.indexed,
-                    'required': field_def.required,
-                    'default_value': field_def.default_value
+                    "type": field_def.type.value,
+                    "indexed": field_def.indexed,
+                    "required": field_def.required,
+                    "default_value": field_def.default_value,
                 }
             output_str = json.dumps(schema_data, indent=2)
 
-        elif format == 'table':
+        elif format == "table":
             # Table format - good for overview
-            headers = ['Field Name', 'Type', 'Indexed', 'Required', 'Default Value']
+            headers = ["Field Name", "Type", "Indexed", "Required", "Default Value"]
             rows = []
             for field_name, field_def in schema_fields.items():
-                default_val = str(field_def.default_value) if field_def.default_value is not None else 'None'
+                default_val = str(field_def.default_value) if field_def.default_value is not None else "None"
                 if len(default_val) > 30:
                     default_val = default_val[:27] + "..."
-                rows.append([
-                    field_name,
-                    field_def.type.value.upper(),
-                    "✓" if field_def.indexed else "✗",
-                    "✓" if field_def.required else "✗",
-                    default_val
-                ])
+                rows.append(
+                    [
+                        field_name,
+                        field_def.type.value.upper(),
+                        "✓" if field_def.indexed else "✗",
+                        "✓" if field_def.required else "✗",
+                        default_val,
+                    ]
+                )
             output_str = format_table(headers, rows)
 
         else:  # pretty format
@@ -697,30 +725,30 @@ def show_schema(ctx, format, output):
                 output_str += "\n"
 
         if output:
-            with open(output, 'w') as f:
+            with open(output, "w") as f:
                 f.write(output_str)
             click.echo(f"Schema information saved to {output}")
         else:
             click.echo(output_str)
 
     except Exception as e:
-        click.secho(f"Error retrieving schema: {str(e)}", fg='bright_red')
+        click.secho(f"Error retrieving schema: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@schema_group.command('update')
-@click.option('--schema', '-s', type=str,
-              help='Path to JSON file or JSON string containing new schema definition')
-@click.option('--mapping', '-m', type=str,
-              help='Column mapping as JSON string or or path to JSON file (old_name: new_name)')
-@click.option('--drop-columns', '--drop', is_flag=True, default=False,
-              help='Actually drop removed columns (WARNING: data loss)')
-@click.option('--dry-run', '--dry', is_flag=True, default=False,
-              help='Show what would be changed without making changes')
-@click.option('--force', '-f', is_flag=True, default=False,
-              help='Skip confirmation prompts')
-@click.option('--verbose', '-v', is_flag=True, default=False,
-              help='Show detailed output')
+@schema_group.command("update")
+@click.option("--schema", "-s", type=str, help="Path to JSON file or JSON string containing new schema definition")
+@click.option(
+    "--mapping", "-m", type=str, help="Column mapping as JSON string or or path to JSON file (old_name: new_name)"
+)
+@click.option(
+    "--drop-columns", "--drop", is_flag=True, default=False, help="Actually drop removed columns (WARNING: data loss)"
+)
+@click.option(
+    "--dry-run", "--dry", is_flag=True, default=False, help="Show what would be changed without making changes"
+)
+@click.option("--force", "-f", is_flag=True, default=False, help="Skip confirmation prompts")
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Show detailed output")
 @click.pass_context
 def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
     """
@@ -773,11 +801,11 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
         # Shorthand schema with string input
         lvdb db mydb schema update --schema '{"title": "text", "author": "text"}' --mapping '{"old_author": "author"}'
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     # Validate input combinations
     if not schema:
-        click.secho("Error: --schema must be provided", fg='bright_red')
+        click.secho("Error: --schema must be provided", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     try:
@@ -786,7 +814,7 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
 
             if verbose:
                 click.echo(f"Loading schema from file: {schema}")
-            with open(schema, 'r') as f:
+            with open(schema, "r") as f:
                 schema_data = json.load(f)
         else:
             if verbose:
@@ -798,7 +826,7 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
         if mapping and os.path.exists(mapping):
             if verbose:
                 click.echo(f"Loading column mapping from file: {mapping}")
-            with open(mapping, 'r') as f:
+            with open(mapping, "r") as f:
                 column_mapping = json.load(f)
         elif mapping:
             if verbose:
@@ -812,7 +840,7 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
         try:
             new_schema = parse_metadata_schema(schema_data)
         except ValidationError as e:
-            click.secho(f"Error: {e}", fg='bright_red')
+            click.secho(f"Error: {e}", fg="bright_red")
             raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
         # Show current schema for comparison
@@ -853,8 +881,10 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
 
         # Show warnings
         if drop_columns and removed_fields:
-            click.echo(f"  {click.style('WARNING:', fg='bright_red', bold=True)} "
-                       f"--drop-columns specified. Data in removed columns will be permanently lost!")
+            click.echo(
+                f"  {click.style('WARNING:', fg='bright_red', bold=True)} "
+                f"--drop-columns specified. Data in removed columns will be permanently lost!"
+            )
 
         if not new_fields and not removed_fields and not column_mapping:
             click.echo("  No changes detected.")
@@ -875,44 +905,44 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
         click.echo(f"\n{click.style('Applying schema update...', fg='blue')}")
 
         changes = db.update_metadata_schema(
-            new_schema=new_schema,
-            column_mapping=column_mapping,
-            drop_columns=drop_columns
+            new_schema=new_schema, column_mapping=column_mapping, drop_columns=drop_columns
         )
 
         # Report results
         click.echo(f"\n{click.style('Schema Update Complete!', fg='green', bold=True)}")
 
-        if changes['added_fields']:
+        if changes["added_fields"]:
             click.echo(f"  {click.style('Added fields:', fg='green')} {', '.join(changes['added_fields'])}")
 
-        if changes['removed_fields']:
+        if changes["removed_fields"]:
             click.echo(f"  {click.style('Removed fields:', fg='red')} {', '.join(changes['removed_fields'])}")
 
-        if changes['modified_fields']:
-            modified_names = [f['field_name'] for f in changes['modified_fields']]
+        if changes["modified_fields"]:
+            modified_names = [f["field_name"] for f in changes["modified_fields"]]
             click.echo(f"  {click.style('Modified fields:', fg='blue')} {', '.join(modified_names)}")
 
-        if changes['remapped_columns']:
+        if changes["remapped_columns"]:
             click.echo(f"  {click.style('Remapped columns:', fg='cyan')}")
-            for remap in changes['remapped_columns']:
-                click.echo(f"    {remap['old_column']} → {remap['new_column']} "
-                           f"({remap['rows_transferred']} rows transferred)")
+            for remap in changes["remapped_columns"]:
+                click.echo(
+                    f"    {remap['old_column']} → {remap['new_column']} "
+                    f"({remap['rows_transferred']} rows transferred)"
+                )
 
-        if changes['populated_defaults']:
+        if changes["populated_defaults"]:
             click.echo(f"  {click.style('Populated defaults:', fg='yellow')}")
-            for default_info in changes['populated_defaults']:
+            for default_info in changes["populated_defaults"]:
                 click.echo(f"    {default_info['field_name']}: {default_info['rows_updated']} rows updated")
 
         # Show warnings and errors
-        if changes['warnings']:
+        if changes["warnings"]:
             click.echo(f"\n{click.style('Warnings:', fg='yellow')}")
-            for warning in changes['warnings']:
+            for warning in changes["warnings"]:
                 click.echo(f"  ⚠ {warning}")
 
-        if changes['errors']:
+        if changes["errors"]:
             click.echo(f"\n{click.style('Errors:', fg='red')}")
-            for error in changes['errors']:
+            for error in changes["errors"]:
                 click.echo(f"  ✗ {error}")
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
@@ -926,29 +956,29 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
                 click.echo(f"  {field_name}: {field_def.type.value}{indexed_str}{required_str}{default_str}")
 
     except json.JSONDecodeError as e:
-        click.secho(f"Error: Invalid JSON format: {str(e)}", fg='bright_red')
+        click.secho(f"Error: Invalid JSON format: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     except KeyError as e:
-        click.secho(f"Error: Missing required field in schema: {str(e)}", fg='bright_red')
+        click.secho(f"Error: Missing required field in schema: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     except ValueError as e:
-        click.secho(f"Error: {str(e)}", fg='bright_red')
+        click.secho(f"Error: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     except Exception as e:
-        click.secho(f"Error: Unexpected error during schema update: {str(e)}", fg='bright_red')
+        click.secho(f"Error: Unexpected error during schema update: {str(e)}", fg="bright_red")
         if verbose:
             import traceback
+
             click.echo(traceback.format_exc())
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-@schema_group.command('export')
-@click.option('--output', '-o', type=click.Path(file_okay=True, dir_okay=False), required=True,
-              help='Output file path')
-@click.option('--format', '-f', type=click.Choice(['json', 'toml']), default='json',
-              help='Output format')
-@click.option('--include-data', '--with-data', is_flag=True, default=False,
-              help='Include sample data for each field type')
+@schema_group.command("export")
+@click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), required=True, help="Output file path")
+@click.option("--format", "-f", type=click.Choice(["json", "toml"]), default="json", help="Output format")
+@click.option(
+    "--include-data", "--with-data", is_flag=True, default=False, help="Include sample data for each field type"
+)
 @click.pass_context
 def export_schema(ctx, output, format, include_data):
     """
@@ -964,11 +994,11 @@ def export_schema(ctx, output, format, include_data):
         lvdb db mydb schema export --output schema.toml --format toml
         lvdb db mydb schema export --output schema_with_samples.json --include-data
     """
-    db = ctx.obj['db']
+    db = ctx.obj["db"]
 
     try:
         schema_info = db.get_metadata_schema_info()
-        schema_fields = schema_info.get('fields', {})
+        schema_fields = schema_info.get("fields", {})
 
         if not schema_fields:
             click.echo("No metadata schema to export.")
@@ -977,50 +1007,48 @@ def export_schema(ctx, output, format, include_data):
         # Convert to exportable format
         export_data = {}
         for field_name, field_def in schema_fields.items():
-            field_data = {
-                'type': field_def.type.value,
-                'indexed': field_def.indexed,
-                'required': field_def.required
-            }
+            field_data = {"type": field_def.type.value, "indexed": field_def.indexed, "required": field_def.required}
 
             if field_def.default_value is not None:
-                field_data['default_value'] = field_def.default_value
+                field_data["default_value"] = field_def.default_value
 
             # Add sample data if requested
             if include_data:
                 sample_values = {
-                    'text': 'Sample text value',
-                    'integer': 42,
-                    'real': 3.14159,
-                    'boolean': True,
-                    'date': '2024-01-01',
-                    'json': {'key': 'value', 'array': [1, 2, 3]}
+                    "text": "Sample text value",
+                    "integer": 42,
+                    "real": 3.14159,
+                    "boolean": True,
+                    "date": "2024-01-01",
+                    "json": {"key": "value", "array": [1, 2, 3]},
                 }
-                field_data['_sample_value'] = sample_values.get(field_def.type.value, 'Sample value')
+                field_data["_sample_value"] = sample_values.get(field_def.type.value, "Sample value")
 
             export_data[field_name] = field_data
 
         # Write to file
-        if format == 'toml':
+        if format == "toml":
             try:
                 import toml
-                with open(output, 'w') as f:
-                    toml.dump({'metadata_schema': export_data}, f)
-            except ImportError:
-                click.secho("Error: TOML format requires the 'toml' package. Install with: pip install toml",
-                            fg='bright_red')
-                click.secho("Falling back to JSON format...", fg='yellow')
-                format = 'json'  # Fall back to JSON
 
-        if format == 'json':  # Handle both explicit JSON and fallback case
-            with open(output, 'w') as f:
+                with open(output, "w") as f:
+                    toml.dump({"metadata_schema": export_data}, f)
+            except ImportError:
+                click.secho(
+                    "Error: TOML format requires the 'toml' package. Install with: pip install toml", fg="bright_red"
+                )
+                click.secho("Falling back to JSON format...", fg="yellow")
+                format = "json"  # Fall back to JSON
+
+        if format == "json":  # Handle both explicit JSON and fallback case
+            with open(output, "w") as f:
                 json.dump(export_data, f, indent=2)
 
         click.echo(f"Schema exported to {output}")
         click.echo(f"Fields exported: {len(export_data)}")
 
     except Exception as e:
-        click.secho(f"Error exporting schema: {str(e)}", fg='bright_red')
+        click.secho(f"Error exporting schema: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -1030,7 +1058,7 @@ def _validate_schema_format(schema_data):
     if not isinstance(schema_data, dict):
         raise ValueError("Schema must be a dictionary")
 
-    valid_types = {'text', 'integer', 'real', 'boolean', 'date', 'json'}
+    valid_types = {"text", "integer", "real", "boolean", "date", "json"}
 
     for field_name, field_config in schema_data.items():
         if not isinstance(field_name, str) or not field_name.strip():
@@ -1039,24 +1067,29 @@ def _validate_schema_format(schema_data):
         if isinstance(field_config, str):
             # Simple string type
             if field_config not in valid_types:
-                raise ValueError(f"Invalid field type '{field_config}' for field '{field_name}'. "
-                                 f"Valid types: {', '.join(valid_types)}")
+                raise ValueError(
+                    f"Invalid field type '{field_config}' for field '{field_name}'. "
+                    f"Valid types: {', '.join(valid_types)}"
+                )
         elif isinstance(field_config, dict):
             # Full configuration
-            if 'type' not in field_config:
+            if "type" not in field_config:
                 raise ValueError(f"Field '{field_name}' missing required 'type' property")
 
-            if field_config['type'] not in valid_types:
-                raise ValueError(f"Invalid field type '{field_config['type']}' for field '{field_name}'. "
-                                 f"Valid types: {', '.join(valid_types)}")
+            if field_config["type"] not in valid_types:
+                raise ValueError(
+                    f"Invalid field type '{field_config['type']}' for field '{field_name}'. "
+                    f"Valid types: {', '.join(valid_types)}"
+                )
 
             # Validate boolean properties
-            for bool_prop in ['indexed', 'required']:
+            for bool_prop in ["indexed", "required"]:
                 if bool_prop in field_config and not isinstance(field_config[bool_prop], bool):
                     raise ValueError(f"Property '{bool_prop}' for field '{field_name}' must be boolean")
         else:
-            raise ValueError(f"Invalid field configuration for '{field_name}'. "
-                             f"Must be string type or configuration object")
+            raise ValueError(
+                f"Invalid field configuration for '{field_name}'. " f"Must be string type or configuration object"
+            )
 
 
 def _validate_mapping_format(mapping_data):

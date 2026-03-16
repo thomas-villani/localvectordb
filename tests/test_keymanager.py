@@ -32,7 +32,7 @@ def sample_key_record():
         expires_at=datetime(2024, 12, 31, 23, 59, 59, tzinfo=UTC),
         last_used=datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC),
         active=True,
-        created_by="test_user"
+        created_by="test_user",
     )
 
 
@@ -47,7 +47,7 @@ def expired_key_record():
         expires_at=datetime(2023, 12, 31, 23, 59, 59, tzinfo=UTC),
         last_used=datetime(2023, 6, 1, 10, 0, 0, tzinfo=UTC),
         active=True,
-        created_by="test_user"
+        created_by="test_user",
     )
 
 
@@ -57,10 +57,10 @@ def mock_key_manager(temp_dir):
 
     db_path = temp_dir / "test_keys.db"
     # from localvectordb_server.keymanager import bcrypt as bcrypt_mod
-    with patch('localvectordb_server.keymanager.bcrypt') as mock_bcrypt:
+    with patch("localvectordb_server.keymanager.bcrypt") as mock_bcrypt:
         # Mock bcrypt operations for consistent testing
-        mock_bcrypt.gensalt.return_value = b'$2b$12$mock_salt'
-        mock_bcrypt.hashpw.return_value = b'$2b$12$mock_hashed_password'
+        mock_bcrypt.gensalt.return_value = b"$2b$12$mock_salt"
+        mock_bcrypt.hashpw.return_value = b"$2b$12$mock_hashed_password"
         mock_bcrypt.checkpw.return_value = True
 
         manager = KeyManager(str(db_path))
@@ -89,56 +89,32 @@ class TestKeyRecord:
     def test_key_record_is_expired_logic(self):
         """Test is_expired logic with known dates."""
         # Test with future expiry (not expired)
-        future_key = KeyRecord(
-            id="test",
-            key_hash="hash",
-            expires_at=datetime.now(UTC) + timedelta(days=30)
-        )
+        future_key = KeyRecord(id="test", key_hash="hash", expires_at=datetime.now(UTC) + timedelta(days=30))
         assert future_key.is_expired is False
 
         # Test with past expiry (expired)
-        past_key = KeyRecord(
-            id="test",
-            key_hash="hash",
-            expires_at=datetime.now(UTC) - timedelta(days=1)
-        )
+        past_key = KeyRecord(id="test", key_hash="hash", expires_at=datetime.now(UTC) - timedelta(days=1))
         assert past_key.is_expired is True
 
         # Test with no expiry
-        no_expiry_key = KeyRecord(
-            id="test",
-            key_hash="hash",
-            expires_at=None
-        )
+        no_expiry_key = KeyRecord(id="test", key_hash="hash", expires_at=None)
         assert no_expiry_key.is_expired is False
 
     def test_days_until_expiry(self):
         """Test is_expired logic with known dates."""
         # Test with future expiry (not expired)
-        future_key = KeyRecord(
-            id="test",
-            key_hash="hash",
-            expires_at=datetime.now(UTC) + timedelta(days=30)
-        )
+        future_key = KeyRecord(id="test", key_hash="hash", expires_at=datetime.now(UTC) + timedelta(days=30))
         assert future_key.days_until_expiry == 30
 
     def test_days_until_expiry_expired(self):
         """Test days_until_expiry for expired key."""
-        future_key = KeyRecord(
-            id="test",
-            key_hash="hash",
-            expires_at=datetime.now(UTC) - timedelta(days=30)
-        )
+        future_key = KeyRecord(id="test", key_hash="hash", expires_at=datetime.now(UTC) - timedelta(days=30))
         # Should be zero for expired keys
         assert future_key.days_until_expiry == 0
 
     def test_days_until_expiry_no_expiry(self):
         """Test days_until_expiry for key with no expiration."""
-        key = KeyRecord(
-            id="key_never_expires",
-            key_hash="hash",
-            expires_at=None
-        )
+        key = KeyRecord(id="key_never_expires", key_hash="hash", expires_at=None)
         assert key.days_until_expiry is None
 
     def test_to_dict(self, sample_key_record):
@@ -146,55 +122,62 @@ class TestKeyRecord:
         result = sample_key_record.to_dict()
 
         expected_keys = {
-            'id', 'description', 'created_at', 'expires_at',
-            'last_used', 'active', 'created_by', 'permission_level', 'is_expired',
-            'days_until_expiry'
+            "id",
+            "description",
+            "created_at",
+            "expires_at",
+            "last_used",
+            "active",
+            "created_by",
+            "permission_level",
+            "is_expired",
+            "days_until_expiry",
         }
         assert set(result.keys()) == expected_keys
-        assert result['id'] == "key_20240101_abc123"
-        assert result['description'] == "Test API Key"
-        assert result['active'] is True
+        assert result["id"] == "key_20240101_abc123"
+        assert result["description"] == "Test API Key"
+        assert result["active"] is True
 
     def test_from_db_row(self):
         """Test from_db_row class method."""
         # Create a mock SQLite row
         mock_row = {
-            'id': 'test_key_id',
-            'key_hash': 'test_hash',
-            'description': 'Test Description',
-            'created_at': '2024-01-01T12:00:00+00:00',
-            'expires_at': '2024-12-31T23:59:59+00:00',
-            'last_used': '2024-06-01T10:00:00+00:00',
-            'active': 1,  # SQLite stores boolean as integer
-            'created_by': 'test_user'
+            "id": "test_key_id",
+            "key_hash": "test_hash",
+            "description": "Test Description",
+            "created_at": "2024-01-01T12:00:00+00:00",
+            "expires_at": "2024-12-31T23:59:59+00:00",
+            "last_used": "2024-06-01T10:00:00+00:00",
+            "active": 1,  # SQLite stores boolean as integer
+            "created_by": "test_user",
         }
 
         key_record = KeyRecord.from_db_row(mock_row)
 
-        assert key_record.id == 'test_key_id'
-        assert key_record.key_hash == 'test_hash'
-        assert key_record.description == 'Test Description'
+        assert key_record.id == "test_key_id"
+        assert key_record.key_hash == "test_hash"
+        assert key_record.description == "Test Description"
         assert key_record.active is True
-        assert key_record.created_by == 'test_user'
+        assert key_record.created_by == "test_user"
         assert isinstance(key_record.created_at, datetime)
         assert isinstance(key_record.expires_at, datetime)
 
     def test_from_db_row_with_none_values(self):
         """Test from_db_row with None values."""
         mock_row = {
-            'id': 'test_key_id',
-            'key_hash': 'test_hash',
-            'description': None,
-            'created_at': None,
-            'expires_at': None,
-            'last_used': None,
-            'active': 1,
-            'created_by': None
+            "id": "test_key_id",
+            "key_hash": "test_hash",
+            "description": None,
+            "created_at": None,
+            "expires_at": None,
+            "last_used": None,
+            "active": 1,
+            "created_by": None,
         }
 
         key_record = KeyRecord.from_db_row(mock_row)
 
-        assert key_record.id == 'test_key_id'
+        assert key_record.id == "test_key_id"
         assert key_record.description is None
         assert key_record.created_at is None
         assert key_record.expires_at is None
@@ -210,7 +193,7 @@ class TestKeyManagerInitialization:
         """Test that KeyManager creates database on initialization."""
         db_path = temp_dir / "test_keys.db"
 
-        with patch('localvectordb_server.keymanager.bcrypt'):
+        with patch("localvectordb_server.keymanager.bcrypt"):
             _manager = KeyManager(str(db_path))
 
         assert db_path.exists()
@@ -219,16 +202,16 @@ class TestKeyManagerInitialization:
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = {row['name'] for row in cursor.fetchall()}
+            tables = {row["name"] for row in cursor.fetchall()}
 
-        expected_tables = {'api_keys', 'schema_version'}
+        expected_tables = {"api_keys", "schema_version"}
         assert expected_tables.issubset(tables)
 
     def test_init_creates_parent_directories(self, temp_dir):
         """Test that KeyManager creates parent directories."""
         nested_path = temp_dir / "nested" / "path" / "keys.db"
 
-        with patch('localvectordb_server.keymanager.bcrypt'):
+        with patch("localvectordb_server.keymanager.bcrypt"):
             _manager = KeyManager(str(nested_path))
 
         assert nested_path.exists()
@@ -238,7 +221,7 @@ class TestKeyManagerInitialization:
         """Test that KeyManager sets the schema version."""
         db_path = temp_dir / "test_keys.db"
 
-        with patch('localvectordb_server.keymanager.bcrypt'):
+        with patch("localvectordb_server.keymanager.bcrypt"):
             _manager = KeyManager(str(db_path))
 
         with sqlite3.connect(db_path) as conn:
@@ -294,6 +277,7 @@ class TestKeyManagerWithRealBcrypt:
         # print(original_last_used)
         # Wait a tiny bit to ensure timestamp difference
         import time
+
         time.sleep(0.01)
 
         # Check that last_used was updated
@@ -427,10 +411,7 @@ class TestKeyManagerRetrieval:
         manager, mock_bcrypt = mock_key_manager
 
         # Create a key that will be expired
-        _expired_key = manager.create_key(
-            description="Expired Key",
-            expires_days=-10
-        )
+        _expired_key = manager.create_key(description="Expired Key", expires_days=-10)
         # Create a non-expired key
         valid_key = manager.create_key(description="Valid Key")
 
@@ -476,11 +457,7 @@ class TestKeyManagerRevocation:
         manager, mock_bcrypt = mock_key_manager
 
         # Create original key
-        original_key = manager.create_key(
-            description="Original Key",
-            expires_days=30,
-            created_by="test_user"
-        )
+        original_key = manager.create_key(description="Original Key", expires_days=30, created_by="test_user")
         original_id = original_key.id
 
         # Rotate the key
@@ -514,10 +491,7 @@ class TestKeyManagerExpiration:
         manager, mock_bcrypt = mock_key_manager
 
         # Create expired and valid keys
-        expired_key = manager.create_key(
-            description="Expired Key",
-            expires_days=-10
-        )
+        expired_key = manager.create_key(description="Expired Key", expires_days=-10)
         valid_key = manager.create_key(description="Valid Key")
 
         # Prune expired keys
@@ -540,10 +514,7 @@ class TestKeyManagerExpiration:
 
         # Create expired and valid keys
 
-        expired_key = manager.create_key(
-            description="Expired Key",
-            expires_days=-10
-        )
+        expired_key = manager.create_key(description="Expired Key", expires_days=-10)
         valid_key = manager.create_key(description="Valid Key")
 
         # Prune expired keys with hard delete
@@ -582,11 +553,11 @@ class TestKeyManagerStats:
 
         stats = manager.get_stats()
 
-        assert stats['total_keys'] == 0
-        assert stats['active_keys'] == 0
-        assert stats['expired_keys'] == 0
-        assert stats['expiring_soon'] == 0
-        assert stats['recently_used'] == 0
+        assert stats["total_keys"] == 0
+        assert stats["active_keys"] == 0
+        assert stats["expired_keys"] == 0
+        assert stats["expiring_soon"] == 0
+        assert stats["recently_used"] == 0
 
     def test_get_stats_with_keys(self, mock_key_manager):
         """Test getting stats with various key types."""
@@ -596,16 +567,10 @@ class TestKeyManagerStats:
         active_key = manager.create_key(description="Active Key")
 
         # Expired key
-        _expired_key = manager.create_key(
-            description="Expired Key",
-            expires_days=-10  # Already expired
-        )
+        _expired_key = manager.create_key(description="Expired Key", expires_days=-10)  # Already expired
 
         # Expiring soon key
-        _expiring_key = manager.create_key(
-            description="Expiring Soon",
-            expires_days=3  # Expires in 3 days
-        )
+        _expiring_key = manager.create_key(description="Expiring Soon", expires_days=3)  # Expires in 3 days
 
         # Recently used key
         recent_key = manager.create_key(description="Recent Key")
@@ -613,10 +578,7 @@ class TestKeyManagerStats:
         # Update last_used for recent key
         with manager._get_connection() as conn:
             recent_time = datetime.now(UTC) - timedelta(hours=12)
-            conn.execute(
-                "UPDATE api_keys SET last_used = ? WHERE id = ?",
-                (recent_time.isoformat(), recent_key.id)
-            )
+            conn.execute("UPDATE api_keys SET last_used = ? WHERE id = ?", (recent_time.isoformat(), recent_key.id))
             conn.commit()
 
         # Revoke one key
@@ -624,11 +586,11 @@ class TestKeyManagerStats:
 
         stats = manager.get_stats()
 
-        assert stats['total_keys'] == 4
-        assert stats['active_keys'] == 3  # expired, expiring, recent (active is revoked)
-        assert stats['expired_keys'] == 1
-        assert stats['expiring_soon'] == 1
-        assert stats['recently_used'] == 1
+        assert stats["total_keys"] == 4
+        assert stats["active_keys"] == 3  # expired, expiring, recent (active is revoked)
+        assert stats["expired_keys"] == 1
+        assert stats["expiring_soon"] == 1
+        assert stats["recently_used"] == 1
 
 
 @pytest.mark.unit
@@ -661,11 +623,11 @@ class TestKeyManagerUtilities:
         import bcrypt
 
         test_key = "test_key_12345"
-        hashed = bcrypt.hashpw(test_key.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        hashed = bcrypt.hashpw(test_key.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
         # Test verification
-        assert bcrypt.checkpw(test_key.encode('utf-8'), hashed.encode('utf-8'))
-        assert not bcrypt.checkpw("wrong_key".encode('utf-8'), hashed.encode('utf-8'))
+        assert bcrypt.checkpw(test_key.encode("utf-8"), hashed.encode("utf-8"))
+        assert not bcrypt.checkpw("wrong_key".encode("utf-8"), hashed.encode("utf-8"))
 
 
 @pytest.mark.unit
@@ -680,7 +642,7 @@ class TestKeyManagerErrorHandling:
         db_path.touch()
         db_path.chmod(0o444)  # Read-only
 
-        with patch('localvectordb_server.keymanager.bcrypt'):
+        with patch("localvectordb_server.keymanager.bcrypt"):
             # This should raise an exception during database operations
             with pytest.raises((PermissionError, sqlite3.OperationalError, OSError)):
                 manager = KeyManager(str(db_path))

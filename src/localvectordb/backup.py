@@ -50,12 +50,14 @@ logger = logging.getLogger(__name__)
 
 class BackupType(Enum):
     """Backup type enumeration."""
+
     FULL = "full"
     INCREMENTAL = "incremental"
 
 
 class CompressionAlgorithm(Enum):
     """Supported compression algorithms."""
+
     NONE = "none"
     GZIP = "gzip"
     LZMA = "lzma"
@@ -100,20 +102,20 @@ class BackupMetadata:
     """
 
     def __init__(
-            self,
-            backup_id: str,
-            backup_type: BackupType,
-            database_name: str,
-            database_version: str,
-            created_at: datetime,
-            file_paths: Dict[str, str],
-            checksums: Dict[str, str],
-            compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
-            size_bytes: int = 0,
-            parent_backup_id: Optional[str] = None,
-            metadata: Optional[Dict[str, Any]] = None,
-            archive_checksum: Optional[str] = None,
-            manifest_checksum: Optional[str] = None
+        self,
+        backup_id: str,
+        backup_type: BackupType,
+        database_name: str,
+        database_version: str,
+        created_at: datetime,
+        file_paths: Dict[str, str],
+        checksums: Dict[str, str],
+        compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
+        size_bytes: int = 0,
+        parent_backup_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        archive_checksum: Optional[str] = None,
+        manifest_checksum: Optional[str] = None,
     ):
         self.backup_id = backup_id
         self.backup_type = backup_type
@@ -132,38 +134,38 @@ class BackupMetadata:
     def to_dict(self) -> Dict[str, Any]:
         """Convert metadata to dictionary for JSON serialization."""
         return {
-            'backup_id': self.backup_id,
-            'backup_type': self.backup_type.value,
-            'database_name': self.database_name,
-            'database_version': self.database_version,
-            'created_at': self.created_at.isoformat(),
-            'file_paths': self.file_paths,
-            'checksums': self.checksums,
-            'compression_algorithm': self.compression_algorithm.value,
-            'size_bytes': self.size_bytes,
-            'parent_backup_id': self.parent_backup_id,
-            'metadata': self.metadata,
-            'archive_checksum': self.archive_checksum,
-            'manifest_checksum': self.manifest_checksum
+            "backup_id": self.backup_id,
+            "backup_type": self.backup_type.value,
+            "database_name": self.database_name,
+            "database_version": self.database_version,
+            "created_at": self.created_at.isoformat(),
+            "file_paths": self.file_paths,
+            "checksums": self.checksums,
+            "compression_algorithm": self.compression_algorithm.value,
+            "size_bytes": self.size_bytes,
+            "parent_backup_id": self.parent_backup_id,
+            "metadata": self.metadata,
+            "archive_checksum": self.archive_checksum,
+            "manifest_checksum": self.manifest_checksum,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'BackupMetadata':
+    def from_dict(cls, data: Dict[str, Any]) -> "BackupMetadata":
         """Create BackupMetadata from dictionary."""
         return cls(
-            backup_id=data['backup_id'],
-            backup_type=BackupType(data['backup_type']),
-            database_name=data['database_name'],
-            database_version=data['database_version'],
-            created_at=parse_iso8601(data['created_at']),
-            file_paths=data['file_paths'],
-            checksums=data['checksums'],
-            compression_algorithm=CompressionAlgorithm(data['compression_algorithm']),
-            size_bytes=data['size_bytes'],
-            parent_backup_id=data.get('parent_backup_id'),
-            metadata=data.get('metadata', {}),
-            archive_checksum=data.get('archive_checksum'),  # Backward compatibility
-            manifest_checksum=data.get('manifest_checksum')  # Backward compatibility
+            backup_id=data["backup_id"],
+            backup_type=BackupType(data["backup_type"]),
+            database_name=data["database_name"],
+            database_version=data["database_version"],
+            created_at=parse_iso8601(data["created_at"]),
+            file_paths=data["file_paths"],
+            checksums=data["checksums"],
+            compression_algorithm=CompressionAlgorithm(data["compression_algorithm"]),
+            size_bytes=data["size_bytes"],
+            parent_backup_id=data.get("parent_backup_id"),
+            metadata=data.get("metadata", {}),
+            archive_checksum=data.get("archive_checksum"),  # Backward compatibility
+            manifest_checksum=data.get("manifest_checksum"),  # Backward compatibility
         )
 
 
@@ -188,13 +190,13 @@ class BackupConfig:
     """
 
     def __init__(
-            self,
-            backup_location: Union[str, Path] = "./backups",
-            compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
-            verify_integrity: bool = True,
-            retention_days: int = 30,
-            max_backup_size_gb: float = 0.0,
-            include_faiss_index: bool = True
+        self,
+        backup_location: Union[str, Path] = "./backups",
+        compression_algorithm: CompressionAlgorithm = CompressionAlgorithm.GZIP,
+        verify_integrity: bool = True,
+        retention_days: int = 30,
+        max_backup_size_gb: float = 0.0,
+        include_faiss_index: bool = True,
     ):
         self.backup_location: Path = Path(backup_location)
         self.compression_algorithm = compression_algorithm
@@ -244,16 +246,16 @@ class BackupManager:
     """
 
     def __init__(
-            self,
-            database_path: Union[str, Path],
-            faiss_index_path: Optional[Union[str, Path]] = None,
-            config: Optional[BackupConfig] = None
+        self,
+        database_path: Union[str, Path],
+        faiss_index_path: Optional[Union[str, Path]] = None,
+        config: Optional[BackupConfig] = None,
     ):
         self.database_path = Path(database_path)
 
         if faiss_index_path is None:
             # Infer FAISS index path from database path
-            self.faiss_index_path = self.database_path.with_suffix('.faiss')
+            self.faiss_index_path = self.database_path.with_suffix(".faiss")
         else:
             self.faiss_index_path = Path(faiss_index_path)
 
@@ -272,11 +274,7 @@ class BackupManager:
         return sha256_hash.hexdigest()
 
     def _create_backup_manifest(
-            self,
-            backup_id: str,
-            backup_type: BackupType,
-            temp_dir: Path,
-            parent_backup_id: Optional[str] = None
+        self, backup_id: str, backup_type: BackupType, temp_dir: Path, parent_backup_id: Optional[str] = None
     ) -> BackupMetadata:
         """Create backup manifest with metadata and checksums."""
 
@@ -308,11 +306,11 @@ class BackupManager:
             size_bytes=total_size,
             parent_backup_id=parent_backup_id,
             metadata={
-                'original_db_path': str(self.database_path),
-                'original_faiss_path': str(self.faiss_index_path),
-                'faiss_included': self.config.include_faiss_index and self.faiss_index_path.exists(),
-                'sqlite_pragmas': self._get_current_pragma_settings()
-            }
+                "original_db_path": str(self.database_path),
+                "original_faiss_path": str(self.faiss_index_path),
+                "faiss_included": self.config.include_faiss_index and self.faiss_index_path.exists(),
+                "sqlite_pragmas": self._get_current_pragma_settings(),
+            },
         )
 
         return metadata
@@ -342,7 +340,7 @@ class BackupManager:
                 - faiss_id: FAISS vector ID (may be None)
                 - start_pos, end_pos: Character positions in document
         """
-        manifest = {'documents': {}}
+        manifest = {"documents": {}}
 
         try:
             with sqlite3.connect(db_path) as conn:
@@ -354,26 +352,29 @@ class BackupManager:
                 """)
 
                 for doc_id, content_hash, updated_at in doc_cursor:
-                    manifest['documents'][doc_id] = {
-                        'content_hash': content_hash,
-                        'updated_at': updated_at,
-                        'chunks': {}
+                    manifest["documents"][doc_id] = {
+                        "content_hash": content_hash,
+                        "updated_at": updated_at,
+                        "chunks": {},
                     }
 
                     # Get all chunks for this document
-                    chunk_cursor = conn.execute("""
+                    chunk_cursor = conn.execute(
+                        """
                         SELECT chunk_index, content_hash, faiss_id, start_pos, end_pos
                         FROM chunks
                         WHERE document_id = ?
                         ORDER BY chunk_index
-                    """, (doc_id,))
+                    """,
+                        (doc_id,),
+                    )
 
                     for chunk_index, chunk_hash, faiss_id, start_pos, end_pos in chunk_cursor:
-                        manifest['documents'][doc_id]['chunks'][chunk_index] = {
-                            'content_hash': chunk_hash,
-                            'faiss_id': faiss_id,
-                            'start_pos': start_pos,
-                            'end_pos': end_pos
+                        manifest["documents"][doc_id]["chunks"][chunk_index] = {
+                            "content_hash": chunk_hash,
+                            "faiss_id": faiss_id,
+                            "start_pos": start_pos,
+                            "end_pos": end_pos,
                         }
 
         except Exception as e:
@@ -392,32 +393,30 @@ class BackupManager:
 
         # Calculate manifest checksum (without the checksum fields themselves)
         temp_manifest_data = metadata.to_dict()
-        temp_manifest_data['archive_checksum'] = None  # Will be calculated after archive creation
-        temp_manifest_data['manifest_checksum'] = None  # Will be calculated now
+        temp_manifest_data["archive_checksum"] = None  # Will be calculated after archive creation
+        temp_manifest_data["manifest_checksum"] = None  # Will be calculated now
 
         # Calculate manifest checksum from the normalized JSON
-        manifest_json = json.dumps(temp_manifest_data, sort_keys=True, separators=(',', ':'))
-        manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
+        manifest_json = json.dumps(temp_manifest_data, sort_keys=True, separators=(",", ":"))
+        manifest_checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
 
         # Update metadata with manifest checksum (but NOT archive_checksum to avoid circularity)
         metadata.manifest_checksum = manifest_checksum
 
         # Write final manifest to temp directory (without archive_checksum)
         manifest_path = temp_dir / "manifest.json"
-        with open(manifest_path, 'w') as f:
+        with open(manifest_path, "w") as f:
             # Create manifest data without archive_checksum to avoid circular dependency
             manifest_data_for_archive = metadata.to_dict()
-            manifest_data_for_archive['archive_checksum'] = None
+            manifest_data_for_archive["archive_checksum"] = None
             json.dump(manifest_data_for_archive, f, indent=2)
 
         write_mode = {
             CompressionAlgorithm.GZIP: "w:gz",
             CompressionAlgorithm.LZMA: "w:xz",
             CompressionAlgorithm.BZIP: "w:bz2",
-            CompressionAlgorithm.NONE: "w"
+            CompressionAlgorithm.NONE: "w",
         }.get(self.config.compression_algorithm, "w")
-
-
 
         with tarfile.open(backup_path, write_mode) as tar:
             for file_path in temp_dir.iterdir():
@@ -429,8 +428,8 @@ class BackupManager:
         metadata.archive_checksum = archive_checksum
 
         # Write sidecar checksum file for verification
-        sidecar_path = backup_path.with_suffix(backup_path.suffix + '.sha256')
-        with open(sidecar_path, 'w') as f:
+        sidecar_path = backup_path.with_suffix(backup_path.suffix + ".sha256")
+        with open(sidecar_path, "w") as f:
             f.write(f"{archive_checksum}  {backup_path.name}\n")
 
         logger.info(f"Created backup archive: {backup_path}")
@@ -439,10 +438,10 @@ class BackupManager:
         return backup_path
 
     def create_backup(
-            self,
-            backup_type: BackupType = BackupType.FULL,
-            parent_backup_id: Optional[str] = None,
-            backup_id: Optional[str] = None
+        self,
+        backup_type: BackupType = BackupType.FULL,
+        parent_backup_id: Optional[str] = None,
+        backup_id: Optional[str] = None,
     ) -> str:
         """
         Create a new backup of the database.
@@ -492,23 +491,21 @@ class BackupManager:
                     self._backup_faiss_index(temp_dir)
 
                 # Create manifest
-                metadata = self._create_backup_manifest(
-                    backup_id, backup_type, temp_dir, parent_backup_id
-                )
+                metadata = self._create_backup_manifest(backup_id, backup_type, temp_dir, parent_backup_id)
 
                 # Add document IDs to metadata for optimization (helps detect deletions in future incremental backups)
                 try:
                     with sqlite3.connect(self.database_path) as conn:
                         cursor = conn.execute("SELECT id FROM documents")
                         document_ids = [row[0] for row in cursor.fetchall()]
-                        metadata.metadata['document_ids'] = document_ids
+                        metadata.metadata["document_ids"] = document_ids
                         logger.debug(f"Added {len(document_ids)} document IDs to backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document IDs to metadata: {e}")
 
                 # Add comprehensive document manifest for fast diffing without extraction
                 try:
-                    metadata.metadata['document_manifest'] = self._generate_document_manifest(self.database_path)
+                    metadata.metadata["document_manifest"] = self._generate_document_manifest(self.database_path)
                     logger.debug("Added document manifest to backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document manifest to metadata: {e}")
@@ -546,8 +543,11 @@ class BackupManager:
             # Store original pragmas from source
             original_pragmas = {}
             pragma_queries = [
-                "PRAGMA synchronous", "PRAGMA journal_mode", "PRAGMA cache_size",
-                "PRAGMA wal_autocheckpoint", "PRAGMA mmap_size"
+                "PRAGMA synchronous",
+                "PRAGMA journal_mode",
+                "PRAGMA cache_size",
+                "PRAGMA wal_autocheckpoint",
+                "PRAGMA mmap_size",
             ]
 
             for pragma_query in pragma_queries:
@@ -617,7 +617,7 @@ class BackupManager:
                     ("mmap_size", "PRAGMA mmap_size"),
                     ("temp_store", "PRAGMA temp_store"),
                     ("foreign_keys", "PRAGMA foreign_keys"),
-                    ("busy_timeout", "PRAGMA busy_timeout")
+                    ("busy_timeout", "PRAGMA busy_timeout"),
                 ]
 
                 for pragma_name, pragma_query in pragma_queries:
@@ -635,11 +635,11 @@ class BackupManager:
                     ).fetchall()
 
                     for key, value in config_result:
-                        if key == 'sqlite_profile':
-                            pragma_settings['profile'] = value
-                        elif key == 'sqlite_pragma_overrides':
+                        if key == "sqlite_profile":
+                            pragma_settings["profile"] = value
+                        elif key == "sqlite_pragma_overrides":
                             try:
-                                pragma_settings['overrides'] = json.loads(value)
+                                pragma_settings["overrides"] = json.loads(value)
                             except (json.JSONDecodeError, TypeError):
                                 pass
                 except sqlite3.Error:
@@ -661,23 +661,26 @@ class BackupManager:
         """Record backup metadata in the database."""
         try:
             with sqlite3.connect(self.database_path) as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO backup_log
                     (id, backup_type, created_at, database_version, file_path,
                      checksum, parent_backup_id, metadata, size_bytes, compression_algorithm)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    metadata.backup_id,
-                    metadata.backup_type.value,
-                    metadata.created_at.isoformat(),
-                    metadata.database_version,
-                    str(backup_path),
-                    metadata.archive_checksum or self._calculate_file_checksum(backup_path),
-                    metadata.parent_backup_id,
-                    json.dumps(metadata.metadata),
-                    metadata.size_bytes,
-                    metadata.compression_algorithm.value
-                ))
+                """,
+                    (
+                        metadata.backup_id,
+                        metadata.backup_type.value,
+                        metadata.created_at.isoformat(),
+                        metadata.database_version,
+                        str(backup_path),
+                        metadata.archive_checksum or self._calculate_file_checksum(backup_path),
+                        metadata.parent_backup_id,
+                        json.dumps(metadata.metadata),
+                        metadata.size_bytes,
+                        metadata.compression_algorithm.value,
+                    ),
+                )
         except sqlite3.OperationalError as e:
             # backup_log table might not exist in older databases
             logger.warning(f"Could not record backup in database: {e}")
@@ -721,8 +724,7 @@ class BackupManager:
             actual_checksum = sha256_hash.hexdigest()
             if actual_checksum != expected_checksum:
                 raise ValueError(
-                    f"Checksum mismatch for {member.name}: "
-                    f"expected {expected_checksum}, got {actual_checksum}"
+                    f"Checksum mismatch for {member.name}: " f"expected {expected_checksum}, got {actual_checksum}"
                 )
 
         logger.debug("Archive checksum verification passed")
@@ -733,20 +735,22 @@ class BackupManager:
 
         try:
             # 1. Verify archive checksum from sidecar file first
-            sidecar_path = backup_path.with_suffix(backup_path.suffix + '.sha256')
+            sidecar_path = backup_path.with_suffix(backup_path.suffix + ".sha256")
             archive_checksum_from_sidecar = None
 
             if sidecar_path.exists():
-                with open(sidecar_path, 'r') as f:
+                with open(sidecar_path, "r") as f:
                     line = f.readline().strip()
                     if line:
-                        parts = line.split('  ', 1)
+                        parts = line.split("  ", 1)
                         if len(parts) == 2:
                             archive_checksum_from_sidecar = parts[0]
                             expected_filename = parts[1]
                             if expected_filename != backup_path.name:
-                                logger.warning("Sidecar filename mismatch: expected "
-                                               f"{expected_filename}, got {backup_path.name}")
+                                logger.warning(
+                                    "Sidecar filename mismatch: expected "
+                                    f"{expected_filename}, got {backup_path.name}"
+                                )
                         else:
                             archive_checksum_from_sidecar = parts[0]
 
@@ -759,8 +763,9 @@ class BackupManager:
                         )
                     logger.debug("Archive checksum verification passed (from sidecar)")
             else:
-                logger.debug(f"No sidecar checksum file found at {sidecar_path}, "
-                             "skipping archive checksum verification")
+                logger.debug(
+                    f"No sidecar checksum file found at {sidecar_path}, " "skipping archive checksum verification"
+                )
 
             with tarfile.open(backup_path, "r:*") as tar:
                 # Check that manifest exists
@@ -776,12 +781,12 @@ class BackupManager:
                 if metadata.manifest_checksum:
                     # Reconstruct manifest data without checksum fields for verification
                     manifest_for_verification = manifest_data.copy()
-                    manifest_for_verification['archive_checksum'] = None
-                    manifest_for_verification['manifest_checksum'] = None
+                    manifest_for_verification["archive_checksum"] = None
+                    manifest_for_verification["manifest_checksum"] = None
 
                     # Calculate checksum of normalized manifest
-                    manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(',', ':'))
-                    actual_manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
+                    manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(",", ":"))
+                    actual_manifest_checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
 
                     if actual_manifest_checksum != metadata.manifest_checksum:
                         raise ValueError(
@@ -849,8 +854,18 @@ class BackupManager:
 
     def _backup_row_to_metadata(self, row: tuple) -> BackupMetadata:
         """Convert database row to BackupMetadata object."""
-        (backup_id, backup_type, created_at, database_version, file_path,
-         checksum, parent_backup_id, metadata_json, size_bytes, compression_algorithm) = row
+        (
+            backup_id,
+            backup_type,
+            created_at,
+            database_version,
+            file_path,
+            checksum,
+            parent_backup_id,
+            metadata_json,
+            size_bytes,
+            compression_algorithm,
+        ) = row
 
         return BackupMetadata(
             backup_id=backup_id,
@@ -863,7 +878,7 @@ class BackupManager:
             compression_algorithm=CompressionAlgorithm(compression_algorithm or "gzip"),
             size_bytes=size_bytes or 0,
             parent_backup_id=parent_backup_id,
-            metadata=json.loads(metadata_json) if metadata_json else {}
+            metadata=json.loads(metadata_json) if metadata_json else {},
         )
 
     def _list_backups_from_filesystem(self, backup_type: Optional[BackupType] = None) -> List[BackupMetadata]:
@@ -888,10 +903,7 @@ class BackupManager:
         return sorted(backups, key=lambda x: x.created_at, reverse=True)
 
     def restore_backup(
-            self,
-            backup_id: str,
-            restore_location: Optional[Union[str, Path]] = None,
-            overwrite_existing: bool = False
+        self, backup_id: str, restore_location: Optional[Union[str, Path]] = None, overwrite_existing: bool = False
     ) -> Path:
         """
         Restore database from backup.
@@ -944,9 +956,7 @@ class BackupManager:
 
         if not overwrite_existing:
             if restored_db_path.exists() or restored_faiss_path.exists():
-                raise ValueError(
-                    "Files already exist at restore location. Use overwrite_existing=True to overwrite."
-                )
+                raise ValueError("Files already exist at restore location. Use overwrite_existing=True to overwrite.")
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
@@ -1004,7 +1014,7 @@ class BackupManager:
                             continue  # Skip if manifest can't be read
 
                         manifest_data = json.load(manifest_file)
-                        file_backup_id = manifest_data.get('backup_id')
+                        file_backup_id = manifest_data.get("backup_id")
 
                         if file_backup_id == backup_id:
                             return backup_file
@@ -1087,19 +1097,17 @@ class BackupManager:
             member_name = member.name
 
             # Reject null bytes which could be used for path manipulation
-            if '\x00' in member_name:
+            if "\x00" in member_name:
                 raise ValueError(f"Null byte detected in path: {repr(member_name)}")
 
             # Reject control characters (ASCII 0-31 except tab, newline, carriage return)
             for char in member_name:
-                if ord(char) < 32 and char not in '\t\n\r':
+                if ord(char) < 32 and char not in "\t\n\r":
                     raise ValueError(f"Control character detected in path: {repr(member_name)}")
 
             # Reject excessively long paths (DoS prevention)
             if len(member_name) > self.MAX_PATH_LENGTH:
-                raise ValueError(
-                    f"Path exceeds maximum length ({self.MAX_PATH_LENGTH} chars): {member_name[:100]}..."
-                )
+                raise ValueError(f"Path exceeds maximum length ({self.MAX_PATH_LENGTH} chars): {member_name[:100]}...")
 
             member_path = path / member_name
 
@@ -1114,11 +1122,11 @@ class BackupManager:
 
             # Also check for Windows drive letters that Path might not catch in all cases
             # e.g., "C:" at the start of the path
-            if len(member_name) >= 2 and member_name[1] == ':' and member_name[0].isalpha():
+            if len(member_name) >= 2 and member_name[1] == ":" and member_name[0].isalpha():
                 raise ValueError(f"Windows absolute path detected in tar: {member_name}")
 
             # Check for UNC paths (\\server\share or //server/share)
-            if member_name.startswith('\\\\') or member_name.startswith('//'):
+            if member_name.startswith("\\\\") or member_name.startswith("//"):
                 raise ValueError(f"UNC path detected in tar: {member_name}")
 
             # Reject path traversal attempts using .. in any path component
@@ -1134,7 +1142,7 @@ class BackupManager:
                 raise ValueError(f"Refusing to extract special file type: {member_name}")
 
         # If all validations pass, extract the archive
-        tar.extractall(path=path)
+        tar.extractall(path=path)  # nosec B202
 
     def _extract_backup_archive(self, backup_file: Path, temp_dir: Path) -> None:
         """Extract backup archive to temporary directory."""
@@ -1157,7 +1165,8 @@ class BackupManager:
         # Verify backup ID matches
         if extracted_metadata.backup_id != expected_metadata.backup_id:
             raise ValueError(
-                f"Backup ID mismatch: expected {expected_metadata.backup_id}, got {extracted_metadata.backup_id}")
+                f"Backup ID mismatch: expected {expected_metadata.backup_id}, got {extracted_metadata.backup_id}"
+            )
 
         # Verify checksums of extracted files
         for filename, expected_checksum in extracted_metadata.checksums.items():
@@ -1171,7 +1180,8 @@ class BackupManager:
             actual_checksum = self._calculate_file_checksum(file_path)
             if actual_checksum != expected_checksum:
                 raise ValueError(
-                    f"Checksum mismatch for {filename}: expected {expected_checksum}, got {actual_checksum}")
+                    f"Checksum mismatch for {filename}: expected {expected_checksum}, got {actual_checksum}"
+                )
 
         logger.debug("Backup integrity verification passed")
 
@@ -1216,7 +1226,7 @@ class BackupManager:
             logger.debug(f"Deleted backup file: {backup_file}")
 
             # Also delete sidecar checksum file if it exists
-            sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
+            sidecar_path = backup_file.with_suffix(backup_file.suffix + ".sha256")
             if sidecar_path.exists():
                 sidecar_path.unlink()
                 logger.debug(f"Deleted sidecar checksum file: {sidecar_path}")
@@ -1303,20 +1313,22 @@ class BackupManager:
 
         try:
             # Verify archive checksum from sidecar file first
-            sidecar_path = backup_file.with_suffix(backup_file.suffix + '.sha256')
+            sidecar_path = backup_file.with_suffix(backup_file.suffix + ".sha256")
             archive_checksum_from_sidecar = None
 
             if sidecar_path.exists():
-                with open(sidecar_path, 'r') as f:
+                with open(sidecar_path, "r") as f:
                     line = f.readline().strip()
                     if line:
-                        parts = line.split('  ', 1)
+                        parts = line.split("  ", 1)
                         if len(parts) == 2:
                             archive_checksum_from_sidecar = parts[0]
                             expected_filename = parts[1]
                             if expected_filename != backup_file.name:
-                                logger.warning(f"Sidecar filename mismatch: expected "
-                                               f"{expected_filename}, got {backup_file.name}")
+                                logger.warning(
+                                    f"Sidecar filename mismatch: expected "
+                                    f"{expected_filename}, got {backup_file.name}"
+                                )
                         else:
                             archive_checksum_from_sidecar = parts[0]
 
@@ -1329,8 +1341,9 @@ class BackupManager:
                         )
                     logger.debug("Archive checksum verification passed (from sidecar)")
             else:
-                logger.debug(f"No sidecar checksum file found at {sidecar_path}, "
-                             "skipping archive checksum verification")
+                logger.debug(
+                    f"No sidecar checksum file found at {sidecar_path}, " "skipping archive checksum verification"
+                )
 
             with tarfile.open(backup_file, "r:*") as tar:
                 # Extract and parse manifest
@@ -1344,11 +1357,11 @@ class BackupManager:
                 # Verify manifest integrity (if available)
                 if metadata.manifest_checksum:
                     manifest_for_verification = manifest_data.copy()
-                    manifest_for_verification['archive_checksum'] = None
-                    manifest_for_verification['manifest_checksum'] = None
+                    manifest_for_verification["archive_checksum"] = None
+                    manifest_for_verification["manifest_checksum"] = None
 
-                    manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(',', ':'))
-                    actual_manifest_checksum = hashlib.sha256(manifest_json.encode('utf-8')).hexdigest()
+                    manifest_json = json.dumps(manifest_for_verification, sort_keys=True, separators=(",", ":"))
+                    actual_manifest_checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
 
                     if actual_manifest_checksum != metadata.manifest_checksum:
                         raise ValueError(
@@ -1445,11 +1458,7 @@ class IncrementalBackupManager:
         self.config = backup_manager.config
         self.version_manager = backup_manager.version_manager
 
-    def create_incremental_backup(
-            self,
-            parent_backup_id: str,
-            backup_id: Optional[str] = None
-    ) -> str:
+    def create_incremental_backup(self, parent_backup_id: str, backup_id: Optional[str] = None) -> str:
         """
         Create an incremental backup based on changes since parent backup.
 
@@ -1489,12 +1498,12 @@ class IncrementalBackupManager:
         # Get changes since parent backup
         changes = self._get_changes_since_backup(parent_backup)
 
-        if not changes['has_changes']:
+        if not changes["has_changes"]:
             logger.info("No changes detected since parent backup")
             # Still create backup but mark as empty incremental
-            changes['changed_documents'] = []
-            changes['deleted_documents'] = []
-            changes['faiss_changes'] = []
+            changes["changed_documents"] = []
+            changes["deleted_documents"] = []
+            changes["faiss_changes"] = []
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
@@ -1504,7 +1513,7 @@ class IncrementalBackupManager:
                 self._create_incremental_database(changes, temp_dir)
 
                 # Create incremental FAISS index if there are vector changes
-                if changes['faiss_changes']:
+                if changes["faiss_changes"]:
                     self._create_incremental_faiss_index(changes, temp_dir)
 
                 # Create change manifest
@@ -1516,27 +1525,29 @@ class IncrementalBackupManager:
                 )
 
                 # Add incremental-specific metadata
-                metadata.metadata.update({
-                    'incremental_type': 'wal_based',
-                    'parent_backup_id': parent_backup_id,
-                    'changes_count': len(changes['changed_documents']),
-                    'deletions_count': len(changes['deleted_documents']),
-                    'faiss_changes_count': len(changes['faiss_changes'])
-                })
+                metadata.metadata.update(
+                    {
+                        "incremental_type": "wal_based",
+                        "parent_backup_id": parent_backup_id,
+                        "changes_count": len(changes["changed_documents"]),
+                        "deletions_count": len(changes["deleted_documents"]),
+                        "faiss_changes_count": len(changes["faiss_changes"]),
+                    }
+                )
 
                 # Add current document IDs to metadata for future deletion detection
                 try:
                     with sqlite3.connect(self.database_path) as conn:
                         cursor = conn.execute("SELECT id FROM documents")
                         document_ids = [row[0] for row in cursor.fetchall()]
-                        metadata.metadata['document_ids'] = document_ids
+                        metadata.metadata["document_ids"] = document_ids
                         logger.debug(f"Added {len(document_ids)} document IDs to incremental backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document IDs to incremental metadata: {e}")
 
                 # Add comprehensive document manifest for fast diffing without extraction
                 try:
-                    metadata.metadata['document_manifest'] = self.backup_manager._generate_document_manifest(
+                    metadata.metadata["document_manifest"] = self.backup_manager._generate_document_manifest(
                         self.database_path
                     )
                     logger.debug("Added document manifest to incremental backup metadata")
@@ -1568,7 +1579,7 @@ class IncrementalBackupManager:
             cursor = conn.execute("PRAGMA journal_mode")
             current_mode = cursor.fetchone()[0]
 
-            if current_mode.lower() != 'wal':
+            if current_mode.lower() != "wal":
                 logger.info("Enabling WAL mode for incremental backups")
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.commit()
@@ -1600,27 +1611,29 @@ class IncrementalBackupManager:
             If parent backup lacks document manifest
         """
         # Check if parent backup has document manifest
-        parent_manifest = parent_backup.metadata.get('document_manifest') if parent_backup.metadata else None
+        parent_manifest = parent_backup.metadata.get("document_manifest") if parent_backup.metadata else None
 
         if not parent_manifest:
-            raise ValueError(f"Parent backup {parent_backup.backup_id} lacks document manifest. "
-                             "Only backups with document manifest are supported for incremental operations.")
+            raise ValueError(
+                f"Parent backup {parent_backup.backup_id} lacks document manifest. "
+                "Only backups with document manifest are supported for incremental operations."
+            )
 
         logger.debug("Using manifest-based diffing for incremental backup")
 
         changes = {
-            'has_changes': False,
-            'changed_documents': [],
-            'deleted_documents': [],
-            'faiss_changes': [],
-            'parent_timestamp': parent_backup.created_at
+            "has_changes": False,
+            "changed_documents": [],
+            "deleted_documents": [],
+            "faiss_changes": [],
+            "parent_timestamp": parent_backup.created_at,
         }
 
         # Generate current database manifest
         current_manifest = self.backup_manager._generate_document_manifest(self.database_path)
 
-        current_doc_ids = set(current_manifest['documents'].keys())
-        parent_doc_ids = set(parent_manifest['documents'].keys())
+        current_doc_ids = set(current_manifest["documents"].keys())
+        parent_doc_ids = set(parent_manifest["documents"].keys())
 
         # Detect deleted documents with FAISS IDs (no extraction needed!)
         deleted_doc_ids = parent_doc_ids - current_doc_ids
@@ -1628,24 +1641,19 @@ class IncrementalBackupManager:
             logger.info(f"Detected {len(deleted_doc_ids)} deleted documents using manifest")
 
             for doc_id in deleted_doc_ids:
-                parent_doc = parent_manifest['documents'][doc_id]
+                parent_doc = parent_manifest["documents"][doc_id]
 
                 # Add deleted document
-                changes['deleted_documents'].append({
-                    'id': doc_id,
-                    'action': 'delete'
-                })
+                changes["deleted_documents"].append({"id": doc_id, "action": "delete"})
 
                 # Add FAISS IDs for deleted chunks directly from manifest
-                for _, chunk_info in parent_doc['chunks'].items():
-                    if chunk_info.get('faiss_id') is not None:
-                        changes['faiss_changes'].append({
-                            'document_id': doc_id,
-                            'faiss_id': chunk_info['faiss_id'],
-                            'action': 'delete'
-                        })
+                for _, chunk_info in parent_doc["chunks"].items():
+                    if chunk_info.get("faiss_id") is not None:
+                        changes["faiss_changes"].append(
+                            {"document_id": doc_id, "faiss_id": chunk_info["faiss_id"], "action": "delete"}
+                        )
 
-                changes['has_changes'] = True
+                changes["has_changes"] = True
 
         # Detect modified documents by comparing with parent backup timestamp
         # This preserves the original timestamp-based logic for modified documents
@@ -1653,73 +1661,80 @@ class IncrementalBackupManager:
 
         with sqlite3.connect(self.database_path) as conn:
             # Get documents modified since parent backup
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT id, content, content_hash, updated_at
                 FROM documents
                 WHERE updated_at > ?
                 ORDER BY updated_at
-            """, (parent_timestamp.isoformat(),))
+            """,
+                (parent_timestamp.isoformat(),),
+            )
 
             for row in cursor.fetchall():
                 doc_id, content, content_hash, updated_at = row
                 _changes: list[dict] = changes["changed_documents"]
-                _changes.append({
-                    'id': doc_id,
-                    'content': content,
-                    'content_hash': content_hash,
-                    'updated_at': updated_at
-                })
-                changes['has_changes'] = True
+                _changes.append(
+                    {"id": doc_id, "content": content, "content_hash": content_hash, "updated_at": updated_at}
+                )
+                changes["has_changes"] = True
 
             # Get chunks for changed documents
-            if changes['changed_documents']:
-                doc_ids = [doc['id'] for doc in changes['changed_documents']]
-                placeholders = ','.join(['?'] * len(doc_ids))
+            if changes["changed_documents"]:
+                doc_ids = [doc["id"] for doc in changes["changed_documents"]]
+                placeholders = ",".join(["?"] * len(doc_ids))
 
-                cursor = conn.execute(f"""
+                cursor = conn.execute(
+                    f"""
                     SELECT document_id, chunk_index, content, content_hash,
                            start_pos, end_pos, start_line, start_col, end_line, end_col,
                            tokens, faiss_id
                     FROM chunks
                     WHERE document_id IN ({placeholders})
                     ORDER BY document_id, chunk_index
-                """, doc_ids)
+                """,
+                    doc_ids,
+                )
 
                 chunks_by_doc = defaultdict(list)
                 for row in cursor.fetchall():
                     doc_id = row[0]
                     chunk_data = {
-                        'chunk_index': row[1],
-                        'content': row[2],
-                        'content_hash': row[3],
-                        'start_pos': row[4],
-                        'end_pos': row[5],
-                        'start_line': row[6],
-                        'start_col': row[7],
-                        'end_line': row[8],
-                        'end_col': row[9],
-                        'tokens': row[10],
-                        'faiss_id': row[11]
+                        "chunk_index": row[1],
+                        "content": row[2],
+                        "content_hash": row[3],
+                        "start_pos": row[4],
+                        "end_pos": row[5],
+                        "start_line": row[6],
+                        "start_col": row[7],
+                        "end_line": row[8],
+                        "end_col": row[9],
+                        "tokens": row[10],
+                        "faiss_id": row[11],
                     }
                     chunks_by_doc[doc_id].append(chunk_data)
 
                 # Attach chunks to documents and track FAISS changes
-                for doc in changes['changed_documents']:
-                    doc['chunks'] = chunks_by_doc.get(doc['id'], [])
+                for doc in changes["changed_documents"]:
+                    doc["chunks"] = chunks_by_doc.get(doc["id"], [])
 
                     # Add FAISS changes for modified chunks
-                    for chunk in doc['chunks']:
-                        if chunk.get('faiss_id') is not None:
-                            changes['faiss_changes'].append({
-                                'document_id': doc['id'],
-                                'chunk_index': chunk['chunk_index'],
-                                'faiss_id': chunk['faiss_id'],
-                                'action': 'update'
-                            })
+                    for chunk in doc["chunks"]:
+                        if chunk.get("faiss_id") is not None:
+                            changes["faiss_changes"].append(
+                                {
+                                    "document_id": doc["id"],
+                                    "chunk_index": chunk["chunk_index"],
+                                    "faiss_id": chunk["faiss_id"],
+                                    "action": "update",
+                                }
+                            )
 
-        logger.info(f"Manifest-based diffing found {len(changes['changed_documents'])} changed documents, "
-                    f"{len(changes['deleted_documents'])} deleted documents, "
-                    f"{len(changes['faiss_changes'])} FAISS changes")
+        logger.info(
+            f"Manifest-based diffing found {len(changes['changed_documents'])} changed documents, "
+            f"{len(changes['deleted_documents'])} deleted documents, "
+            f"{len(changes['faiss_changes'])} FAISS changes"
+        )
 
         return changes
 
@@ -1749,41 +1764,64 @@ class IncrementalBackupManager:
                     pass
 
             # Insert changed documents
-            for doc in changes['changed_documents']:
-                inc_conn.execute("""
+            for doc in changes["changed_documents"]:
+                inc_conn.execute(
+                    """
                     INSERT OR REPLACE INTO documents
                     (id, content, content_hash, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?)
-                """, (
-                    doc['id'], doc['content'], doc['content_hash'],
-                    doc.get('created_at', datetime.now(UTC).isoformat()),
-                    doc['updated_at']
-                ))
+                """,
+                    (
+                        doc["id"],
+                        doc["content"],
+                        doc["content_hash"],
+                        doc.get("created_at", datetime.now(UTC).isoformat()),
+                        doc["updated_at"],
+                    ),
+                )
 
                 # Insert chunks for this document
-                for chunk in doc.get('chunks', []):
-                    inc_conn.execute("""
+                for chunk in doc.get("chunks", []):
+                    inc_conn.execute(
+                        """
                         INSERT OR REPLACE INTO chunks
                         (document_id, chunk_index, content, content_hash,
                          start_pos, end_pos, start_line, start_col, end_line, end_col,
                          tokens, faiss_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        doc['id'], chunk['chunk_index'], chunk['content'], chunk['content_hash'],
-                        chunk['start_pos'], chunk['end_pos'], chunk['start_line'], chunk['start_col'],
-                        chunk['end_line'], chunk['end_col'], chunk['tokens'], chunk['faiss_id']
-                    ))
+                    """,
+                        (
+                            doc["id"],
+                            chunk["chunk_index"],
+                            chunk["content"],
+                            chunk["content_hash"],
+                            chunk["start_pos"],
+                            chunk["end_pos"],
+                            chunk["start_line"],
+                            chunk["start_col"],
+                            chunk["end_line"],
+                            chunk["end_col"],
+                            chunk["tokens"],
+                            chunk["faiss_id"],
+                        ),
+                    )
 
             # Record change metadata
-            inc_conn.execute("""
+            inc_conn.execute(
+                """
                 INSERT OR REPLACE INTO config (key, value)
                 VALUES (?, ?)
-            """, ('incremental_backup_type', 'wal_based'))
+            """,
+                ("incremental_backup_type", "wal_based"),
+            )
 
-            inc_conn.execute("""
+            inc_conn.execute(
+                """
                 INSERT OR REPLACE INTO config (key, value)
                 VALUES (?, ?)
-            """, ('parent_backup_timestamp', changes['parent_timestamp'].isoformat()))
+            """,
+                ("parent_backup_timestamp", changes["parent_timestamp"].isoformat()),
+            )
 
             inc_conn.commit()
 
@@ -1799,7 +1837,7 @@ class IncrementalBackupManager:
         import faiss
 
         # Get the base index from IndexIDMap if wrapped
-        if hasattr(original_index, 'index'):
+        if hasattr(original_index, "index"):
             base_index = original_index.index
         else:
             base_index = original_index
@@ -1808,15 +1846,15 @@ class IncrementalBackupManager:
         index_type = str(type(base_index).__name__)
 
         # Handle different index types and metrics
-        if 'IP' in index_type or 'InnerProduct' in index_type:
+        if "IP" in index_type or "InnerProduct" in index_type:
             # Inner product metric
             return faiss.IndexFlatIP(dimension)
-        elif 'L2' in index_type:
+        elif "L2" in index_type:
             # L2 metric (default)
             return faiss.IndexFlatL2(dimension)
-        elif 'HNSW' in index_type:
+        elif "HNSW" in index_type:
             # For HNSW, try to preserve the metric but use flat for incremental
-            if 'IP' in index_type:
+            if "IP" in index_type:
                 return faiss.IndexFlatIP(dimension)
             else:
                 return faiss.IndexFlatL2(dimension)
@@ -1837,7 +1875,7 @@ class IncrementalBackupManager:
             original_index = faiss.read_index(str(self.faiss_index_path))
 
             # Extract changed vectors
-            faiss_ids = [change['faiss_id'] for change in changes['faiss_changes']]
+            faiss_ids = [change["faiss_id"] for change in changes["faiss_changes"]]
 
             if not faiss_ids:
                 return
@@ -1877,36 +1915,32 @@ class IncrementalBackupManager:
         """Create manifest describing the incremental changes."""
 
         manifest = {
-            'type': 'incremental_changes',
-            'parent_backup_id': parent_backup_id,
-            'parent_timestamp': changes['parent_timestamp'].isoformat(),
-            'created_at': datetime.now(UTC).isoformat(),
-            'changes_summary': {
-                'documents_changed': len(changes['changed_documents']),
-                'documents_deleted': len(changes['deleted_documents']),
-                'faiss_changes': len(changes['faiss_changes'])
+            "type": "incremental_changes",
+            "parent_backup_id": parent_backup_id,
+            "parent_timestamp": changes["parent_timestamp"].isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "changes_summary": {
+                "documents_changed": len(changes["changed_documents"]),
+                "documents_deleted": len(changes["deleted_documents"]),
+                "faiss_changes": len(changes["faiss_changes"]),
             },
-            'document_changes': [
+            "document_changes": [
                 {
-                    'id': doc['id'],
-                    'content_hash': doc['content_hash'],
-                    'updated_at': doc['updated_at'],
-                    'chunks_count': len(doc.get('chunks', []))
+                    "id": doc["id"],
+                    "content_hash": doc["content_hash"],
+                    "updated_at": doc["updated_at"],
+                    "chunks_count": len(doc.get("chunks", [])),
                 }
-                for doc in changes['changed_documents']
+                for doc in changes["changed_documents"]
             ],
-            'deleted_documents': [
-                {
-                    'id': doc['id'],
-                    'action': doc.get('action', 'delete')
-                }
-                for doc in changes['deleted_documents']
+            "deleted_documents": [
+                {"id": doc["id"], "action": doc.get("action", "delete")} for doc in changes["deleted_documents"]
             ],
-            'faiss_changes': changes['faiss_changes']
+            "faiss_changes": changes["faiss_changes"],
         }
 
         manifest_path = temp_dir / "incremental_manifest.json"
-        with open(manifest_path, 'w') as f:
+        with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
 
         logger.debug(f"Created incremental change manifest: {manifest_path}")
@@ -1915,19 +1949,18 @@ class IncrementalBackupManager:
         """Update the last backup timestamp in the database."""
         try:
             with sqlite3.connect(self.database_path) as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO config (key, value)
                     VALUES (?, ?)
-                """, ('last_backup_timestamp', datetime.now(UTC).isoformat()))
+                """,
+                    ("last_backup_timestamp", datetime.now(UTC).isoformat()),
+                )
                 conn.commit()
         except sqlite3.OperationalError:
             logger.debug("Could not update last backup timestamp")
 
-    def restore_incremental_backup_chain(
-            self,
-            target_backup_id: str,
-            restore_location: Union[str, Path]
-    ) -> Path:
+    def restore_incremental_backup_chain(self, target_backup_id: str, restore_location: Union[str, Path]) -> Path:
         """
         Restore database by applying a chain of incremental backups.
 
@@ -1960,11 +1993,7 @@ class IncrementalBackupManager:
                 full_backup = backup_chain[0]
                 logger.info(f"Restoring full backup: {full_backup.backup_id}")
 
-                self.backup_manager.restore_backup(
-                    full_backup.backup_id,
-                    temp_dir,
-                    overwrite_existing=True
-                )
+                self.backup_manager.restore_backup(full_backup.backup_id, temp_dir, overwrite_existing=True)
 
                 # Apply incremental backups in order
                 for inc_backup in backup_chain[1:]:
@@ -2043,27 +2072,21 @@ class IncrementalBackupManager:
             # First, process deletions from the manifest
             manifest_path = inc_dir / "incremental_manifest.json"
             if manifest_path.exists():
-                with open(manifest_path, 'r') as f:
+                with open(manifest_path, "r") as f:
                     manifest = json.load(f)
 
                 # Apply deletions first (before any insertions/updates)
-                deleted_documents = manifest.get('deleted_documents', [])
+                deleted_documents = manifest.get("deleted_documents", [])
                 if deleted_documents:
-                    deleted_ids = [doc['id'] for doc in deleted_documents]
+                    deleted_ids = [doc["id"] for doc in deleted_documents]
                     logger.info(f"Applying {len(deleted_ids)} document deletions")
 
                     # Delete chunks first (foreign key constraint)
-                    placeholders = ','.join(['?' for _ in deleted_ids])
-                    working_conn.execute(
-                        f"DELETE FROM chunks WHERE document_id IN ({placeholders})",
-                        deleted_ids
-                    )
+                    placeholders = ",".join(["?" for _ in deleted_ids])
+                    working_conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", deleted_ids)
 
                     # Then delete documents
-                    cursor = working_conn.execute(
-                        f"DELETE FROM documents WHERE id IN ({placeholders})",
-                        deleted_ids
-                    )
+                    cursor = working_conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", deleted_ids)
                     actual_deleted = cursor.rowcount
                     logger.debug(f"Deleted {actual_deleted} documents from restored database")
 
@@ -2081,17 +2104,20 @@ class IncrementalBackupManager:
                 cursor = inc_conn.execute("PRAGMA table_info(documents)")
                 column_info = cursor.fetchall()
                 column_names = [col[1] for col in column_info]  # col[1] is the column name
-                placeholders = ', '.join(['?' for _ in column_names])
-                column_names_str = ', '.join(column_names)
+                placeholders = ", ".join(["?" for _ in column_names])
+                column_names_str = ", ".join(column_names)
 
                 # Copy changed documents with all columns
                 cursor = inc_conn.execute(f"SELECT {column_names_str} FROM documents")
                 for row in cursor.fetchall():
-                    working_conn.execute(f"""
+                    working_conn.execute(
+                        f"""
                         INSERT OR REPLACE INTO documents
                         ({column_names_str})
                         VALUES ({placeholders})
-                    """, row)
+                    """,
+                        row,
+                    )
 
                 # Copy changed chunks with optimized bulk operations
                 cursor = inc_conn.execute("SELECT * FROM chunks")
@@ -2106,10 +2132,9 @@ class IncrementalBackupManager:
 
                     # Bulk delete all chunks for affected documents
                     if affected_doc_ids:
-                        placeholders = ','.join(['?' for _ in affected_doc_ids])
+                        placeholders = ",".join(["?" for _ in affected_doc_ids])
                         working_conn.execute(
-                            f"DELETE FROM chunks WHERE document_id IN ({placeholders})",
-                            list(affected_doc_ids)
+                            f"DELETE FROM chunks WHERE document_id IN ({placeholders})", list(affected_doc_ids)
                         )
                         logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
 
@@ -2118,13 +2143,16 @@ class IncrementalBackupManager:
                     for row in all_chunk_rows:
                         chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
 
-                    working_conn.executemany("""
+                    working_conn.executemany(
+                        """
                         INSERT INTO chunks
                         (document_id, chunk_index, content, content_hash,
                          start_pos, end_pos, start_line, start_col, end_line, end_col,
                          tokens, faiss_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, chunk_insert_data)
+                    """,
+                        chunk_insert_data,
+                    )
                     logger.debug(f"Bulk inserted {len(chunk_insert_data)} chunks")
 
                 working_conn.commit()
@@ -2244,22 +2272,20 @@ class PointInTimeRecoveryManager:
 
         recovery_points = []
         for backup in backups:
-            recovery_points.append({
-                'timestamp': backup.created_at,
-                'backup_id': backup.backup_id,
-                'backup_type': backup.backup_type.value,
-                'parent_backup_id': backup.parent_backup_id,
-                'database_version': backup.database_version,
-                'size_bytes': backup.size_bytes
-            })
+            recovery_points.append(
+                {
+                    "timestamp": backup.created_at,
+                    "backup_id": backup.backup_id,
+                    "backup_type": backup.backup_type.value,
+                    "parent_backup_id": backup.parent_backup_id,
+                    "database_version": backup.database_version,
+                    "size_bytes": backup.size_bytes,
+                }
+            )
 
-        return sorted(recovery_points, key=lambda x: x['timestamp'])
+        return sorted(recovery_points, key=lambda x: x["timestamp"])
 
-    def find_recovery_point(
-            self,
-            target_timestamp: datetime,
-            tolerance_minutes: int = 60
-    ) -> Optional[Dict[str, Any]]:
+    def find_recovery_point(self, target_timestamp: datetime, tolerance_minutes: int = 60) -> Optional[Dict[str, Any]]:
         """
         Find the best recovery point for a target timestamp.
 
@@ -2283,7 +2309,7 @@ class PointInTimeRecoveryManager:
         min_time_diff = timedelta(minutes=tolerance_minutes + 1)
 
         for point in timeline:
-            point_time = point['timestamp']
+            point_time = point["timestamp"]
             if point_time <= target_timestamp:
                 time_diff = target_timestamp - point_time
                 if time_diff < min_time_diff:
@@ -2296,11 +2322,11 @@ class PointInTimeRecoveryManager:
         return None
 
     def restore_to_point_in_time(
-            self,
-            target_timestamp: datetime,
-            restore_location: Union[str, Path],
-            tolerance_minutes: int = 60,
-            dry_run: bool = False
+        self,
+        target_timestamp: datetime,
+        restore_location: Union[str, Path],
+        tolerance_minutes: int = 60,
+        dry_run: bool = False,
     ) -> Dict[str, Any]:
         """
         Restore database to a specific point in time.
@@ -2328,64 +2354,63 @@ class PointInTimeRecoveryManager:
         recovery_point = self.find_recovery_point(target_timestamp, tolerance_minutes)
         if not recovery_point:
             return {
-                'success': False,
-                'error': f'No recovery point found within {tolerance_minutes} minutes of {target_timestamp}',
-                'target_timestamp': target_timestamp,
-                'available_timeline': self.get_recovery_timeline()
+                "success": False,
+                "error": f"No recovery point found within {tolerance_minutes} minutes of {target_timestamp}",
+                "target_timestamp": target_timestamp,
+                "available_timeline": self.get_recovery_timeline(),
             }
 
         # Calculate time difference
-        actual_timestamp = recovery_point['timestamp']
+        actual_timestamp = recovery_point["timestamp"]
         time_diff = abs(target_timestamp - actual_timestamp)
 
-        logger.info(f"Found recovery point: {recovery_point['backup_id']} at {actual_timestamp} "
-                    f"(diff: {time_diff.total_seconds():.1f} seconds)")
+        logger.info(
+            f"Found recovery point: {recovery_point['backup_id']} at {actual_timestamp} "
+            f"(diff: {time_diff.total_seconds():.1f} seconds)"
+        )
 
         if dry_run:
             return {
-                'success': True,
-                'dry_run': True,
-                'target_timestamp': target_timestamp,
-                'actual_timestamp': actual_timestamp,
-                'time_difference_seconds': time_diff.total_seconds(),
-                'recovery_point': recovery_point,
-                'restore_location': str(restore_location),
-                'recovery_chain': self._get_recovery_chain(recovery_point['backup_id'])
+                "success": True,
+                "dry_run": True,
+                "target_timestamp": target_timestamp,
+                "actual_timestamp": actual_timestamp,
+                "time_difference_seconds": time_diff.total_seconds(),
+                "recovery_point": recovery_point,
+                "restore_location": str(restore_location),
+                "recovery_chain": self._get_recovery_chain(recovery_point["backup_id"]),
             }
 
         try:
             # Perform the actual recovery
-            if recovery_point['backup_type'] == 'full':
+            if recovery_point["backup_type"] == "full":
                 # Simple full backup restore
                 restore_path = self.backup_manager.restore_backup(
-                    recovery_point['backup_id'],
-                    restore_location,
-                    overwrite_existing=True
+                    recovery_point["backup_id"], restore_location, overwrite_existing=True
                 )
             else:
                 # Incremental backup chain restore
                 restore_path = self.incremental_manager.restore_incremental_backup_chain(
-                    recovery_point['backup_id'],
-                    restore_location
+                    recovery_point["backup_id"], restore_location
                 )
 
             return {
-                'success': True,
-                'target_timestamp': target_timestamp,
-                'actual_timestamp': actual_timestamp,
-                'time_difference_seconds': time_diff.total_seconds(),
-                'recovery_point': recovery_point,
-                'restore_location': str(restore_path),
-                'recovery_chain': self._get_recovery_chain(recovery_point['backup_id'])
+                "success": True,
+                "target_timestamp": target_timestamp,
+                "actual_timestamp": actual_timestamp,
+                "time_difference_seconds": time_diff.total_seconds(),
+                "recovery_point": recovery_point,
+                "restore_location": str(restore_path),
+                "recovery_chain": self._get_recovery_chain(recovery_point["backup_id"]),
             }
 
         except Exception as e:
             logger.error(f"Point-in-time recovery failed: {e}")
             return {
-                'success': False,
-                'error': str(e),
-                'target_timestamp': target_timestamp,
-                'recovery_point': recovery_point
+                "success": False,
+                "error": str(e),
+                "target_timestamp": target_timestamp,
+                "recovery_point": recovery_point,
             }
 
     def _get_recovery_chain(self, backup_id: str) -> List[Dict[str, Any]]:
@@ -2395,10 +2420,10 @@ class PointInTimeRecoveryManager:
             backup_chain = self.incremental_manager._build_backup_chain(backup_id)
             return [
                 {
-                    'backup_id': backup.backup_id,
-                    'backup_type': backup.backup_type.value,
-                    'created_at': backup.created_at,
-                    'database_version': backup.database_version
+                    "backup_id": backup.backup_id,
+                    "backup_type": backup.backup_type.value,
+                    "created_at": backup.created_at,
+                    "database_version": backup.database_version,
                 }
                 for backup in backup_chain
             ]
@@ -2406,12 +2431,14 @@ class PointInTimeRecoveryManager:
             # Single backup (probably full)
             backup = self.backup_manager._find_backup_metadata(backup_id)
             if backup:
-                return [{
-                    'backup_id': backup.backup_id,
-                    'backup_type': backup.backup_type.value,
-                    'created_at': backup.created_at,
-                    'database_version': backup.database_version
-                }]
+                return [
+                    {
+                        "backup_id": backup.backup_id,
+                        "backup_type": backup.backup_type.value,
+                        "created_at": backup.created_at,
+                        "database_version": backup.database_version,
+                    }
+                ]
             return []
 
     def validate_recovery_timeline(self) -> Dict[str, Any]:
@@ -2431,28 +2458,28 @@ class PointInTimeRecoveryManager:
         warnings = []
 
         # Check for gaps in the timeline
-        full_backups = [p for p in timeline if p['backup_type'] == 'full']
-        incremental_backups = [p for p in timeline if p['backup_type'] == 'incremental']
+        full_backups = [p for p in timeline if p["backup_type"] == "full"]
+        incremental_backups = [p for p in timeline if p["backup_type"] == "incremental"]
 
         if not full_backups:
             issues.append("No full backups found - recovery not possible")
 
         # Validate incremental backup chains
         for inc_backup in incremental_backups:
-            parent_id = inc_backup.get('parent_backup_id')
+            parent_id = inc_backup.get("parent_backup_id")
             if parent_id:
-                parent_found = any(p['backup_id'] == parent_id for p in timeline)
+                parent_found = any(p["backup_id"] == parent_id for p in timeline)
                 if not parent_found:
-                    issues.append(f"Incremental backup {inc_backup['backup_id']} references "
-                                  f"missing parent {parent_id}")
+                    issues.append(
+                        f"Incremental backup {inc_backup['backup_id']} references " f"missing parent {parent_id}"
+                    )
 
         # Check for orphaned incremental backups
         for inc_backup in incremental_backups:
             try:
-                chain = self._get_recovery_chain(inc_backup['backup_id'])
-                if not any(c['backup_type'] == 'full' for c in chain):
-                    warnings.append(f"Incremental backup {inc_backup['backup_id']} "
-                                    f"has no full backup in its chain")
+                chain = self._get_recovery_chain(inc_backup["backup_id"])
+                if not any(c["backup_type"] == "full" for c in chain):
+                    warnings.append(f"Incremental backup {inc_backup['backup_id']} " f"has no full backup in its chain")
             except Exception as e:
                 issues.append(f"Failed to validate chain for {inc_backup['backup_id']}: {e}")
 
@@ -2462,38 +2489,33 @@ class PointInTimeRecoveryManager:
                 prev_backup = timeline[i - 1]
                 curr_backup = timeline[i]
 
-                time_gap = curr_backup['timestamp'] - prev_backup['timestamp']
+                time_gap = curr_backup["timestamp"] - prev_backup["timestamp"]
                 if time_gap.total_seconds() > 24 * 3600:  # More than 24 hours
-                    warnings.append(f"Large time gap ({time_gap.days} days) between "
-                                    f"{prev_backup['backup_id']} and {curr_backup['backup_id']}")
+                    warnings.append(
+                        f"Large time gap ({time_gap.days} days) between "
+                        f"{prev_backup['backup_id']} and {curr_backup['backup_id']}"
+                    )
 
         # Calculate recovery window
         recovery_window = None
         if timeline:
-            earliest = min(p['timestamp'] for p in timeline)
-            latest = max(p['timestamp'] for p in timeline)
-            recovery_window = {
-                'earliest': earliest,
-                'latest': latest,
-                'duration_days': (latest - earliest).days
-            }
+            earliest = min(p["timestamp"] for p in timeline)
+            latest = max(p["timestamp"] for p in timeline)
+            recovery_window = {"earliest": earliest, "latest": latest, "duration_days": (latest - earliest).days}
 
         return {
-            'valid': len(issues) == 0,
-            'issues': issues,
-            'warnings': warnings,
-            'total_backups': len(timeline),
-            'full_backups': len(full_backups),
-            'incremental_backups': len(incremental_backups),
-            'recovery_window': recovery_window,
-            'timeline': timeline
+            "valid": len(issues) == 0,
+            "issues": issues,
+            "warnings": warnings,
+            "total_backups": len(timeline),
+            "full_backups": len(full_backups),
+            "incremental_backups": len(incremental_backups),
+            "recovery_window": recovery_window,
+            "timeline": timeline,
         }
 
     def cleanup_recovery_timeline(
-            self,
-            max_age_days: Optional[int] = None,
-            keep_full_backups: int = 3,
-            dry_run: bool = False
+        self, max_age_days: Optional[int] = None, keep_full_backups: int = 3, dry_run: bool = False
     ) -> Dict[str, Any]:
         """
         Clean up old backups while maintaining recovery timeline integrity.
@@ -2517,12 +2539,11 @@ class PointInTimeRecoveryManager:
             max_age_days = self.config.retention_days
 
         cutoff_date = datetime.now(UTC) - timedelta(days=max_age_days)
-        logger.info(f"Cleaning up recovery timeline (max_age: {max_age_days} days, "
-                    f"keep_full: {keep_full_backups})")
+        logger.info(f"Cleaning up recovery timeline (max_age: {max_age_days} days, " f"keep_full: {keep_full_backups})")
 
         timeline = self.get_recovery_timeline()
-        full_backups = [p for p in timeline if p['backup_type'] == 'full']
-        full_backups.sort(key=lambda x: x['timestamp'], reverse=True)  # Newest first
+        full_backups = [p for p in timeline if p["backup_type"] == "full"]
+        full_backups.sort(key=lambda x: x["timestamp"], reverse=True)  # Newest first
 
         # Determine which backups to delete
         backups_to_delete = []
@@ -2530,19 +2551,20 @@ class PointInTimeRecoveryManager:
 
         # Always keep the most recent full backups
         recent_full_backups = full_backups[:keep_full_backups]
-        recent_full_ids = {b['backup_id'] for b in recent_full_backups}
+        recent_full_ids = {b["backup_id"] for b in recent_full_backups}
 
         for backup in timeline:
-            if backup['timestamp'] < cutoff_date:
-                if backup['backup_type'] == 'full' and backup['backup_id'] in recent_full_ids:
+            if backup["timestamp"] < cutoff_date:
+                if backup["backup_type"] == "full" and backup["backup_id"] in recent_full_ids:
                     # Keep recent full backups regardless of age
                     backups_to_keep.append(backup)
-                elif backup['backup_type'] == 'incremental':
+                elif backup["backup_type"] == "incremental":
                     # Check if incremental backup depends on a kept full backup
                     try:
-                        chain = self._get_recovery_chain(backup['backup_id'])
-                        full_in_chain = any(c['backup_id'] in recent_full_ids and
-                                            c['backup_type'] == 'full' for c in chain)
+                        chain = self._get_recovery_chain(backup["backup_id"])
+                        full_in_chain = any(
+                            c["backup_id"] in recent_full_ids and c["backup_type"] == "full" for c in chain
+                        )
                         if full_in_chain:
                             backups_to_keep.append(backup)
                         else:
@@ -2563,27 +2585,24 @@ class PointInTimeRecoveryManager:
         if not dry_run:
             for backup in backups_to_delete:
                 try:
-                    self.backup_manager.delete_backup(backup['backup_id'])
+                    self.backup_manager.delete_backup(backup["backup_id"])
                     deleted_count += 1
                     logger.debug(f"Deleted backup: {backup['backup_id']}")
                 except Exception as e:
                     deletion_errors.append(f"Failed to delete {backup['backup_id']}: {e}")
 
         return {
-            'dry_run': dry_run,
-            'total_backups': len(timeline),
-            'backups_to_delete': len(backups_to_delete),
-            'backups_to_keep': len(backups_to_keep),
-            'deleted_count': deleted_count,
-            'deletion_errors': deletion_errors,
-            'kept_backups': backups_to_keep,
-            'would_delete' if dry_run else 'deleted': backups_to_delete
+            "dry_run": dry_run,
+            "total_backups": len(timeline),
+            "backups_to_delete": len(backups_to_delete),
+            "backups_to_keep": len(backups_to_keep),
+            "deleted_count": deleted_count,
+            "deletion_errors": deletion_errors,
+            "kept_backups": backups_to_keep,
+            "would_delete" if dry_run else "deleted": backups_to_delete,
         }
 
-    def get_recovery_recommendations(
-            self,
-            target_timestamp: datetime
-    ) -> Dict[str, Any]:
+    def get_recovery_recommendations(self, target_timestamp: datetime) -> Dict[str, Any]:
         """
         Get recommendations for recovering to a specific point in time.
 
@@ -2602,59 +2621,60 @@ class PointInTimeRecoveryManager:
 
         if not timeline:
             return {
-                'feasible': False,
-                'reason': 'No backups available',
-                'recommendations': ['Create initial full backup']
+                "feasible": False,
+                "reason": "No backups available",
+                "recommendations": ["Create initial full backup"],
             }
 
         # Find closest recovery points
-        before_points = [p for p in timeline if p['timestamp'] <= target_timestamp]
-        after_points = [p for p in timeline if p['timestamp'] > target_timestamp]
+        before_points = [p for p in timeline if p["timestamp"] <= target_timestamp]
+        after_points = [p for p in timeline if p["timestamp"] > target_timestamp]
 
         recommendations = []
 
         if before_points:
-            closest_before = max(before_points, key=lambda x: x['timestamp'])
-            time_diff_before = target_timestamp - closest_before['timestamp']
+            closest_before = max(before_points, key=lambda x: x["timestamp"])
+            time_diff_before = target_timestamp - closest_before["timestamp"]
 
-            recommendations.append({
-                'option': 'restore_to_closest_before',
-                'backup_id': closest_before['backup_id'],
-                'timestamp': closest_before['timestamp'],
-                'time_difference_seconds': time_diff_before.total_seconds(),
-                'data_loss': 'None (exact recovery point)',
-                'complexity': 'Low' if closest_before['backup_type'] == 'full' else 'Medium'
-            })
+            recommendations.append(
+                {
+                    "option": "restore_to_closest_before",
+                    "backup_id": closest_before["backup_id"],
+                    "timestamp": closest_before["timestamp"],
+                    "time_difference_seconds": time_diff_before.total_seconds(),
+                    "data_loss": "None (exact recovery point)",
+                    "complexity": "Low" if closest_before["backup_type"] == "full" else "Medium",
+                }
+            )
 
         if after_points:
-            closest_after = min(after_points, key=lambda x: x['timestamp'])
-            time_diff_after = closest_after['timestamp'] - target_timestamp
+            closest_after = min(after_points, key=lambda x: x["timestamp"])
+            time_diff_after = closest_after["timestamp"] - target_timestamp
 
-            recommendations.append({
-                'option': 'restore_to_closest_after',
-                'backup_id': closest_after['backup_id'],
-                'timestamp': closest_after['timestamp'],
-                'time_difference_seconds': time_diff_after.total_seconds(),
-                'data_loss': f"May include {time_diff_after.total_seconds():.0f} seconds of extra data",
-                'complexity': 'Low' if closest_after['backup_type'] == 'full' else 'Medium'
-            })
+            recommendations.append(
+                {
+                    "option": "restore_to_closest_after",
+                    "backup_id": closest_after["backup_id"],
+                    "timestamp": closest_after["timestamp"],
+                    "time_difference_seconds": time_diff_after.total_seconds(),
+                    "data_loss": f"May include {time_diff_after.total_seconds():.0f} seconds of extra data",
+                    "complexity": "Low" if closest_after["backup_type"] == "full" else "Medium",
+                }
+            )
 
         # Determine feasibility
         feasible = len(before_points) > 0
-        earliest = min(timeline, key=lambda x: x['timestamp'])
-        latest = max(timeline, key=lambda x: x['timestamp'])
+        earliest = min(timeline, key=lambda x: x["timestamp"])
+        latest = max(timeline, key=lambda x: x["timestamp"])
 
         return {
-            'feasible': feasible,
-            'target_timestamp': target_timestamp,
-            'recovery_window': {
-                'earliest': earliest['timestamp'],
-                'latest': latest['timestamp']
+            "feasible": feasible,
+            "target_timestamp": target_timestamp,
+            "recovery_window": {"earliest": earliest["timestamp"], "latest": latest["timestamp"]},
+            "recommendations": recommendations,
+            "timeline_summary": {
+                "total_points": len(timeline),
+                "full_backups": len([p for p in timeline if p["backup_type"] == "full"]),
+                "incremental_backups": len([p for p in timeline if p["backup_type"] == "incremental"]),
             },
-            'recommendations': recommendations,
-            'timeline_summary': {
-                'total_points': len(timeline),
-                'full_backups': len([p for p in timeline if p['backup_type'] == 'full']),
-                'incremental_backups': len([p for p in timeline if p['backup_type'] == 'incremental'])
-            }
         }

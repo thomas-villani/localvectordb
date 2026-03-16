@@ -33,12 +33,7 @@ class TestSearchClause:
 
     def test_search_clause_creation(self):
         """Test creating SearchClause with all parameters."""
-        clause = SearchClause(
-            field="content",
-            query="machine learning",
-            weight=0.8,
-            search_type="hybrid"
-        )
+        clause = SearchClause(field="content", query="machine learning", weight=0.8, search_type="hybrid")
 
         assert clause.field == "content"
         assert clause.query == "machine learning"
@@ -63,7 +58,7 @@ class TestSemanticFilter:
             concept="artificial intelligence",
             threshold=0.8,
             metric=SimilarityMetric.COSINE,
-            embedding_model="test-model"
+            embedding_model="test-model",
         )
 
         assert semantic_filter.field == "category"
@@ -92,11 +87,7 @@ class TestAggregationClause:
 
     def test_aggregation_clause_creation(self):
         """Test creating AggregationClause with all parameters."""
-        agg = AggregationClause(
-            field="rating",
-            function="avg",
-            alias="average_rating"
-        )
+        agg = AggregationClause(field="rating", function="avg", alias="average_rating")
 
         assert agg.field == "rating"
         assert agg.function == "avg"
@@ -331,9 +322,7 @@ class TestQueryBuilderFilterMethods:
 
     def test_semantic_filter_with_metric(self, builder):
         """Test semantic filtering with specific metric."""
-        result = builder.semantic_filter(
-            "content", "AI", 0.9, metric=SimilarityMetric.EUCLIDEAN
-        )
+        result = builder.semantic_filter("content", "AI", 0.9, metric=SimilarityMetric.EUCLIDEAN)
 
         sem_filter = result._semantic_filters[0]
         assert sem_filter.metric == SimilarityMetric.EUCLIDEAN
@@ -537,16 +526,17 @@ class TestQueryBuilderChaining:
 
     def test_complex_chaining(self, builder):
         """Test complex method chaining."""
-        result = (builder
-                  .search("machine learning")
-                  .filter("category", "AI")
-                  .semantic_filter("methodology", "supervised", 0.8)
-                  .limit(20)
-                  .offset(10)
-                  .order_by("rating", "desc")
-                  .group_by("author")
-                  .count_by("*", "doc_count")
-                  .having("doc_count", "gt", 2))
+        result = (
+            builder.search("machine learning")
+            .filter("category", "AI")
+            .semantic_filter("methodology", "supervised", 0.8)
+            .limit(20)
+            .offset(10)
+            .order_by("rating", "desc")
+            .group_by("author")
+            .count_by("*", "doc_count")
+            .having("doc_count", "gt", 2)
+        )
 
         # Verify all operations were applied
         assert len(result._search_clauses) == 1
@@ -620,10 +610,7 @@ class TestQueryBuilderUtilityMethods:
 
     def test_debug_info(self, builder):
         """Test debug_info functionality."""
-        builder_with_data = (builder
-                             .search("test")
-                             .filter("category", "AI")
-                             .limit(20))
+        builder_with_data = builder.search("test").filter("category", "AI").limit(20)
 
         debug_info = builder_with_data.debug_info()
 
@@ -636,12 +623,9 @@ class TestQueryBuilderUtilityMethods:
 
     def test_generate_sql_preview(self, builder):
         """Test SQL preview generation."""
-        query = (builder
-                 .search("machine learning")
-                 .filter("category", "AI")
-                 .order_by("rating", "desc")
-                 .limit(10)
-                 .offset(5))
+        query = (
+            builder.search("machine learning").filter("category", "AI").order_by("rating", "desc").limit(10).offset(5)
+        )
 
         # The QueryBuilder doesn't have _generate_sql_preview method
         # Test that the query structure is correct instead
@@ -700,11 +684,7 @@ class TestQueryExecutor:
 
         # Mock query result
         mock_result = QueryResult(
-            id="doc1",
-            score=0.9,
-            type="document",
-            content="Test content",
-            metadata={"category": "AI"}
+            id="doc1", score=0.9, type="document", content="Test content", metadata={"category": "AI"}
         )
         db.query.return_value = [mock_result]
         db.filter.return_value = []
@@ -720,7 +700,7 @@ class TestQueryExecutor:
         """Test executing a search query."""
         query = builder.search("machine learning")
 
-        with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.QueryExecutor") as mock_executor_class:
             mock_executor = Mock()
             mock_executor.execute.return_value = []
             mock_executor_class.return_value = mock_executor
@@ -734,7 +714,7 @@ class TestQueryExecutor:
         """Test executing a filter-only query."""
         query = builder.filter("category", "AI")
 
-        with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.QueryExecutor") as mock_executor_class:
             mock_executor = Mock()
             mock_executor.execute.return_value = []
             mock_executor_class.return_value = mock_executor
@@ -747,7 +727,7 @@ class TestQueryExecutor:
         """Test count functionality."""
         query = builder.search("test")
 
-        with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.QueryExecutor") as mock_executor_class:
             mock_executor = Mock()
             mock_executor.count.return_value = 5
             mock_executor_class.return_value = mock_executor
@@ -761,7 +741,7 @@ class TestQueryExecutor:
         """Test stream functionality."""
         query = builder.search("test")
 
-        with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.QueryExecutor") as mock_executor_class:
             mock_executor = Mock()
             mock_stream = Mock()
             mock_executor.stream.return_value = mock_stream
@@ -798,7 +778,7 @@ class TestAsyncQueryExecutor:
         """Test async execution."""
         query = builder.search("machine learning")
 
-        with patch('localvectordb.query_builder.AsyncQueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.AsyncQueryExecutor") as mock_executor_class:
             mock_executor = AsyncMock()
 
             async def mock_execute():
@@ -817,7 +797,7 @@ class TestAsyncQueryExecutor:
         """Test async count functionality."""
         query = builder.search("test")
 
-        with patch('localvectordb.query_builder.AsyncQueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.AsyncQueryExecutor") as mock_executor_class:
             mock_executor = Mock()
 
             async def mock_count():
@@ -835,7 +815,7 @@ class TestAsyncQueryExecutor:
         """Test async stream functionality."""
         query = builder.search("test")
 
-        with patch('localvectordb.query_builder.AsyncQueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.AsyncQueryExecutor") as mock_executor_class:
             mock_executor = Mock()
 
             async def mock_stream(batch_size):
@@ -859,18 +839,18 @@ class TestQueryBuilderIntegration:
             Document(
                 id="doc1",
                 content="Machine learning and AI research",
-                metadata={"category": "AI", "rating": 4.5, "author": "John Doe"}
+                metadata={"category": "AI", "rating": 4.5, "author": "John Doe"},
             ),
             Document(
                 id="doc2",
                 content="Deep learning neural networks",
-                metadata={"category": "AI", "rating": 4.8, "author": "Jane Smith"}
+                metadata={"category": "AI", "rating": 4.8, "author": "Jane Smith"},
             ),
             Document(
                 id="doc3",
                 content="Data analysis with Python",
-                metadata={"category": "Programming", "rating": 4.2, "author": "Bob Johnson"}
-            )
+                metadata={"category": "Programming", "rating": 4.2, "author": "Bob Johnson"},
+            ),
         ]
 
     @pytest.fixture(scope="function")
@@ -881,22 +861,22 @@ class TestQueryBuilderIntegration:
 
         # Mock query results
         def mock_query(**kwargs):
-            query_text = kwargs.get('query', '')
-            if 'machine learning' in query_text.lower():
+            query_text = kwargs.get("query", "")
+            if "machine learning" in query_text.lower():
                 return [
                     QueryResult(
                         id="doc1",
                         score=0.95,
                         type="document",
                         content=mock_documents[0].content,
-                        metadata=mock_documents[0].metadata
+                        metadata=mock_documents[0].metadata,
                     )
                 ]
             return []
 
         def mock_filter(**kwargs):
-            where = kwargs.get('where', {})
-            if where.get('category') == 'AI':
+            where = kwargs.get("where", {})
+            if where.get("category") == "AI":
                 return mock_documents[:2]
             return mock_documents
 
@@ -909,10 +889,7 @@ class TestQueryBuilderIntegration:
         """Test combining search and filter operations."""
         builder = QueryBuilder(mock_db)
 
-        query = (builder
-                 .search("machine learning")
-                 .filter("category", "AI")
-                 .limit(10))
+        query = builder.search("machine learning").filter("category", "AI").limit(10)
 
         # Verify query structure
         assert len(query._search_clauses) == 1
@@ -928,13 +905,14 @@ class TestQueryBuilderIntegration:
         """Test complex query with aggregations."""
         builder = QueryBuilder(mock_db)
 
-        query = (builder
-                 .search("AI")
-                 .group_by("category")
-                 .count_by("*", "doc_count")
-                 .avg_by("rating", "avg_rating")
-                 .having("doc_count", "gt", 1)
-                 .order_by("avg_rating", "desc"))
+        query = (
+            builder.search("AI")
+            .group_by("category")
+            .count_by("*", "doc_count")
+            .avg_by("rating", "avg_rating")
+            .having("doc_count", "gt", 1)
+            .order_by("avg_rating", "desc")
+        )
 
         # Verify query structure
         assert len(query._group_by) == 1
@@ -953,11 +931,12 @@ class TestQueryBuilderIntegration:
         """Test semantic filtering integration."""
         builder = QueryBuilder(mock_db)
 
-        query = (builder
-                 .search("machine learning")
-                 .semantic_filter("methodology", "supervised learning", 0.8)
-                 .filter("rating", gte_=4.0)
-                 .chunks())
+        query = (
+            builder.search("machine learning")
+            .semantic_filter("methodology", "supervised learning", 0.8)
+            .filter("rating", gte_=4.0)
+            .chunks()
+        )
 
         assert len(query._semantic_filters) == 1
         assert query._return_type == "chunks"
@@ -985,7 +964,7 @@ class TestQueryBuilderErrorHandling:
     def test_empty_query_execution(self, builder):
         """Test executing empty query."""
         # Empty query should still work (filter-only)
-        with patch('localvectordb.query_builder.QueryExecutor') as mock_executor_class:
+        with patch("localvectordb.query_builder.QueryExecutor") as mock_executor_class:
             mock_executor = Mock()
             mock_executor.execute.return_value = []
             mock_executor_class.return_value = mock_executor
@@ -995,18 +974,14 @@ class TestQueryBuilderErrorHandling:
 
     def test_multiple_search_clauses(self, builder):
         """Test multiple search clauses."""
-        query = (builder
-                 .search("machine learning")
-                 .search("artificial intelligence"))
+        query = builder.search("machine learning").search("artificial intelligence")
 
         assert len(query._search_clauses) == 2
 
     def test_conflicting_operations(self, builder):
         """Test potentially conflicting operations."""
         # This should work - return type can be changed
-        query = (builder
-                 .documents()
-                 .chunks())
+        query = builder.documents().chunks()
 
         assert query._return_type == "chunks"
 
@@ -1039,22 +1014,22 @@ class TestQueryExecutorCore:
                 score=0.9,
                 type="document",
                 content="Machine learning content",
-                metadata={"category": "AI", "rating": 4.5, "author": "John"}
+                metadata={"category": "AI", "rating": 4.5, "author": "John"},
             ),
             QueryResult(
                 id="doc2",
                 score=0.8,
                 type="document",
                 content="Deep learning content",
-                metadata={"category": "AI", "rating": 4.8, "author": "Jane"}
+                metadata={"category": "AI", "rating": 4.8, "author": "Jane"},
             ),
             QueryResult(
                 id="doc3",
                 score=0.7,
                 type="document",
                 content="Data science content",
-                metadata={"category": "Data", "rating": 4.2, "author": "John"}
-            )
+                metadata={"category": "Data", "rating": 4.2, "author": "John"},
+            ),
         ]
 
     def test_query_executor_initialization(self, mock_db):
@@ -1091,27 +1066,18 @@ class TestQueryExecutorCore:
         """Test combining multiple filters on same field."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .filter("rating", gt_=4.0)
-                  .filter("rating", lt_=5.0))
+        builder = QueryBuilder(mock_db).filter("rating", gt_=4.0).filter("rating", lt_=5.0)
         executor = QueryExecutor(builder)
 
         result = executor._combine_exact_filters()
-        expected = {
-            "$and": [
-                {"rating": {"$gt": 4.0}},
-                {"rating": {"$lt": 5.0}}
-            ]
-        }
+        expected = {"$and": [{"rating": {"$gt": 4.0}}, {"rating": {"$lt": 5.0}}]}
         assert result == expected
 
     def test_combine_exact_filters_multiple_fields(self, mock_db):
         """Test combining filters on different fields."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .filter("category", "AI")
-                  .filter("rating", gt_=4.0))
+        builder = QueryBuilder(mock_db).filter("category", "AI").filter("rating", gt_=4.0)
         executor = QueryExecutor(builder)
 
         result = executor._combine_exact_filters()
@@ -1141,9 +1107,7 @@ class TestQueryExecutorCore:
         """Test building order by clause with multiple fields (uses first)."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .order_by("category", "asc")
-                  .order_by("rating", "desc"))
+        builder = QueryBuilder(mock_db).order_by("category", "asc").order_by("rating", "desc")
         executor = QueryExecutor(builder)
 
         result = executor._build_order_by_clause()
@@ -1178,23 +1142,31 @@ class TestQueryExecutorCore:
         """Test execution plan generation for hybrid query."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .search("machine learning")
-                  .filter("category", "AI")
-                  .semantic_filter("methodology", "supervised", 0.8)
-                  .group_by("author")
-                  .count_by("*")
-                  .having("count", "gt", 1)
-                  .order_by("count", "desc")
-                  .rerank("recency", date_field="created_at"))
+        builder = (
+            QueryBuilder(mock_db)
+            .search("machine learning")
+            .filter("category", "AI")
+            .semantic_filter("methodology", "supervised", 0.8)
+            .group_by("author")
+            .count_by("*")
+            .having("count", "gt", 1)
+            .order_by("count", "desc")
+            .rerank("recency", date_field="created_at")
+        )
         executor = QueryExecutor(builder)
 
         plan = executor._generate_execution_plan()
 
         assert plan["query_type"] == "hybrid"
         expected_steps = [
-            "vector_search", "exact_filtering", "semantic_filtering",
-            "grouping", "aggregation", "having_filter", "sorting", "reranking"
+            "vector_search",
+            "exact_filtering",
+            "semantic_filtering",
+            "grouping",
+            "aggregation",
+            "having_filter",
+            "sorting",
+            "reranking",
         ]
         for step in expected_steps:
             assert step in plan["steps"]
@@ -1221,22 +1193,22 @@ class TestQueryExecutorExecution:
                 score=0.9,
                 type="document",
                 content="Machine learning content",
-                metadata={"category": "AI", "rating": 4.5, "author": "John", "created_at": "2024-01-01"}
+                metadata={"category": "AI", "rating": 4.5, "author": "John", "created_at": "2024-01-01"},
             ),
             QueryResult(
                 id="doc2",
                 score=0.8,
                 type="document",
                 content="Deep learning content",
-                metadata={"category": "AI", "rating": 4.8, "author": "Jane", "created_at": "2024-02-01"}
+                metadata={"category": "AI", "rating": 4.8, "author": "Jane", "created_at": "2024-02-01"},
             ),
             QueryResult(
                 id="doc3",
                 score=0.7,
                 type="document",
                 content="Data science content",
-                metadata={"category": "Data", "rating": 4.2, "author": "John", "created_at": "2024-03-01"}
-            )
+                metadata={"category": "Data", "rating": 4.2, "author": "John", "created_at": "2024-03-01"},
+            ),
         ]
 
     def test_execute_search_query_basic(self, mock_db, sample_query_results):
@@ -1264,7 +1236,7 @@ class TestQueryExecutorExecution:
             context_window=2,
             semantic_dedup_threshold=None,
             document_scoring_method="frequency_boost",
-            document_scoring_options=None
+            document_scoring_options=None,
         )
 
         assert results == sample_query_results
@@ -1275,12 +1247,14 @@ class TestQueryExecutorExecution:
 
         mock_db.query.return_value = sample_query_results
 
-        builder = (QueryBuilder(mock_db)
-                  .search("machine learning", search_type="vector")
-                  .filter("category", "AI")
-                  .filter("rating", gt_=4.0)
-                  .limit(5)
-                  .offset(2))
+        builder = (
+            QueryBuilder(mock_db)
+            .search("machine learning", search_type="vector")
+            .filter("category", "AI")
+            .filter("rating", gt_=4.0)
+            .limit(5)
+            .offset(2)
+        )
         executor = QueryExecutor(builder)
 
         executor._execute_search_query()
@@ -1299,7 +1273,7 @@ class TestQueryExecutorExecution:
             context_window=2,
             semantic_dedup_threshold=None,
             document_scoring_method="frequency_boost",
-            document_scoring_options=None
+            document_scoring_options=None,
         )
 
     def test_execute_filter_only_query(self, mock_db):
@@ -1310,25 +1284,18 @@ class TestQueryExecutorExecution:
         # Setup mock documents response
         mock_docs = [
             Document(id="doc1", content="Content 1", metadata={"category": "AI"}),
-            Document(id="doc2", content="Content 2", metadata={"category": "AI"})
+            Document(id="doc2", content="Content 2", metadata={"category": "AI"}),
         ]
         mock_db.filter.return_value = mock_docs
 
-        builder = (QueryBuilder(mock_db)
-                  .filter("category", "AI")
-                  .limit(10)
-                  .offset(5)
-                  .order_by("rating", "desc"))
+        builder = QueryBuilder(mock_db).filter("category", "AI").limit(10).offset(5).order_by("rating", "desc")
         executor = QueryExecutor(builder)
 
         results = executor._execute_filter_only_query()
 
         # Verify database was called correctly
         mock_db.filter.assert_called_once_with(
-            where={"category": "AI"},
-            limit=15,  # limit + offset
-            offset=0,
-            order_by="rating DESC"
+            where={"category": "AI"}, limit=15, offset=0, order_by="rating DESC"  # limit + offset
         )
 
         # Verify QueryResult objects were created
@@ -1370,9 +1337,7 @@ class TestQueryExecutorExecution:
         """Test sorting with multiple order by clauses."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .order_by("author", "asc")
-                  .order_by("rating", "desc"))
+        builder = QueryBuilder(mock_db).order_by("author", "asc").order_by("rating", "desc")
         executor = QueryExecutor(builder)
 
         sorted_results = executor._apply_sorting(sample_query_results.copy())
@@ -1390,8 +1355,7 @@ class TestQueryExecutorExecution:
 
         # Add result with missing field
         missing_field_result = QueryResult(
-            id="doc4", score=0.6, type="document",
-            content="Content", metadata={"category": "Other"}
+            id="doc4", score=0.6, type="document", content="Content", metadata={"category": "Other"}
         )
         results = sample_query_results + [missing_field_result]
 
@@ -1407,10 +1371,7 @@ class TestQueryExecutorExecution:
         """Test post-processing with offset and limit."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .order_by("score", "desc")
-                  .offset(1)
-                  .limit(1))
+        builder = QueryBuilder(mock_db).order_by("score", "desc").offset(1).limit(1)
         executor = QueryExecutor(builder)
 
         results = executor._apply_post_processing(sample_query_results.copy())
@@ -1423,11 +1384,9 @@ class TestQueryExecutorExecution:
         """Test post-processing skips sorting when aggregations are present."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .order_by("score", "desc")
-                  .count_by("*")  # This adds aggregations
-                  .offset(1)
-                  .limit(1))
+        builder = (
+            QueryBuilder(mock_db).order_by("score", "desc").count_by("*").offset(1).limit(1)  # This adds aggregations
+        )
         executor = QueryExecutor(builder)
 
         results = executor._apply_post_processing(sample_query_results.copy())
@@ -1455,21 +1414,33 @@ class TestQueryExecutorAggregations:
         """Create sample results for aggregation testing."""
         return [
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Content 1",
-                metadata={"category": "AI", "rating": 4.5, "views": 100, "author": "John"}
+                id="doc1",
+                score=0.9,
+                type="document",
+                content="Content 1",
+                metadata={"category": "AI", "rating": 4.5, "views": 100, "author": "John"},
             ),
             QueryResult(
-                id="doc2", score=0.8, type="document", content="Content 2",
-                metadata={"category": "AI", "rating": 4.8, "views": 150, "author": "Jane"}
+                id="doc2",
+                score=0.8,
+                type="document",
+                content="Content 2",
+                metadata={"category": "AI", "rating": 4.8, "views": 150, "author": "Jane"},
             ),
             QueryResult(
-                id="doc3", score=0.7, type="document", content="Content 3",
-                metadata={"category": "Data", "rating": 4.2, "views": 80, "author": "John"}
+                id="doc3",
+                score=0.7,
+                type="document",
+                content="Content 3",
+                metadata={"category": "Data", "rating": 4.2, "views": 80, "author": "John"},
             ),
             QueryResult(
-                id="doc4", score=0.6, type="document", content="Content 4",
-                metadata={"category": "Data", "rating": 3.9, "views": 120, "author": "Bob"}
-            )
+                id="doc4",
+                score=0.6,
+                type="document",
+                content="Content 4",
+                metadata={"category": "Data", "rating": 3.9, "views": 120, "author": "Bob"},
+            ),
         ]
 
     def test_group_results_single_field(self, mock_db, sample_aggregation_results):
@@ -1510,8 +1481,7 @@ class TestQueryExecutorAggregations:
 
         # Add result with missing category
         missing_category = QueryResult(
-            id="doc5", score=0.5, type="document", content="Content 5",
-            metadata={"rating": 4.0, "author": "Alice"}
+            id="doc5", score=0.5, type="document", content="Content 5", metadata={"rating": 4.0, "author": "Alice"}
         )
         results = sample_aggregation_results + [missing_category]
 
@@ -1617,9 +1587,7 @@ class TestQueryExecutorAggregations:
         from localvectordb.query_builder import AggregationClause, QueryExecutor
 
         # Results without the target field
-        results = [
-            QueryResult(id="doc1", score=0.9, type="document", content="Content", metadata={"category": "AI"})
-        ]
+        results = [QueryResult(id="doc1", score=0.9, type="document", content="Content", metadata={"category": "AI"})]
 
         builder = QueryBuilder(mock_db)
         executor = QueryExecutor(builder)
@@ -1633,9 +1601,7 @@ class TestQueryExecutorAggregations:
         """Test aggregations without grouping."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .count_by("*", "total_count")
-                  .avg_by("rating", "avg_rating"))
+        builder = QueryBuilder(mock_db).count_by("*", "total_count").avg_by("rating", "avg_rating")
         executor = QueryExecutor(builder)
 
         results = executor._apply_aggregations_and_grouping(sample_aggregation_results)
@@ -1650,10 +1616,7 @@ class TestQueryExecutorAggregations:
         """Test aggregations with grouping."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(mock_db)
-                  .group_by("category")
-                  .count_by("*", "count")
-                  .avg_by("rating", "avg_rating"))
+        builder = QueryBuilder(mock_db).group_by("category").count_by("*", "count").avg_by("rating", "avg_rating")
         executor = QueryExecutor(builder)
 
         results = executor._apply_aggregations_and_grouping(sample_aggregation_results)
@@ -1703,18 +1666,22 @@ class TestQueryExecutorAggregations:
         # Create aggregated results
         aggregated_results = [
             QueryResult(
-                id="group_ai", score=1.0, type="group", content="Group: AI",
-                metadata={"category": "AI", "count": 3, "avg_rating": 4.5}
+                id="group_ai",
+                score=1.0,
+                type="group",
+                content="Group: AI",
+                metadata={"category": "AI", "count": 3, "avg_rating": 4.5},
             ),
             QueryResult(
-                id="group_data", score=1.0, type="group", content="Group: Data",
-                metadata={"category": "Data", "count": 1, "avg_rating": 3.5}
-            )
+                id="group_data",
+                score=1.0,
+                type="group",
+                content="Group: Data",
+                metadata={"category": "Data", "count": 1, "avg_rating": 3.5},
+            ),
         ]
 
-        builder = (QueryBuilder(mock_db)
-                  .having("count", "gt", 2)
-                  .having("avg_rating", "gte", 4.0))
+        builder = QueryBuilder(mock_db).having("count", "gt", 2).having("avg_rating", "gte", 4.0)
         executor = QueryExecutor(builder)
 
         results = executor._apply_having_clauses(aggregated_results)
@@ -1729,8 +1696,11 @@ class TestQueryExecutorAggregations:
 
         aggregated_results = [
             QueryResult(
-                id="group1", score=1.0, type="group", content="Group 1",
-                metadata={"category": "AI", "count": 3}
+                id="group1",
+                score=1.0,
+                type="group",
+                content="Group 1",
+                metadata={"category": "AI", "count": 3},
                 # Missing avg_rating field
             )
         ]
@@ -1759,21 +1729,33 @@ class TestQueryExecutorReranking:
         """Create sample results for reranking testing."""
         return [
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Recent content",
-                metadata={"category": "AI", "created_at": "2024-03-01T10:00:00", "author": "John"}
+                id="doc1",
+                score=0.9,
+                type="document",
+                content="Recent content",
+                metadata={"category": "AI", "created_at": "2024-03-01T10:00:00", "author": "John"},
             ),
             QueryResult(
-                id="doc2", score=0.8, type="document", content="Older content",
-                metadata={"category": "Data", "created_at": "2024-01-01T10:00:00", "author": "Jane"}
+                id="doc2",
+                score=0.8,
+                type="document",
+                content="Older content",
+                metadata={"category": "Data", "created_at": "2024-01-01T10:00:00", "author": "Jane"},
             ),
             QueryResult(
-                id="doc3", score=0.7, type="document", content="Very recent content",
-                metadata={"category": "AI", "created_at": "2024-03-15T10:00:00", "author": "John"}
+                id="doc3",
+                score=0.7,
+                type="document",
+                content="Very recent content",
+                metadata={"category": "AI", "created_at": "2024-03-15T10:00:00", "author": "John"},
             ),
             QueryResult(
-                id="doc4", score=0.6, type="document", content="Another recent",
-                metadata={"category": "Data", "created_at": "2024-02-15T10:00:00", "author": "Bob"}
-            )
+                id="doc4",
+                score=0.6,
+                type="document",
+                content="Another recent",
+                metadata={"category": "Data", "created_at": "2024-02-15T10:00:00", "author": "Bob"},
+            ),
         ]
 
     def test_apply_reranking_no_config(self, mock_db, sample_reranking_results):
@@ -1808,7 +1790,8 @@ class TestQueryExecutorReranking:
         # At least some scores should have been modified due to recency calculation
         # (Unless all dates happen to result in the same recency score)
         modified_count = sum(
-            1 for result in results
+            1
+            for result in results
             if result.metadata.get("created_at") and result.score != original_scores.get(result.id, -1)
         )
         # Most dates should result in modified scores due to recency calculation
@@ -1823,13 +1806,19 @@ class TestQueryExecutorReranking:
         # Create results with datetime objects instead of strings
         results_with_datetime = [
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Content",
-                metadata={"created_at": datetime(2024, 3, 1, 10, 0, 0)}
+                id="doc1",
+                score=0.9,
+                type="document",
+                content="Content",
+                metadata={"created_at": datetime(2024, 3, 1, 10, 0, 0)},
             ),
             QueryResult(
-                id="doc2", score=0.8, type="document", content="Content",
-                metadata={"created_at": datetime(2024, 3, 15, 10, 0, 0)}
-            )
+                id="doc2",
+                score=0.8,
+                type="document",
+                content="Content",
+                metadata={"created_at": datetime(2024, 3, 15, 10, 0, 0)},
+            ),
         ]
 
         builder = QueryBuilder(mock_db).rerank("recency", date_field="created_at", weight=0.5)
@@ -1849,13 +1838,11 @@ class TestQueryExecutorReranking:
 
         results_with_invalid_date = [
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Content",
-                metadata={"created_at": "invalid-date-string"}
+                id="doc1", score=0.9, type="document", content="Content", metadata={"created_at": "invalid-date-string"}
             ),
             QueryResult(
-                id="doc2", score=0.8, type="document", content="Content",
-                metadata={"created_at": "2024-03-01T10:00:00"}
-            )
+                id="doc2", score=0.8, type="document", content="Content", metadata={"created_at": "2024-03-01T10:00:00"}
+            ),
         ]
 
         builder = QueryBuilder(mock_db).rerank("recency", date_field="created_at", weight=0.5)
@@ -1879,13 +1866,15 @@ class TestQueryExecutorReranking:
 
         results_missing_field = [
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Content",
-                metadata={"category": "AI"}  # No created_at field
+                id="doc1",
+                score=0.9,
+                type="document",
+                content="Content",
+                metadata={"category": "AI"},  # No created_at field
             ),
             QueryResult(
-                id="doc2", score=0.8, type="document", content="Content",
-                metadata={"created_at": "2024-03-01T10:00:00"}
-            )
+                id="doc2", score=0.8, type="document", content="Content", metadata={"created_at": "2024-03-01T10:00:00"}
+            ),
         ]
 
         builder = QueryBuilder(mock_db).rerank("recency", date_field="created_at", weight=0.5)
@@ -1921,18 +1910,11 @@ class TestQueryExecutorReranking:
         from localvectordb.query_builder import QueryExecutor
 
         results_missing_field = [
+            QueryResult(id="doc1", score=0.9, type="document", content="Content", metadata={"category": "AI"}),
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Content",
-                metadata={"category": "AI"}
+                id="doc2", score=0.8, type="document", content="Content", metadata={}  # Missing category field
             ),
-            QueryResult(
-                id="doc2", score=0.8, type="document", content="Content",
-                metadata={}  # Missing category field
-            ),
-            QueryResult(
-                id="doc3", score=0.7, type="document", content="Content",
-                metadata={"category": "AI"}
-            )
+            QueryResult(id="doc3", score=0.7, type="document", content="Content", metadata={"category": "AI"}),
         ]
 
         builder = QueryBuilder(mock_db).rerank("diversity", field="category", weight=0.3)
@@ -1962,9 +1944,11 @@ class TestQueryExecutorReranking:
         from localvectordb.query_builder import QueryExecutor
 
         # Last rerank call should override previous ones
-        builder = (QueryBuilder(mock_db)
-                  .rerank("recency", date_field="created_at", weight=0.5)
-                  .rerank("diversity", field="category", weight=0.3))
+        builder = (
+            QueryBuilder(mock_db)
+            .rerank("recency", date_field="created_at", weight=0.5)
+            .rerank("diversity", field="category", weight=0.3)
+        )
         executor = QueryExecutor(builder)
 
         # Should use diversity method (the last one)
@@ -1997,6 +1981,7 @@ class TestSemanticFilterFunctionality:
 
         # Mock synchronous embedding methods
         import numpy as np
+
         # This mock will be called with [concept] first, then [field1, field2]
         # So we need to return different results for different calls
         def mock_embed_sync(texts):
@@ -2033,18 +2018,14 @@ class TestSemanticFilterFunctionality:
             Document(
                 id="doc1",
                 content="Machine learning algorithms",
-                metadata={"category": "artificial intelligence", "methodology": "supervised learning"}
+                metadata={"category": "artificial intelligence", "methodology": "supervised learning"},
             ),
             Document(
                 id="doc2",
                 content="Deep learning networks",
-                metadata={"category": "different topic", "methodology": "unsupervised learning"}
+                metadata={"category": "different topic", "methodology": "unsupervised learning"},
             ),
-            Document(
-                id="doc3",
-                content="Data analysis techniques",
-                metadata={"nested": {"field": "neural networks"}}
-            )
+            Document(id="doc3", content="Data analysis techniques", metadata={"nested": {"field": "neural networks"}}),
         ]
 
     def test_semantic_filter_initialization(self):
@@ -2056,7 +2037,7 @@ class TestSemanticFilterFunctionality:
             concept="machine learning",
             threshold=0.8,
             metric=SimilarityMetric.COSINE,
-            embedding_model="test-model"
+            embedding_model="test-model",
         )
 
         assert filter_obj.field == "content"
@@ -2303,18 +2284,12 @@ class TestAsyncQueryExecutorExecution:
 
         # Mock async database methods
         async def mock_query_async(**kwargs):
-            return [
-                QueryResult(
-                    id="doc1", score=0.9, type="document", content="Content",
-                    metadata={"category": "AI"}
-                )
-            ]
+            return [QueryResult(id="doc1", score=0.9, type="document", content="Content", metadata={"category": "AI"})]
 
         async def mock_filter_async(**kwargs):
             from localvectordb.core import Document
-            return [
-                Document(id="doc1", content="Content", metadata={"category": "AI"})
-            ]
+
+            return [Document(id="doc1", content="Content", metadata={"category": "AI"})]
 
         async def mock_count_async(filters):
             return 5
@@ -2328,6 +2303,7 @@ class TestAsyncQueryExecutorExecution:
 
         async def mock_embed_batch(texts):
             import numpy as np
+
             return [np.array([0.1, 0.2, 0.3]) for _ in texts]
 
         embedding_provider.embed_batch = mock_embed_batch
@@ -2340,13 +2316,11 @@ class TestAsyncQueryExecutorExecution:
         """Create sample results for async testing."""
         return [
             QueryResult(
-                id="doc1", score=0.9, type="document", content="Content 1",
-                metadata={"category": "AI", "rating": 4.5}
+                id="doc1", score=0.9, type="document", content="Content 1", metadata={"category": "AI", "rating": 4.5}
             ),
             QueryResult(
-                id="doc2", score=0.8, type="document", content="Content 2",
-                metadata={"category": "Data", "rating": 4.2}
-            )
+                id="doc2", score=0.8, type="document", content="Content 2", metadata={"category": "Data", "rating": 4.2}
+            ),
         ]
 
     @pytest.mark.asyncio
@@ -2401,10 +2375,7 @@ class TestAsyncQueryExecutorExecution:
         # Convert QueryResults to Documents for semantic filtering
         from localvectordb.core import Document
 
-        documents = [
-            Document(id=r.id, content=r.content, metadata=r.metadata.copy())
-            for r in sample_async_results
-        ]
+        documents = [Document(id=r.id, content=r.content, metadata=r.metadata.copy()) for r in sample_async_results]
 
         # Mock the SemanticFilter.apply_async method
         async def mock_apply_async(docs, db):
@@ -2423,10 +2394,7 @@ class TestAsyncQueryExecutorExecution:
         """Test async post-processing."""
         from localvectordb.query_builder import AsyncQueryExecutor
 
-        builder = (QueryBuilder(mock_async_db)
-                  .order_by("rating", "desc")
-                  .offset(1)
-                  .limit(1))
+        builder = QueryBuilder(mock_async_db).order_by("rating", "desc").offset(1).limit(1)
         executor = AsyncQueryExecutor(builder)
 
         results = await executor._apply_post_processing_async(sample_async_results.copy())
@@ -2490,19 +2458,21 @@ class TestAsyncQueryExecutorExecution:
                     score=0.9,
                     type="document",
                     content="Machine learning with supervised methodology",
-                    metadata={"category": "AI", "methodology": "supervised"}
+                    metadata={"category": "AI", "methodology": "supervised"},
                 )
             ]
 
         mock_async_db.query = mock_query_with_results
         mock_async_db.query_async = mock_query_with_results
 
-        builder = (QueryBuilder(mock_async_db)
-                  .search("machine learning")
-                  .filter("category", "AI")
-                  .semantic_filter("methodology", "supervised", 0.8)
-                  .limit(10)
-                  .explain())
+        builder = (
+            QueryBuilder(mock_async_db)
+            .search("machine learning")
+            .filter("category", "AI")
+            .semantic_filter("methodology", "supervised", 0.8)
+            .limit(10)
+            .explain()
+        )
         executor = AsyncQueryExecutor(builder)
 
         results = await executor.execute()
@@ -2519,10 +2489,12 @@ class TestAsyncQueryExecutorExecution:
         """Test async execution plan generation."""
         from localvectordb.query_builder import AsyncQueryExecutor
 
-        builder = (QueryBuilder(mock_async_db)
-                  .search("machine learning")
-                  .filter("category", "AI")
-                  .semantic_filter("methodology", "supervised", 0.8))
+        builder = (
+            QueryBuilder(mock_async_db)
+            .search("machine learning")
+            .filter("category", "AI")
+            .semantic_filter("methodology", "supervised", 0.8)
+        )
         executor = AsyncQueryExecutor(builder)
 
         plan = await executor._generate_execution_plan()
@@ -2546,56 +2518,91 @@ class TestQueryExecutorIntegrationEnhancements:
 
         # Mock comprehensive query results
         def mock_query(**kwargs):
-            _query_text = kwargs.get('query', '')
-            filters = kwargs.get('filters', {})
+            _query_text = kwargs.get("query", "")
+            filters = kwargs.get("filters", {})
 
             # Simulate search results based on query
             base_results = [
                 QueryResult(
-                    id="doc1", score=0.95, type="document",
+                    id="doc1",
+                    score=0.95,
+                    type="document",
                     content="Machine learning and artificial intelligence research",
                     metadata={
-                        "category": "AI", "subcategory": "ML", "rating": 4.8,
-                        "author": "Dr. Smith", "year": 2024, "views": 1500,
-                        "created_at": "2024-03-15T10:00:00", "tags": ["ML", "AI"]
-                    }
+                        "category": "AI",
+                        "subcategory": "ML",
+                        "rating": 4.8,
+                        "author": "Dr. Smith",
+                        "year": 2024,
+                        "views": 1500,
+                        "created_at": "2024-03-15T10:00:00",
+                        "tags": ["ML", "AI"],
+                    },
                 ),
                 QueryResult(
-                    id="doc2", score=0.88, type="document",
+                    id="doc2",
+                    score=0.88,
+                    type="document",
                     content="Deep learning neural networks and applications",
                     metadata={
-                        "category": "AI", "subcategory": "DL", "rating": 4.6,
-                        "author": "Dr. Johnson", "year": 2024, "views": 1200,
-                        "created_at": "2024-02-20T10:00:00", "tags": ["DL", "Neural"]
-                    }
+                        "category": "AI",
+                        "subcategory": "DL",
+                        "rating": 4.6,
+                        "author": "Dr. Johnson",
+                        "year": 2024,
+                        "views": 1200,
+                        "created_at": "2024-02-20T10:00:00",
+                        "tags": ["DL", "Neural"],
+                    },
                 ),
                 QueryResult(
-                    id="doc3", score=0.82, type="document",
+                    id="doc3",
+                    score=0.82,
+                    type="document",
                     content="Data science and statistical analysis methods",
                     metadata={
-                        "category": "Data", "subcategory": "Stats", "rating": 4.4,
-                        "author": "Dr. Brown", "year": 2023, "views": 800,
-                        "created_at": "2024-01-10T10:00:00", "tags": ["Stats", "Data"]
-                    }
+                        "category": "Data",
+                        "subcategory": "Stats",
+                        "rating": 4.4,
+                        "author": "Dr. Brown",
+                        "year": 2023,
+                        "views": 800,
+                        "created_at": "2024-01-10T10:00:00",
+                        "tags": ["Stats", "Data"],
+                    },
                 ),
                 QueryResult(
-                    id="doc4", score=0.75, type="document",
+                    id="doc4",
+                    score=0.75,
+                    type="document",
                     content="Computer vision and image processing techniques",
                     metadata={
-                        "category": "AI", "subcategory": "CV", "rating": 4.2,
-                        "author": "Dr. Smith", "year": 2023, "views": 600,
-                        "created_at": "2024-01-05T10:00:00", "tags": ["CV", "Image"]
-                    }
+                        "category": "AI",
+                        "subcategory": "CV",
+                        "rating": 4.2,
+                        "author": "Dr. Smith",
+                        "year": 2023,
+                        "views": 600,
+                        "created_at": "2024-01-05T10:00:00",
+                        "tags": ["CV", "Image"],
+                    },
                 ),
                 QueryResult(
-                    id="doc5", score=0.68, type="document",
+                    id="doc5",
+                    score=0.68,
+                    type="document",
                     content="Natural language processing and text analysis",
                     metadata={
-                        "category": "AI", "subcategory": "NLP", "rating": 4.0,
-                        "author": "Dr. Davis", "year": 2023, "views": 400,
-                        "created_at": "2023-12-15T10:00:00", "tags": ["NLP", "Text"]
-                    }
-                )
+                        "category": "AI",
+                        "subcategory": "NLP",
+                        "rating": 4.0,
+                        "author": "Dr. Davis",
+                        "year": 2023,
+                        "views": 400,
+                        "created_at": "2023-12-15T10:00:00",
+                        "tags": ["NLP", "Text"],
+                    },
+                ),
             ]
 
             # Apply basic filtering
@@ -2626,12 +2633,10 @@ class TestQueryExecutorIntegrationEnhancements:
 
         def mock_filter(**kwargs):
             from localvectordb.core import Document
+
             # Convert QueryResults to Documents for filter operations
-            query_results = mock_query(filters=kwargs.get('where', {}))
-            return [
-                Document(id=r.id, content=r.content, metadata=r.metadata)
-                for r in query_results
-            ]
+            query_results = mock_query(filters=kwargs.get("where", {}))
+            return [Document(id=r.id, content=r.content, metadata=r.metadata) for r in query_results]
 
         def mock_count(where=None, **kwargs):
             return len(mock_query(filters=where or {}))
@@ -2643,6 +2648,7 @@ class TestQueryExecutorIntegrationEnhancements:
         # Mock embedding provider for semantic filtering
         embedding_provider = Mock()
         import numpy as np
+
         embedding_provider.embed_sync.return_value = [
             np.array([0.1, 0.2, 0.3]),  # concept embedding
             np.array([0.9, 0.1, 0.1]),  # doc1 - high similarity
@@ -2658,22 +2664,24 @@ class TestQueryExecutorIntegrationEnhancements:
         from localvectordb.query_builder import QueryExecutor
 
         # Build complex query
-        builder = (QueryBuilder(comprehensive_mock_db)
-                  .search("machine learning", search_type="vector")
-                  .filter("category", "AI")
-                  .filter("rating", gte_=4.0)
-                  .filter("year", gte_=2023)
-                  .semantic_filter("subcategory", "machine learning", threshold=0.7)
-                  .group_by("author", "year")
-                  .count_by("*", "doc_count")
-                  .avg_by("rating", "avg_rating")
-                  .sum_by("views", "total_views")
-                  .having("doc_count", "gte", 1)
-                  .having("avg_rating", "gte", 4.0)
-                  .order_by("total_views", "desc")
-                  .rerank("recency", date_field="created_at", weight=0.3)
-                  .limit(10)
-                  .explain())
+        builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("machine learning", search_type="vector")
+            .filter("category", "AI")
+            .filter("rating", gte_=4.0)
+            .filter("year", gte_=2023)
+            .semantic_filter("subcategory", "machine learning", threshold=0.7)
+            .group_by("author", "year")
+            .count_by("*", "doc_count")
+            .avg_by("rating", "avg_rating")
+            .sum_by("views", "total_views")
+            .having("doc_count", "gte", 1)
+            .having("avg_rating", "gte", 4.0)
+            .order_by("total_views", "desc")
+            .rerank("recency", date_field="created_at", weight=0.3)
+            .limit(10)
+            .explain()
+        )
 
         executor = QueryExecutor(builder)
         results = executor.execute()
@@ -2697,12 +2705,14 @@ class TestQueryExecutorIntegrationEnhancements:
         """Test semantic filtering integration within full execution pipeline."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(comprehensive_mock_db)
-                  .search("artificial intelligence")
-                  .semantic_filter("content", "machine learning", threshold=0.8)
-                  .filter("category", "AI")
-                  .order_by("score", "desc")
-                  .limit(3))
+        builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("artificial intelligence")
+            .semantic_filter("content", "machine learning", threshold=0.8)
+            .filter("category", "AI")
+            .order_by("score", "desc")
+            .limit(3)
+        )
 
         executor = QueryExecutor(builder)
         results = executor.execute()
@@ -2720,17 +2730,19 @@ class TestQueryExecutorIntegrationEnhancements:
         from localvectordb.query_builder import QueryExecutor
 
         # Test multiple aggregations with multiple grouping fields
-        builder = (QueryBuilder(comprehensive_mock_db)
-                  .search("AI")
-                  .filter("year", gte_=2023)
-                  .group_by("category", "year")
-                  .count_by("*", "document_count")
-                  .avg_by("rating", "avg_rating")
-                  .min_by("rating", "min_rating")
-                  .max_by("rating", "max_rating")
-                  .sum_by("views", "total_views")
-                  .having("document_count", "gt", 0)
-                  .order_by("total_views", "desc"))
+        builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("AI")
+            .filter("year", gte_=2023)
+            .group_by("category", "year")
+            .count_by("*", "document_count")
+            .avg_by("rating", "avg_rating")
+            .min_by("rating", "min_rating")
+            .max_by("rating", "max_rating")
+            .sum_by("views", "total_views")
+            .having("document_count", "gt", 0)
+            .order_by("total_views", "desc")
+        )
 
         executor = QueryExecutor(builder)
         results = executor.execute()
@@ -2755,21 +2767,25 @@ class TestQueryExecutorIntegrationEnhancements:
         from localvectordb.query_builder import QueryExecutor
 
         # Test recency reranking
-        recency_builder = (QueryBuilder(comprehensive_mock_db)
-                          .search("AI research")
-                          .filter("category", "AI")
-                          .rerank("recency", date_field="created_at", weight=0.5)
-                          .limit(5))
+        recency_builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("AI research")
+            .filter("category", "AI")
+            .rerank("recency", date_field="created_at", weight=0.5)
+            .limit(5)
+        )
 
         recency_executor = QueryExecutor(recency_builder)
         recency_results = recency_executor.execute()
 
         # Test diversity reranking
-        diversity_builder = (QueryBuilder(comprehensive_mock_db)
-                            .search("AI research")
-                            .filter("category", "AI")
-                            .rerank("diversity", field="subcategory", weight=0.4)
-                            .limit(5))
+        diversity_builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("AI research")
+            .filter("category", "AI")
+            .rerank("diversity", field="subcategory", weight=0.4)
+            .limit(5)
+        )
 
         diversity_executor = QueryExecutor(diversity_builder)
         diversity_results = diversity_executor.execute()
@@ -2785,11 +2801,13 @@ class TestQueryExecutorIntegrationEnhancements:
         from localvectordb.query_builder import QueryExecutor
 
         # Test with invalid aggregation field
-        builder = (QueryBuilder(comprehensive_mock_db)
-                  .search("test")
-                  .group_by("category")
-                  .avg_by("nonexistent_field", "avg_missing")
-                  .having("avg_missing", "gt", 0))
+        builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("test")
+            .group_by("category")
+            .avg_by("nonexistent_field", "avg_missing")
+            .having("avg_missing", "gt", 0)
+        )
 
         executor = QueryExecutor(builder)
         results = executor.execute()
@@ -2801,11 +2819,13 @@ class TestQueryExecutorIntegrationEnhancements:
         """Test streaming functionality with complex queries."""
         from localvectordb.query_builder import QueryExecutor
 
-        builder = (QueryBuilder(comprehensive_mock_db)
-                  .search("AI")
-                  .filter("year", gte_=2023)
-                  .order_by("rating", "desc")
-                  .limit(10))
+        builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("AI")
+            .filter("year", gte_=2023)
+            .order_by("rating", "desc")
+            .limit(10)
+        )
 
         executor = QueryExecutor(builder)
 
@@ -2853,15 +2873,17 @@ class TestQueryExecutorIntegrationEnhancements:
         simple_plan = simple_executor._generate_execution_plan()
 
         # Complex query
-        complex_builder = (QueryBuilder(comprehensive_mock_db)
-                          .search("AI")
-                          .filter("year", gte_=2023)
-                          .semantic_filter("content", "machine learning", 0.8)
-                          .group_by("category")
-                          .count_by("*")
-                          .having("count", "gt", 1)
-                          .order_by("count", "desc")
-                          .rerank("recency", date_field="created_at"))
+        complex_builder = (
+            QueryBuilder(comprehensive_mock_db)
+            .search("AI")
+            .filter("year", gte_=2023)
+            .semantic_filter("content", "machine learning", 0.8)
+            .group_by("category")
+            .count_by("*")
+            .having("count", "gt", 1)
+            .order_by("count", "desc")
+            .rerank("recency", date_field="created_at")
+        )
         complex_executor = QueryExecutor(complex_builder)
         complex_plan = complex_executor._generate_execution_plan()
 

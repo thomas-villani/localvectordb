@@ -71,7 +71,7 @@ def safe_get_id_mapping(index: Any) -> Optional[np.ndarray]:
 
     try:
         # Method 1: Standard IndexIDMap2 access pattern
-        if hasattr(index, 'id_map') and hasattr(index.id_map, 'id_map'):
+        if hasattr(index, "id_map") and hasattr(index.id_map, "id_map"):
             logger.debug("Using IndexIDMap2 standard access (.id_map.id_map)")
             external_ids = faiss.vector_to_array(index.id_map.id_map).astype(np.int64)
             return external_ids
@@ -81,10 +81,10 @@ def safe_get_id_mapping(index: Any) -> Optional[np.ndarray]:
 
     try:
         # Method 2: Direct id_map access (some FAISS versions)
-        if hasattr(index, 'id_map'):
+        if hasattr(index, "id_map"):
             logger.debug("Attempting direct id_map access")
             # Try to access as vector-like object
-            if hasattr(index.id_map, 'size') and callable(getattr(index.id_map, 'size', None)):
+            if hasattr(index.id_map, "size") and callable(getattr(index.id_map, "size", None)):
                 size = index.id_map.size()
                 if size > 0:
                     external_ids = faiss.vector_to_array(index.id_map).astype(np.int64)
@@ -95,11 +95,11 @@ def safe_get_id_mapping(index: Any) -> Optional[np.ndarray]:
 
     try:
         # Method 3: Alternative attribute names (version compatibility)
-        for attr_name in ['external_ids', 'ids', 'id_vector']:
+        for attr_name in ["external_ids", "ids", "id_vector"]:
             if hasattr(index, attr_name):
                 logger.debug(f"Using alternative attribute: {attr_name}")
                 attr = getattr(index, attr_name)
-                if hasattr(attr, '__len__') and len(attr) > 0:
+                if hasattr(attr, "__len__") and len(attr) > 0:
                     return np.array(attr, dtype=np.int64)
 
     except Exception as e:
@@ -107,7 +107,7 @@ def safe_get_id_mapping(index: Any) -> Optional[np.ndarray]:
 
     # Method 4: Check if it's a wrapped index
     try:
-        if hasattr(index, 'index') and hasattr(index.index, 'id_map'):
+        if hasattr(index, "index") and hasattr(index.index, "id_map"):
             logger.debug("Attempting wrapped index access")
             return safe_get_id_mapping(index.index)
 
@@ -150,7 +150,7 @@ def get_faiss_external_ids(index: Any) -> np.ndarray:
     if index is None:
         raise ValueError("Index cannot be None")
 
-    if not hasattr(index, 'ntotal') or index.ntotal == 0:
+    if not hasattr(index, "ntotal") or index.ntotal == 0:
         raise ValueError("Index is empty (ntotal = 0)")
 
     external_ids = safe_get_id_mapping(index)
@@ -158,7 +158,7 @@ def get_faiss_external_ids(index: Any) -> np.ndarray:
     if external_ids is None:
         # Provide helpful error message based on index type
         index_type = type(index).__name__
-        if 'IDMap' not in index_type:
+        if "IDMap" not in index_type:
             raise ValueError(
                 f"Index type {index_type} does not support ID mapping. "
                 f"Use IndexIDMap or IndexIDMap2 for external ID support."
@@ -170,9 +170,7 @@ def get_faiss_external_ids(index: Any) -> np.ndarray:
             )
 
     if len(external_ids) != index.ntotal:
-        logger.warning(
-            f"ID mapping size ({len(external_ids)}) doesn't match index size ({index.ntotal})"
-        )
+        logger.warning(f"ID mapping size ({len(external_ids)}) doesn't match index size ({index.ntotal})")
 
     return external_ids
 
@@ -242,29 +240,26 @@ def check_faiss_index_compatibility(index: Any) -> Dict[str, Any]:
     """
     if index is None:
         return {
-            'has_id_mapping': False,
-            'index_type': 'None',
-            'ntotal': 0,
-            'supports_reconstruct': False,
-            'attributes': []
+            "has_id_mapping": False,
+            "index_type": "None",
+            "ntotal": 0,
+            "supports_reconstruct": False,
+            "attributes": [],
         }
 
     index_type = type(index).__name__
-    attributes = [attr for attr in dir(index) if not attr.startswith('_')]
+    attributes = [attr for attr in dir(index) if not attr.startswith("_")]
 
     # Check for ID mapping support
     has_id_mapping = safe_get_id_mapping(index) is not None
 
     # Check for reconstruction support
-    supports_reconstruct = (
-        hasattr(index, 'reconstruct') and
-        callable(getattr(index, 'reconstruct', None))
-    )
+    supports_reconstruct = hasattr(index, "reconstruct") and callable(getattr(index, "reconstruct", None))
 
     return {
-        'has_id_mapping': has_id_mapping,
-        'index_type': index_type,
-        'ntotal': getattr(index, 'ntotal', 0),
-        'supports_reconstruct': supports_reconstruct,
-        'attributes': attributes
+        "has_id_mapping": has_id_mapping,
+        "index_type": index_type,
+        "ntotal": getattr(index, "ntotal", 0),
+        "supports_reconstruct": supports_reconstruct,
+        "attributes": attributes,
     }

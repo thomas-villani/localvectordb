@@ -210,22 +210,58 @@ from localvectordb.sqlite_tuning import (
 from localvectordb.validation import ClaimResult, FactChecker, FactCheckResult, Polarity
 from localvectordb.versioning import VersionManager
 
-__all__ = ["LocalVectorDB", "ChunkerFactory", "EmbeddingRegistry", "RerankerRegistry",
-           "RemoteVectorDB", "VectorDB", "MetadataField",
-           "Section", "SectionBoundary", "section_detection", "section_metadata",
-           "factory", "utils", "chunking", "core", "embeddings", "client", "database", "exceptions", "backup",
-           "BackupManager", "IncrementalBackupManager", "PointInTimeRecoveryManager",
-           "migration", "Migration", "MigrationEngine",
-           "versioning", "VersionManager", "QueryBuilder", "query_builder", "extractors", "get_extractor_registry",
-           "ExtractorRegistry", "sqlite_tuning", "SqliteProfile", "get_profile_description",
-           "is_valid_sqlite_pragma_profile", "get_sqlite_pragma_profile",
-           "get_common_metadata_schemas",
-           "FactChecker", "FactCheckResult", "ClaimResult", "Polarity",
-           "validation", "reranking"]
+__all__ = [
+    "LocalVectorDB",
+    "ChunkerFactory",
+    "EmbeddingRegistry",
+    "RerankerRegistry",
+    "RemoteVectorDB",
+    "VectorDB",
+    "MetadataField",
+    "Section",
+    "SectionBoundary",
+    "section_detection",
+    "section_metadata",
+    "factory",
+    "utils",
+    "chunking",
+    "core",
+    "embeddings",
+    "client",
+    "database",
+    "exceptions",
+    "backup",
+    "BackupManager",
+    "IncrementalBackupManager",
+    "PointInTimeRecoveryManager",
+    "migration",
+    "Migration",
+    "MigrationEngine",
+    "versioning",
+    "VersionManager",
+    "QueryBuilder",
+    "query_builder",
+    "extractors",
+    "get_extractor_registry",
+    "ExtractorRegistry",
+    "sqlite_tuning",
+    "SqliteProfile",
+    "get_profile_description",
+    "is_valid_sqlite_pragma_profile",
+    "get_sqlite_pragma_profile",
+    "get_common_metadata_schemas",
+    "FactChecker",
+    "FactCheckResult",
+    "ClaimResult",
+    "Polarity",
+    "validation",
+    "reranking",
+]
 
 
 def __getattr__(name):
     if name == "get_common_metadata_schemas":
         from localvectordb._schema import get_common_metadata_schemas
+
         return get_common_metadata_schemas
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

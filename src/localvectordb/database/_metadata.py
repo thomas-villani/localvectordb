@@ -13,6 +13,7 @@ Metadata validation, schema management, and metadata-embedding helpers.
 
 Preserves original method implementations as much as possible.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,31 +44,31 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     def _build_metadata_schema_info(self) -> Dict[str, Any]:
         """Build metadata schema information dictionary (pure business logic)"""
         info = {
-            'fields': {},
-            'field_count': len(self.metadata_schema),
-            'indexed_fields': [],
-            'required_fields': [],
-            'field_types': {}
+            "fields": {},
+            "field_count": len(self.metadata_schema),
+            "indexed_fields": [],
+            "required_fields": [],
+            "field_types": {},
         }
         for field_name, field_def in self.metadata_schema.items():
-            info['fields'][field_name] = {
-                'type': field_def.type.value,
-                'indexed': field_def.indexed,
-                'required': field_def.required,
-                'default_value': field_def.default_value
+            info["fields"][field_name] = {
+                "type": field_def.type.value,
+                "indexed": field_def.indexed,
+                "required": field_def.required,
+                "default_value": field_def.default_value,
             }
             if field_def.indexed:
-                info['indexed_fields'].append(field_name)
+                info["indexed_fields"].append(field_name)
             if field_def.required:
-                info['required_fields'].append(field_name)
+                info["required_fields"].append(field_name)
             field_type = field_def.type.value
-            info['field_types'][field_type] = info['field_types'].get(field_type, 0) + 1
+            info["field_types"][field_type] = info["field_types"].get(field_type, 0) + 1
         return info
 
     def _calculate_faiss_ids_for_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
         """Calculate FAISS IDs for embeddings using index state (pure business logic)"""
         start_id = self.index.ntotal
-        if hasattr(self.index, 'add_with_ids'):
+        if hasattr(self.index, "add_with_ids"):
             return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
         else:
             # For basic add, we'll need to calculate after adding
@@ -76,7 +77,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     def _add_embeddings_to_faiss(self, embeddings: np.ndarray) -> np.ndarray:
         """Add embeddings to FAISS index and return actual IDs (pure business logic for FAISS operations)"""
         start_id = self.index.ntotal
-        if hasattr(self.index, 'add_with_ids'):
+        if hasattr(self.index, "add_with_ids"):
             ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
             self.index.add_with_ids(embeddings, ids)
             return ids  # Return actual IDs used
@@ -136,10 +137,10 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     # Schema Updates (sync/async)
     #############################
     def update_metadata_schema(
-            self,
-            new_schema,
-            drop_columns: bool = False,
-            column_mapping: Optional[dict] = None,
+        self,
+        new_schema,
+        drop_columns: bool = False,
+        column_mapping: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """
         Update the metadata schema for the database
@@ -249,10 +250,10 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             raise DatabaseError(f"Schema update failed: {str(e)}") from e
 
     async def update_metadata_schema_async(
-            self,
-            new_schema,
-            drop_columns: bool = False,
-            column_mapping: Optional[dict] = None,
+        self,
+        new_schema,
+        drop_columns: bool = False,
+        column_mapping: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """
         Update the metadata schema for the database asynchronously
@@ -355,9 +356,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             if self.async_connection_pool is None:
                 self.async_connection_pool = AsyncConnectionPool(self.db_path, self.async_max_connections)
             async with self.async_connection_pool.get_connection_context() as conn:
-                changes = await self.schema.update_metadata_schema_async(
-                    new_schema, conn, drop_columns, column_mapping
-                )
+                changes = await self.schema.update_metadata_schema_async(new_schema, conn, drop_columns, column_mapping)
             self._metadata_schema = new_schema.copy()
             return changes
         except Exception as e:
@@ -367,12 +366,16 @@ class MetadataMixin(LocalVectorDBBase, ABC):
     #############################
     # Metadata Embeddings       #
     #############################
-    def _get_embedding_enabled_fields(self) -> Dict[str, 'MetadataField']:
-        return {field_name: field_def for field_name, field_def in self.metadata_schema.items() if
-                field_def.embedding_enabled}
+    def _get_embedding_enabled_fields(self) -> Dict[str, "MetadataField"]:
+        return {
+            field_name: field_def
+            for field_name, field_def in self.metadata_schema.items()
+            if field_def.embedding_enabled
+        }
 
-    def _get_changed_embedding_fields(self, old_metadata: Dict[str, Any], new_metadata: Dict[str, Any]) -> Dict[
-        str, 'MetadataField']:
+    def _get_changed_embedding_fields(
+        self, old_metadata: Dict[str, Any], new_metadata: Dict[str, Any]
+    ) -> Dict[str, "MetadataField"]:
         embedding_enabled_fields = self._get_embedding_enabled_fields()
         changed_fields = {}
         for field_name, field_def in embedding_enabled_fields.items():
@@ -385,9 +388,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                     changed_fields[field_name] = field_def
         return changed_fields
 
-    def _track_column_embedding(
-            self, conn, document_id: str, field_name: str, chunk_index: int, faiss_id: int
-    ) -> None:
+    def _track_column_embedding(self, conn, document_id: str, field_name: str, chunk_index: int, faiss_id: int) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO column_embeddings
@@ -398,10 +399,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         )
 
     def _generate_metadata_embeddings(
-            self,
-            metadata: Dict[str, Any],
-            embedding_enabled_fields: Dict[str, 'MetadataField'],
-            batch_size: int = 100
+        self, metadata: Dict[str, Any], embedding_enabled_fields: Dict[str, "MetadataField"], batch_size: int = 100
     ) -> Dict[str, np.ndarray]:
         field_embeddings = {}
         for field_name, field_def in embedding_enabled_fields.items():
@@ -421,10 +419,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         return field_embeddings
 
     async def _generate_metadata_embeddings_async(
-            self,
-            metadata: Dict[str, Any],
-            embedding_enabled_fields: Dict[str, 'MetadataField'],
-            batch_size: int = 100
+        self, metadata: Dict[str, Any], embedding_enabled_fields: Dict[str, "MetadataField"], batch_size: int = 100
     ) -> Dict[str, np.ndarray]:
         field_embeddings = {}
         for field_name, field_def in embedding_enabled_fields.items():
@@ -456,10 +451,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 self._track_column_embedding(conn, document_id, field_name, chunk_index, int(faiss_id))
 
     async def _store_metadata_embeddings_async(
-            self,
-            conn: aiosqlite.Connection,
-            document_id: str,
-            field_embeddings: Dict[str, np.ndarray]
+        self, conn: aiosqlite.Connection, document_id: str, field_embeddings: Dict[str, np.ndarray]
     ) -> None:
         for field_name, embeddings in field_embeddings.items():
             if embeddings.size == 0:
@@ -479,32 +471,44 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 )
 
     def _remove_metadata_embeddings(self, conn, document_id: str) -> None:
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT faiss_id FROM column_embeddings
             WHERE document_id = ?
-        """, (document_id,))
-        faiss_ids = [row['faiss_id'] for row in cursor.fetchall()]
+        """,
+            (document_id,),
+        )
+        faiss_ids = [row["faiss_id"] for row in cursor.fetchall()]
         if faiss_ids:
             self._remove_old_vectors_bulk(faiss_ids)
-            conn.execute("""
+            conn.execute(
+                """
                 DELETE FROM column_embeddings
                 WHERE document_id = ?
-            """, (document_id,))
+            """,
+                (document_id,),
+            )
 
     async def _remove_metadata_embeddings_async(self, conn: aiosqlite.Connection, document_id: str) -> None:
-        cursor = await conn.execute("""
+        cursor = await conn.execute(
+            """
             SELECT faiss_id FROM column_embeddings
             WHERE document_id = ?
-        """, (document_id,))
+        """,
+            (document_id,),
+        )
         rows = await cursor.fetchall()
-        faiss_ids_to_remove = [row['faiss_id'] for row in rows]
+        faiss_ids_to_remove = [row["faiss_id"] for row in rows]
         if faiss_ids_to_remove:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
-        await conn.execute("""
+        await conn.execute(
+            """
             DELETE FROM column_embeddings
             WHERE document_id = ?
-        """, (document_id,))
+        """,
+            (document_id,),
+        )
 
     async def _validate_metadata_async(self, metadata: Dict[str, Any]) -> None:
         loop = asyncio.get_event_loop()

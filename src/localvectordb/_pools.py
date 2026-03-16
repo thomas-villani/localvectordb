@@ -78,6 +78,7 @@ class ConnectionPool:
         if self._pragmas:
             try:
                 from localvectordb.sqlite_tuning import apply_pragmas
+
                 apply_pragmas(conn, self._pragmas)
             except Exception:
                 pass  # Best-effort pragma application
@@ -157,7 +158,7 @@ class ConnectionPool:
                 "pool_size": len(self._pool),
                 "max_connections": self.max_connections,
                 "created_connections": self._created_connections,
-                "available_connections": len(self._pool)
+                "available_connections": len(self._pool),
             }
 
     def __del__(self) -> None:
@@ -178,9 +179,12 @@ class AsyncConnectionPool:
     """
 
     def __init__(
-            self, db_path: Union[str, Path], max_connections: int = 10, wait_timeout: float = 30.0,
-            pragmas: Optional[Dict[str, Any]] = None
-            ):
+        self,
+        db_path: Union[str, Path],
+        max_connections: int = 10,
+        wait_timeout: float = 30.0,
+        pragmas: Optional[Dict[str, Any]] = None,
+    ):
         self.db_path = Path(db_path)
         self.max_connections = max_connections
         self.wait_timeout = wait_timeout
@@ -209,6 +213,7 @@ class AsyncConnectionPool:
         if self._pragmas:
             try:
                 from localvectordb.sqlite_tuning import apply_pragmas_async
+
                 await apply_pragmas_async(conn, self._pragmas)
             except Exception:
                 pass  # Best-effort pragma application
@@ -311,7 +316,7 @@ class AsyncConnectionPool:
             "pool_size": len(self._pool),
             "max_connections": self.max_connections,
             "created_connections": self._created_connections,
-            "available_connections": len(self._pool)
+            "available_connections": len(self._pool),
         }
 
 

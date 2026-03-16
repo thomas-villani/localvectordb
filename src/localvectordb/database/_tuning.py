@@ -61,12 +61,7 @@ class TuningMixin(ABC):
         pass
 
     @abstractmethod
-    def set_sqlite_tuning(
-            self,
-            profile: str,
-            overrides: Optional[Dict[str, Any]] = None,
-            persist: bool = True
-    ) -> None:
+    def set_sqlite_tuning(self, profile: str, overrides: Optional[Dict[str, Any]] = None, persist: bool = True) -> None:
         """
         Apply SQLite tuning profile with optional overrides.
 
@@ -153,14 +148,11 @@ class TuningMixin(ABC):
             "cpu_cores": system_info.cpu_cores,
             "disk_type": system_info.disk_type,
             "disk_free_gb": system_info.disk_free_gb,
-            "os_type": system_info.os_type
+            "os_type": system_info.os_type,
         }
 
     def auto_tune(
-            self,
-            workload: Optional[Dict[str, Any]] = None,
-            interactive: bool = False,
-            apply: bool = False
+        self, workload: Optional[Dict[str, Any]] = None, interactive: bool = False, apply: bool = False
     ) -> Dict[str, Any]:
         """
         Get auto-tuning recommendations based on system and workload.
@@ -190,22 +182,24 @@ class TuningMixin(ABC):
         elif workload:
             # Convert dict to WorkloadProfile
             from localvectordb.sqlite_tuning import DurabilityLevel, WorkloadType
+
             workload_profile = WorkloadProfile(
                 workload_type=WorkloadType(workload.get("workload_type", "balanced")),
                 document_size=workload.get("document_size", "medium"),
                 concurrent_users=workload.get("concurrent_users", 5),
                 durability_level=DurabilityLevel(workload.get("durability_level", "normal")),
-                memory_constraint=workload.get("memory_constraint", "moderate")
+                memory_constraint=workload.get("memory_constraint", "moderate"),
             )
         else:
             # Use balanced defaults
             from localvectordb.sqlite_tuning import DurabilityLevel, WorkloadType
+
             workload_profile = WorkloadProfile(
                 workload_type=WorkloadType.BALANCED,
                 document_size="medium",
                 concurrent_users=5,
                 durability_level=DurabilityLevel.NORMAL,
-                memory_constraint="moderate"
+                memory_constraint="moderate",
             )
 
         recommendation = AutoTuner.recommend_profile(system_info, workload_profile)
@@ -215,15 +209,11 @@ class TuningMixin(ABC):
             "pragma_overrides": recommendation.pragma_overrides,
             "reasoning": recommendation.reasoning,
             "estimated_memory_mb": recommendation.estimated_memory_mb,
-            "current_settings": self.get_sqlite_tuning()
+            "current_settings": self.get_sqlite_tuning(),
         }
 
         if apply:
-            self.set_sqlite_tuning(
-                recommendation.profile_name,
-                recommendation.pragma_overrides,
-                persist=True
-            )
+            self.set_sqlite_tuning(recommendation.profile_name, recommendation.pragma_overrides, persist=True)
             result["applied"] = True
         else:
             result["applied"] = False
@@ -263,18 +253,13 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
         """Get current SQLite tuning configuration from local database."""
         # Access stored configuration
         config = {
-            "profile": getattr(self, '_sqlite_profile', 'balanced'),
-            "overrides": getattr(self, '_sqlite_pragma_overrides', {}),
-            "pragmas": getattr(self, '_sqlite_pragmas', {})
+            "profile": getattr(self, "_sqlite_profile", "balanced"),
+            "overrides": getattr(self, "_sqlite_pragma_overrides", {}),
+            "pragmas": getattr(self, "_sqlite_pragmas", {}),
         }
         return config
 
-    def set_sqlite_tuning(
-            self,
-            profile: str,
-            overrides: Optional[Dict[str, Any]] = None,
-            persist: bool = True
-    ) -> None:
+    def set_sqlite_tuning(self, profile: str, overrides: Optional[Dict[str, Any]] = None, persist: bool = True) -> None:
         """Apply SQLite tuning profile to local database."""
         if profile not in SQLITE_PRAGMA_PROFILES:
             raise ValueError(f"Unknown SQLite profile '{profile}'. Available: {list(SQLITE_PRAGMA_PROFILES.keys())}")
@@ -292,10 +277,10 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
         self._sqlite_pragmas = base_pragmas
 
         # Apply to existing connection pools
-        if hasattr(self, 'connection_pool'):
+        if hasattr(self, "connection_pool"):
             self.connection_pool._pragmas = self._sqlite_pragmas
 
-        if hasattr(self, 'async_connection_pool') and self.async_connection_pool:
+        if hasattr(self, "async_connection_pool") and self.async_connection_pool:
             self.async_connection_pool._pragmas = self._sqlite_pragmas
 
         # Persist to database config if requested
@@ -344,7 +329,7 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
         """Check if WAL file is large and checkpoint if needed."""
         from pathlib import Path
 
-        if hasattr(self, 'db_path') and not self.is_memory_only:
+        if hasattr(self, "db_path") and not self.is_memory_only:
             wal_path = Path(str(self.db_path) + "-wal")
             try:
                 if wal_path.exists():
@@ -360,22 +345,21 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
 
     def _save_sqlite_tuning(self) -> None:
         """Save SQLite tuning configuration to database."""
-        if hasattr(self, 'connection_pool'):
+        if hasattr(self, "connection_pool"):
             with self.connection_pool.get_connection() as conn:
                 conn.execute(
-                    'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
-                    ('sqlite_profile', self._sqlite_profile)
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", ("sqlite_profile", self._sqlite_profile)
                 )
                 conn.execute(
-                    'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
-                    ('sqlite_pragma_overrides', json.dumps(self._sqlite_pragma_overrides))
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                    ("sqlite_pragma_overrides", json.dumps(self._sqlite_pragma_overrides)),
                 )
                 conn.commit()
 
     def _load_sqlite_tuning(self, config: Dict[str, str]) -> None:
         """Load SQLite tuning configuration from database config."""
-        profile = config.get('sqlite_profile', 'balanced')
-        overrides_json = config.get('sqlite_pragma_overrides', '{}')
+        profile = config.get("sqlite_profile", "balanced")
+        overrides_json = config.get("sqlite_pragma_overrides", "{}")
 
         try:
             overrides = json.loads(overrides_json) if overrides_json else {}
@@ -393,6 +377,6 @@ class LocalTuningMixin(LocalVectorDBBase, TuningMixin, ABC):
             logger.debug(f"Loaded SQLite tuning profile '{profile}' with {len(overrides)} overrides")
         else:
             logger.warning(f"Unknown saved SQLite profile '{profile}', using balanced")
-            self._sqlite_profile = 'balanced'
+            self._sqlite_profile = "balanced"
             self._sqlite_pragma_overrides = {}
-            self._sqlite_pragmas = dict(SQLITE_PRAGMA_PROFILES['balanced'].pragmas)
+            self._sqlite_pragmas = dict(SQLITE_PRAGMA_PROFILES["balanced"].pragmas)

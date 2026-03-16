@@ -21,16 +21,19 @@ class DatabaseError(BaseLocalVectorDBException):
 
 class DatabaseNotFoundError(DatabaseError, KeyError):
     """Raised if the Database cannot be found"""
+
     pass
 
 
 class MetadataFilterError(DatabaseError, ValueError):
     """Raised when there's an error in metadata filter specification or processing"""
+
     pass
 
 
 class DuplicateDocumentIDError(DatabaseError, ValueError):
     """Raised when inserting document(s) and the id(s) already exist"""
+
     pass
 
 
@@ -48,6 +51,7 @@ class EmbeddingError(BaseLocalVectorDBException, RuntimeError):
 
 class OllamaNotFoundError(EmbeddingError):
     """Raised when Ollama is not installed or not running."""
+
     pass
 
 
@@ -57,6 +61,7 @@ class ConfigurationError(BaseLocalVectorDBException, RuntimeError):
 
 class ValidationError(BaseLocalVectorDBException, ValueError):
     """Raised when there's a validation error in input data"""
+
     pass
 
 
@@ -66,4 +71,5 @@ class ConnectionPoolError(BaseLocalVectorDBException):
 
 class RerankerError(BaseLocalVectorDBException, RuntimeError):
     """Raised when there's an error in reranking operations."""
+
     pass

@@ -32,6 +32,7 @@ Supported environment variables (prefix LVDB_):
 
 See class docstrings for detailed field descriptions and validation rules.
 """
+
 import copy
 import json
 import os
@@ -71,6 +72,7 @@ class BaseSettings(ABC):
 @dataclass
 class EmbeddingSettings(BaseSettings):
     """Settings for embedding providers."""
+
     provider: str = "ollama"  # ollama, openai
     model: str = "nomic-embed-text"
     base_url: Optional[str] = None  # Provider-specific base URL
@@ -108,6 +110,7 @@ class EmbeddingSettings(BaseSettings):
 @dataclass
 class DatabaseSettings(BaseSettings):
     """Settings related to database operations and connections"""
+
     root_dir: str = "./.lvdb"
     timeout: int = 300  # seconds
     connection_pool_size: int = 10
@@ -147,10 +150,15 @@ class DatabaseSettings(BaseSettings):
         if self.chunk_overlap >= self.chunk_size:
             raise ConfigurationError("chunk_overlap must be less than chunk_size")
 
-        if self.faiss_index_type and self.faiss_index_type not in ("IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat",
-                                                                   "IndexLSH"):
+        if self.faiss_index_type and self.faiss_index_type not in (
+            "IndexFlatL2",
+            "IndexFlatIP",
+            "IndexHNSWFlat",
+            "IndexLSH",
+        ):
             raise ConfigurationError(
-                "faiss_index_type must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH")
+                "faiss_index_type must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH"
+            )
 
         # Validate metadata schema
         for field_name, _field_config in self.default_metadata_schema.items():
@@ -163,6 +171,7 @@ class DatabaseSettings(BaseSettings):
 @dataclass
 class BackupSettings(BaseSettings):
     """Settings for database backup operations."""
+
     enabled: bool = True
     default_location: str = "./backups"
     retention_days: int = 30  # Keep backups for 30 days
@@ -205,6 +214,7 @@ class BackupSettings(BaseSettings):
 @dataclass
 class MigrationSettings(BaseSettings):
     """Settings for database migration operations."""
+
     enabled: bool = True
     migration_dir: str = "./migrations"
     auto_migrate: bool = False  # Automatically apply pending migrations on startup
@@ -233,6 +243,7 @@ class MigrationSettings(BaseSettings):
 @dataclass
 class SecuritySettings(BaseSettings):
     """Security-related settings for the server."""
+
     # API Key authentication
     require_api_key: bool = False
     api_key_header: str = "Authorization"  # Header name for API key
@@ -258,18 +269,20 @@ class SecuritySettings(BaseSettings):
     force_https: bool = False
     strict_transport_security: bool = True
     strict_transport_security_max_age: int = 31536000
-    content_security_policy: dict = field(default_factory=lambda: {
-        'default-src': "'self'",
-        'script-src': "'self' 'unsafe-inline'",
-        'style-src': "'self' 'unsafe-inline'",
-        'connect-src': "'self'",
-        'img-src': "'self' data:",
-        'frame-ancestors': 'none',
-    })
+    content_security_policy: dict = field(
+        default_factory=lambda: {
+            "default-src": "'self'",
+            "script-src": "'self' 'unsafe-inline'",
+            "style-src": "'self' 'unsafe-inline'",
+            "connect-src": "'self'",
+            "img-src": "'self' data:",
+            "frame-ancestors": "none",
+        }
+    )
     content_type_nosniff: bool = True
-    x_frame_options: str = 'DENY'
+    x_frame_options: str = "DENY"
     x_xss_protection: bool = True
-    referrer_policy: str = 'strict-origin-when-cross-origin'
+    referrer_policy: str = "strict-origin-when-cross-origin"
 
     def validate(self):
         # Validate API key settings if required
@@ -327,10 +340,12 @@ class SecuritySettings(BaseSettings):
             # Import here to avoid circular imports
             try:
                 from localvectordb_server.utils.hostmatch import validate_trusted_host_patterns
+
                 validation_errors = validate_trusted_host_patterns(self.trusted_hosts)
                 if validation_errors:
                     error_msg = "Invalid trusted_hosts patterns:\n" + "\n".join(
-                        f"  - {error}" for error in validation_errors)
+                        f"  - {error}" for error in validation_errors
+                    )
                     raise ConfigurationError(error_msg)
             except ImportError:
                 # Fallback validation if hostmatch module not available
@@ -344,13 +359,14 @@ class SecuritySettings(BaseSettings):
 @dataclass
 class ServerSettings(BaseSettings):
     """Settings related to the flask API server"""
+
     debug: bool = False
     environment: str = "development"
 
     host: str = "127.0.0.1"
     port: int = 5000
     log_level: str = "INFO"
-    log_format: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     # Turn on to accept various file formats with upload route
     file_upload_enabled: bool = False
@@ -372,9 +388,16 @@ class ServerSettings(BaseSettings):
     cache_timeout: int = 300  # 5 min
     cache_key_prefix: str = "lvdb_cache_"
     # Which cachelib cache to use: https://cachelib.readthedocs.io/en/stable/
-    cache_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
-    "MemcachedCache", "UWSGICache", "DynamoDbCache",
-    "MongoDbCache", "NullCache"] = "SimpleCache"
+    cache_type: Literal[
+        "SimpleCache",
+        "RedisCache",
+        "FileSystemCache",
+        "MemcachedCache",
+        "UWSGICache",
+        "DynamoDbCache",
+        "MongoDbCache",
+        "NullCache",
+    ] = "SimpleCache"
     # Contains the keyword-arguments passed to the cache constructor. See cachelib docs for details.
     # DEPRECATED: Use specific cache backend configurations below instead
     cache_settings: Optional[dict] = None
@@ -398,9 +421,16 @@ class ServerSettings(BaseSettings):
     memcached_password: Optional[str] = None
 
     # Database registry settings for multi-worker coordination
-    db_registry_type: Literal["SimpleCache", "RedisCache", "FileSystemCache",
-    "MemcachedCache", "UWSGICache", "DynamoDbCache",
-    "MongoDbCache", "NullCache"] = "SimpleCache"
+    db_registry_type: Literal[
+        "SimpleCache",
+        "RedisCache",
+        "FileSystemCache",
+        "MemcachedCache",
+        "UWSGICache",
+        "DynamoDbCache",
+        "MongoDbCache",
+        "NullCache",
+    ] = "SimpleCache"
 
     # Will try to use the cache_settings if not set and cache_types match.
     db_registry_settings: Optional[dict] = None
@@ -451,17 +481,22 @@ class ServerSettings(BaseSettings):
 
         if self.proxy_enabled:
             if not isinstance(self.proxy_settings, dict):
-                raise ConfigurationError("If `proxy_enabled` is True, `proxy_settings` must be a dict containing "
-                                         "one or more of the following keys: x_for, x_proto, x_host, x_prefix")
+                raise ConfigurationError(
+                    "If `proxy_enabled` is True, `proxy_settings` must be a dict containing "
+                    "one or more of the following keys: x_for, x_proto, x_host, x_prefix"
+                )
 
             # Require trusted_proxies when proxy is enabled for security
             if not self.trusted_proxies:
-                raise ConfigurationError("When `proxy_enabled` is True, `trusted_proxies` must be configured with "
-                                         "a list of trusted proxy IP addresses or CIDR blocks for security")
+                raise ConfigurationError(
+                    "When `proxy_enabled` is True, `trusted_proxies` must be configured with "
+                    "a list of trusted proxy IP addresses or CIDR blocks for security"
+                )
 
         # Validate trusted_proxies format
         if self.trusted_proxies:
             import ipaddress
+
             for proxy in self.trusted_proxies:
                 try:
                     # Validate IP address or CIDR block format
@@ -470,8 +505,16 @@ class ServerSettings(BaseSettings):
                     raise ConfigurationError(f"Invalid IP address or CIDR block in trusted_proxies: {proxy}") from e
 
         if self.cache_enabled:
-            valid_cache_types = ("SimpleCache", "RedisCache", "FileSystemCache", "MemcachedCache",
-                                 "UWSGICache", "DynamoDbCache", "MongoDbCache", "NullCache")
+            valid_cache_types = (
+                "SimpleCache",
+                "RedisCache",
+                "FileSystemCache",
+                "MemcachedCache",
+                "UWSGICache",
+                "DynamoDbCache",
+                "MongoDbCache",
+                "NullCache",
+            )
 
             # Validate cache type
             if self.cache_type not in valid_cache_types:
@@ -480,9 +523,11 @@ class ServerSettings(BaseSettings):
             # Backend-specific validation
             if self.cache_type == "RedisCache":
                 if self.redis_url and (
-                        self.redis_host != "localhost" or self.redis_port != 6379 or self.redis_password):
+                    self.redis_host != "localhost" or self.redis_port != 6379 or self.redis_password
+                ):
                     raise ConfigurationError(
-                        "When redis_url is set, do not set individual redis_host/port/password settings")
+                        "When redis_url is set, do not set individual redis_host/port/password settings"
+                    )
                 if not self.redis_url and not self.redis_host:
                     raise ConfigurationError("Redis cache requires either redis_url or redis_host to be configured")
 
@@ -508,6 +553,7 @@ class ServerSettings(BaseSettings):
 @dataclass
 class Config:
     """Main configuration container with v1.0 enhancements."""
+
     database: DatabaseSettings = field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
@@ -516,11 +562,11 @@ class Config:
 
     def validate(self):
         return (
-                self.database.validate() and
-                self.embedding.validate() and
-                self.server.validate() and
-                self.backup.validate() and
-                self.migration.validate()
+            self.database.validate()
+            and self.embedding.validate()
+            and self.server.validate()
+            and self.backup.validate()
+            and self.migration.validate()
         )
 
     @classmethod
@@ -530,9 +576,9 @@ class Config:
 
         if not path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
-        if path.suffix.lower() == '.toml':
+        if path.suffix.lower() == ".toml":
             return cls._from_toml(path)
-        elif path.suffix.lower() == '.json':
+        elif path.suffix.lower() == ".json":
             return cls._from_json(path)
         else:
             raise ValueError(f"Unsupported configuration file format: {path.suffix}")
@@ -549,10 +595,10 @@ class Config:
         config = cls()
 
         # Process database settings
-        if 'database' in data and isinstance(data['database'], dict):
-            db_data = data['database']
+        if "database" in data and isinstance(data["database"], dict):
+            db_data = data["database"]
             for key, value in db_data.items():
-                if key == 'default_metadata_schema' and isinstance(value, dict):
+                if key == "default_metadata_schema" and isinstance(value, dict):
                     # Parse metadata schema
                     schema = {}
                     for field_name, field_config in value.items():
@@ -565,16 +611,16 @@ class Config:
                     setattr(config.database, key, value)
 
         # Process embedding settings
-        if 'embedding' in data and isinstance(data['embedding'], dict):
-            for key, value in data['embedding'].items():
+        if "embedding" in data and isinstance(data["embedding"], dict):
+            for key, value in data["embedding"].items():
                 if hasattr(config.embedding, key):
                     setattr(config.embedding, key, value)
 
         # Process server settings
-        if 'server' in data and isinstance(data['server'], dict):
-            server_data = data['server']
+        if "server" in data and isinstance(data["server"], dict):
+            server_data = data["server"]
             for key, value in server_data.items():
-                if key == 'security' and isinstance(value, dict):
+                if key == "security" and isinstance(value, dict):
                     # Handle nested security settings
                     for sec_key, sec_value in value.items():
                         if hasattr(config.server.security, sec_key):
@@ -582,16 +628,15 @@ class Config:
                 elif hasattr(config.server, key):
                     setattr(config.server, key, value)
 
-
         # Process backup settings
-        if 'backup' in data and isinstance(data['backup'], dict):
-            for key, value in data['backup'].items():
+        if "backup" in data and isinstance(data["backup"], dict):
+            for key, value in data["backup"].items():
                 if hasattr(config.backup, key):
                     setattr(config.backup, key, value)
 
         # Process migration settings
-        if 'migration' in data and isinstance(data['migration'], dict):
-            for key, value in data['migration'].items():
+        if "migration" in data and isinstance(data["migration"], dict):
+            for key, value in data["migration"].items():
                 if hasattr(config.migration, key):
                     setattr(config.migration, key, value)
 
@@ -600,14 +645,14 @@ class Config:
     @classmethod
     def _from_toml(cls, path: Path) -> "Config":
         """Load configuration from TOML file."""
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             data = tomllib.load(f)
         return cls.from_dict(data)
 
     @classmethod
     def _from_json(cls, path: Path) -> "Config":
         """Load configuration from JSON file."""
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)
 
@@ -622,17 +667,17 @@ class Config:
                 continue
 
             # Remove prefix and convert to lowercase
-            name = env_name[len(prefix):].lower()
-            parts = name.split('_', 2)  # Allow for deeper nesting
+            name = env_name[len(prefix) :].lower()
+            parts = name.split("_", 2)  # Allow for deeper nesting
 
-            if len(parts) >= 2 and parts[0] in ['database', 'embedding', 'server', 'backup', 'migration']:
+            if len(parts) >= 2 and parts[0] in ["database", "embedding", "server", "backup", "migration"]:
                 section_name = parts[0]
-                key = '_'.join(parts[1:])
+                key = "_".join(parts[1:])
                 section_obj = getattr(config, section_name)
 
                 # Handle nested server.security settings
-                if section_name == 'server' and len(parts) >= 3 and parts[1] == 'security':
-                    security_key = '_'.join(parts[2:])
+                if section_name == "server" and len(parts) >= 3 and parts[1] == "security":
+                    security_key = "_".join(parts[2:])
                     security_obj = section_obj.security
                     if hasattr(security_obj, security_key):
                         value = cls._convert_env_value(env_value, security_obj, security_key)
@@ -679,7 +724,7 @@ class Config:
 
         # Handle basic types first (these have no origin)
         if target_type is bool:
-            return value.lower() in ['true', 'yes', '1', 'on']
+            return value.lower() in ["true", "yes", "1", "on"]
         elif target_type is int:
             return int(value)
         elif target_type is float:
@@ -702,18 +747,18 @@ class Config:
 
             if is_str_list_union:
                 # Try to parse as JSON array first
-                if value.startswith('[') and value.endswith(']'):
+                if value.startswith("[") and value.endswith("]"):
                     try:
                         return json.loads(value)
                     except json.JSONDecodeError:
                         # Fallback to comma-separated list
-                        items = value[1:-1].split(',')
-                        return [item.strip(' "\'') for item in items if item.strip()]
+                        items = value[1:-1].split(",")
+                        return [item.strip(" \"'") for item in items if item.strip()]
                 # If it contains commas or semicolons, treat as list
-                elif ',' in value or ';' in value:
+                elif "," in value or ";" in value:
                     # Support both comma and semicolon delimiters
-                    delimiter = ';' if ';' in value else ','
-                    return [item.strip(' "\'') for item in value.split(delimiter) if item.strip()]
+                    delimiter = ";" if ";" in value else ","
+                    return [item.strip(" \"'") for item in value.split(delimiter) if item.strip()]
                 # Otherwise, return as string
                 else:
                     return value
@@ -722,14 +767,14 @@ class Config:
             elif len(non_none_types) == 1:
                 inner_type = non_none_types[0]
                 # Check if the value represents None
-                if value.lower() in ['none', 'null', '']:
+                if value.lower() in ["none", "null", ""]:
                     return None
 
                 # Convert using the inner type
                 inner_origin = get_origin(inner_type)
 
                 if inner_type is bool:
-                    return value.lower() in ['true', 'yes', '1', 'on']
+                    return value.lower() in ["true", "yes", "1", "on"]
                 elif inner_type is int:
                     return int(value)
                 elif inner_type is float:
@@ -738,14 +783,14 @@ class Config:
                     return value
                 elif inner_origin is list:
                     # Handle Optional[List[str]]
-                    if value.startswith('[') and value.endswith(']'):
+                    if value.startswith("[") and value.endswith("]"):
                         try:
                             return json.loads(value)
                         except json.JSONDecodeError:
-                            items = value[1:-1].split(',')
-                            return [item.strip(' "\'') for item in items if item.strip()]
+                            items = value[1:-1].split(",")
+                            return [item.strip(" \"'") for item in items if item.strip()]
                     else:
-                        return [item.strip(' "\'') for item in value.split(',') if item.strip()]
+                        return [item.strip(" \"'") for item in value.split(",") if item.strip()]
                 elif inner_origin is dict:
                     # Handle Optional[dict]
                     try:
@@ -763,17 +808,17 @@ class Config:
 
         # Handle List types
         elif origin is list:
-            if value.startswith('[') and value.endswith(']'):
+            if value.startswith("[") and value.endswith("]"):
                 # Handle JSON array format
                 try:
                     return json.loads(value)
                 except json.JSONDecodeError:
                     # Fallback to comma-separated
-                    items = value[1:-1].split(',')
-                    return [item.strip(' "\'') for item in items if item.strip()]
+                    items = value[1:-1].split(",")
+                    return [item.strip(" \"'") for item in items if item.strip()]
             else:
                 # Handle comma-separated format
-                return [item.strip(' "\'') for item in value.split(',') if item.strip()]
+                return [item.strip(" \"'") for item in value.split(",") if item.strip()]
 
         # Handle Dict types
         elif origin is dict or target_type is dict:
@@ -827,7 +872,7 @@ class Config:
 
         # Database settings with DB_ prefix (maintaining backward compatibility)
         for key, value in asdict(self.database).items():
-            if key == 'default_metadata_schema':
+            if key == "default_metadata_schema":
                 continue
             else:
                 result[f"DB_{key.upper()}"] = value
@@ -848,23 +893,25 @@ class Config:
         cache_config = self._generate_cache_config()
 
         # Server settings (maintain existing names for backward compatibility)
-        result.update({
-            "DEBUG": self.server.debug,
-            "ENVIRONMENT": self.server.environment,
-            "DB_ROOT_DIR": self.database.root_dir,
-            "LOG_LEVEL": self.server.log_level,
-            "LOG_FORMAT": self.server.log_format,
-            "REQUIRE_API_KEY": self.server.security.require_api_key,
-            "CORS_ENABLED": self.server.security.cors_enabled,
-            "CORS_ALLOWED_ORIGINS": self.server.security.cors_allowed_origins,
-            "MAX_CONTENT_LENGTH": self.server.max_request_size,
-            "AUTH_LOG_LEVEL": self.server.security.auth_log_level,
-            "TRUSTED_HOSTS": self.server.security.trusted_hosts,
-            "TRUSTED_PROXIES": self.server.trusted_proxies,
-            "CACHE_IGNORE_ERRORS": self.server.cache_ignore_errors,
-            "CACHE_NO_NULL_WARNING": not self.server.cache_enabled,
-            "CACHE_KEY_PREFIX": self.server.cache_key_prefix
-        })
+        result.update(
+            {
+                "DEBUG": self.server.debug,
+                "ENVIRONMENT": self.server.environment,
+                "DB_ROOT_DIR": self.database.root_dir,
+                "LOG_LEVEL": self.server.log_level,
+                "LOG_FORMAT": self.server.log_format,
+                "REQUIRE_API_KEY": self.server.security.require_api_key,
+                "CORS_ENABLED": self.server.security.cors_enabled,
+                "CORS_ALLOWED_ORIGINS": self.server.security.cors_allowed_origins,
+                "MAX_CONTENT_LENGTH": self.server.max_request_size,
+                "AUTH_LOG_LEVEL": self.server.security.auth_log_level,
+                "TRUSTED_HOSTS": self.server.security.trusted_hosts,
+                "TRUSTED_PROXIES": self.server.trusted_proxies,
+                "CACHE_IGNORE_ERRORS": self.server.cache_ignore_errors,
+                "CACHE_NO_NULL_WARNING": not self.server.cache_enabled,
+                "CACHE_KEY_PREFIX": self.server.cache_key_prefix,
+            }
+        )
 
         # Add cache configuration
         result.update(cache_config)
@@ -880,7 +927,6 @@ class Config:
 
         if not self.server.cache_enabled:
             return cache_config
-
 
         # Generate backend-specific configuration
         if self.server.cache_type == "RedisCache":
@@ -913,7 +959,6 @@ class Config:
             if self.server.memcached_password:
                 cache_config["CACHE_MEMCACHED_PASSWORD"] = self.server.memcached_password
 
-
         return cache_config
 
     def generate_toml(self) -> str:
@@ -944,36 +989,36 @@ class Config:
         config_dict = clean_none_values(self.to_dict())
 
         # Process metadata schema for proper TOML serialization
-        if config_dict.get('database', {}).get('default_metadata_schema'):
-            metadata_schema = config_dict['database']['default_metadata_schema']
+        if config_dict.get("database", {}).get("default_metadata_schema"):
+            metadata_schema = config_dict["database"]["default_metadata_schema"]
             processed_schema = {}
             for field_name, field_config in metadata_schema.items():
-                if hasattr(field_config, '__dict__'):
+                if hasattr(field_config, "__dict__"):
                     # Convert MetadataField object to dict
                     field_dict = clean_none_values(asdict(field_config))
                     # Convert enum to string if needed
-                    if hasattr(field_dict.get('type'), 'value'):
-                        field_dict['type'] = field_dict['type'].value
-                    elif hasattr(field_dict.get('type'), '__str__'):
-                        field_dict['type'] = str(field_dict['type'])
+                    if hasattr(field_dict.get("type"), "value"):
+                        field_dict["type"] = field_dict["type"].value
+                    elif hasattr(field_dict.get("type"), "__str__"):
+                        field_dict["type"] = str(field_dict["type"])
                     processed_schema[field_name] = field_dict
                 elif isinstance(field_config, dict):
                     # Handle already converted dict
                     processed_field = clean_none_values(field_config.copy())
-                    if hasattr(processed_field.get('type'), 'value'):
-                        processed_field['type'] = processed_field['type'].value
-                    elif hasattr(processed_field.get('type'), '__str__'):
-                        processed_field['type'] = str(processed_field['type'])
+                    if hasattr(processed_field.get("type"), "value"):
+                        processed_field["type"] = processed_field["type"].value
+                    elif hasattr(processed_field.get("type"), "__str__"):
+                        processed_field["type"] = str(processed_field["type"])
                     processed_schema[field_name] = processed_field
 
             # Update the config dict
-            config_dict['database']['default_metadata_schema'] = processed_schema
+            config_dict["database"]["default_metadata_schema"] = processed_schema
 
         # Handle security nested structure - flatten for TOML
-        if 'server' in config_dict and 'security' in config_dict['server']:
+        if "server" in config_dict and "security" in config_dict["server"]:
             # Create server.security section
-            security_config = config_dict['server'].pop('security')
-            config_dict.setdefault('server', {})['security'] = security_config
+            security_config = config_dict["server"].pop("security")
+            config_dict.setdefault("server", {})["security"] = security_config
 
         # Generate TOML with header comment
         output = BytesIO()
@@ -990,7 +1035,7 @@ class Config:
             "embedding": asdict(self.embedding),
             "server": asdict(self.server),
             "backup": asdict(self.backup),
-            "migration": asdict(self.migration)
+            "migration": asdict(self.migration),
         }
 
     def apply_common_schema(self, schema_name: str):
@@ -1027,7 +1072,7 @@ class Config:
                     continue
 
                 # Special handling for metadata schema
-                if key == 'default_metadata_schema' and isinstance(override_value, dict):
+                if key == "default_metadata_schema" and isinstance(override_value, dict):
                     if not override_value:
                         # Use base value if override is empty
                         setattr(result, key, base_value)
@@ -1037,8 +1082,11 @@ class Config:
                         merged_schema.update(override_value)
                         setattr(result, key, merged_schema)
                 # Handle nested dataclasses recursively
-                elif (is_dataclass(base_value) and is_dataclass(override_value) and
-                      type(base_value) is type(override_value)):
+                elif (
+                    is_dataclass(base_value)
+                    and is_dataclass(override_value)
+                    and type(base_value) is type(override_value)
+                ):
                     # Create a new instance of the dataclass and recursively merge
                     nested_result = type(base_value)()
                     merge_dataclass(base_value, override_value, nested_result)
@@ -1074,10 +1122,10 @@ class Config:
 
 
 def load_config(
-        configuration: Union[str, Config, None] = None,
-        validate: bool = True,
-        verbose: bool = False,
-        apply_schema: Optional[str] = None
+    configuration: Union[str, Config, None] = None,
+    validate: bool = True,
+    verbose: bool = False,
+    apply_schema: Optional[str] = None,
 ) -> Config:
     """Load and construct a Config object from various sources.
 

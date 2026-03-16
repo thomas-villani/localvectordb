@@ -12,7 +12,7 @@ from localvectordb.utils import get_system_version, make_filename_safe
 class TestGetSystemVersion:
     """Test get_system_version function."""
 
-    @patch('importlib.metadata.version')
+    @patch("importlib.metadata.version")
     def test_get_version_success(self, mock_version):
         """Test successful version retrieval."""
         mock_version.return_value = "2.0.1"
@@ -22,32 +22,26 @@ class TestGetSystemVersion:
         assert version == "2.0.1"
         mock_version.assert_called_once_with("localvectordb")
 
-    @patch('importlib.metadata.version')
+    @patch("importlib.metadata.version")
     def test_get_version_not_found(self, mock_version):
         """Test version retrieval when package not found."""
         from importlib.metadata import PackageNotFoundError
+
         mock_version.side_effect = PackageNotFoundError("Package not found")
 
         assert get_system_version() == "dev"
 
-    @patch('importlib.metadata.version')
+    @patch("importlib.metadata.version")
     def test_get_version_different_versions(self, mock_version):
         """Test with different version formats."""
-        test_versions = [
-            "1.0.0",
-            "2.1.3",
-            "0.1.0-alpha",
-            "1.0.0-beta.1",
-            "2.0.0-rc.1",
-            "1.0.0+build.1"
-        ]
+        test_versions = ["1.0.0", "2.1.3", "0.1.0-alpha", "1.0.0-beta.1", "2.0.0-rc.1", "1.0.0+build.1"]
 
         for version in test_versions:
             mock_version.return_value = version
             result = get_system_version()
             assert result == version
 
-    @patch('importlib.metadata.version')
+    @patch("importlib.metadata.version")
     def test_get_version_empty_string(self, mock_version):
         """Test with empty version string."""
         mock_version.return_value = ""
@@ -56,7 +50,7 @@ class TestGetSystemVersion:
 
         assert version == ""
 
-    @patch('importlib.metadata.version')
+    @patch("importlib.metadata.version")
     def test_get_version_with_spaces(self, mock_version):
         """Test version with leading/trailing spaces."""
         mock_version.return_value = "  1.0.0  "
@@ -71,13 +65,7 @@ class TestMakeFilenameSafe:
 
     def test_simple_safe_filename(self):
         """Test with already safe filename."""
-        safe_names = [
-            "simple",
-            "test_file",
-            "document-1",
-            "file.txt",
-            "my_document_2024"
-        ]
+        safe_names = ["simple", "test_file", "document-1", "file.txt", "my_document_2024"]
 
         for name in safe_names:
             result = make_filename_safe(name)
@@ -85,18 +73,18 @@ class TestMakeFilenameSafe:
 
     def test_windows_invalid_characters(self):
         """Test Windows invalid character replacement."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             test_cases = [
                 ("file<name", "file_name"),
                 ("file>name", "file_name"),
                 ("file:name", "file_name"),
-                ("file\"name", "file_name"),
+                ('file"name', "file_name"),
                 ("file/name", "file_name"),
                 ("file\\name", "file_name"),
                 ("file|name", "file_name"),
                 ("file?name", "file_name"),
                 ("file*name", "file_name"),
-                ("file<>:\"/\\|?*name", "file_________name")
+                ('file<>:"/\\|?*name', "file_________name"),
             ]
 
             for input_name, expected in test_cases:
@@ -105,13 +93,13 @@ class TestMakeFilenameSafe:
 
     def test_posix_invalid_characters(self):
         """Test POSIX invalid character replacement."""
-        with patch('os.name', 'posix'):
+        with patch("os.name", "posix"):
             test_cases = [
                 ("file/name", "file_name"),
                 ("file:name", "file_name"),
                 ("file/:name", "file__name"),
                 ("normal_file", "normal_file"),
-                ("file.txt", "file.txt")
+                ("file.txt", "file.txt"),
             ]
 
             for input_name, expected in test_cases:
@@ -120,11 +108,30 @@ class TestMakeFilenameSafe:
 
     def test_windows_reserved_names(self):
         """Test Windows reserved name handling."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             reserved_names = [
-                "CON", "PRN", "AUX", "NUL",
-                "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+                "CON",
+                "PRN",
+                "AUX",
+                "NUL",
+                "COM1",
+                "COM2",
+                "COM3",
+                "COM4",
+                "COM5",
+                "COM6",
+                "COM7",
+                "COM8",
+                "COM9",
+                "LPT1",
+                "LPT2",
+                "LPT3",
+                "LPT4",
+                "LPT5",
+                "LPT6",
+                "LPT7",
+                "LPT8",
+                "LPT9",
             ]
 
             for name in reserved_names:
@@ -137,7 +144,7 @@ class TestMakeFilenameSafe:
 
     def test_posix_no_reserved_names(self):
         """Test that POSIX systems don't have reserved names."""
-        with patch('os.name', 'posix'):
+        with patch("os.name", "posix"):
             # These are reserved on Windows but not POSIX
             names = ["CON", "PRN", "AUX", "COM1", "LPT1"]
 
@@ -147,7 +154,7 @@ class TestMakeFilenameSafe:
 
     def test_windows_strip_spaces_and_periods(self):
         """Test Windows space and period stripping."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             test_cases = [
                 ("  filename  ", "filename"),
                 ("...filename...", "filename"),
@@ -156,7 +163,7 @@ class TestMakeFilenameSafe:
                 ("filename ", "filename"),
                 (" .filename. ", "filename"),
                 ("   ", ""),  # Edge case
-                ("...", "")  # Edge case
+                ("...", ""),  # Edge case
             ]
 
             for input_name, expected in test_cases:
@@ -165,7 +172,7 @@ class TestMakeFilenameSafe:
 
     def test_posix_only_strip_spaces(self):
         """Test that POSIX only strips spaces, not periods."""
-        with patch('os.name', 'posix'):
+        with patch("os.name", "posix"):
             test_cases = [
                 ("  filename  ", "filename"),
                 ("...filename...", "...filename..."),  # Periods preserved
@@ -206,7 +213,7 @@ class TestMakeFilenameSafe:
 
     def test_complex_filename_windows(self):
         """Test complex filename with multiple issues on Windows."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             # Filename with multiple issues
             complex_name = '  CON<file>name:with"invalid/chars\\and|extra?spaces*  '
 
@@ -218,9 +225,9 @@ class TestMakeFilenameSafe:
 
     def test_complex_filename_posix(self):
         """Test complex filename with multiple issues on POSIX."""
-        with patch('os.name', 'posix'):
+        with patch("os.name", "posix"):
             # Filename with POSIX invalid chars
-            complex_name = '  file/name:with:invalid/chars  '
+            complex_name = "  file/name:with:invalid/chars  "
 
             result = make_filename_safe(complex_name)
 
@@ -236,7 +243,7 @@ class TestMakeFilenameSafe:
             "ファイル.txt",  # Japanese
             "αρχείο.txt",  # Greek
             "café.txt",  # Accented characters
-            "file_😀.txt"  # Emoji
+            "file_😀.txt",  # Emoji
         ]
 
         for name in unicode_names:
@@ -248,7 +255,7 @@ class TestMakeFilenameSafe:
 
     def test_mixed_invalid_and_unicode(self):
         """Test mixed invalid characters and Unicode."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             name = "файл<test>café:file.txt"
             result = make_filename_safe(name)
 
@@ -261,8 +268,8 @@ class TestMakeFilenameSafe:
 
     def test_edge_case_only_invalid_chars(self):
         """Test filename consisting only of invalid characters."""
-        with patch('os.name', 'nt'):
-            name = "<>:\"/\\|?*"
+        with patch("os.name", "nt"):
+            name = '<>:"/\\|?*'
             result = make_filename_safe(name)
 
             # Should be replaced with underscores
@@ -270,7 +277,7 @@ class TestMakeFilenameSafe:
 
     def test_edge_case_reserved_with_extension(self):
         """Test reserved name with file extension."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             name = "CON"
             result = make_filename_safe(name)
 
@@ -279,7 +286,7 @@ class TestMakeFilenameSafe:
 
     def test_very_long_filename_with_issues(self):
         """Test very long filename with multiple issues."""
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             # Create a long name with invalid characters
             base = "file<with>invalid:chars"
             long_name = base * 15  # Make it very long
@@ -296,7 +303,7 @@ class TestMakeFilenameSafe:
     def test_fallback_for_empty_result(self):
         """Test fallback name when result is empty."""
         # This might happen if filename only contains invalid chars that get stripped
-        with patch('os.name', 'nt'):
+        with patch("os.name", "nt"):
             name = "   ...   "  # Only spaces and periods
             result = make_filename_safe(name)
 
@@ -318,17 +325,20 @@ class TestMakeFilenameSafe:
         assert result == "f"
         assert len(result) == 1
 
-    @pytest.mark.parametrize("os_name,input_name,expected", [
-        ('nt', 'file<name', 'file_name'),
-        ('posix', 'file<name', 'file<name'),
-        ('nt', 'file/name', 'file_name'),
-        ('posix', 'file/name', 'file_name'),
-        ('nt', 'CON', 'CON_safe'),
-        ('posix', 'CON', 'CON'),
-    ])
+    @pytest.mark.parametrize(
+        "os_name,input_name,expected",
+        [
+            ("nt", "file<name", "file_name"),
+            ("posix", "file<name", "file<name"),
+            ("nt", "file/name", "file_name"),
+            ("posix", "file/name", "file_name"),
+            ("nt", "CON", "CON_safe"),
+            ("posix", "CON", "CON"),
+        ],
+    )
     def test_parametrized_os_behavior(self, os_name, input_name, expected):
         """Test behavior across different operating systems."""
-        with patch('os.name', os_name):
+        with patch("os.name", os_name):
             result = make_filename_safe(input_name)
             assert result == expected
 
@@ -338,11 +348,11 @@ class TestUtilsIntegration:
 
     def test_version_with_invalid_chars_in_filename(self):
         """Test version with invalid characters in filename."""
-        with patch('importlib.metadata.version', return_value="2.0.1-beta+build"):
+        with patch("importlib.metadata.version", return_value="2.0.1-beta+build"):
             version = get_system_version()
             filename = f"db<{version}>.sqlite"
 
-            with patch('os.name', 'nt'):
+            with patch("os.name", "nt"):
                 safe_filename = make_filename_safe(filename)
 
                 # Invalid chars should be replaced
@@ -414,7 +424,7 @@ class TestUtilsPerformance:
         # Test repeated version calls
         start_time = time.time()
         for _ in range(100):
-            with patch('importlib.metadata.version', return_value="1.0.0"):
+            with patch("importlib.metadata.version", return_value="1.0.0"):
                 get_system_version()
         end_time = time.time()
 

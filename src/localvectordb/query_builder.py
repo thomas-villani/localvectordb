@@ -64,6 +64,7 @@ Examples
             .execute_async())
         return results
 """
+
 from __future__ import annotations
 
 import logging
@@ -87,6 +88,7 @@ logger = logging.getLogger(__name__)
 
 class SimilarityMetric(Enum):
     """Supported similarity metrics for semantic filtering."""
+
     COSINE = "cosine"
     EUCLIDEAN = "euclidean"
     DOT_PRODUCT = "dot_product"
@@ -96,6 +98,7 @@ class SimilarityMetric(Enum):
 @dataclass
 class SearchClause:
     """Represents a search operation on a specific field."""
+
     field: str  # Currently only 'content' is supported
     query: str
     weight: float = 1.0
@@ -106,6 +109,7 @@ class SearchClause:
 @dataclass
 class SemanticFilter:
     """Semantic filtering based on conceptual similarity with async support."""
+
     field: str
     concept: str
     threshold: float
@@ -239,6 +243,7 @@ class SemanticFilter:
 @dataclass
 class AggregationClause:
     """Represents an aggregation operation."""
+
     field: str
     function: Literal["count", "sum", "avg", "min", "max", "std", "var"]
     alias: Optional[str] = None
@@ -385,7 +390,7 @@ class QueryBuilder:
 
         # Validate operator suffixes in kwargs
         for key in kwargs:
-            if key.endswith('_') and key[:-1] not in FILTER_OPERATOR_NAMES:
+            if key.endswith("_") and key[:-1] not in FILTER_OPERATOR_NAMES:
                 raise ValueError(f"Invalid operator suffix in '{key}'")
 
         builder = self.clone()
@@ -394,7 +399,7 @@ class QueryBuilder:
             builder._exact_filters.append({field: value})
 
         for key, val in kwargs.items():
-            if key.endswith('_'):
+            if key.endswith("_"):
                 operator = key[:-1]
                 if field is None:
                     raise ValueError("Field must be specified when using operators")
@@ -410,11 +415,7 @@ class QueryBuilder:
         return builder
 
     def semantic_filter(
-            self,
-            field: str,
-            concept: str,
-            threshold: float = 0.8,
-            metric: SimilarityMetric = SimilarityMetric.COSINE
+        self, field: str, concept: str, threshold: float = 0.8, metric: SimilarityMetric = SimilarityMetric.COSINE
     ) -> "QueryBuilder":
         """Add semantic filtering based on conceptual similarity."""
         if not field or not isinstance(field, str):
@@ -504,10 +505,8 @@ class QueryBuilder:
         return builder
 
     def documents(
-            self,
-            scoring_method: DocumentScoringMethod = "frequency_boost",
-            scoring_options: dict = None
-            ) -> "QueryBuilder":
+        self, scoring_method: DocumentScoringMethod = "frequency_boost", scoring_options: dict = None
+    ) -> "QueryBuilder":
         """Return full documents in results (default)."""
         builder = self.clone()
         builder._return_type = "documents"
@@ -678,7 +677,7 @@ class QueryBuilder:
         return self.rerank("diversity", field=field, weight=weight)
 
     def rerank_by_model(
-            self, provider: str, model: Optional[str] = None, top_k: Optional[int] = None, **config
+        self, provider: str, model: Optional[str] = None, top_k: Optional[int] = None, **config
     ) -> "QueryBuilder":
         """Rerank results using a cross-encoder or reranking model.
 
@@ -762,7 +761,7 @@ class QueryBuilder:
             "issues": issues,
             "warnings": warnings,
             "recommendations": recommendations,
-            "query_complexity": self._estimate_complexity()
+            "query_complexity": self._estimate_complexity(),
         }
 
     def _estimate_complexity(self) -> str:
@@ -800,8 +799,9 @@ class QueryBuilder:
         }
 
     # Execution methods
-    def execute(self, *, streaming: bool = False, batch_size: int = 100) -> Union[
-        List[QueryResult], Iterator[List[QueryResult]]]:
+    def execute(
+        self, *, streaming: bool = False, batch_size: int = 100
+    ) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:
         """
         Execute the query and return results.
 
@@ -823,8 +823,9 @@ class QueryBuilder:
             executor = QueryExecutor(self)
             return executor.execute()
 
-    async def execute_async(self, *, streaming: bool = False, batch_size: int = 100) -> Union[
-        List[QueryResult], Iterator[List[QueryResult]]]:
+    async def execute_async(
+        self, *, streaming: bool = False, batch_size: int = 100
+    ) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:
         """
         Execute the query asynchronously with native async support.
 
@@ -912,7 +913,7 @@ class QueryBuilder:
                 "limit": self._limit,
                 "offset": self._offset,
                 "return_type": self._return_type,
-                "vector_weight": self._vector_weight
+                "vector_weight": self._vector_weight,
             }
 
         return plan
@@ -945,7 +946,7 @@ class QueryBuilder:
                 "limit": self._limit,
                 "offset": self._offset,
                 "return_type": self._return_type,
-                "vector_weight": self._vector_weight
+                "vector_weight": self._vector_weight,
             }
 
         return plan
@@ -1015,7 +1016,7 @@ class QueryExecutor:
             context_window=self.builder._context_window,
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
-            document_scoring_options=self.builder._document_scoring_options
+            document_scoring_options=self.builder._document_scoring_options,
         )
 
         if self.builder._semantic_filters:
@@ -1031,17 +1032,11 @@ class QueryExecutor:
             where=filters,
             limit=self.builder._limit + self.builder._offset,
             offset=0,
-            order_by=self._build_order_by_clause()
+            order_by=self._build_order_by_clause(),
         )
 
         results = [
-            QueryResult(
-                id=doc.id,
-                score=1.0,
-                type="document",
-                content=doc.content,
-                metadata=doc.metadata
-            )
+            QueryResult(id=doc.id, score=1.0, type="document", content=doc.content, metadata=doc.metadata)
             for doc in documents
         ]
 
@@ -1057,11 +1052,7 @@ class QueryExecutor:
 
         documents = []
         for result in results:
-            doc = Document(
-                id=result.id,
-                content=result.content,
-                metadata=result.metadata.copy()
-            )
+            doc = Document(id=result.id, content=result.content, metadata=result.metadata.copy())
             doc.metadata["_original_score"] = result.score
             documents.append(doc)
 
@@ -1072,11 +1063,7 @@ class QueryExecutor:
         for doc in documents:
             original_score = doc.metadata.pop("_original_score", 1.0)
             result = QueryResult(
-                id=doc.id,
-                score=original_score,
-                type="document",
-                content=doc.content,
-                metadata=doc.metadata
+                id=doc.id, score=original_score, type="document", content=doc.content, metadata=doc.metadata
             )
             filtered_results.append(result)
 
@@ -1088,25 +1075,26 @@ class QueryExecutor:
             results = self._apply_sorting(results)
 
         if self.builder._offset > 0:
-            results = results[self.builder._offset:]
+            results = results[self.builder._offset :]
 
         if len(results) > self.builder._limit:
-            results = results[:self.builder._limit]
+            results = results[: self.builder._limit]
 
         return results
 
     def _apply_sorting(self, results: List[QueryResult]) -> List[QueryResult]:
         """Apply sorting to results."""
         for field, direction in reversed(self.builder._order_by):
-            reverse = (direction.lower() == "desc")
+            reverse = direction.lower() == "desc"
 
             if field == "score":
                 results.sort(key=lambda x: x.score, reverse=reverse)
             else:
+
                 def sort_key(result, field=field, reverse=reverse):
                     value = result.metadata.get(field)
                     if value is None:
-                        return float('-inf') if reverse else float('inf')
+                        return float("-inf") if reverse else float("inf")
                     return value
 
                 results.sort(key=sort_key, reverse=reverse)
@@ -1138,8 +1126,11 @@ class QueryExecutor:
             # A dedicated AggregatedQueryResult type could improve clarity.
             # Create result for this group
             if self.builder._group_by:
-                group_metadata = dict(zip(self.builder._group_by,
-                                          group_key if isinstance(group_key, tuple) else [group_key], strict=False))
+                group_metadata = dict(
+                    zip(
+                        self.builder._group_by, group_key if isinstance(group_key, tuple) else [group_key], strict=False
+                    )
+                )
                 group_metadata.update(aggregation_data)
 
                 result = QueryResult(
@@ -1147,7 +1138,7 @@ class QueryExecutor:
                     score=1.0,
                     type="group",
                     content=f"Group: {group_key}",
-                    metadata=group_metadata
+                    metadata=group_metadata,
                 )
             else:
                 result = QueryResult(
@@ -1155,7 +1146,7 @@ class QueryExecutor:
                     score=1.0,
                     type="aggregation",
                     content="Aggregation Result",
-                    metadata=aggregation_data
+                    metadata=aggregation_data,
                 )
 
             aggregated_results.append(result)
@@ -1302,7 +1293,7 @@ class QueryExecutor:
             for result in results:
                 field_value = result.metadata.get(field)
                 if field_value not in seen_values:
-                    result.score *= (1.0 + weight)
+                    result.score *= 1.0 + weight
                     seen_values.add(field_value)
 
             results.sort(key=lambda x: x.score, reverse=True)
@@ -1315,8 +1306,9 @@ class QueryExecutor:
             model = config.get("model")
             top_k = config.get("top_k")
 
-            reranker_kwargs = {k: v for k, v in config.items()
-                               if k not in ("method", "provider", "model", "top_k") and v is not None}
+            reranker_kwargs = {
+                k: v for k, v in config.items() if k not in ("method", "provider", "model", "top_k") and v is not None
+            }
 
             reranker = RerankerRegistry.create_reranker(provider, model, **reranker_kwargs)
 
@@ -1336,7 +1328,7 @@ class QueryExecutor:
             return len(results)
         else:
             # Use database count if available, otherwise execute filter
-            if hasattr(self.db, 'count'):
+            if hasattr(self.db, "count"):
                 filters = self._combine_exact_filters()
                 return self.db.count(where=filters)
             else:
@@ -1411,9 +1403,12 @@ class QueryExecutor:
         plan = {
             "steps": [],
             "estimated_cost": 0,
-            "query_type": "hybrid" if self.builder._search_clauses and self.builder._exact_filters else
-            "search" if self.builder._search_clauses else "filter",
-            "optimizations": []
+            "query_type": (
+                "hybrid"
+                if self.builder._search_clauses and self.builder._exact_filters
+                else "search" if self.builder._search_clauses else "filter"
+            ),
+            "optimizations": [],
         }
 
         if self.builder._search_clauses:
@@ -1463,9 +1458,12 @@ class AsyncQueryExecutor:
         plan = {
             "steps": [],
             "estimated_cost": 0,
-            "query_type": "hybrid" if self.builder._search_clauses and self.builder._exact_filters else
-            "search" if self.builder._search_clauses else "filter",
-            "optimizations": []
+            "query_type": (
+                "hybrid"
+                if self.builder._search_clauses and self.builder._exact_filters
+                else "search" if self.builder._search_clauses else "filter"
+            ),
+            "optimizations": [],
         }
 
         if self.builder._search_clauses:
@@ -1561,7 +1559,7 @@ class AsyncQueryExecutor:
             context_window=self.builder._context_window,
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
-            document_scoring_options=self.builder._document_scoring_options
+            document_scoring_options=self.builder._document_scoring_options,
         )
 
         if self.builder._semantic_filters:
@@ -1577,16 +1575,10 @@ class AsyncQueryExecutor:
             where=filters,
             limit=self.builder._limit + self.builder._offset,
             offset=0,
-            order_by=self._build_order_by_clause()
+            order_by=self._build_order_by_clause(),
         )
         results = [
-            QueryResult(
-                id=doc.id,
-                score=1.0,
-                type="document",
-                content=doc.content,
-                metadata=doc.metadata
-            )
+            QueryResult(id=doc.id, score=1.0, type="document", content=doc.content, metadata=doc.metadata)
             for doc in documents
         ]
 
@@ -1602,11 +1594,7 @@ class AsyncQueryExecutor:
 
         documents = []
         for result in results:
-            doc = Document(
-                id=result.id,
-                content=result.content,
-                metadata=result.metadata.copy()
-            )
+            doc = Document(id=result.id, content=result.content, metadata=result.metadata.copy())
             doc.metadata["_original_score"] = result.score
             documents.append(doc)
 
@@ -1617,11 +1605,7 @@ class AsyncQueryExecutor:
         for doc in documents:
             original_score = doc.metadata.pop("_original_score", 1.0)
             result = QueryResult(
-                id=doc.id,
-                score=original_score,
-                type="document",
-                content=doc.content,
-                metadata=doc.metadata
+                id=doc.id, score=original_score, type="document", content=doc.content, metadata=doc.metadata
             )
             filtered_results.append(result)
 
@@ -1634,10 +1618,10 @@ class AsyncQueryExecutor:
             results = self._apply_sorting(results)
 
         if self.builder._offset > 0:
-            results = results[self.builder._offset:]
+            results = results[self.builder._offset :]
 
         if len(results) > self.builder._limit:
-            results = results[:self.builder._limit]
+            results = results[: self.builder._limit]
 
         return results
 

@@ -33,7 +33,7 @@ from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DatabaseError
 
 # Pattern for valid SQL identifiers (alphanumeric and underscores, starting with letter or underscore)
-_SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+_SAFE_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 def _validate_and_quote_identifier(name: str) -> str:
@@ -66,24 +66,25 @@ def _validate_and_quote_identifier(name: str) -> str:
     escaped = name.replace('"', '""')
     return f'"{escaped}"'
 
+
 FILTER_OPERATORS = (
-    '$eq',
-    '$ne',
-    '$gt',
-    '$lt',
-    '$gte',
-    '$lte',
-    '$like',
-    '$ilike',
-    '$in',
-    '$nin',
-    '$contains',
-    '$not_contains',
-    '$exists',
-    '$not_exists',
-    '$startswith',
-    '$endswith',
-    '$type',
+    "$eq",
+    "$ne",
+    "$gt",
+    "$lt",
+    "$gte",
+    "$lte",
+    "$like",
+    "$ilike",
+    "$in",
+    "$nin",
+    "$contains",
+    "$not_contains",
+    "$exists",
+    "$not_exists",
+    "$startswith",
+    "$endswith",
+    "$type",
 )
 
 
@@ -92,22 +93,20 @@ class FilterQueryBuilder:
 
     # SQL operators mapping
     OPERATORS = {
-        '$eq': '=',
-        '$ne': '!=',
-        '$gt': '>',
-        '$lt': '<',
-        '$gte': '>=',
-        '$lte': '<=',
-        '$like': 'LIKE',
-        '$ilike': 'LIKE',  # Case-insensitive, handled with LOWER()
-        '$in': 'IN',
-        '$nin': 'NOT IN',
+        "$eq": "=",
+        "$ne": "!=",
+        "$gt": ">",
+        "$lt": "<",
+        "$gte": ">=",
+        "$lte": "<=",
+        "$like": "LIKE",
+        "$ilike": "LIKE",  # Case-insensitive, handled with LOWER()
+        "$in": "IN",
+        "$nin": "NOT IN",
     }
 
     # Reserved column names that cannot be used as metadata fields
-    RESERVED_COLUMNS = {
-        'id', 'content', 'content_hash', 'created_at', 'updated_at', 'rowid'
-    }
+    RESERVED_COLUMNS = {"id", "content", "content_hash", "created_at", "updated_at", "rowid"}
 
     def __init__(self, metadata_schema: Dict[str, MetadataField]):
         """Initialize the query builder with metadata schema.
@@ -156,7 +155,7 @@ class FilterQueryBuilder:
             If field name is invalid or doesn't exist
         """
         # Check for SQL injection patterns
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', field):
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", field):
             raise DatabaseError(f"Invalid field name: {field}")
 
         # Check if it's a reserved column
@@ -182,9 +181,9 @@ class FilterQueryBuilder:
         """
         if field.lower() in self.RESERVED_COLUMNS:
             # Handle reserved columns
-            if field in ['created_at', 'updated_at']:
+            if field in ["created_at", "updated_at"]:
                 return MetadataFieldType.DATE
-            elif field in ['content_hash', 'id']:
+            elif field in ["content_hash", "id"]:
                 return MetadataFieldType.TEXT
             else:
                 return MetadataFieldType.TEXT
@@ -222,7 +221,7 @@ class FilterQueryBuilder:
             if isinstance(value, bool):
                 return value
             elif isinstance(value, str):
-                return value.lower() in ('true', '1', 'yes', 'on')
+                return value.lower() in ("true", "1", "yes", "on")
             return bool(value)
         elif field_type == MetadataFieldType.INTEGER:
             return int(value) if value is not None else None
@@ -255,18 +254,15 @@ class FilterQueryBuilder:
         converted_value = self._convert_value_for_type(value, field_type) if field_type else value
 
         # Handle special cases
-        if operator in ('IN', 'NOT IN'):
+        if operator in ("IN", "NOT IN"):
             if not isinstance(value, (list, tuple)):
                 raise DatabaseError(f"Operator {operator} requires a list/array value")
             if not value:
                 # Empty list - handle specially
-                return "1=0" if operator == 'IN' else "1=1"
+                return "1=0" if operator == "IN" else "1=1"
 
             # Convert all values
-            converted_values = [
-                self._convert_value_for_type(v, field_type) if field_type else v
-                for v in value
-            ]
+            converted_values = [self._convert_value_for_type(v, field_type) if field_type else v for v in value]
             placeholders = [self._add_param(v) for v in converted_values]
             placeholder_str = f"({', '.join(placeholders)})"
             return f"{field} {operator} {placeholder_str}"
@@ -297,19 +293,23 @@ class FilterQueryBuilder:
         if field_type != MetadataFieldType.JSON:
             raise DatabaseError(f"JSON operations only supported on JSON fields, {field} is {field_type}")
 
-        if json_op == '$contains':
+        if json_op == "$contains":
             # Check if JSON array contains value
             json_value = json.dumps(value)
             param_placeholder = self._add_param(json_value)
             # Use JSON_EXTRACT or fallback to string search
-            return (f"(json_extract({field}, '$') LIKE '%' || {param_placeholder} "
-                    f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')")
-        elif json_op == '$not_contains':
+            return (
+                f"(json_extract({field}, '$') LIKE '%' || {param_placeholder} "
+                f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')"
+            )
+        elif json_op == "$not_contains":
             # Check if JSON array does not contain value
             json_value = json.dumps(value)
             param_placeholder = self._add_param(json_value)
-            return (f"NOT (json_extract({field}, '$') LIKE '%' || {param_placeholder} "
-                    f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')")
+            return (
+                f"NOT (json_extract({field}, '$') LIKE '%' || {param_placeholder} "
+                f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')"
+            )
         else:
             raise DatabaseError(f"Unsupported JSON operation: {json_op}")
 
@@ -335,11 +335,11 @@ class FilterQueryBuilder:
         if not isinstance(value, str):
             value = str(value)
 
-        if str_op == '$startswith':
+        if str_op == "$startswith":
             pattern = f"{value}%"
-        elif str_op == '$endswith':
+        elif str_op == "$endswith":
             pattern = f"%{value}"
-        elif str_op == '$contains':
+        elif str_op == "$contains":
             pattern = f"%{value}%"
         else:
             raise DatabaseError(f"Unsupported string operation: {str_op}")
@@ -388,14 +388,14 @@ class FilterQueryBuilder:
 
         # Map type names to SQL checks
         type_checks = {
-            'null': f"{field} IS NULL",
-            'string': f"{field} IS NOT NULL AND typeof({field}) = 'text'",
-            'number': f"{field} IS NOT NULL AND typeof({field}) IN ('integer', 'real')",
-            'integer': f"{field} IS NOT NULL AND typeof({field}) = 'integer'",
-            'real': f"{field} IS NOT NULL AND typeof({field}) = 'real'",
-            'boolean': f"{field} IS NOT NULL AND {field} IN (0, 1)",
-            'array': f"{field} IS NOT NULL AND substr({field}, 1, 1) = '['",
-            'object': f"{field} IS NOT NULL AND substr({field}, 1, 1) = '{{'",
+            "null": f"{field} IS NULL",
+            "string": f"{field} IS NOT NULL AND typeof({field}) = 'text'",
+            "number": f"{field} IS NOT NULL AND typeof({field}) IN ('integer', 'real')",
+            "integer": f"{field} IS NOT NULL AND typeof({field}) = 'integer'",
+            "real": f"{field} IS NOT NULL AND typeof({field}) = 'real'",
+            "boolean": f"{field} IS NOT NULL AND {field} IN (0, 1)",
+            "array": f"{field} IS NOT NULL AND substr({field}, 1, 1) = '['",
+            "object": f"{field} IS NOT NULL AND substr({field}, 1, 1) = '{{'",
         }
 
         if expected_type not in type_checks:
@@ -420,42 +420,42 @@ class FilterQueryBuilder:
         """
         # Simple equality
         if not isinstance(condition, dict):
-            return self._build_simple_condition(field, '=', condition)
+            return self._build_simple_condition(field, "=", condition)
 
         # Complex condition with operators
         conditions = []
         for op, value in condition.items():
             if op in self.OPERATORS:
                 sql_op = self.OPERATORS[op]
-                if op == '$ilike':
+                if op == "$ilike":
                     # Special handling for case-insensitive LIKE
                     self._validate_field_name(field)
                     if not isinstance(value, str):
                         value = str(value)
                     # Add wildcards if not present
-                    if '%' not in value:
+                    if "%" not in value:
                         value = f"%{value}%"
                     param_placeholder = self._add_param(value.lower())
                     conditions.append(f"LOWER({field}) LIKE {param_placeholder}")
                 else:
                     conditions.append(self._build_simple_condition(field, sql_op, value))
-            elif op in ['$contains', '$not_contains']:
+            elif op in ["$contains", "$not_contains"]:
                 field_type = self._get_field_type(field)
                 if field_type == MetadataFieldType.JSON:
                     conditions.append(self._build_json_condition(field, op, value))
                 else:
                     # Treat as string contains
-                    if op == '$contains':
-                        conditions.append(self._build_string_condition(field, '$contains', value))
+                    if op == "$contains":
+                        conditions.append(self._build_string_condition(field, "$contains", value))
                     else:
                         conditions.append(f"NOT ({self._build_string_condition(field, '$contains', value)})")
-            elif op in ['$startswith', '$endswith']:
+            elif op in ["$startswith", "$endswith"]:
                 conditions.append(self._build_string_condition(field, op, value))
-            elif op == '$exists':
+            elif op == "$exists":
                 conditions.append(self._build_existence_condition(field, value))
-            elif op == '$not_exists':
+            elif op == "$not_exists":
                 conditions.append(self._build_existence_condition(field, not value))
-            elif op == '$type':
+            elif op == "$type":
                 conditions.append(self._build_type_condition(field, value))
             else:
                 raise DatabaseError(f"Unsupported operator: {op}")
@@ -494,10 +494,10 @@ class FilterQueryBuilder:
             raise DatabaseError("Invalid ORDER BY format. Use 'field_name' or 'field_name ASC/DESC'")
 
         field_name = order_parts[0].strip()
-        direction = order_parts[1].upper() if len(order_parts) == 2 else 'ASC'
+        direction = order_parts[1].upper() if len(order_parts) == 2 else "ASC"
 
         # Validate direction
-        if direction not in ('ASC', 'DESC'):
+        if direction not in ("ASC", "DESC"):
             raise DatabaseError("ORDER BY direction must be ASC or DESC")
 
         # Determine valid columns
@@ -551,19 +551,19 @@ class FilterQueryBuilder:
         conditions = []
 
         for key, value in filter_spec.items():
-            if key == '$and':
+            if key == "$and":
                 if not isinstance(value, list):
                     raise DatabaseError("$and operator requires a list of conditions")
                 and_conditions = [self._build_where_recursive(cond) for cond in value]
                 if and_conditions:
                     conditions.append(f"({' AND '.join(and_conditions)})")
-            elif key == '$or':
+            elif key == "$or":
                 if not isinstance(value, list):
                     raise DatabaseError("$or operator requires a list of conditions")
                 or_conditions = [self._build_where_recursive(cond) for cond in value]
                 if or_conditions:
                     conditions.append(f"({' OR '.join(or_conditions)})")
-            elif key == '$not':
+            elif key == "$not":
                 if not isinstance(value, dict):
                     raise DatabaseError("$not operator requires a condition object")
                 not_condition = self._build_where_recursive(value)
@@ -602,7 +602,7 @@ def get_nested_value(data: dict, path: str) -> Any:
     if not data:
         return None
 
-    keys = path.split('.')
+    keys = path.split(".")
     value = data
 
     try:
@@ -641,58 +641,58 @@ def check_metadata_condition(metadata: dict, field: str, condition: Union[dict, 
 
     # Operator-based comparison
     for op, target in condition.items():
-        if op == '$eq':
+        if op == "$eq":
             return value == target
-        elif op == '$ne':
+        elif op == "$ne":
             return value != target
-        elif op == '$gt':
+        elif op == "$gt":
             return value > target if value is not None else False
-        elif op == '$lt':
+        elif op == "$lt":
             return value < target if value is not None else False
-        elif op == '$gte':
+        elif op == "$gte":
             return value >= target if value is not None else False
-        elif op == '$lte':
+        elif op == "$lte":
             return value <= target if value is not None else False
-        elif op == '$ilike':
+        elif op == "$ilike":
             return str(target).lower() in str(value).lower() if value is not None else False
-        elif op == '$like':
+        elif op == "$like":
             return str(target) in str(value) if value is not None else False
-        elif op == '$contains':
+        elif op == "$contains":
             if isinstance(value, list):
                 return any(t in value for t in ([target] if not isinstance(target, list) else target))
             return target in str(value) if value is not None else False
-        elif op == '$not_contains':
+        elif op == "$not_contains":
             if isinstance(value, list):
                 return not all(t in value for t in ([target] if not isinstance(target, list) else target))
             return target not in str(value) if value is not None else True
-        elif op == '$exists':
+        elif op == "$exists":
             return (value is not None) == target
-        elif op == '$not_exists':
+        elif op == "$not_exists":
             return (value is None) == target
-        elif op == '$in':
+        elif op == "$in":
             return value in target if isinstance(target, (list, tuple)) and value is not None else False
-        elif op == '$nin':
+        elif op == "$nin":
             return value not in target if isinstance(target, (list, tuple)) and value is not None else True
-        elif op == '$startswith':
+        elif op == "$startswith":
             return str(value).startswith(str(target)) if value is not None else False
-        elif op == '$endswith':
+        elif op == "$endswith":
             return str(value).endswith(str(target)) if value is not None else False
-        elif op == '$type':
-            if target == 'null':
+        elif op == "$type":
+            if target == "null":
                 return value is None
-            elif target == 'string':
+            elif target == "string":
                 return isinstance(value, str)
-            elif target == 'number':
+            elif target == "number":
                 return isinstance(value, (int, float))
-            elif target == 'integer':
+            elif target == "integer":
                 return isinstance(value, int)
-            elif target == 'real':
+            elif target == "real":
                 return isinstance(value, float)
-            elif target == 'boolean':
+            elif target == "boolean":
                 return isinstance(value, bool)
-            elif target == 'array':
+            elif target == "array":
                 return isinstance(value, list)
-            elif target == 'object':
+            elif target == "object":
                 return isinstance(value, dict)
             else:
                 return False
@@ -726,26 +726,26 @@ def matches_metadata_filter(doc_or_metadata, metadata_filter: dict) -> bool:
         metadata = doc_or_metadata
     else:
         # Try to get metadata from object
-        if hasattr(doc_or_metadata, 'metadata'):
+        if hasattr(doc_or_metadata, "metadata"):
             metadata = doc_or_metadata.metadata
         else:
             return False
 
     # Handle logical operators
-    if '$and' in metadata_filter:
-        return all(matches_metadata_filter(metadata, cond) for cond in metadata_filter['$and'])
+    if "$and" in metadata_filter:
+        return all(matches_metadata_filter(metadata, cond) for cond in metadata_filter["$and"])
 
-    if '$or' in metadata_filter:
-        return any(matches_metadata_filter(metadata, cond) for cond in metadata_filter['$or'])
+    if "$or" in metadata_filter:
+        return any(matches_metadata_filter(metadata, cond) for cond in metadata_filter["$or"])
 
-    if '$not' in metadata_filter:
-        return not matches_metadata_filter(metadata, metadata_filter['$not'])
+    if "$not" in metadata_filter:
+        return not matches_metadata_filter(metadata, metadata_filter["$not"])
 
     # Handle field conditions
     return all(
         check_metadata_condition(metadata, field, condition)
         for field, condition in metadata_filter.items()
-        if not field.startswith('$')
+        if not field.startswith("$")
     )
 
 
@@ -782,7 +782,7 @@ class FTSQuerySanitization:
             return FTSQuerySanitization.handle_phrase_query(query)
 
         # Check if query contains basic boolean operators
-        if any(op in query.upper() for op in [' AND ', ' OR ', ' NOT ']):
+        if any(op in query.upper() for op in [" AND ", " OR ", " NOT "]):
             return FTSQuerySanitization.handle_boolean_query(query)
 
         # Simple multi-term query - default to AND behavior for better relevance
@@ -805,7 +805,7 @@ class FTSQuerySanitization:
     def is_safe_phrase(phrase: str) -> bool:
         """Check if a phrase is safe to use in FTS5 without additional escaping"""
         # Avoid phrases with FTS5 special characters that could cause issues
-        dangerous_chars = ['*', ':', '^', '(', ')', '[', ']', '{', '}']
+        dangerous_chars = ["*", ":", "^", "(", ")", "[", "]", "{", "}"]
         return not any(char in phrase for char in dangerous_chars)
 
     @staticmethod
@@ -813,7 +813,7 @@ class FTSQuerySanitization:
         """Clean a single term for safe FTS5 usage"""
         # Remove FTS5 special characters but preserve basic word characters
         # Keep unicode word characters, numbers, hyphens, apostrophes
-        clean_term = re.sub(r'[^\w\s\'-]', '', term, flags=re.UNICODE).strip()
+        clean_term = re.sub(r"[^\w\s\'-]", "", term, flags=re.UNICODE).strip()
         return clean_term
 
     @staticmethod
@@ -876,18 +876,18 @@ class FTSQuerySanitization:
 
         # Replace boolean operators with standardized versions
         normalized = query.upper()
-        normalized = re.sub(r'\bAND\b', ' AND ', normalized)
-        normalized = re.sub(r'\bOR\b', ' OR ', normalized)
-        normalized = re.sub(r'\bNOT\b', ' NOT ', normalized)
+        normalized = re.sub(r"\bAND\b", " AND ", normalized)
+        normalized = re.sub(r"\bOR\b", " OR ", normalized)
+        normalized = re.sub(r"\bNOT\b", " NOT ", normalized)
 
         # Split by operators while preserving them
-        tokens = re.split(r'(\s+(?:AND|OR|NOT)\s+)', normalized)
+        tokens = re.split(r"(\s+(?:AND|OR|NOT)\s+)", normalized)
 
         # Clean each non-operator token
         cleaned_tokens = []
         for token in tokens:
             token = token.strip()
-            if token in ['AND', 'OR', 'NOT']:
+            if token in ["AND", "OR", "NOT"]:
                 cleaned_tokens.append(token)
             elif token:
                 # Regular term - clean it
@@ -900,7 +900,7 @@ class FTSQuerySanitization:
             return " ".join(cleaned_tokens)
         else:
             # Fall back to simple AND of all terms
-            terms = re.split(r'\s+(?:AND|OR|NOT)\s+', query, flags=re.IGNORECASE)
+            terms = re.split(r"\s+(?:AND|OR|NOT)\s+", query, flags=re.IGNORECASE)
             clean_terms = []
             for term in terms:
                 clean_term = FTSQuerySanitization.clean_term(term.strip())
@@ -915,11 +915,11 @@ class FTSQuerySanitization:
             return False
 
         # Should start and end with terms, not operators
-        if tokens[0] in ['AND', 'OR', 'NOT'] or tokens[-1] in ['AND', 'OR']:
+        if tokens[0] in ["AND", "OR", "NOT"] or tokens[-1] in ["AND", "OR"]:
             return False
 
         # Operators and terms should alternate (roughly)
-        operator_count = sum(1 for token in tokens if token in ['AND', 'OR', 'NOT'])
+        operator_count = sum(1 for token in tokens if token in ["AND", "OR", "NOT"])
         term_count = len(tokens) - operator_count
 
         # Should have roughly one fewer operator than terms

@@ -8,9 +8,7 @@ from typing import Optional
 from .result import ClaimResult
 
 
-def _find_best_match(
-    text: str, sentence: str, threshold: float = 0.6
-) -> Optional[tuple[int, int]]:
+def _find_best_match(text: str, sentence: str, threshold: float = 0.6) -> Optional[tuple[int, int]]:
     """Locate *sentence* in *text* via exact then fuzzy matching.
 
     Returns ``(start, end)`` character offsets or ``None``.
@@ -74,7 +72,7 @@ def annotate_response(
     for i, (_start, end, source_id, excerpt) in enumerate(reversed(citations), 1):
         marker = f" [{i}]"
         annotated = annotated[:end] + marker + annotated[end:]
-        footnotes.append(f"[{i}] {source_id} -- \"{excerpt}\"")
+        footnotes.append(f'[{i}] {source_id} -- "{excerpt}"')
 
     annotated += "\n\n---\n" + "\n".join(footnotes)
     return annotated
