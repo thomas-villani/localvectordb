@@ -35,7 +35,7 @@ For running the LocalVectorDB HTTP server:
 
 Additional dependencies:
 
-- Flask web framework
+- FastAPI web framework with Uvicorn ASGI server
 - HTTP client libraries
 - Configuration management
 - CLI tools

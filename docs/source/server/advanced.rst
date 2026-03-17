@@ -630,42 +630,41 @@ Kubernetes Deployment
            persistentVolumeClaim:
              claimName: vectordb-data
 
-Gunicorn Deployment
-~~~~~~~~~~~~~~~~~~~
+Uvicorn Deployment
+~~~~~~~~~~~~~~~~~~
 
-For production WSGI deployment:
+For production ASGI deployment:
 
-**gunicorn.conf.py**
+**Single worker (simple)**
 
-.. code-block:: python
+.. code-block:: bash
 
-   import os
+   uvicorn "localvectordb_server.app:create_app" --factory \
+       --host 0.0.0.0 --port 5000
 
-   bind = "0.0.0.0:5000"
-   workers = 4
-   worker_class = "sync"
-   worker_connections = 1000
-   max_requests = 1000
-   max_requests_jitter = 50
-   timeout = 300
-   keepalive = 5
+**Multi-worker production**
 
-   # Logging
-   accesslog = "/app/logs/access.log"
-   errorlog = "/app/logs/error.log"
-   loglevel = "info"
+.. code-block:: bash
 
-   # Process naming
-   proc_name = "localvectordb-server"
+   uvicorn "localvectordb_server.app:create_app" --factory \
+       --host 0.0.0.0 --port 5000 \
+       --workers 4 \
+       --log-level info \
+       --access-log \
+       --timeout-keep-alive 5
 
-   # Worker management
-   preload_app = True
+**With Gunicorn as process manager (uvicorn workers)**
 
-   def when_ready(server):
-       server.log.info("Server is ready. Spawning workers")
+.. code-block:: bash
 
-   def worker_int(worker):
-       worker.log.info("worker received INT or QUIT signal")
+   gunicorn "localvectordb_server.app:create_app" \
+       --worker-class uvicorn.workers.UvicornWorker \
+       --workers 4 \
+       --bind 0.0.0.0:5000 \
+       --timeout 300 \
+       --keepalive 5 \
+       --access-logfile /app/logs/access.log \
+       --error-logfile /app/logs/error.log
 
 **Deployment script**
 
@@ -673,18 +672,12 @@ For production WSGI deployment:
 
    #!/bin/bash
 
-   # Create application factory
-   cat > wsgi.py << 'EOF'
-   from localvectordb_server import create_app
+   # Start with uvicorn (recommended)
+   uvicorn "localvectordb_server.app:create_app" --factory \
+       --host 0.0.0.0 --port 5000 --workers 4
 
-   app = create_app(configuration="config/production.toml")
-
-   if __name__ == "__main__":
-       app.run()
-   EOF
-
-   # Start with Gunicorn
-   gunicorn wsgi:app -c gunicorn.conf.py
+   # Or use the CLI
+   lvdb serve --host 0.0.0.0 --port 5000
 
 Performance Tuning
 ------------------

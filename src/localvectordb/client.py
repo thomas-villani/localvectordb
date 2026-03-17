@@ -3370,3 +3370,373 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         data = self._handle_response(response)
         checkpointed: bool = data.get("checkpointed", False)
         return checkpointed
+
+    # ========================================================================
+    # Streaming methods
+    # ========================================================================
+
+    def query_stream(
+        self,
+        query: str,
+        *,
+        search_type: str = "vector",
+        return_type: str = "documents",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        batch_size: int = 10,
+        context_window: int = 2,
+        document_scoring_method: str = "frequency_boost",
+        document_scoring_options: Optional[Dict[str, Any]] = None,
+    ):
+        """Stream query results from the server via SSE.
+
+        Yields lists of QueryResult objects as they arrive from the server.
+
+        Parameters
+        ----------
+        query : str
+            The search query text.
+        search_type : str
+            One of 'vector', 'keyword', 'hybrid'.
+        return_type : str
+            One of 'documents', 'chunks', 'context', 'enriched'.
+        k : int
+            Maximum number of results.
+        batch_size : int
+            Number of results per SSE batch.
+
+        Yields
+        ------
+        List[QueryResult]
+            Batches of query results as they stream from the server.
+        """
+        import json as _json
+
+        payload = {
+            "query": query,
+            "search_type": search_type,
+            "return_type": return_type,
+            "k": k,
+            "score_threshold": score_threshold,
+            "filters": filters,
+            "vector_weight": vector_weight,
+            "batch_size": batch_size,
+            "context_window": context_window,
+            "document_scoring_method": document_scoring_method,
+            "document_scoring_options": document_scoring_options,
+        }
+
+        client = self._ensure_sync_client()
+        url = f"/api/v1/{self.name}/query/stream"
+
+        with client.stream("POST", url, json=payload) as response:
+            if response.status_code != 200:
+                # Read the full response for error handling
+                response.read()
+                self._handle_response(response)
+                return
+
+            buffer = ""
+            current_event: Optional[Dict[str, str]] = None
+            for chunk in response.iter_text():
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+
+                    if not line:
+                        # Empty line = end of event
+                        if current_event and current_event.get("data"):
+                            event_type = current_event.get("event", "message")
+                            data = _json.loads(current_event["data"])
+
+                            if event_type == "result":
+                                yield [QueryResult.from_dict(data)]
+                            elif event_type == "done":
+                                return
+                            elif event_type == "error":
+                                raise DatabaseError(data.get("error", "Unknown streaming error"))
+
+                        current_event = None
+                        continue
+
+                    if line.startswith("event:"):
+                        current_event = current_event or {}
+                        current_event["event"] = line[6:].strip()
+                    elif line.startswith("data:"):
+                        current_event = current_event or {}
+                        current_event["data"] = line[5:].strip()
+
+    async def query_stream_async(
+        self,
+        query: str,
+        *,
+        search_type: str = "vector",
+        return_type: str = "documents",
+        k: int = 10,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+        vector_weight: float = 0.7,
+        batch_size: int = 10,
+        context_window: int = 2,
+        document_scoring_method: str = "frequency_boost",
+        document_scoring_options: Optional[Dict[str, Any]] = None,
+    ):
+        """Async version of query_stream. Yields lists of QueryResult."""
+        import json as _json
+
+        payload = {
+            "query": query,
+            "search_type": search_type,
+            "return_type": return_type,
+            "k": k,
+            "score_threshold": score_threshold,
+            "filters": filters,
+            "vector_weight": vector_weight,
+            "batch_size": batch_size,
+            "context_window": context_window,
+            "document_scoring_method": document_scoring_method,
+            "document_scoring_options": document_scoring_options,
+        }
+
+        client = await self._ensure_client()
+        url = f"/api/v1/{self.name}/query/stream"
+
+        async with client.stream("POST", url, json=payload) as response:
+            if response.status_code != 200:
+                await response.aread()
+                self._handle_response(response)
+                return
+
+            buffer = ""
+            current_event: Optional[Dict[str, str]] = None
+            async for chunk in response.aiter_text():
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+
+                    if not line:
+                        if current_event and current_event.get("data"):
+                            event_type = current_event.get("event", "message")
+                            data = _json.loads(current_event["data"])
+
+                            if event_type == "result":
+                                yield [QueryResult.from_dict(data)]
+                            elif event_type == "done":
+                                return
+                            elif event_type == "error":
+                                raise DatabaseError(data.get("error", "Unknown streaming error"))
+
+                        current_event = None
+                        continue
+
+                    if line.startswith("event:"):
+                        current_event = current_event or {}
+                        current_event["event"] = line[6:].strip()
+                    elif line.startswith("data:"):
+                        current_event = current_event or {}
+                        current_event["data"] = line[5:].strip()
+
+    # ========================================================================
+    # Document comparison methods
+    # ========================================================================
+
+    def compare_documents(self, doc_id_1: str, doc_id_2: str) -> float:
+        """Compare two documents and return their similarity score.
+
+        Parameters
+        ----------
+        doc_id_1 : str
+            First document ID.
+        doc_id_2 : str
+            Second document ID.
+
+        Returns
+        -------
+        float
+            Similarity score between the two documents.
+        """
+        payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2}
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/compare", json=payload)
+        result = self._handle_response(response)
+        similarity: float = result.get("similarity", 0.0)
+        return similarity
+
+    async def compare_documents_async(self, doc_id_1: str, doc_id_2: str) -> float:
+        """Async version of compare_documents."""
+        payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2}
+        response = await self._make_request_with_retry_async("POST", f"/api/v1/{self.name}/compare", json=payload)
+        result = self._handle_response(response)
+        similarity: float = result.get("similarity", 0.0)
+        return similarity
+
+    def compare_documents_detailed(self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7):
+        """Compare two documents with detailed chunk-level analysis.
+
+        Parameters
+        ----------
+        doc_id_1 : str
+            First document ID.
+        doc_id_2 : str
+            Second document ID.
+        chunk_threshold : float
+            Threshold for chunk-level similarity matching.
+
+        Returns
+        -------
+        DocumentComparisonResult
+            Detailed comparison result with chunk similarities.
+        """
+        payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2, "chunk_threshold": chunk_threshold}
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/compare/detailed", json=payload)
+        return self._handle_response(response)
+
+    async def compare_documents_detailed_async(self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7):
+        """Async version of compare_documents_detailed."""
+        payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2, "chunk_threshold": chunk_threshold}
+        response = await self._make_request_with_retry_async(
+            "POST", f"/api/v1/{self.name}/compare/detailed", json=payload
+        )
+        return self._handle_response(response)
+
+    def nearest_neighbors(self, doc_id: str, k: int = 5) -> List[QueryResult]:
+        """Find nearest neighbors for a document.
+
+        Parameters
+        ----------
+        doc_id : str
+            The document ID to find neighbors for.
+        k : int
+            Number of neighbors to return.
+
+        Returns
+        -------
+        List[QueryResult]
+            List of nearest neighbor results.
+        """
+        payload = {"doc_id": doc_id, "k": k}
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/nearest-neighbors", json=payload)
+        result = self._handle_response(response)
+        return [qr for r in result.get("results", []) if (qr := QueryResult.from_dict(r)) is not None]
+
+    async def nearest_neighbors_async(self, doc_id: str, k: int = 5) -> List[QueryResult]:
+        """Async version of nearest_neighbors."""
+        payload = {"doc_id": doc_id, "k": k}
+        response = await self._make_request_with_retry_async(
+            "POST", f"/api/v1/{self.name}/nearest-neighbors", json=payload
+        )
+        result = self._handle_response(response)
+        return [qr for r in result.get("results", []) if (qr := QueryResult.from_dict(r)) is not None]
+
+    def pairwise_similarity_matrix(self, doc_ids: Optional[List[str]] = None):
+        """Compute pairwise similarity matrix for documents.
+
+        Parameters
+        ----------
+        doc_ids : Optional[List[str]]
+            Document IDs to include. If None, uses all documents.
+
+        Returns
+        -------
+        DocumentSimilarityMatrix
+            Matrix with similarity scores between all document pairs.
+        """
+        payload = {"doc_ids": doc_ids}
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/similarity-matrix", json=payload)
+        return self._handle_response(response)
+
+    async def pairwise_similarity_matrix_async(self, doc_ids: Optional[List[str]] = None):
+        """Async version of pairwise_similarity_matrix."""
+        payload = {"doc_ids": doc_ids}
+        response = await self._make_request_with_retry_async(
+            "POST", f"/api/v1/{self.name}/similarity-matrix", json=payload
+        )
+        return self._handle_response(response)
+
+    # ========================================================================
+    # Fact-checking methods
+    # ========================================================================
+
+    def fact_check(
+        self,
+        text: str,
+        *,
+        llm_provider: str = "anthropic",
+        llm_api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        similarity_threshold: float = 0.3,
+        min_grounding_score: float = 0.5,
+        search_type: str = "hybrid",
+        top_k: int = 10,
+    ) -> Dict[str, Any]:
+        """Check text against the database for factual grounding.
+
+        Parameters
+        ----------
+        text : str
+            The text to fact-check.
+        llm_provider : str
+            LLM provider to use (anthropic/openai/gemini).
+        llm_api_key : Optional[str]
+            API key for the LLM provider.
+        model : Optional[str]
+            Model name.
+        similarity_threshold : float
+            Minimum similarity for evidence retrieval.
+        min_grounding_score : float
+            Minimum grounding score for claims.
+        search_type : str
+            Search type for evidence retrieval.
+        top_k : int
+            Number of evidence documents to retrieve.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Fact-check result with grounding score, claims, and evidence.
+        """
+        payload = {
+            "text": text,
+            "llm_provider": llm_provider,
+            "model": model,
+            "similarity_threshold": similarity_threshold,
+            "min_grounding_score": min_grounding_score,
+            "search_type": search_type,
+            "top_k": top_k,
+        }
+        if llm_api_key:
+            payload["llm_api_key"] = llm_api_key
+
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/factcheck", json=payload)
+        return self._handle_response(response)
+
+    async def fact_check_async(
+        self,
+        text: str,
+        *,
+        llm_provider: str = "anthropic",
+        llm_api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        similarity_threshold: float = 0.3,
+        min_grounding_score: float = 0.5,
+        search_type: str = "hybrid",
+        top_k: int = 10,
+    ) -> Dict[str, Any]:
+        """Async version of fact_check."""
+        payload = {
+            "text": text,
+            "llm_provider": llm_provider,
+            "model": model,
+            "similarity_threshold": similarity_threshold,
+            "min_grounding_score": min_grounding_score,
+            "search_type": search_type,
+            "top_k": top_k,
+        }
+        if llm_api_key:
+            payload["llm_api_key"] = llm_api_key
+
+        response = await self._make_request_with_retry_async("POST", f"/api/v1/{self.name}/factcheck", json=payload)
+        return self._handle_response(response)

@@ -42,7 +42,7 @@ Starting the Server
 
 - ``--host, -h``: Interface to bind to (default: 127.0.0.1)
 - ``--port, -p``: Port to bind to (default: 5000)
-- ``--debug``: Enable Flask debug mode
+- ``--debug``: Enable debug mode
 - ``--config, -c``: Path to configuration file
 - ``--db-folder, -d``: Database directory path
 - ``--log-level, -l``: Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)

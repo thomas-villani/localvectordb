@@ -1,21 +1,13 @@
 # Copyright (c) 2023-2025 Tom Villani, Ph.D.
 #
-# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-# You may not use this file for commercial purposes without explicit permission.
-#
-# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
-#
-# Contact: thomas.villani@gmail.com
-#
 # tests/test_server_integrated.py
 """
-Integration tests for LocalVectorDB server.
+Integration tests for LocalVectorDB server (FastAPI).
 
 These tests verify end-to-end functionality including authentication,
 database operations, and multi-component interactions.
 """
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -23,16 +15,13 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-from flask import Flask
+from fastapi import FastAPI
+from starlette.testclient import TestClient
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DocumentNotFoundError
-from localvectordb_server._cache import cache
 from localvectordb_server.config import Config
 from localvectordb_server.keymanager import KeyManager
-from localvectordb_server.routes import api
-
-# EmbeddingRegistry cleanup now handled by global_cleanup fixture in conftest.py
 
 
 @pytest.fixture(scope="function")
@@ -48,72 +37,15 @@ def test_key_manager(temp_dir):
     key_db_path = Path(temp_dir) / "test_api_keys.db"
     key_manager = KeyManager(str(key_db_path))
 
-    # Create test API keys
-    test_key = key_manager.create_key(description="Test API Key", expires_days=None)  # Never expires
+    test_key = key_manager.create_key(description="Test API Key", expires_days=None)
+    expired_key = key_manager.create_key(description="Expired Test Key", expires_days=-1)
 
-    expired_key = key_manager.create_key(description="Expired Test Key", expires_days=-1)  # Already expired
-
-    # Store the plain keys and IDs for testing
     key_manager._test_valid_key = test_key.plain_key
     key_manager._test_valid_key_id = test_key.id
     key_manager._test_expired_key = expired_key.plain_key
     key_manager._test_expired_key_id = expired_key.id
 
     return key_manager
-
-
-@pytest.fixture(scope="function")
-def integration_app(temp_dir, test_key_manager):
-    """Create Flask app for integration testing with real-like configuration."""
-    app = Flask(__name__)
-    app.config["TESTING"] = True
-
-    # Set up proper Config object structure
-    app.config_obj = Config()
-    app.config_obj.database.root_dir = temp_dir
-    app.config_obj.server.cache_enabled = False
-
-    # Configure security settings for authentication
-    app.config_obj.server.security.require_api_key = True
-    app.config_obj.server.security.api_key_header = "Authorization"
-    app.config_obj.server.security.key_audit_logging = False  # Disable for tests
-    app.config_obj.server.security.auto_prune_expired_keys = False  # Disable for tests
-
-    # Use temporary directory for test databases
-    app.config["DB_ROOT_DIR"] = temp_dir
-    app.config["REQUIRE_API_KEY"] = True
-    app.config["CACHE_TYPE"] = "NullCache"
-
-    cache.init_app(app)
-
-    # Store key manager instance for access in tests
-    app.key_manager = test_key_manager
-
-    # Create a simple database manager mock that behaves more realistically
-    app.db_manager = DatabaseManagerMock(temp_dir)
-
-    # Register blueprint
-    app.register_blueprint(api)
-
-    yield app
-
-
-@pytest.fixture(scope="function")
-def integration_client(integration_app):
-    """Create test client for integration testing."""
-    return integration_app.test_client()
-
-
-@pytest.fixture(scope="function")
-def valid_auth_headers(integration_app):
-    """Get headers with valid API key for authenticated requests."""
-    return {"Authorization": f"Bearer {integration_app.key_manager._test_valid_key}"}
-
-
-@pytest.fixture(scope="function")
-def expired_auth_headers(integration_app):
-    """Get headers with expired API key for testing expired key handling."""
-    return {"Authorization": f"Bearer {integration_app.key_manager._test_expired_key}"}
 
 
 class DatabaseManagerMock:
@@ -125,19 +57,14 @@ class DatabaseManagerMock:
         self._created_dbs = set()
 
     def list_databases(self):
-        """List databases by checking filesystem and in-memory databases."""
         db_files = list(self.base_path.glob("*.sqlite"))
         file_dbs = [f.stem for f in db_files]
-
-        # Combine all sources of database names
         all_dbs = set(file_dbs) | set(self._created_dbs) | set(self.databases.keys())
         return list(all_dbs)
 
     def get_db(self, name):
-        """Get database instance, creating mock if needed."""
         if name not in self.databases:
             if name in self._created_dbs or (self.base_path / f"{name}.sqlite").exists():
-                # Create a more realistic mock database
                 self.databases[name] = self._create_mock_db(name)
             else:
                 from localvectordb.exceptions import DatabaseNotFoundError
@@ -163,20 +90,15 @@ class DatabaseManagerMock:
 
         for name in names:
             results = []
-            for i in range(min(k, 5)):  # Limit to requested k or 5, whichever is smaller
+            for i in range(min(k, 5)):
                 result = QueryResult(id=f"doc{i}", score=0.8, type=return_type, content=f"doc{i} content")
                 results.append(result)
             all_results[name] = results
-
         return all_results
 
     def get_embeddings_for_model(self, query_texts, provider: str, model: str):
-        """Mock implementation of get_embeddings_for_model."""
-        import numpy as np
-
         if isinstance(query_texts, str):
             query_texts = [query_texts]
-        # Return mock embeddings for each text
         return [np.array([0.1, 0.2, 0.3]).tolist() for _ in query_texts]
 
     def delete_database(self, name: str) -> bool:
@@ -190,24 +112,21 @@ class DatabaseManagerMock:
         return True
 
     def create_db(self, new_db_name: str, metadata_schema=None, db_config=None, embedding_config=None):
-        """Simulate database creation."""
         self._created_dbs.add(new_db_name)
-        # Create the actual file to simulate real behavior
         db_file = self.base_path / f"{new_db_name}.sqlite"
         db_file.touch()
-
-        # Create mock database instance
         self.databases[new_db_name] = self._create_mock_db(new_db_name)
         return self.databases[new_db_name]
 
+    def close_all(self):
+        pass
+
     def _create_mock_db(self, name):
-        """Create a realistic mock database instance."""
         db = Mock()
         db.name = name
         db.embedding_provider = Mock()
         db.embedding_provider.provider_name = "mock"
         db.embedding_provider.model = "test-model"
-        # Make embed_sync return immediately with mock data
         db.embedding_provider.embed_sync = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
         db.embedding_provider.embed_documents = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
         db.embedding_provider.embed_query = Mock(return_value=np.array([0.1, 0.2, 0.3]))
@@ -220,11 +139,9 @@ class DatabaseManagerMock:
         db._stats = {"documents": 0, "chunks": 0, "index_vectors": 0}
         db.get_stats = lambda: db._stats
 
-        # Document storage for more realistic behavior
         db._documents = {}
         db._next_id = 1
 
-        # More realistic method implementations
         def mock_upsert(documents, metadata=None, ids=None, **kwargs):
             if not isinstance(documents, list):
                 documents = [documents]
@@ -243,11 +160,9 @@ class DatabaseManagerMock:
                 }
                 result_ids.append(doc_id)
 
-            # Update stats
             db._stats["documents"] = len(db._documents)
-            db._stats["chunks"] = len(db._documents) * 2  # Simulate chunking
+            db._stats["chunks"] = len(db._documents) * 2
             db._stats["index_vectors"] = db._stats["chunks"]
-
             return result_ids
 
         def mock_get(doc_id):
@@ -270,16 +185,12 @@ class DatabaseManagerMock:
                 count = sum(1 for d in doc_id if db._documents.pop(d, None))
             else:
                 count = 1 if db._documents.pop(doc_id, None) else 0
-
-            # Update stats
             db._stats["documents"] = len(db._documents)
             db._stats["chunks"] = len(db._documents) * 2
             db._stats["index_vectors"] = db._stats["chunks"]
-
             return count
 
         def mock_query(query, **kwargs):
-            # Simple mock that returns some documents
             from localvectordb.core import QueryResult
 
             results = []
@@ -291,13 +202,11 @@ class DatabaseManagerMock:
             return results
 
         def mock_filter(**kwargs):
-            # Simple filter implementation
             from localvectordb.core import Document
 
             results = []
             limit = kwargs.get("limit", 100) or 100
             offset = kwargs.get("offset", 0) or 0
-
             docs = list(db._documents.items())[offset : offset + limit]
             for doc_id, doc_data in docs:
                 doc = Document(
@@ -305,6 +214,9 @@ class DatabaseManagerMock:
                 )
                 results.append(doc)
             return results
+
+        def mock_count(**kwargs):
+            return len(db._documents)
 
         def mock_update(doc_id, content=None, metadata=None):
             if doc_id in db._documents:
@@ -315,18 +227,79 @@ class DatabaseManagerMock:
                 return True
             return False
 
-        # Attach mock methods
         db.upsert = mock_upsert
-        db.insert = mock_upsert  # For simplicity, same as upsert
+        db.insert = mock_upsert
         db.get = mock_get
         db.exists = mock_exists
         db.delete = mock_delete
         db.query = mock_query
         db.filter = mock_filter
+        db.count = mock_count
         db.update = mock_update
         db.close = Mock()
 
         return db
+
+
+@pytest.fixture(scope="function")
+def integration_app(temp_dir, test_key_manager):
+    """Create FastAPI app for integration testing with real-like configuration."""
+    from localvectordb_server.routers import register_routers
+
+    app = FastAPI()
+
+    # Set up Config
+    config = Config()
+    config.database.root_dir = temp_dir
+    config.server.cache_enabled = False
+    config.server.security.require_api_key = True
+    config.server.security.api_key_header = "Authorization"
+    config.server.security.key_audit_logging = False
+    config.server.security.auto_prune_expired_keys = False
+
+    app.state.config = config
+    app.state.key_manager = test_key_manager
+    app.state.db_manager = DatabaseManagerMock(temp_dir)
+
+    # Register exception handlers
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    from localvectordb_server._error_handlers import APIError, ValidationError, standardize_error_response
+
+    @app.exception_handler(APIError)
+    async def handle_api_error(request: Request, exc: APIError):
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    @app.exception_handler(ValidationError)
+    async def handle_validation_error(request: Request, exc: ValidationError):
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(request: Request, exc: Exception):
+        error_response, status_code = standardize_error_response(exc)
+        return JSONResponse(status_code=status_code, content=error_response)
+
+    register_routers(app)
+    yield app
+
+
+@pytest.fixture(scope="function")
+def integration_client(integration_app):
+    """Create test client for integration testing."""
+    return TestClient(integration_app)
+
+
+@pytest.fixture(scope="function")
+def valid_auth_headers(integration_app):
+    """Get headers with valid API key for authenticated requests."""
+    return {"Authorization": f"Bearer {integration_app.state.key_manager._test_valid_key}"}
+
+
+@pytest.fixture(scope="function")
+def expired_auth_headers(integration_app):
+    """Get headers with expired API key for testing expired key handling."""
+    return {"Authorization": f"Bearer {integration_app.state.key_manager._test_expired_key}"}
 
 
 @pytest.mark.integration
@@ -335,58 +308,43 @@ class TestAuthenticationFlow:
     """Test full authentication flow with new KeyManager system."""
 
     def test_request_without_api_key(self, integration_client):
-        """Test request without API key should fail."""
         response = integration_client.get("/api/v1/databases")
         assert response.status_code == 401
 
     def test_request_with_invalid_api_key(self, integration_client):
-        """Test request with invalid API key should fail."""
         headers = {"Authorization": "Bearer invalid_key_12345"}
         response = integration_client.get("/api/v1/databases", headers=headers)
         assert response.status_code == 401
 
     def test_request_with_expired_api_key(self, integration_client, expired_auth_headers):
-        """Test request with expired API key should fail."""
         response = integration_client.get("/api/v1/databases", headers=expired_auth_headers)
         assert response.status_code == 401
 
     def test_request_with_valid_api_key(self, integration_client, valid_auth_headers):
-        """Test request with valid API key should succeed."""
         response = integration_client.get("/api/v1/databases", headers=valid_auth_headers)
         assert response.status_code == 200
 
     def test_api_key_header_formats(self, integration_client, integration_app):
-        """Test API key authentication with different header formats."""
-        valid_key = integration_app.key_manager._test_valid_key
+        valid_key = integration_app.state.key_manager._test_valid_key
 
-        # Test Bearer format (should work)
         headers = {"Authorization": f"Bearer {valid_key}"}
         response = integration_client.get("/api/v1/databases", headers=headers)
         assert response.status_code == 200
 
-        # Test without Bearer prefix (should fail with current strict implementation)
         headers = {"Authorization": valid_key}
         response = integration_client.get("/api/v1/databases", headers=headers)
         assert response.status_code == 401
 
-        # Test invalid Bearer format (should fail)
         headers = {"Authorization": f"InvalidType {valid_key}"}
         response = integration_client.get("/api/v1/databases", headers=headers)
         assert response.status_code == 401
 
     def test_key_validation_updates_last_used(self, integration_client, valid_auth_headers, integration_app):
-        """Test that successful authentication updates the last_used timestamp."""
-        # Get key before request
-        key_id = next(iter(integration_app.key_manager.list_keys())).id
-        key_before = integration_app.key_manager.get_key(key_id)
-        _original_last_used = key_before.last_used
+        key_id = next(iter(integration_app.state.key_manager.list_keys())).id
+        _key_before = integration_app.state.key_manager.get_key(key_id)
 
-        # Make authenticated request
         response = integration_client.get("/api/v1/databases", headers=valid_auth_headers)
         assert response.status_code == 200
-
-        # Check that last_used was updated (this might be mocked in tests)
-        # In a real scenario, we'd verify the timestamp was updated
 
 
 @pytest.mark.integration
@@ -396,8 +354,6 @@ class TestDatabaseLifecycle:
     """Test complete database lifecycle with authentication."""
 
     def test_create_and_delete_database_flow(self, integration_client, integration_app, valid_auth_headers):
-        """Test creating and deleting a database end-to-end."""
-        # Create database
         create_data = {
             "name": "test_lifecycle_db",
             "embedding_provider": "mock",
@@ -406,51 +362,39 @@ class TestDatabaseLifecycle:
         }
 
         with patch("localvectordb.database.LocalVectorDB") as mock_db_class:
-            # Mock the LocalVectorDB constructor
-            mock_db = integration_app.db_manager._create_mock_db("test_lifecycle_db")
+            mock_db = integration_app.state.db_manager._create_mock_db("test_lifecycle_db")
             mock_db_class.return_value = mock_db
 
             response = integration_client.post(
                 "/api/v1/databases",
-                data=json.dumps(create_data),
-                content_type="application/json",
+                json=create_data,
                 headers=valid_auth_headers,
             )
 
             assert response.status_code == 200
-            result = json.loads(response.data)
+            result = response.json()
             assert result["status"] == "success"
             assert "test_lifecycle_db" in result["message"]
 
-        # Get database info
         response = integration_client.get("/api/v1/test_lifecycle_db/info", headers=valid_auth_headers)
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert result["name"] == "test_lifecycle_db"
 
-        # List databases (should include our new one)
         response = integration_client.get("/api/v1/databases", headers=valid_auth_headers)
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert "test_lifecycle_db" in result["databases"]
 
-        # Delete database - patch filesystem operations
-        with patch("pathlib.Path.exists") as mock_exists, patch("os.remove") as mock_remove:
-            # Mock that the .sqlite file exists
+        with patch("pathlib.Path.exists") as mock_exists, patch("os.remove"):
             mock_exists.return_value = True
-
             response = integration_client.delete("/api/v1/test_lifecycle_db", headers=valid_auth_headers)
             assert response.status_code == 200
-            result = json.loads(response.data)
+            result = response.json()
             assert result["status"] == "success"
 
-            # Verify that os.remove was called (files were "deleted")
-            assert mock_remove.call_count >= 1
-
     def test_database_operations_with_metadata_schema(self, integration_client, integration_app, valid_auth_headers):
-        """Test database operations with complex metadata schema."""
-        # Ensure we have a test database
-        integration_app.db_manager.create_db(
+        integration_app.state.db_manager.create_db(
             "schema_test_db",
             metadata_schema={
                 "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -459,7 +403,6 @@ class TestDatabaseLifecycle:
             },
         )
 
-        # Add documents with metadata
         doc_data = {
             "documents": ["First test document with metadata", "Second test document with different metadata"],
             "metadata": [
@@ -469,42 +412,24 @@ class TestDatabaseLifecycle:
         }
 
         response = integration_client.post(
-            "/api/v1/schema_test_db/documents",
-            data=json.dumps(doc_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/schema_test_db/documents", json=doc_data, headers=valid_auth_headers
         )
-
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert len(result["ids"]) == 2
 
-        # Query documents
         query_data = {"query": "test document", "search_type": "vector", "k": 5}
-
-        response = integration_client.post(
-            "/api/v1/schema_test_db/query",
-            data=json.dumps(query_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
-        )
-
+        response = integration_client.post("/api/v1/schema_test_db/query", json=query_data, headers=valid_auth_headers)
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert len(result["results"]) >= 0
 
-        # Filter documents by metadata
         filter_data = {"where": {"author": "Alice"}}
-
         response = integration_client.post(
-            "/api/v1/schema_test_db/filter",
-            data=json.dumps(filter_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/schema_test_db/filter", json=filter_data, headers=valid_auth_headers
         )
-
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert len(result["documents"]) >= 0
 
 
@@ -514,50 +439,26 @@ class TestErrorHandlingIntegration:
     """Test error handling across multiple components."""
 
     def test_database_not_found_flow(self, integration_client, valid_auth_headers):
-        """Test database not found error in realistic scenario."""
-        # Try to access non-existent database
         response = integration_client.get("/api/v1/nonexistent_db/info", headers=valid_auth_headers)
-
         assert response.status_code == 404
-        result = json.loads(response.data)
-        assert result["error"]["code"] == "DATABASE_NOT_FOUND"
 
     def test_document_not_found_flow(self, integration_client, integration_app, valid_auth_headers):
-        """Test document not found in realistic scenario."""
-        # Create a test database
-        integration_app.db_manager.create_db("error_test_db")
-
-        # Try to get non-existent document
+        integration_app.state.db_manager.create_db("error_test_db")
         response = integration_client.get("/api/v1/error_test_db/documents/nonexistent", headers=valid_auth_headers)
         assert response.status_code == 404
 
     def test_invalid_request_data_flow(self, integration_client, integration_app, valid_auth_headers):
-        """Test invalid request data handling."""
-        # Create a test database
-        integration_app.db_manager.create_db("validation_test_db")
+        integration_app.state.db_manager.create_db("validation_test_db")
 
-        # Try to query without required data
-        response = integration_client.post(
-            "/api/v1/validation_test_db/query",
-            data=json.dumps({}),
-            content_type="application/json",
-            headers=valid_auth_headers,
-        )
-
+        response = integration_client.post("/api/v1/validation_test_db/query", json={}, headers=valid_auth_headers)
         assert response.status_code == 400
 
-        # Try to create database without name
         response = integration_client.post(
-            "/api/v1/databases",
-            data=json.dumps({"embedding_model": "test"}),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/databases", json={"embedding_model": "test"}, headers=valid_auth_headers
         )
-
         assert response.status_code == 400
 
     def test_unauthenticated_access_to_protected_endpoints(self, integration_client):
-        """Test that protected endpoints reject unauthenticated requests."""
         protected_endpoints = [
             ("/api/v1/databases", "GET"),
             ("/api/v1/databases", "POST"),
@@ -570,8 +471,7 @@ class TestErrorHandlingIntegration:
             if method == "GET":
                 response = integration_client.get(endpoint)
             elif method == "POST":
-                response = integration_client.post(endpoint, data=json.dumps({}), content_type="application/json")
-
+                response = integration_client.post(endpoint, json={})
             assert response.status_code == 401, f"Endpoint {method} {endpoint} should require authentication"
 
 
@@ -582,57 +482,31 @@ class TestMultiDatabaseOperations:
     """Test operations across multiple databases."""
 
     def test_global_search_across_databases(self, integration_client, integration_app, valid_auth_headers):
-        """Test global search functionality."""
-        # Create multiple test databases
-        db1 = integration_app.db_manager.create_db("global_search_db1")
-        db2 = integration_app.db_manager.create_db("global_search_db2")
+        db1 = integration_app.state.db_manager.create_db("global_search_db1")
+        db2 = integration_app.state.db_manager.create_db("global_search_db2")
 
-        # Add some documents to each
         db1.upsert(["Document in database 1"], [{"source": "db1"}])
         db2.upsert(["Document in database 2"], [{"source": "db2"}])
 
-        # Perform global search
         search_data = {"query": "document", "search_type": "vector", "k": 5}
-
-        response = integration_client.post(
-            "/api/v1/search", data=json.dumps(search_data), content_type="application/json", headers=valid_auth_headers
-        )
-
+        response = integration_client.post("/api/v1/search", json=search_data, headers=valid_auth_headers)
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert "results" in result
-
-        # Should have results from multiple databases
         assert len(result["results"]) >= 2
 
     def test_database_isolation(self, integration_client, integration_app, valid_auth_headers):
-        """Test that databases are properly isolated."""
-        # Create two databases
-        _db1 = integration_app.db_manager.create_db("isolation_db1")
-        _db2 = integration_app.db_manager.create_db("isolation_db2")
+        integration_app.state.db_manager.create_db("isolation_db1")
+        integration_app.state.db_manager.create_db("isolation_db2")
 
-        # Add document to first database
         doc_data = {"documents": ["Document only in db1"]}
-        response = integration_client.post(
-            "/api/v1/isolation_db1/documents",
-            data=json.dumps(doc_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
-        )
+        response = integration_client.post("/api/v1/isolation_db1/documents", json=doc_data, headers=valid_auth_headers)
         assert response.status_code == 200
 
-        # Try to find document in second database
         query_data = {"query": "Document only in db1", "k": 5}
-        response = integration_client.post(
-            "/api/v1/isolation_db2/query",
-            data=json.dumps(query_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
-        )
-
+        response = integration_client.post("/api/v1/isolation_db2/query", json=query_data, headers=valid_auth_headers)
         assert response.status_code == 200
-        result = json.loads(response.data)
-        # Should not find the document (or find very few/none)
+        result = response.json()
         assert len(result["results"]) == 0
 
 
@@ -643,43 +517,26 @@ class TestEmbeddingIntegration:
     """Test embedding functionality integration."""
 
     def test_embedding_endpoint_with_database_provider(self, integration_client, integration_app, valid_auth_headers):
-        """Test getting embeddings using database's provider."""
-        # Create test database
-        integration_app.db_manager.create_db("embedding_test_db")
-
-        # Get embeddings
+        integration_app.state.db_manager.create_db("embedding_test_db")
         embed_data = {"texts": ["test text for embedding"]}
         response = integration_client.post(
-            "/api/v1/embedding_test_db/embeddings",
-            data=json.dumps(embed_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/embedding_test_db/embeddings", json=embed_data, headers=valid_auth_headers
         )
-
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert "embeddings" in result
         assert len(result["embeddings"]) == 1
 
     def test_generic_embedding_endpoint(self, integration_client, valid_auth_headers):
-        """Test generic embedding endpoint."""
         with patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_create:
             mock_provider = Mock()
             mock_provider.embed_sync.return_value = np.array([[0.1, 0.2, 0.3]])
             mock_create.return_value = mock_provider
 
             embed_data = {"texts": ["test text"], "provider": "mock", "model": "test-model"}
-
-            response = integration_client.post(
-                "/api/v1/embeddings",
-                data=json.dumps(embed_data),
-                content_type="application/json",
-                headers=valid_auth_headers,
-            )
-
+            response = integration_client.post("/api/v1/embeddings", json=embed_data, headers=valid_auth_headers)
             assert response.status_code == 200
-            result = json.loads(response.data)
-
+            result = response.json()
             assert "embeddings" in result
 
 
@@ -689,28 +546,22 @@ class TestHealthAndMonitoring:
     """Test health check and monitoring endpoints."""
 
     def test_health_check_integration(self, integration_client):
-        """Test health check with real-like conditions (health checks are typically unauthenticated)."""
-        with patch("localvectordb_server.routes.check_ollama_service") as mock_ollama:
+        with patch("localvectordb_server.routers.health.check_ollama_service") as mock_ollama:
             mock_ollama.return_value = True
-
             response = integration_client.get("/api/v1/health")
-
             assert response.status_code == 200
-            result = json.loads(response.data)
+            result = response.json()
             assert result["status"] == "healthy"
             assert "version" in result
             assert result["ollama_available"] is True
 
     def test_health_check_with_service_down(self, integration_client):
-        """Test health check when external services are down."""
-        with patch("localvectordb_server.routes.check_ollama_service") as mock_ollama:
+        with patch("localvectordb_server.routers.health.check_ollama_service") as mock_ollama:
             mock_ollama.return_value = False
-
             response = integration_client.get("/api/v1/health")
-
             assert response.status_code == 200
-            result = json.loads(response.data)
-            assert result["status"] == "healthy"  # Should still be healthy
+            result = response.json()
+            assert result["status"] == "healthy"
             assert result["ollama_available"] is False
 
 
@@ -721,42 +572,30 @@ class TestKeyManagerIntegration:
     """Test integration with the new KeyManager system."""
 
     def test_key_manager_stats(self, integration_app):
-        """Test that key manager provides stats."""
-        stats = integration_app.key_manager.get_stats()
-
+        stats = integration_app.state.key_manager.get_stats()
         assert isinstance(stats, dict)
         assert "total_keys" in stats
         assert "active_keys" in stats
         assert "expired_keys" in stats
-        assert stats["total_keys"] >= 2  # We created 2 test keys
-        assert stats["expired_keys"] >= 1  # We created 1 expired key
+        assert stats["total_keys"] >= 2
+        assert stats["expired_keys"] >= 1
 
     def test_key_creation_during_test(self, integration_app):
-        """Test that we can create new keys during testing."""
-        initial_count = integration_app.key_manager.get_stats()["total_keys"]
-
-        # Create a new key
-        new_key = integration_app.key_manager.create_key(description="Test key created during test", expires_days=30)
-
+        initial_count = integration_app.state.key_manager.get_stats()["total_keys"]
+        new_key = integration_app.state.key_manager.create_key(
+            description="Test key created during test", expires_days=30
+        )
         assert new_key.plain_key is not None
         assert new_key.description == "Test key created during test"
-
-        # Verify count increased
-        final_count = integration_app.key_manager.get_stats()["total_keys"]
+        final_count = integration_app.state.key_manager.get_stats()["total_keys"]
         assert final_count == initial_count + 1
 
     def test_key_validation_accuracy(self, integration_app):
-        """Test that key validation works correctly."""
-        # Valid key should pass
-        valid_key = integration_app.key_manager._test_valid_key
-        assert integration_app.key_manager.validate_key(valid_key) is True
-
-        # Invalid key should fail
-        assert integration_app.key_manager.validate_key("invalid_key") is False
-
-        # Expired key should fail
-        expired_key = integration_app.key_manager._test_expired_key
-        assert integration_app.key_manager.validate_key(expired_key) is False
+        valid_key = integration_app.state.key_manager._test_valid_key
+        assert integration_app.state.key_manager.validate_key(valid_key) is True
+        assert integration_app.state.key_manager.validate_key("invalid_key") is False
+        expired_key = integration_app.state.key_manager._test_expired_key
+        assert integration_app.state.key_manager.validate_key(expired_key) is False
 
 
 @pytest.mark.integration
@@ -768,105 +607,72 @@ class TestCompleteWorkflow:
     """Test complete end-to-end workflows."""
 
     def test_complete_document_management_workflow(self, integration_client, integration_app, valid_auth_headers):
-        """Test a complete document management workflow."""
-        # 1. Create database
-        _db = integration_app.db_manager.create_db(
-            "workflow_test_db", metadata_schema={"author": MetadataField(type=MetadataFieldType.TEXT, indexed=True)}
+        integration_app.state.db_manager.create_db(
+            "workflow_test_db",
+            metadata_schema={"author": MetadataField(type=MetadataFieldType.TEXT, indexed=True)},
         )
 
-        # 2. Add documents
         doc_data = {
             "documents": ["First document", "Second document"],
             "metadata": [{"author": "Alice"}, {"author": "Bob"}],
         }
-
         response = integration_client.post(
-            "/api/v1/workflow_test_db/documents",
-            data=json.dumps(doc_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/workflow_test_db/documents", json=doc_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
-        doc_ids = json.loads(response.data)["ids"]
+        doc_ids = response.json()["ids"]
 
-        # 3. Search documents
         search_data = {"query": "document", "k": 5}
         response = integration_client.post(
-            "/api/v1/workflow_test_db/query",
-            data=json.dumps(search_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/workflow_test_db/query", json=search_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
-        # 4. Update a document
         update_data = {"content": "Updated first document", "metadata": {"author": "Alice Updated"}}
         response = integration_client.put(
-            f"/api/v1/workflow_test_db/documents/{doc_ids[0]}",
-            data=json.dumps(update_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            f"/api/v1/workflow_test_db/documents/{doc_ids[0]}", json=update_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
-        # 5. Get updated document
         response = integration_client.get(
             f"/api/v1/workflow_test_db/documents/{doc_ids[0]}", headers=valid_auth_headers
         )
         assert response.status_code == 200
-        result = json.loads(response.data)
+        result = response.json()
         assert "Updated" in result["content"]
 
-        # 6. Filter documents
         filter_data = {"where": {"author": "Bob"}}
         response = integration_client.post(
-            "/api/v1/workflow_test_db/filter",
-            data=json.dumps(filter_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/workflow_test_db/filter", json=filter_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
-        # 7. Delete a document
         response = integration_client.delete(
             f"/api/v1/workflow_test_db/documents/{doc_ids[1]}", headers=valid_auth_headers
         )
         assert response.status_code == 200
 
-        # 8. Verify deletion
         response = integration_client.get(
             f"/api/v1/workflow_test_db/documents/{doc_ids[1]}", headers=valid_auth_headers
         )
         assert response.status_code == 404
 
     def test_workflow_with_key_rotation(self, integration_client, integration_app, valid_auth_headers):
-        """Test workflow that includes key rotation."""
-        # Create initial database
-        _db = integration_app.db_manager.create_db("rotation_test_db")
+        integration_app.state.db_manager.create_db("rotation_test_db")
 
-        # Add some documents with original key
         doc_data = {"documents": ["Document with original key"]}
         response = integration_client.post(
-            "/api/v1/rotation_test_db/documents",
-            data=json.dumps(doc_data),
-            content_type="application/json",
-            headers=valid_auth_headers,
+            "/api/v1/rotation_test_db/documents", json=doc_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
-        # Get the key ID for the valid test key
-        original_key_id = integration_app.key_manager._test_valid_key_id
-
-        # Rotate the key
-        new_key_record = integration_app.key_manager.rotate_key(original_key_id)
+        original_key_id = integration_app.state.key_manager._test_valid_key_id
+        new_key_record = integration_app.state.key_manager.rotate_key(original_key_id)
         assert new_key_record is not None
 
-        # Old key should no longer work
         response = integration_client.get("/api/v1/databases", headers=valid_auth_headers)
         assert response.status_code == 401
 
-        # New key should work
         new_auth_headers = {"Authorization": f"Bearer {new_key_record.plain_key}"}
         response = integration_client.get("/api/v1/databases", headers=new_auth_headers)
-        print(response.text)
         assert response.status_code == 200

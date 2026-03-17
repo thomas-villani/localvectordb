@@ -72,7 +72,7 @@ Full Configuration File
 
    # IMPORTANT: if ``proxy_settings = true``, you must set the proxy settings.
    # The specific values depend on your server set-up. Set the number of proxies forwarding each header.
-   # Read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
+   # When behind a reverse proxy (nginx, etc.), configure trusted_hosts and proxy settings.
    [server.proxy_settings]
    x_for = 1
    x_proto = 1

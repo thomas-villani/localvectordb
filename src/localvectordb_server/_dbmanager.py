@@ -416,11 +416,10 @@ class DatabaseManager:
     - Database statistics and health monitoring
     """
 
-    def __init__(self, app):
+    def __init__(self, config):
         global _atexit_registered
 
-        self.app = app
-        self.config = app.config
+        self.config = config
 
         # Register this instance for emergency cleanup
         _active_managers.add(self)
@@ -435,7 +434,7 @@ class DatabaseManager:
         self.registry = self._create_registry()
 
         # Initialize lock manager for FAISS coordination
-        db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+        db_path = Path(self.config.database.root_dir)
         self.lock_manager = DatabaseLockManager(db_path)
 
         # Process-local database cache (existing functionality)
@@ -476,18 +475,18 @@ class DatabaseManager:
 
     def _create_registry(self) -> DatabaseRegistry:
         """Create database registry using cachelib"""
-        if self.app.config_obj.server.use_single_cache:
+        if self.config.server.use_single_cache:
             from localvectordb_server._cache import cache
 
             return DatabaseRegistry(cache.cache)
 
         # Get registry configuration from server settings
-        registry_type = self.app.config_obj.server.db_registry_type
+        registry_type = self.config.server.db_registry_type
 
-        registry_settings = self.app.config_obj.server.db_registry_settings
+        registry_settings = self.config.server.db_registry_settings
 
-        if registry_type == self.app.config_obj.server.cache_type and not registry_settings:
-            registry_settings = self.app.config_obj.server.cache_settings
+        if registry_type == self.config.server.cache_type and not registry_settings:
+            registry_settings = self.config.server.cache_settings
 
         registry_settings = registry_settings or {}
         logger.info(f"Initializing database registry with type: {registry_type}")
@@ -555,7 +554,7 @@ class DatabaseManager:
     def _sync_registry_from_filesystem(self):
         """Sync registry with actual filesystem state"""
         try:
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+            db_path = Path(self.config.database.root_dir)
             if not db_path.exists():
                 return
 
@@ -586,7 +585,7 @@ class DatabaseManager:
     def _register_database_from_filesystem(self, db_name: str):
         """Register a database found on filesystem"""
         try:
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+            db_path = Path(self.config.database.root_dir)
             sqlite_path = db_path / f"{db_name}.sqlite"
             faiss_path = db_path / f"{db_name}.faiss"
 
@@ -695,7 +694,7 @@ class DatabaseManager:
                     # Create new database instance
                     db = LocalVectorDB(
                         name=new_db_name,
-                        base_path=self.config.get("DB_ROOT_DIR", ".lvdb"),
+                        base_path=self.config.database.root_dir,
                         metadata_schema=metadata_schema,
                         embedding_provider=embedding_config.provider,
                         embedding_model=embedding_config.model,
@@ -713,7 +712,7 @@ class DatabaseManager:
                     )
 
                     # Register in shared registry
-                    db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+                    db_path = Path(self.config.database.root_dir)
                     metadata = {
                         "name": new_db_name,
                         "created_at": datetime.now(UTC).isoformat(),
@@ -829,7 +828,7 @@ class DatabaseManager:
                 try:
                     db_logger.log_query("load_database", database_name=name)
 
-                    db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+                    db_path = Path(self.config.database.root_dir)
                     db = LocalVectorDB(name=name, base_path=db_path, create_if_not_exists=False)
 
                     # Verify database is functional
@@ -883,7 +882,7 @@ class DatabaseManager:
     def _fallback_list_databases(self) -> List[str]:
         """Fallback method to list databases from filesystem"""
         try:
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+            db_path = Path(self.config.database.root_dir)
             if not db_path.exists():
                 return []
             return [d.stem for d in db_path.iterdir() if d.suffix.lower() == ".sqlite"]
@@ -915,7 +914,7 @@ class DatabaseManager:
                 db_logger.log_query("delete_database_start", database_name=name)
 
                 # Delete database files
-                db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+                db_path = Path(self.config.database.root_dir)
                 sqlite_file = db_path / f"{name}.sqlite"
                 faiss_file = db_path / f"{name}.faiss"
 
@@ -1159,7 +1158,7 @@ class DatabaseManager:
     def _cleanup_failed_database(self, db_name: str):
         """Clean up files from a failed database creation"""
         try:
-            db_path = Path(self.config.get("DB_ROOT_DIR", ".lvdb"))
+            db_path = Path(self.config.database.root_dir)
             files_to_remove = [db_path / f"{db_name}.sqlite", db_path / f"{db_name}.faiss"]
 
             for file_path in files_to_remove:
@@ -1193,7 +1192,7 @@ class DatabaseManager:
     def _cleanup_inactive(self):
         """Close inactive database connections"""
         now = datetime.now(UTC)
-        timeout = timedelta(seconds=self.config.get("DB_TIMEOUT", 3600))  # Default 1 hour
+        timeout = timedelta(seconds=getattr(self.config.server, "db_timeout", 3600))  # Default 1 hour
 
         with self.lock:
             to_remove = []
@@ -1273,7 +1272,7 @@ class DatabaseManager:
                 "total_databases": total_dbs,
                 "uptime_seconds": uptime,
                 "worker_id": self.worker_id,
-                "registry_type": getattr(self.app.config_obj.server, "db_registry_type", "memory"),
+                "registry_type": getattr(self.config.server, "db_registry_type", "memory"),
                 "error_counts": dict(self._error_counts),
                 "last_health_check": self._last_health_check.isoformat(),
                 "last_registry_sync": self._last_registry_sync.isoformat(),

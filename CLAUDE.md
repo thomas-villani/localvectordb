@@ -124,10 +124,26 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
 - `chunking.py` - Position-aware text chunking with multiple strategies
 - `query_builder.py` - SQL-like query builder for metadata filtering
 
-**localvectordb_server/** - HTTP server implementation
-- `routes.py` - Flask REST API endpoints
+**localvectordb_server/** - HTTP server implementation (FastAPI)
+- `app.py` - FastAPI application factory with lifespan, middleware, and exception handlers
+- `routers/` - Domain-specific FastAPI routers:
+  - `health.py` - Health check and system resource endpoints
+  - `databases.py` - Database CRUD (create, list, info, delete)
+  - `documents.py` - Document CRUD (upsert, insert, get, update, delete, filter, count)
+  - `search.py` - Query endpoints (vector, keyword, hybrid, multi-column, query builder, global search)
+  - `upload.py` - File upload with text extraction
+  - `schema.py` - Metadata schema management
+  - `embeddings.py` - Embedding generation endpoints
+  - `tuning.py` - SQLite tuning and maintenance operations
+  - `streaming.py` - SSE streaming for query results
+  - `comparison.py` - Document comparison and nearest neighbors
+  - `factcheck.py` - LLM-based fact-checking endpoints
+  - `_deps.py` - Common FastAPI dependencies (get_db, get_config, get_db_manager)
 - `_dbmanager.py` - Multi-database management and connection pooling
-- `_auth.py` - API key authentication system
+- `_auth.py` - API key authentication via FastAPI dependency injection
+- `_error_handlers.py` - Exception classes (APIError, ValidationError) and validation utilities
+- `_logcfg.py` - Structured logging with contextvars (replaces Flask g/request)
+- `_cache.py` - Framework-agnostic cache wrapper around cachelib
 - `config.py` - Configuration management (TOML/JSON + env vars)
 - `cli/` - Command-line interface (`lvdb` command)
 - `extractors/` - File format extractors (PDF, DOCX, etc.)
@@ -148,7 +164,7 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
 
 ### Database Operations
 - LocalVectorDB handles SQLite + FAISS operations directly
-- RemoteVectorDB communicates with Flask server via HTTP
+- RemoteVectorDB communicates with FastAPI server via HTTP
 - All operations support both sync and async variants
 - Connection pooling is managed automatically
 
@@ -177,10 +193,12 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
 - Provider-specific configuration via embedding_config
 
 ### Server Architecture
-- Flask application with modular blueprint structure
+- FastAPI application with domain-specific routers (replaces Flask blueprints)
+- Uvicorn ASGI server (replaces Flask/Werkzeug dev server)
 - Multi-database support with lazy loading
-- Authentication via API keys with expiration
-- Rate limiting, CORS, and caching support
+- Authentication via FastAPI dependency injection with API keys
+- Rate limiting (slowapi), CORS (starlette), and security headers middleware
+- SSE streaming support via sse-starlette
 - Redis integration for distributed deployments
 
 ## Configuration

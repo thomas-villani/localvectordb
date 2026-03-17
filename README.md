@@ -272,8 +272,12 @@ docs = db.filter(sql="author LIKE '%Smith%' AND rating > 4.0")
 | `PUT` | `/api/v1/{db}/documents/{id}` | Update document |
 | `DELETE` | `/api/v1/{db}/documents/{id}` | Delete document |
 | `POST` | `/api/v1/{db}/query` | Search documents |
+| `POST` | `/api/v1/{db}/query/stream` | Stream results (SSE) |
 | `POST` | `/api/v1/{db}/filter` | Filter documents |
 | `POST` | `/api/v1/{db}/upload` | Upload files |
+| `POST` | `/api/v1/{db}/compare` | Compare documents |
+| `POST` | `/api/v1/{db}/nearest-neighbors` | Find similar documents |
+| `POST` | `/api/v1/{db}/factcheck` | Fact-check text |
 
 Example API usage:
 
@@ -353,13 +357,13 @@ lvdb config set database.chunk_size 1000
 ```
 ┌─────────────────┐    ┌──────────────┐    ┌─────────────┐
 │     Client      │────│ HTTP Server  │────│ DB Manager  │
-│ (RemoteVectorDB)│    │   (Flask)    │    └─────────────┘
+│ (RemoteVectorDB)│    │  (FastAPI)   │    └─────────────┘
 └─────────────────┘    └──────────────┘           │
                               │            ┌───────────────┐
                        ┌──────────────┐    │Multiple DBs   │
                        │     Auth     │    │(LocalVectorDB)│
                        │  Rate Limit  │    └───────────────┘
-                       │    CORS      │
+                       │  CORS / SSE  │
                        └──────────────┘
 ```
 
@@ -438,8 +442,8 @@ CMD ["lvdb", "serve", "--config", "config.toml"]
 lvdb config set server.db_registry_type "RedisCache"
 lvdb config set server.db_registry_settings '{"host": "redis", "port": 6379, "db": 1}'
 
-# Start multiple workers
-gunicorn -w 4 -b 0.0.0.0:5000 "localvectordb_server:create_app()"
+# Start with multiple uvicorn workers
+uvicorn "localvectordb_server.app:create_app" --factory --host 0.0.0.0 --port 5000 --workers 4
 ```
 
 ### Environment Variables
@@ -550,6 +554,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [FAISS](https://github.com/facebookresearch/faiss) for vector similarity search
 - [SQLite](https://sqlite.org/) for the document database
 - [Ollama](https://ollama.ai/) for local embedding models
-- [Flask](https://flask.palletsprojects.com/) for the HTTP server
+- [FastAPI](https://fastapi.tiangolo.com/) for the HTTP server
 - [Click](https://click.palletsprojects.com/) for the Click CLI library
 - All the contributors who made this project possible

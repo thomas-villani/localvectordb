@@ -37,7 +37,7 @@ from localvectordb_server.cli._utils import EXIT_CODE_CONFIGURATION_ERROR, EXIT_
     envvar="LVDB_HOST",
 )
 @click.option("--port", "-p", default=None, type=int, help="The port to bind to (default = 5000).", envvar="LVDB_PORT")
-@click.option("--debug", is_flag=True, help="Enable Flask debug mode.", envvar="LVDB_DEBUG")
+@click.option("--debug", is_flag=True, help="Enable debug mode.", envvar="LVDB_DEBUG")
 @click.option(
     "--log-level",
     "-l",
@@ -73,31 +73,23 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     db_folder = ctx.obj["db_folder"]
 
     from localvectordb.exceptions import ConfigurationError
-    from localvectordb_server import create_app
+    from localvectordb_server.app import create_app
+    from localvectordb_server.config import load_config
 
     try:
-        app = create_app(
-            configuration=config_path,
-            database_directory=db_folder,
-            debug=debug,
-            log_level=log_level,
-            host=host,
-            port=port,
-        )
-
-        # Get final configuration
-        config = app.config_obj
+        # Load config first for Ollama check before building the app
+        config = load_config(config_path)
+        if db_folder:
+            config.database.root_dir = db_folder
 
         if not disable_ollama_check:
             from localvectordb.exceptions import OllamaNotFoundError
             from localvectordb_server.utils.checkdeps import check_ollama_installation, check_ollama_service
 
             try:
-                # Check Ollama installation
                 version = check_ollama_installation()
                 click.secho(f"✓ Found Ollama {version}", fg="green")
 
-                # Check Ollama service
                 if check_ollama_service():
                     click.secho("✓ Ollama service is running", fg="green")
                 else:
@@ -118,8 +110,28 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
                 click.secho("  Or set environment variable: LVDB_DISABLE_OLLAMA_CHECK=true", fg="blue")
                 raise click.exceptions.Exit(EXIT_CODE_OLLAMA_ERROR) from e
 
-        # Run the Flask app with final config values
-        app.run(host=host or config.server.host, port=port or config.server.port, debug=debug)
+        app = create_app(
+            configuration=config_path,
+            database_directory=db_folder,
+            debug=debug,
+            log_level=log_level,
+            host=host,
+            port=port,
+        )
+
+        # Run with uvicorn
+        import uvicorn
+
+        final_host = host or config.server.host
+        final_port = port or config.server.port
+
+        uvicorn.run(
+            app,
+            host=final_host,
+            port=final_port,
+            reload=debug,
+            log_level="debug" if debug else (log_level or "info").lower(),
+        )
 
     except ConfigurationError as e:
         click.secho(f"Configuration error: {e}", fg="bright_red")

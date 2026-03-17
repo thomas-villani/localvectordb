@@ -22,7 +22,7 @@ from datetime import datetime
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
 from localvectordb_server._auth import validate_api_key
-from localvectordb_server._error_handlers import handle_errors
+from localvectordb_server._error_handlers import handle_errors  # type: ignore[attr-defined]
 from localvectordb_server._logcfg import log_performance
 from localvectordb_server.keymanager import PermissionLevel
 

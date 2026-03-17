@@ -822,7 +822,7 @@ Add the code from the sections above to each respective file.
 Start the LocalVectorDB Server
 ------------------------------
 
-The LocalVectorDB server includes a built-in Flask web server that handles both the API and serves static files:
+The LocalVectorDB server includes a built-in FastAPI web server that handles both the API and serves static files:
 
 .. code-block:: bash
 

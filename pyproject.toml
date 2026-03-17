@@ -61,11 +61,11 @@ build-backend = "hatchling.build"
 server = [
     "bcrypt>=4.3.0",
     "cachelib>=0.13.0",
-    "flask>=3.1.1",
-    "flask-caching>=2.3.1",
-    "flask-cors>=6.0.0",
-    "flask-limiter>=3.12",
-    "flask-talisman>=1.1.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "sse-starlette>=2.0.0",
+    "slowapi>=0.1.9",
     "psutil>=7.1.0",
     "tomli-w>=1.2.0",
 ]
