@@ -25,6 +25,7 @@ import numpy as np
 
 from localvectordb.core import (
     ChunkAlignment,
+    ChunkSimilarityMatrix,
     DocumentComparisonResult,
     DocumentSimilarityMatrix,
     QueryResult,
@@ -383,6 +384,54 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
         )
 
     # ------------------------------------------------------------------ #
+    # Public API – chunk similarity matrix                                 #
+    # ------------------------------------------------------------------ #
+
+    def chunk_similarity_matrix(
+        self,
+        doc_id_1: str,
+        doc_id_2: Optional[str] = None,
+    ) -> ChunkSimilarityMatrix:
+        """Compute the full chunk-level pairwise similarity matrix.
+
+        When *doc_id_2* is ``None``, computes self-similarity within
+        *doc_id_1* (useful for chord diagrams).
+
+        Parameters
+        ----------
+        doc_id_1 : str
+            First document ID.
+        doc_id_2 : str, optional
+            Second document ID.  Defaults to *doc_id_1*.
+
+        Returns
+        -------
+        ChunkSimilarityMatrix
+        """
+        if doc_id_2 is None:
+            doc_id_2 = doc_id_1
+
+        embs1, idx1 = self._get_chunk_embeddings_for_doc(doc_id_1)
+        if embs1.shape[0] == 0:
+            raise ValueError(f"Document '{doc_id_1}' has no chunk embeddings")
+
+        if doc_id_1 == doc_id_2:
+            embs2, idx2 = embs1, idx1
+        else:
+            embs2, idx2 = self._get_chunk_embeddings_for_doc(doc_id_2)
+            if embs2.shape[0] == 0:
+                raise ValueError(f"Document '{doc_id_2}' has no chunk embeddings")
+
+        matrix = _cosine_similarity_matrix(embs1, embs2)
+        return ChunkSimilarityMatrix(
+            matrix=matrix,
+            doc_id_1=doc_id_1,
+            doc_id_2=doc_id_2,
+            chunk_indices_1=idx1,
+            chunk_indices_2=idx2,
+        )
+
+    # ------------------------------------------------------------------ #
     # Convenience visualisation wrappers                                   #
     # ------------------------------------------------------------------ #
 
@@ -520,3 +569,104 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
 
             return plot_embedding_map_interactive(projection, queries=overlays, **kwargs)
         return plot_embedding_map(projection, queries=overlays, **kwargs)
+
+    def visualize_synteny(
+        self,
+        doc_id_1: str,
+        doc_id_2: str,
+        similarity_threshold: float = 0.7,
+        orientation: str = "horizontal",
+        chunk_labels: bool = False,
+        interactive: bool = False,
+        **kwargs,
+    ):
+        """Synteny ribbon diagram comparing chunks of two documents.
+
+        Parameters
+        ----------
+        doc_id_1 : str
+            First document ID.
+        doc_id_2 : str
+            Second document ID.
+        similarity_threshold : float
+            Minimum similarity for a ribbon to be drawn.
+        orientation : str
+            ``"horizontal"`` or ``"vertical"``.
+        chunk_labels : bool
+            Label each chunk segment with its index.
+        interactive : bool
+            Use plotly instead of matplotlib.
+
+        Returns
+        -------
+        matplotlib.figure.Figure or plotly.graph_objects.Figure
+        """
+        from localvectordb.visualization import plot_synteny
+
+        chunk_sim = self.chunk_similarity_matrix(doc_id_1, doc_id_2)
+        if interactive:
+            from localvectordb.visualization import plot_synteny_interactive
+
+            return plot_synteny_interactive(
+                chunk_sim,
+                similarity_threshold=similarity_threshold,
+                orientation=orientation,
+                chunk_labels=chunk_labels,
+                **kwargs,
+            )
+        return plot_synteny(
+            chunk_sim,
+            similarity_threshold=similarity_threshold,
+            orientation=orientation,
+            chunk_labels=chunk_labels,
+            **kwargs,
+        )
+
+    def visualize_chord(
+        self,
+        doc_id: str,
+        similarity_threshold: float = 0.7,
+        min_chunk_distance: int = 3,
+        chunk_labels: bool = False,
+        interactive: bool = False,
+        **kwargs,
+    ):
+        """Chord (Circos-style) diagram for chunk self-similarity.
+
+        Parameters
+        ----------
+        doc_id : str
+            Document ID.
+        similarity_threshold : float
+            Minimum similarity for a chord to be drawn.
+        min_chunk_distance : int
+            Minimum index distance between chunks for a chord.
+        chunk_labels : bool
+            Label each arc segment with its index.
+        interactive : bool
+            Use plotly instead of matplotlib.
+
+        Returns
+        -------
+        matplotlib.figure.Figure or plotly.graph_objects.Figure
+        """
+        from localvectordb.visualization import plot_chord
+
+        chunk_sim = self.chunk_similarity_matrix(doc_id)
+        if interactive:
+            from localvectordb.visualization import plot_chord_interactive
+
+            return plot_chord_interactive(
+                chunk_sim,
+                similarity_threshold=similarity_threshold,
+                min_chunk_distance=min_chunk_distance,
+                chunk_labels=chunk_labels,
+                **kwargs,
+            )
+        return plot_chord(
+            chunk_sim,
+            similarity_threshold=similarity_threshold,
+            min_chunk_distance=min_chunk_distance,
+            chunk_labels=chunk_labels,
+            **kwargs,
+        )

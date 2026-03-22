@@ -120,6 +120,10 @@ visualization-interactive = [
     "localvectordb[visualization]",
     "plotly>=5.15.0",
 ]
+benchmark = [
+    "h5py>=3.0.0",
+    "psutil>=5.9.0",
+]
 all = [
     "localvectordb[server]",
     "localvectordb[file-extraction]",

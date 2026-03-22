@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from localvectordb.core import DocumentSimilarityMatrix
+from localvectordb.core import ChunkSimilarityMatrix, DocumentSimilarityMatrix
 
 # Guard: skip all tests if visualization deps are missing
 sklearn = pytest.importorskip("sklearn")
@@ -14,10 +14,12 @@ from localvectordb.visualization import (  # noqa: E402
     build_similarity_graph,
     cluster_embeddings,
     find_optimal_clusters,
+    plot_chord,
     plot_clusters,
     plot_embedding_map,
     plot_similarity_graph,
     plot_similarity_matrix,
+    plot_synteny,
     reduce_dimensions,
 )
 from localvectordb.visualization._dimensionality import project_new_points  # noqa: E402
@@ -281,6 +283,150 @@ class TestPlotSimilarityGraph:
             embeddings=np.array([]).reshape(0, 0),
         )
         fig = plot_similarity_graph(sm)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Synteny diagram
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cross_doc_chunk_sim():
+    """ChunkSimilarityMatrix for two documents with 8 and 6 chunks."""
+    rng = np.random.RandomState(42)
+    embs1 = rng.randn(8, 32).astype(np.float32)
+    embs2 = rng.randn(6, 32).astype(np.float32)
+    norms1 = np.linalg.norm(embs1, axis=1, keepdims=True)
+    norms2 = np.linalg.norm(embs2, axis=1, keepdims=True)
+    matrix = (embs1 / np.maximum(norms1, 1e-8)) @ (embs2 / np.maximum(norms2, 1e-8)).T
+    matrix = (matrix + 1.0) / 2.0
+    return ChunkSimilarityMatrix(
+        matrix=matrix,
+        doc_id_1="doc_alpha",
+        doc_id_2="doc_beta",
+        chunk_indices_1=list(range(8)),
+        chunk_indices_2=list(range(6)),
+    )
+
+
+@pytest.fixture
+def self_chunk_sim():
+    """ChunkSimilarityMatrix for self-comparison with 10 chunks."""
+    rng = np.random.RandomState(7)
+    embs = rng.randn(10, 32).astype(np.float32)
+    norms = np.linalg.norm(embs, axis=1, keepdims=True)
+    embs_norm = embs / np.maximum(norms, 1e-8)
+    matrix = (embs_norm @ embs_norm.T + 1.0) / 2.0
+    return ChunkSimilarityMatrix(
+        matrix=matrix,
+        doc_id_1="doc_self",
+        doc_id_2="doc_self",
+        chunk_indices_1=list(range(10)),
+        chunk_indices_2=list(range(10)),
+    )
+
+
+@pytest.mark.unit
+class TestPlotSynteny:
+    def test_horizontal(self, cross_doc_chunk_sim):
+        fig = plot_synteny(cross_doc_chunk_sim, similarity_threshold=0.4)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_vertical(self, cross_doc_chunk_sim):
+        fig = plot_synteny(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            orientation="vertical",
+        )
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_with_labels(self, cross_doc_chunk_sim):
+        fig = plot_synteny(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            chunk_labels=True,
+        )
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_high_threshold_no_ribbons(self, cross_doc_chunk_sim):
+        """Threshold of 1.0 should produce a figure with only chunk bars."""
+        fig = plot_synteny(cross_doc_chunk_sim, similarity_threshold=1.0)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_custom_title_and_cmap(self, cross_doc_chunk_sim):
+        fig = plot_synteny(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            title="Custom Title",
+            cmap="plasma",
+        )
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+
+@pytest.mark.unit
+class TestPlotChord:
+    def test_basic_chord(self, self_chunk_sim):
+        fig = plot_chord(self_chunk_sim, similarity_threshold=0.4)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_with_labels(self, self_chunk_sim):
+        fig = plot_chord(
+            self_chunk_sim,
+            similarity_threshold=0.4,
+            chunk_labels=True,
+        )
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_min_chunk_distance(self, self_chunk_sim):
+        """Higher min distance should produce fewer chords."""
+        fig = plot_chord(
+            self_chunk_sim,
+            similarity_threshold=0.3,
+            min_chunk_distance=5,
+        )
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_rejects_cross_document(self, cross_doc_chunk_sim):
+        with pytest.raises(ValueError, match="self-comparison"):
+            plot_chord(cross_doc_chunk_sim)
+
+    def test_empty(self):
+        csm = ChunkSimilarityMatrix(
+            matrix=np.array([]).reshape(0, 0),
+            doc_id_1="empty",
+            doc_id_2="empty",
+            chunk_indices_1=[],
+            chunk_indices_2=[],
+        )
+        fig = plot_chord(csm)
         assert fig is not None
         import matplotlib.pyplot as plt
 

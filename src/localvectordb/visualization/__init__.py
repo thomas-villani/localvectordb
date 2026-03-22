@@ -41,6 +41,7 @@ from localvectordb.visualization._clustering import cluster_embeddings, find_opt
 from localvectordb.visualization._dimensionality import reduce_dimensions  # noqa: E402
 from localvectordb.visualization._graph import build_similarity_graph, plot_similarity_graph  # noqa: E402
 from localvectordb.visualization._plots import plot_clusters, plot_embedding_map, plot_similarity_matrix  # noqa: E402
+from localvectordb.visualization._ribbons import plot_chord, plot_synteny  # noqa: E402
 from localvectordb.visualization.types import ClusterResult, EmbeddingProjection, QueryOverlay  # noqa: E402
 
 # Interactive (optional, imported lazily)
@@ -86,6 +87,28 @@ def plot_clusters_interactive(*args, **kwargs):
     return _impl(*args, **kwargs)
 
 
+def plot_synteny_interactive(*args, **kwargs):
+    """Interactive plotly synteny ribbon diagram. Requires ``plotly``."""
+    if not _PLOTLY_AVAILABLE:
+        raise ImportError(
+            "Interactive plots require plotly. " "Install with: pip install localvectordb[visualization-interactive]"
+        )
+    from localvectordb.visualization._interactive import plot_synteny_interactive as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def plot_chord_interactive(*args, **kwargs):
+    """Interactive plotly chord (Circos) diagram. Requires ``plotly``."""
+    if not _PLOTLY_AVAILABLE:
+        raise ImportError(
+            "Interactive plots require plotly. " "Install with: pip install localvectordb[visualization-interactive]"
+        )
+    from localvectordb.visualization._interactive import plot_chord_interactive as _impl
+
+    return _impl(*args, **kwargs)
+
+
 __all__ = [
     "reduce_dimensions",
     "cluster_embeddings",
@@ -95,9 +118,13 @@ __all__ = [
     "plot_clusters",
     "plot_similarity_graph",
     "build_similarity_graph",
+    "plot_synteny",
+    "plot_chord",
     "plot_embedding_map_interactive",
     "plot_similarity_matrix_interactive",
     "plot_clusters_interactive",
+    "plot_synteny_interactive",
+    "plot_chord_interactive",
     "EmbeddingProjection",
     "ClusterResult",
     "QueryOverlay",

@@ -611,3 +611,31 @@ class DocumentSimilarityMatrix:
     matrix: np.ndarray
     doc_ids: List[str]
     embeddings: np.ndarray
+
+
+@dataclass
+class ChunkSimilarityMatrix:
+    """Chunk-level pairwise similarity matrix between (or within) documents.
+
+    For cross-document comparison, ``doc_id_1`` and ``doc_id_2`` differ.
+    For self-comparison (chord diagrams), they are the same.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        (C1, C2) array of pairwise chunk similarity scores.
+    doc_id_1 : str
+        First document ID.
+    doc_id_2 : str
+        Second document ID (same as ``doc_id_1`` for self-comparison).
+    chunk_indices_1 : List[int]
+        Chunk indices for rows.
+    chunk_indices_2 : List[int]
+        Chunk indices for columns.
+    """
+
+    matrix: np.ndarray
+    doc_id_1: str
+    doc_id_2: str
+    chunk_indices_1: List[int]
+    chunk_indices_2: List[int]

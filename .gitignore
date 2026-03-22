@@ -16,5 +16,9 @@ wheels/
 .coverage
 htmlcov/
 
+# Benchmarks
+benchmarks/.cache/
+benchmarks/results/
+
 # Project notes
 etc/
