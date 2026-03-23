@@ -1,0 +1,105 @@
+// Classes
+export { LocalVectorDBClient } from "./client.js";
+export { DatabaseHandle } from "./database.js";
+
+// Errors
+export {
+  LocalVectorDBError,
+  ValidationError,
+  AuthenticationError,
+  PermissionError,
+  NotFoundError,
+  DatabaseNotFoundError,
+  DocumentNotFoundError,
+  ConflictError,
+  DuplicateDocumentError,
+  DatabaseAlreadyExistsError,
+  ServiceUnavailableError,
+  EmbeddingError,
+  OllamaNotAvailableError,
+  DatabaseConnectionError,
+  ServerError,
+  ConfigurationError,
+  ConnectionError,
+  TimeoutError,
+  errorFromResponse,
+} from "./errors.js";
+
+// Types
+export type {
+  // Core data
+  ChunkPosition,
+  Chunk,
+  Document,
+  QueryResult,
+  MetadataFieldDefinition,
+
+  // Type aliases
+  MetadataFieldType,
+  SearchType,
+  ReturnType,
+  DocumentScoringMethod,
+  QueryResultType,
+  CheckpointMode,
+  ErrorCode,
+
+  // Configuration
+  ClientConfig,
+
+  // Options
+  CreateDatabaseOptions,
+  UpsertOptions,
+  InsertOptions,
+  QueryOptions,
+  QueryMultiColumnOptions,
+  StreamQueryOptions,
+  FilterOptions,
+  ListDocumentsOptions,
+  CountOptions,
+  UpsertChunksOptions,
+  InsertChunksOptions,
+  UpdateSchemaOptions,
+  SetTuningOptions,
+  AutoTuneOptions,
+  CompareDetailedOptions,
+  FactCheckOptions,
+  GlobalSearchOptions,
+  GlobalFactCheckOptions,
+  DatabaseEmbeddingsOptions,
+  UploadOptions,
+  UploadableFile,
+  SemanticFilter,
+
+  // Responses
+  CreateDatabaseResponse,
+  DatabaseListResponse,
+  DatabaseInfoResponse,
+  DeleteDatabaseResponse,
+  HealthResponse,
+  SystemResourcesResponse,
+  UpsertResponse,
+  InsertResponse,
+  UpdateResponse,
+  DeleteResponse,
+  BatchDeleteResponse,
+  CountResponse,
+  ExistsResponse,
+  ListDocumentsResponse,
+  QueryResponse,
+  FilterResponse,
+  GlobalSearchResponse,
+  SchemaInfoResponse,
+  UpdateSchemaResponse,
+  EmbeddingsResponse,
+  CompareResponse,
+  CompareDetailedResponse,
+  NearestNeighborsResponse,
+  SimilarityMatrixResponse,
+  TuningResponse,
+  SetTuningResponse,
+  MaintenanceResponse,
+  AutoTuneResponse,
+  FactCheckResponse,
+  UploadResponse,
+  ServerErrorPayload,
+} from "./types.js";

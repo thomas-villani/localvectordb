@@ -40,6 +40,7 @@ scale to distributed deployments without changing your code.
    comparison
    file-extraction
    server/index
+   sdk/index
    cli
    mcp
    backup
