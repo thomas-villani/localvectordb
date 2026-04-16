@@ -89,7 +89,7 @@ class EmbeddingProvider(ABC):
         # Retry on HTTP errors that indicate temporary issues
         if isinstance(error, httpx.HTTPStatusError):
             # Retry on 429 (rate limit) and 5xx (server errors)
-            return error.response.status_code == 429 or 500 <= error.response.status_code < 600
+            return bool(error.response.status_code == 429 or 500 <= error.response.status_code < 600)
 
         # Retry on general connection/timeout issues
         if isinstance(error, (ConnectionError, TimeoutError)):

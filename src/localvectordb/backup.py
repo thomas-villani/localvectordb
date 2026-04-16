@@ -2202,7 +2202,7 @@ class IncrementalBackupManager:
                 logger.warning("No vectors could be reconstructed from incremental index")
                 return
 
-            inc_vectors = np.array(inc_vectors, dtype=np.float32)  # type: ignore[assignment]
+            inc_vectors = np.array(inc_vectors, dtype=np.float32)
 
             # Remove old vectors with same IDs and add new ones
             for inc_id in inc_ids:

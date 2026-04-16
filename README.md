@@ -2,7 +2,7 @@
 
 A high-performance, document-first vector database with SQLite + FAISS backend, featuring intelligent chunking, unified search, and optional HTTP server.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 ## ✨ Features
 
@@ -517,6 +517,8 @@ results = db.query("async def", search_type="keyword")
 
 ## 🤝 Contributing
 
+Contributions are welcome for noncommercial use under the project's license terms.
+
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
@@ -526,7 +528,7 @@ results = db.query("async def", search_type="keyword")
 ### Development Setup
 
 ```bash
-git clone https://github.com/thomas-villani/localvectordb.git
+git clone https://github.com/njii-comet/localvectordb.git
 cd localvectordb
 
 # Install in development mode
@@ -541,13 +543,15 @@ lvdb serve --debug
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) — see the [LICENSE](LICENSE) file for details.
+
+You are free to use, modify, and distribute this software for any noncommercial purpose. For commercial licensing inquiries, please contact thomas.villani@njii.com.
 
 ## 🆘 Support
 
-- 🐛 **Issues**: [GitHub Issues](https://github.com/thomas-villani/localvectordb/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/thomas-villani/localvectordb/discussions)
-- 📧 **Contact**: thomas.villani@gmail.com
+- 🐛 **Issues**: [GitHub Issues](https://github.com/njii-comet/localvectordb/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/njii-comet/localvectordb/discussions)
+- 📧 **Contact**: thomas.villani@njii.com
 
 ## 🙏 Acknowledgments
 

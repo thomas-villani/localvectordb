@@ -69,6 +69,6 @@ def check_ollama_service() -> bool:
                 break
             time.sleep(2)
             retries += 1
-        return response.status_code == 200
+        return bool(response.status_code == 200)
     except httpx.RequestError:
         return False

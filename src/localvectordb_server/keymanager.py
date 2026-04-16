@@ -380,12 +380,12 @@ class KeyManager:
         """Hash an API key using bcrypt"""
         # Use bcrypt with a reasonable cost factor
         salt = bcrypt.gensalt(rounds=14)
-        return bcrypt.hashpw(key.encode("utf-8"), salt).decode("utf-8")
+        return str(bcrypt.hashpw(key.encode("utf-8"), salt).decode("utf-8"))
 
     def _verify_key(self, key: str, key_hash: str) -> bool:
         """Verify an API key against its hash"""
         try:
-            return bcrypt.checkpw(key.encode("utf-8"), key_hash.encode("utf-8"))
+            return bool(bcrypt.checkpw(key.encode("utf-8"), key_hash.encode("utf-8")))
         except Exception as e:
             logger.warning(f"Error verifying key: {e}")
             return False

@@ -2158,7 +2158,7 @@ class DatabaseSchema:
 
         # Execute the transfer
         cursor = await conn.execute(transfer_sql)
-        return cursor.rowcount
+        return int(cursor.rowcount)
 
     @staticmethod
     async def _populate_field_defaults_async(
