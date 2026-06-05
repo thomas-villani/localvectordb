@@ -528,7 +528,7 @@ Contributions are welcome for noncommercial use under the project's license term
 ### Development Setup
 
 ```bash
-git clone https://github.com/njii-comet/localvectordb.git
+git clone https://github.com/thomas-villani/localvectordb.git
 cd localvectordb
 
 # Install in development mode
@@ -549,8 +549,8 @@ You are free to use, modify, and distribute this software for any noncommercial 
 
 ## 🆘 Support
 
-- 🐛 **Issues**: [GitHub Issues](https://github.com/njii-comet/localvectordb/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/njii-comet/localvectordb/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/thomas-villani/localvectordb/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/thomas-villani/localvectordb/discussions)
 - 📧 **Contact**: thomas.villani@njii.com
 
 ## 🙏 Acknowledgments

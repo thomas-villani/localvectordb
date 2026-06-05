@@ -63,11 +63,11 @@ rtf = "localvectordb.extractors.other_extractors:RTFExtractor"
 lvdb = "localvectordb_server.cli:cli"
 
 [project.urls]
-Homepage = "https://github.com/njii-comet/localvectordb"
-Repository = "https://github.com/njii-comet/localvectordb"
-Documentation = "https://github.com/njii-comet/localvectordb#readme"
-"Bug Tracker" = "https://github.com/njii-comet/localvectordb/issues"
-Changelog = "https://github.com/njii-comet/localvectordb/blob/master/CHANGELOG.md"
+Homepage = "https://github.com/thomas-villani/localvectordb"
+Repository = "https://github.com/thomas-villani/localvectordb"
+Documentation = "https://github.com/thomas-villani/localvectordb#readme"
+"Bug Tracker" = "https://github.com/thomas-villani/localvectordb/issues"
+Changelog = "https://github.com/thomas-villani/localvectordb/blob/master/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
