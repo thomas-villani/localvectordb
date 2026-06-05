@@ -64,6 +64,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     _metadata_schema: Dict[str, Any]
     _embedding_provider: EmbeddingProvider
     _embedding_dimension: int
+    # Cache of (index_object, metric_type); invalidated when the index identity changes.
+    _metric_type_cache: Optional[tuple[Any, str]] = None
 
     def __init__(
         self,
@@ -785,18 +787,36 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _get_faiss_metric_type(self) -> str:
         """Detect the metric type of the FAISS index.
 
+        The result is cached against the current index object: it cannot change
+        for a given index, but a rebuild swaps in a new object (different
+        identity), which transparently invalidates the cache. This matters
+        because the method was previously called once per search candidate
+        (tens of thousands of times per query in profiling).
+
         Returns:
             'L2' for L2 distance metrics
             'IP' for inner product metrics
         """
-        if not hasattr(self, "index") or self.index is None:
+        idx = getattr(self, "index", None)
+        cached = self._metric_type_cache
+        if cached is not None and cached[0] is idx:
+            return cached[1]
+
+        result = self._detect_faiss_metric_type(idx)
+        self._metric_type_cache = (idx, result)
+        return result
+
+    @staticmethod
+    def _detect_faiss_metric_type(index: Any) -> str:
+        """Inspect a FAISS index object and return its metric type ('L2'/'IP')."""
+        if index is None:
             return "L2"  # Default
 
         # Check if it's an IndexIDMap wrapper
-        if hasattr(self.index, "index"):
-            base_index = self.index.index
+        if hasattr(index, "index"):
+            base_index = index.index
         else:
-            base_index = self.index
+            base_index = index
 
         # Check the index type name
         index_type = str(type(base_index).__name__)
@@ -840,6 +860,19 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         else:
             # L2 distance: convert using 1/(1+distance)
             return 1.0 / (1.0 + distance)
+
+    def _distances_to_similarities(self, distances: "np.ndarray", metric_type: Optional[str] = None) -> "np.ndarray":
+        """Vectorized form of :meth:`_distance_to_similarity` over a distance array.
+
+        Computing the conversion for a whole FAISS result row at once avoids a
+        Python-level call per candidate (tens of thousands per query at scale).
+        Returns a float array of the same shape as ``distances``.
+        """
+        if metric_type is None:
+            metric_type = self._get_faiss_metric_type()
+        if metric_type == "IP":
+            return np.clip((distances + 1.0) / 2.0, 0.0, 1.0)
+        return 1.0 / (1.0 + distances)
 
     def _similarity_to_distance(self, similarity: float, metric_type: Optional[str] = None) -> float:
         """Convert similarity threshold to FAISS distance threshold.

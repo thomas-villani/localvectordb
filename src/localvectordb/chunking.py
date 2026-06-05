@@ -30,8 +30,15 @@ class PositionTrackingChunker(ABC):
         pass
 
     def count_tokens(self, text: str) -> int:
-        """Count tokens in text"""
-        return len(self.encoding.encode(text))
+        """Count tokens in text.
+
+        Uses ``encode_ordinary`` rather than ``encode``: the latter runs a
+        special-token scan (regex) on every call to enforce ``disallowed_special``,
+        which is pure overhead here and would also raise on text that merely
+        contains a special-token literal. ``encode_ordinary`` skips that check and
+        yields identical counts for ordinary text.
+        """
+        return len(self.encoding.encode_ordinary(text))
 
     def _calculate_line_column(self, text: str, position: int) -> Tuple[int, int]:
         """Calculate line and column for a character position"""
@@ -133,6 +140,22 @@ class SentenceChunker(PositionTrackingChunker):
         if not sentences:
             return [self._create_chunk(text, 0, len(text), 0)]
 
+        # Fast path: if the entire sentence span fits within one chunk, emit it
+        # directly. This avoids encoding every sentence separately, which is the
+        # common case for short documents and was a dominant ingest cost. The
+        # result is identical to the loop below when everything fits in one chunk
+        # (single chunk spanning sentences[0].start .. sentences[-1].end).
+        single = self._create_chunk(text, sentences[0][0], sentences[-1][1], 0)
+        if single.tokens <= self.max_tokens:
+            return [single]
+
+        # Slow path: the span exceeds the limit and must be split. Pre-count
+        # tokens for every sentence once, up front. The boundary loop below can
+        # rewind ``i`` when overlap is enabled, which previously re-encoded the
+        # same sentences repeatedly; caching the counts makes each sentence cost
+        # exactly one encode regardless of overlap.
+        sentence_token_counts = [self.count_tokens(s[2]) for s in sentences]
+
         chunks = []
         chunk_index = 0
         i = 0
@@ -146,7 +169,7 @@ class SentenceChunker(PositionTrackingChunker):
             # Add sentences until we hit the token limit
             while i < len(sentences):
                 sentence_start, sentence_end, sentence_text = sentences[i]
-                sentence_tokens = self.count_tokens(sentence_text)
+                sentence_tokens = sentence_token_counts[i]
 
                 # If this single sentence exceeds max_tokens, we need to split it
                 if sentence_tokens > self.max_tokens and not chunk_sentences:

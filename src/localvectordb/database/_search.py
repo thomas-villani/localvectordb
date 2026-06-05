@@ -54,6 +54,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float: ...
 
+        def _distances_to_similarities(
+            self, distances: "np.ndarray", metric_type: Optional[str] = None
+        ) -> "np.ndarray": ...
+
     # -----------------
     # Helper methods
     # -----------------
@@ -827,17 +831,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         assert self.index is not None
         with self._faiss_lock.read_lock():
             distances, indices = self.index.search(query_embedding, initial_k)
-        valid_results, valid_faiss_ids = [], []
-        for dist, idx in zip(distances[0], indices[0], strict=False):
-            if idx == -1:
-                continue
-            base_similarity = self._distance_to_similarity(float(dist))
-            # Normalize to 0-1 range with better spread
-            score = base_similarity
-            if score < score_threshold:
-                continue
-            valid_results.append((int(idx), score))
-            valid_faiss_ids.append(int(idx))
+        # Convert the whole result row at once, then filter with a numpy mask,
+        # rather than calling _distance_to_similarity per candidate.
+        idx_row = indices[0]
+        sims = self._distances_to_similarities(distances[0])
+        mask = (idx_row != -1) & (sims >= score_threshold)
+        valid_faiss_ids = idx_row[mask].astype(int).tolist()
+        valid_results = list(zip(valid_faiss_ids, sims[mask].tolist(), strict=False))
         if not valid_faiss_ids:
             return []
         chunk_results = []

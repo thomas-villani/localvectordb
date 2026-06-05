@@ -997,17 +997,25 @@ class TestEmbeddingSyncWrapper:
         finally:
             loop.close()
 
-    @patch("asyncio.run")
-    def test_embed_sync_with_stopped_loop(self, mock_asyncio_run):
-        """Test sync wrapper with no running event loop uses asyncio.run."""
+    def test_embed_sync_reuses_persistent_loop(self):
+        """With no running loop, embed_sync drives a persistent per-thread loop.
+
+        Reusing one loop per thread (instead of asyncio.run building and tearing
+        one down each call) is the performance optimization here; this verifies
+        the loop is created once and reused across calls on the same thread.
+        """
+        from localvectordb.embeddings import _get_sync_event_loop
+
         provider = MockEmbeddings("test-model", dimension=384)
-        expected_result = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
-        mock_asyncio_run.return_value = expected_result
 
         result = provider.embed_sync(["hello", "world"])
+        assert result.shape == (2, 384)
 
-        assert mock_asyncio_run.called
-        assert np.array_equal(result, expected_result)
+        loop1 = _get_sync_event_loop()
+        provider.embed_sync(["again"])
+        loop2 = _get_sync_event_loop()
+        assert loop1 is loop2
+        assert not loop1.is_closed()
 
 
 # =========================================================================

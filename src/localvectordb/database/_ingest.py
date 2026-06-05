@@ -1193,42 +1193,83 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 raise
 
         def database_worker():
+            # Commit once per batch of documents rather than once per document.
+            # Per-document commits dominated ingest time (~41% in profiling) because
+            # each commit forces a WAL sync. We hold a single connection open for the
+            # worker's lifetime (safe: upsert holds the write lock, so we are the only
+            # writer) and flush every ``commit_batch_size`` documents. Doc IDs are only
+            # reported to the result queue after their batch commits, so the IDs the
+            # caller sees are exactly the ones durably written.
+            commit_batch_size = max(1, batch_size)
             try:
-                while True:
-                    chunk_data = embedding_queue.get()
-                    if chunk_data is None:
-                        result_queue.put(None)
-                        break
-                    unchanged_chunks = chunk_data["unchanged_chunks"]
-                    chunks_needing_embedding = chunk_data["chunks_needing_embedding"]
-                    new_embeddings = chunk_data["new_embeddings"]
-                    field_embeddings = chunk_data["field_embeddings"]
-                    if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
-                        doc_info = (
-                            chunk_data["doc_text"],
-                            chunk_data["metadata"],
-                            chunk_data["doc_id"],
-                            chunk_data["content_hash"],
-                        )
-                        doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
-                        filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
-                            new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
-                        )
-                        chunks_needing_embedding = filtered_chunks
-                        new_embeddings = filtered_embeddings
-                    all_chunks = unchanged_chunks + chunks_needing_embedding
-                    if len(all_chunks) > 0 or mode == "upsert":
-                        documents_data = [
-                            (
-                                chunk_data["doc_id"],
+                with self.connection_pool.get_connection() as conn:
+                    docs_in_txn = 0
+                    pending_doc_ids: List[str] = []
+
+                    # When similarity filtering is active, fetch the set of existing
+                    # content hashes once and maintain it in memory as we insert.
+                    # Otherwise _filter_similar_chunks_vectorized would run a full
+                    # "SELECT DISTINCT content_hash" scan per document; and because
+                    # commits are now batched, an uncached per-doc scan would also
+                    # miss duplicates from earlier (not-yet-committed) docs in the
+                    # same batch. Maintaining the set in memory fixes both.
+                    existing_hashes: Optional[set] = None
+                    if similarity_threshold is not None:
+                        _hash_cursor = conn.execute("SELECT DISTINCT content_hash FROM chunks")
+                        existing_hashes = {row["content_hash"] for row in _hash_cursor.fetchall()}
+
+                    def flush() -> None:
+                        nonlocal docs_in_txn
+                        if docs_in_txn > 0:
+                            conn.commit()
+                            docs_in_txn = 0
+                        for did in pending_doc_ids:
+                            result_queue.put(did)
+                        pending_doc_ids.clear()
+
+                    while True:
+                        chunk_data = embedding_queue.get()
+                        if chunk_data is None:
+                            flush()
+                            result_queue.put(None)
+                            break
+                        unchanged_chunks = chunk_data["unchanged_chunks"]
+                        chunks_needing_embedding = chunk_data["chunks_needing_embedding"]
+                        new_embeddings = chunk_data["new_embeddings"]
+                        field_embeddings = chunk_data["field_embeddings"]
+                        if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
+                            doc_info = (
                                 chunk_data["doc_text"],
-                                chunk_data["content_hash"],
                                 chunk_data["metadata"],
+                                chunk_data["doc_id"],
+                                chunk_data["content_hash"],
                             )
-                        ]
-                        chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
-                        with self.connection_pool.get_connection() as conn:
-                            conn.execute("BEGIN")
+                            doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
+                            filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
+                                new_embeddings,
+                                chunks_needing_embedding,
+                                doc_chunk_mapping,
+                                similarity_threshold,
+                                existing_chunk_hashes=existing_hashes,
+                            )
+                            chunks_needing_embedding = filtered_chunks
+                            new_embeddings = filtered_embeddings
+                            # Track kept hashes so later docs in this batch dedup against them.
+                            if existing_hashes is not None:
+                                existing_hashes.update(c.content_hash for c in filtered_chunks)
+                        all_chunks = unchanged_chunks + chunks_needing_embedding
+                        if len(all_chunks) > 0 or mode == "upsert":
+                            documents_data = [
+                                (
+                                    chunk_data["doc_id"],
+                                    chunk_data["doc_text"],
+                                    chunk_data["content_hash"],
+                                    chunk_data["metadata"],
+                                )
+                            ]
+                            chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
+                            if docs_in_txn == 0:
+                                conn.execute("BEGIN")
                             try:
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data["doc_id"])
@@ -1250,12 +1291,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 # Hierarchical: store sections and update indices
                                 if self._hierarchical_embeddings:
                                     self._store_hierarchical_data(conn, chunk_data, all_chunks)
-                                conn.commit()
+                                docs_in_txn += 1
                             except Exception:
                                 conn.rollback()
+                                docs_in_txn = 0
+                                pending_doc_ids.clear()
                                 raise
-                    result_queue.put(chunk_data["doc_id"])
-                    embedding_queue.task_done()
+                        pending_doc_ids.append(chunk_data["doc_id"])
+                        if docs_in_txn >= commit_batch_size:
+                            flush()
+                        embedding_queue.task_done()
             except Exception as e:
                 logger.error(f"Database worker error: {e}")
                 result_queue.put(None)

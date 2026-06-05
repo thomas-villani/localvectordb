@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Literal, Optional, Type
 
@@ -19,6 +20,25 @@ import numpy as np
 
 from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
 from localvectordb.utils import resolve_env_ref
+
+# Per-thread persistent event loops for the synchronous embedding path.
+# ``asyncio.run()`` builds and tears down a fresh event loop on every call,
+# which on some platforms (notably Windows) also allocates a socket self-pipe
+# each time — a large fixed cost paid once per query. Reusing one loop per
+# thread eliminates that. The loop is thread-local because asyncio loops are not
+# safe to drive from multiple threads; ``embed_sync`` may be called from the
+# query thread or the ingest pipeline's embedding worker.
+_sync_loops = threading.local()
+
+
+def _get_sync_event_loop() -> "asyncio.AbstractEventLoop":
+    """Return a persistent event loop owned by the calling thread."""
+    loop = getattr(_sync_loops, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _sync_loops.loop = loop
+    return loop
+
 
 logger = logging.getLogger(__name__)
 
@@ -205,17 +225,19 @@ class EmbeddingProvider(ABC):
     def embed_sync(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
         """Synchronous wrapper for embed_batch with proper event loop handling."""
         try:
-            # Try to get the current event loop without creating one
             asyncio.get_running_loop()
-            # If we reach here, we're in an async context - delegate to sync implementation
-            # Rather than creating complex threading, recommend using embed_batch directly
+        except RuntimeError:
+            # No running event loop - safe to drive a persistent loop ourselves.
+            pass
+        else:
+            # We're inside a running loop; driving another would deadlock.
             raise RuntimeError(
                 "embed_sync() cannot be called from within an async context. "
                 "Use 'await provider.embed_batch(texts, batch_size)' instead."
             )
-        except RuntimeError:
-            # No running event loop - safe to create one
-            return asyncio.run(self.embed_batch(texts, batch_size))
+
+        loop = _get_sync_event_loop()
+        return loop.run_until_complete(self.embed_batch(texts, batch_size))
 
 
 class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
