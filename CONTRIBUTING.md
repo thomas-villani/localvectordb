@@ -8,19 +8,29 @@ for setting up a development environment, running tests, and submitting changes.
 ```bash
 git clone https://github.com/thomas-villani/localvectordb.git
 cd localvectordb
-python -m venv .venv
 
-# Activate the virtual environment
-# Windows (MSYS/Git Bash):
-source .venv/Scripts/activate
-# Linux/macOS:
-source .venv/bin/activate
+# Recommended: uv creates the virtualenv and installs the dev dependency group
+uv sync --dev
 
-pip install -e ".[dev]"
+# Working on the MCP server feature as well? Add its extra:
+#   uv sync --dev --extra mcp
 ```
 
-The `[dev]` extra installs all test, lint, and documentation dependencies along
-with the server and file-extraction extras.
+`uv sync --dev` installs all test, lint, and documentation tooling along with the
+server, file-extraction, and visualization extras. The MCP feature is opt-in
+(its `fastmcp`/`pywin32` dependency can trip Windows antivirus on install).
+
+<details>
+<summary>Without uv (plain venv + pip)</summary>
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate   # Windows (MSYS/Git Bash); use .venv/bin/activate on Linux/macOS
+pip install -e ".[server,file-extraction,visualization]"
+pip install pytest pytest-asyncio pytest-xdist pytest-cov ruff mypy black "bandit[toml]" pre-commit build twine
+```
+
+</details>
 
 Requires Python 3.12 or later.
 

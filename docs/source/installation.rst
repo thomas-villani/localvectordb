@@ -58,26 +58,21 @@ For local inference with HuggingFace transformers models:
 
 Development Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^
-For contributing or advanced usage:
+For contributing or advanced usage, install the development dependency group with
+uv (add ``--extra mcp`` if you are working on the MCP server):
 
 .. code-block:: bash
 
-   pip install localvectordb[dev]
+   git clone https://github.com/thomas-villani/localvectordb.git
+   cd localvectordb
+   uv sync --dev
 
 Includes:
 
 - Testing frameworks
 - Documentation tools
 - Code quality tools
-- All optional dependencies
-
-From Source
-^^^^^^^^^^^
-.. code-block:: bash
-
-   git clone https://github.com/thomas-villani/localvectordb.git
-   cd localvectordb
-   pip install -e .[dev]
+- The server, file-extraction, and visualization extras
 
 System Dependencies
 -------------------

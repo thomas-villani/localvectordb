@@ -28,8 +28,8 @@ Quick Installation
     # With server dependencies
     pip install localvectordb[server]
 
-    # Development installation
-    pip install localvectordb[dev]
+    # Development environment (dev tooling + test extras), via uv
+    uv sync --dev
 
     # The whole kit and kaboodle:
     pip install localvectordb[all]

@@ -75,19 +75,23 @@ cd docs && make clean && make html
 # Build package
 ./.venv/Scripts/python.exe -m build
 
-# Install in development mode
-./.venv/Scripts/pip.exe install -e ".[dev,server,file-extraction]"
+# Set up the full development environment (dev tooling + server, file-extraction,
+# visualization extras). Dev tooling lives in the PEP 735 [dependency-groups].dev
+# group, so `uv sync --dev` installs it.
+uv sync --dev
+
+# MCP server work is opt-in (its fastmcp/pywin32 dep can trip Windows AV):
+uv sync --dev --extra mcp
 ```
 
 ### Package Management
 ```bash
-# Install development dependencies
-pip install -e ".[dev,server,file-extraction]"
+# Full dev environment
+uv sync --dev
 
-# Install specific dependency groups
-pip install -e ".[server]"          # Server features
-pip install -e ".[file-extraction]" # File processing
-pip install -e ".[async]"          # Async support
+# Install specific runtime extras
+uv sync --extra server          # Server features
+uv sync --extra file-extraction # File processing
 ```
 
 ### CLI Commands

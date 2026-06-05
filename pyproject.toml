@@ -171,27 +171,36 @@ all = [
     "localvectordb[sentence-transformers]",
     "localvectordb[visualization]",
 ]
+
+# Development tooling lives in a PEP 735 dependency group (not an extra) so that
+# `uv sync` / `uv sync --dev` install it. It bundles the runtime extras needed to
+# run the full test suite, but intentionally omits [mcp]: fastmcp pulls pywin32,
+# which is prone to AV-quarantine install failures on Windows. MCP contributors
+# should add it explicitly:  uv sync --dev --extra mcp
+[dependency-groups]
 dev = [
+    # Test + lint + type-check + security + format tooling
     "freezegun>=1.5.2",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
     "pytest-xdist>=3.7.0",
-    "sphinx>=8.2.3",
-    "sphinx-autodoc-typehints>=3.2.0",
-    "sphinx-copybutton>=0.5.2",
-    "sphinx-rtd-theme>=3.0.2",
-    "localvectordb[file-extraction]",
-    "localvectordb[server]",
-    "localvectordb[mcp]",
-    "localvectordb[visualization]",
+    "pytest-cov>=7.0.0",
     "ruff>=0.12.12",
     "mypy>=1.17.1",
-    "pytest-cov>=7.0.0",
     "bandit[toml]>=1.8.0",
     "black>=24.0.0",
     "pre-commit>=4.0.0",
     "build>=1.2.0",
     "twine>=5.0.0",
+    # Docs
+    "sphinx>=8.2.3",
+    "sphinx-autodoc-typehints>=3.2.0",
+    "sphinx-copybutton>=0.5.2",
+    "sphinx-rtd-theme>=3.0.2",
+    # Runtime extras exercised by the test suite (mcp deliberately excluded)
+    "localvectordb[server]",
+    "localvectordb[file-extraction]",
+    "localvectordb[visualization]",
 ]
 
 

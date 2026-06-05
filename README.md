@@ -531,11 +531,11 @@ Contributions are welcome for noncommercial use under the project's license term
 git clone https://github.com/thomas-villani/localvectordb.git
 cd localvectordb
 
-# Install in development mode
-pip install -e ".[dev]"
+# Install dev tooling + test extras (add --extra mcp to work on the MCP server)
+uv sync --dev
 
 # Run tests
-pytest
+uv run pytest
 
 # Start development server
 lvdb serve --debug
