@@ -4,7 +4,25 @@ import importlib.metadata
 import os
 import re
 from datetime import datetime
-from typing import Union
+from typing import Optional, Union
+
+
+def resolve_env_ref(value: Optional[str], *, what: str = "value") -> Optional[str]:
+    """Resolve a ``$ENV_VAR`` reference to its environment value.
+
+    Credentials may be passed as a literal string or as a ``$NAME`` reference
+    (all-uppercase) to be read from the environment. If a reference is given but
+    the variable is unset, raise a clear error naming the variable rather than
+    silently returning ``None`` (which surfaces later as a confusing
+    "key required" failure). Non-reference values are returned unchanged.
+    """
+    if value is not None and value.startswith("$") and value[1:].isupper():
+        env_name = value[1:]
+        resolved = os.getenv(env_name)
+        if resolved is None:
+            raise ValueError(f"Environment variable {env_name!r} referenced by {what} is not set")
+        return resolved
+    return value
 
 
 def get_system_version() -> str:

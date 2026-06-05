@@ -140,9 +140,15 @@ class SemanticFilter:
             logger.error(f"Async embedding generation failed: {e}")
             raise e
 
+        if len(field_embeddings) != len(valid_docs):
+            raise ValueError(
+                f"Embedding provider returned {len(field_embeddings)} embeddings for "
+                f"{len(valid_docs)} documents; cannot align semantic-filter scores."
+            )
+
         # Apply similarity filtering
         filtered_docs = []
-        for doc, field_embedding in zip(valid_docs, field_embeddings, strict=False):
+        for doc, field_embedding in zip(valid_docs, field_embeddings, strict=True):
             similarity = self._calculate_similarity(concept_embedding, field_embedding)
 
             if similarity >= self.threshold:
@@ -175,9 +181,15 @@ class SemanticFilter:
         concept_embedding = db.embedding_provider.embed_sync([self.concept])[0]
         field_embeddings = db.embedding_provider.embed_sync(field_contents)
 
+        if len(field_embeddings) != len(valid_docs):
+            raise ValueError(
+                f"Embedding provider returned {len(field_embeddings)} embeddings for "
+                f"{len(valid_docs)} documents; cannot align semantic-filter scores."
+            )
+
         # Apply similarity filtering
         filtered_docs = []
-        for doc, field_embedding in zip(valid_docs, field_embeddings, strict=False):
+        for doc, field_embedding in zip(valid_docs, field_embeddings, strict=True):
             similarity = self._calculate_similarity(concept_embedding, field_embedding)
 
             if similarity >= self.threshold:
@@ -218,7 +230,10 @@ class SemanticFilter:
         b_flat = b.flatten()
 
         if self.metric == SimilarityMetric.COSINE:
-            return float(np.dot(a_flat, b_flat) / (np.linalg.norm(a_flat) * np.linalg.norm(b_flat)))
+            denom = float(np.linalg.norm(a_flat) * np.linalg.norm(b_flat))
+            if denom == 0.0:
+                return 0.0
+            return float(np.dot(a_flat, b_flat) / denom)
         elif self.metric == SimilarityMetric.DOT_PRODUCT:
             return float(np.dot(a_flat, b_flat))
         elif self.metric == SimilarityMetric.EUCLIDEAN:

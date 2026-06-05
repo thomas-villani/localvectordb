@@ -18,6 +18,7 @@ import httpx
 import numpy as np
 
 from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
+from localvectordb.utils import resolve_env_ref
 
 logger = logging.getLogger(__name__)
 
@@ -644,8 +645,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             base_url=base_url,
         )
 
-        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
-            api_key = os.getenv(api_key[1:])
+        api_key = resolve_env_ref(api_key, what="api_key")
 
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
 
@@ -863,8 +863,7 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         )
 
         # Resolve API key (param or env)
-        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
-            api_key = os.getenv(api_key[1:])
+        api_key = resolve_env_ref(api_key, what="api_key")
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -1168,8 +1167,7 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         )
 
         # Resolve API key from env if formatted as "$ENVVAR"
-        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
-            api_key = os.getenv(api_key[1:])
+        api_key = resolve_env_ref(api_key, what="api_key")
 
         # Default to JINA_API_KEY env var
         self.api_key = api_key or os.getenv("JINA_API_KEY")
@@ -1477,8 +1475,7 @@ class HuggingFaceInferenceEmbeddings(HTTPEmbeddingProvider):
             **kwargs,
         )
 
-        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
-            api_key = os.getenv(api_key[1:])
+        api_key = resolve_env_ref(api_key, what="api_key")
 
         self.api_key = api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
         self._explicit_base_url = base_url is not None

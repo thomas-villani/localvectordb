@@ -1,6 +1,7 @@
 # src/localvectordb_server/routers/documents.py
 """Document CRUD routes."""
 
+import json
 import logging
 from math import ceil
 from typing import Any, Dict
@@ -611,7 +612,8 @@ async def count_documents(db_name: str, request: Request):
 
         try:
             data = await request.json()
-        except Exception:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Optional body: empty or non-JSON request means "no filters".
             data = None
 
         if data:

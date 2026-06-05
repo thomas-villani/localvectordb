@@ -68,15 +68,6 @@ class CacheManager:
         result: bool = self._cache.clear()
         return result
 
-    def cached(self, timeout: int = 300, key_prefix: str = ""):
-        """Decorator for caching endpoint responses (compatible with route decorators)."""
-
-        def decorator(func):
-            # For now, passthrough — caching handled at router level if needed
-            return func
-
-        return decorator
-
 
 # Global instance
 cache = CacheManager()

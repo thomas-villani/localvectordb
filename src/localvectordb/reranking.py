@@ -17,6 +17,7 @@ import numpy as np
 
 from localvectordb.core import QueryResult
 from localvectordb.exceptions import RerankerError
+from localvectordb.utils import resolve_env_ref
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,7 @@ class JinaReranker(Reranker):
     ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
 
-        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
-            api_key = os.getenv(api_key[1:])
+        api_key = resolve_env_ref(api_key, what="api_key")
 
         self.api_key = api_key or os.getenv("JINA_API_KEY")
         if not self.api_key:
@@ -295,10 +295,10 @@ class SentenceTransformersReranker(Reranker):
             result.metadata["original_score"] = result.score
             result.score = float(normalized[i])
 
-        results.sort(key=lambda x: x.score, reverse=True)
+        ranked = sorted(results, key=lambda x: x.score, reverse=True)
         if top_k is not None:
-            results = results[:top_k]
-        return results
+            ranked = ranked[:top_k]
+        return ranked
 
 
 class HuggingFaceReranker(Reranker):
@@ -326,8 +326,7 @@ class HuggingFaceReranker(Reranker):
     ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
 
-        if api_key is not None and api_key.startswith("$") and api_key[1:].isupper():
-            api_key = os.getenv(api_key[1:])
+        api_key = resolve_env_ref(api_key, what="api_key")
 
         self.api_key = api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
         self.base_url = (base_url or "https://api-inference.huggingface.co").rstrip("/")
@@ -385,10 +384,10 @@ class HuggingFaceReranker(Reranker):
                     result.metadata["original_score"] = result.score
                     result.score = float(normalized[i])
 
-                results.sort(key=lambda x: x.score, reverse=True)
+                ranked = sorted(results, key=lambda x: x.score, reverse=True)
                 if top_k is not None:
-                    results = results[:top_k]
-                return results
+                    ranked = ranked[:top_k]
+                return ranked
 
             except RerankerError:
                 raise
@@ -431,10 +430,10 @@ class MockReranker(Reranker):
             result.metadata["original_score"] = result.score
             result.score = overlap
 
-        results.sort(key=lambda x: x.score, reverse=True)
+        ranked = sorted(results, key=lambda x: x.score, reverse=True)
         if top_k is not None:
-            results = results[:top_k]
-        return results
+            ranked = ranked[:top_k]
+        return ranked
 
 
 class RerankerRegistry:

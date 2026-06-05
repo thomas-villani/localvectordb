@@ -6,6 +6,7 @@ performance monitoring, and security event tracking.
 Framework-agnostic: uses contextvars instead of Flask g/request.
 """
 
+import asyncio
 import contextvars
 import json
 import logging
@@ -239,43 +240,68 @@ class SecurityLogger:
 
 
 def log_performance(operation: str, logger: Optional[logging.Logger] = None):
-    """Decorator to log function performance."""
+    """Decorator to log function performance.
+
+    Works for both sync and async functions. For coroutine functions the timing
+    spans the awaited execution (not just coroutine creation) and success/failure
+    reflects the actual outcome.
+    """
 
     def decorator(func):
+        func_logger = logger or logging.getLogger(func.__module__)
+
+        def _log_success(duration: float) -> None:
+            func_logger.info(
+                f"Operation {operation} completed successfully",
+                extra={
+                    "extra_fields": {
+                        "operation_type": "performance",
+                        "operation": operation,
+                        "duration_seconds": duration,
+                        "success": True,
+                    }
+                },
+            )
+
+        def _log_failure(duration: float, exc: Exception) -> None:
+            func_logger.error(
+                f"Operation {operation} failed: {str(exc)}",
+                exc_info=True,
+                extra={
+                    "extra_fields": {
+                        "operation_type": "performance",
+                        "operation": operation,
+                        "duration_seconds": duration,
+                        "success": False,
+                        "error_type": type(exc).__name__,
+                    }
+                },
+            )
+
+        if asyncio.iscoroutinefunction(func):
+
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                start_time = time.time()
+                try:
+                    result = await func(*args, **kwargs)
+                    _log_success(time.time() - start_time)
+                    return result
+                except Exception as e:
+                    _log_failure(time.time() - start_time, e)
+                    raise
+
+            return async_wrapper
+
         @wraps(func)
         def wrapper(*args, **kwargs):
             start_time = time.time()
-            func_logger = logger or logging.getLogger(func.__module__)
             try:
                 result = func(*args, **kwargs)
-                duration = time.time() - start_time
-                func_logger.info(
-                    f"Operation {operation} completed successfully",
-                    extra={
-                        "extra_fields": {
-                            "operation_type": "performance",
-                            "operation": operation,
-                            "duration_seconds": duration,
-                            "success": True,
-                        }
-                    },
-                )
+                _log_success(time.time() - start_time)
                 return result
             except Exception as e:
-                duration = time.time() - start_time
-                func_logger.error(
-                    f"Operation {operation} failed: {str(e)}",
-                    exc_info=True,
-                    extra={
-                        "extra_fields": {
-                            "operation_type": "performance",
-                            "operation": operation,
-                            "duration_seconds": duration,
-                            "success": False,
-                            "error_type": type(e).__name__,
-                        }
-                    },
-                )
+                _log_failure(time.time() - start_time, e)
                 raise
 
         return wrapper
