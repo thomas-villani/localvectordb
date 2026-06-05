@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from localvectordb.exceptions import ConfigurationError
+from localvectordb.exceptions import BaseLocalVectorDBException, ConfigurationError
 from localvectordb_server._dbmanager import DatabaseManager
 from localvectordb_server._error_handlers import (
     APIError,
@@ -263,6 +263,14 @@ def create_app(
     @app.exception_handler(ValidationError)
     async def handle_validation_error(request: Request, exc: ValidationError):
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    @app.exception_handler(BaseLocalVectorDBException)
+    async def handle_domain_error(request: Request, exc: BaseLocalVectorDBException):
+        # Map known library exceptions (e.g. DatabaseNotFoundError -> 404) to the
+        # standard envelope. Registering an explicit handler keeps these as proper
+        # client errors rather than falling through to the 500 catch-all.
+        error_response, status_code = standardize_error_response(exc, debug=debug)
+        return JSONResponse(status_code=status_code, content=error_response)
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception):

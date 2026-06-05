@@ -23,6 +23,4 @@ Submodules
    :maxdepth: 4
 
    localvectordb_server.config
-   localvectordb_server.inspector
    localvectordb_server.keymanager
-   localvectordb_server.routes

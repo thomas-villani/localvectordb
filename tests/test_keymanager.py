@@ -595,7 +595,9 @@ class TestKeyManagerUtilities:
         manager, mock_bcrypt = mock_key_manager
 
         key_id = manager._generate_key_id()
-        expected_key_id = datetime.now().strftime("key_%Y%m%d_")
+        # _generate_key_id stamps the UTC date; match it so the test does not
+        # flake when local time and UTC fall on different calendar days.
+        expected_key_id = datetime.now(UTC).strftime("key_%Y%m%d_")
 
         assert key_id.startswith(expected_key_id)
         assert len(key_id) == len(expected_key_id) + 6  # 6 random chars

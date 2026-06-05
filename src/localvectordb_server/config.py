@@ -431,9 +431,10 @@ class ServerSettings(BaseSettings):
     use_single_cache: bool = False
 
     proxy_enabled: bool = False
-    # These proxy settings are passed to the werkzeug ProxyFix middleware.
-    # Keys are: x_for, x_proto, x_host, x_port, x_prefix
-    # read more: https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/
+    # Forwarded-header handling for deployments behind a reverse proxy. When
+    # proxy_enabled is True, HostValidationMiddleware (see app.py) honors the
+    # X-Forwarded-Host header from trusted_proxies. Keys: x_for, x_proto,
+    # x_host, x_port, x_prefix.
     proxy_settings: Optional[dict] = None
 
     # List of trusted proxy IP addresses/CIDR blocks that are allowed to set forwarded headers

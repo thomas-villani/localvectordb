@@ -524,9 +524,15 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                     raise ValueError("No embeddings returned from Ollama API")
 
             except Exception as e:
-                logger.error(f"Failed to get dimension from Ollama API: {e}")
-                # Fallback to a common default for Ollama models
-                return 4096
+                # Do not silently guess a dimension: an incorrect value here is
+                # baked into the FAISS index and corrupts every later embed. Fail
+                # loudly and let the caller fix connectivity or pass an explicit
+                # dimension via embedding_config.
+                raise EmbeddingError(
+                    f"Could not determine embedding dimension for Ollama model '{self.model}' at "
+                    f"{self.base_url}: {e}. Ensure the model is available, or pass an explicit "
+                    f"dimension in embedding_config."
+                ) from e
 
     def get_dimension(self) -> int:
         """Get embedding dimension by making a test call"""
@@ -953,9 +959,20 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
                     raise ValueError("No embedding values returned from Google API")
 
             except Exception as e:
-                logger.error(f"Failed to get dimension from Google API: {e}")
-                # Fallback to known defaults if probe fails
-                return self._default_dimensions_by_model.get(self.model, 3072)
+                # If the probe fails, fall back only to an authoritative per-model
+                # default. For unknown models there is no safe guess, so fail loudly
+                # rather than baking a wrong dimension into the index.
+                known = self._default_dimensions_by_model.get(self.model)
+                if known is not None:
+                    logger.warning(
+                        f"Dimension probe failed for Google model '{self.model}' ({e}); "
+                        f"using known default {known}."
+                    )
+                    return known
+                raise EmbeddingError(
+                    f"Could not determine embedding dimension for Google model '{self.model}': {e}. "
+                    f"Pass an explicit dimension via embedding_config (output_dimensionality)."
+                ) from e
 
     def get_dimension(self) -> int:
         """Return embedding dimension, using API probe if needed."""
@@ -1258,7 +1275,7 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
     ) -> List[List[float]]:
         """Embed a single batch using Jina API."""
         if not texts:
-            return [[]]
+            return []
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -1733,7 +1750,7 @@ class MockEmbeddings(EmbeddingProvider):
 
     async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
         if not texts:
-            return [[]]
+            return []
         embeddings = []
         for text in texts:
             # Simple hash-based embedding

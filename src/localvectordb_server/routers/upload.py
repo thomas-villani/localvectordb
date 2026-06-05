@@ -7,13 +7,13 @@ import mimetypes
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from werkzeug.utils import secure_filename
 
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.routers._deps import get_db
+from localvectordb_server.utils.files import secure_filename
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()

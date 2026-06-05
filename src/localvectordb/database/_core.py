@@ -175,7 +175,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Initialize SQLite tuning configuration
         profile = get_sqlite_pragma_profile(sqlite_profile, default="balanced")
-        assert profile is not None
+        if profile is None:
+            raise ValueError(f"Unknown SQLite pragma profile: {sqlite_profile!r}")
         pragmas = dict(profile.pragmas)
         if sqlite_pragma_overrides:
             pragmas.update(sqlite_pragma_overrides)
@@ -548,7 +549,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
             return
-        assert self.index is not None
+        if self.index is None:
+            raise RuntimeError("FAISS index is not initialized")
         with self._faiss_lock.write_lock():
             start_faiss_id = self.index.ntotal
             new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
@@ -557,7 +559,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 chunk.faiss_id = int(new_faiss_ids[i])
 
     def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
-        assert self.index is not None
+        if self.index is None:
+            raise RuntimeError("FAISS index is not initialized")
         if not faiss_ids or not hasattr(self.index, "remove_ids"):
             return
         try:
@@ -578,7 +581,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
 
-        assert self.index is not None
+        if self.index is None:
+            raise RuntimeError("FAISS index is not initialized")
         with self._faiss_lock.read_lock():
             # Method 1: Try reconstruct_batch if available (for non-wrapped indices)
             if hasattr(self.index, "reconstruct_batch"):
@@ -606,7 +610,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)
 
-        assert self.index is not None
+        if self.index is None:
+            raise RuntimeError("FAISS index is not initialized")
         faiss_ids_array = np.array(faiss_ids, dtype=np.int64)
 
         # Strategy 1: Try direct reconstruction on IndexIDMap2 first
@@ -708,7 +713,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     def _reconstruct_individual_fallback(self, faiss_ids: List[int]) -> np.ndarray:
         """Fallback method using individual reconstruct calls."""
-        assert self.index is not None
+        if self.index is None:
+            raise RuntimeError("FAISS index is not initialized")
         embeddings = []
         for fid in faiss_ids:
             try:
@@ -1000,7 +1006,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     async def _ensure_async_schema_initialized(self) -> None:
         if not self.is_memory_only or self._async_schema_initialized:
             return
-        assert self.async_connection_pool is not None
+        if self.async_connection_pool is None:
+            raise RuntimeError("Async connection pool is not initialized")
         try:
             async with self.async_connection_pool.get_connection_context() as conn:
                 await conn.execute("SELECT 1 FROM documents LIMIT 1")
@@ -1066,7 +1073,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         profile_typed = cast(SqliteProfile, profile)
         if is_valid_sqlite_pragma_profile(profile_typed):
             profile_obj = get_sqlite_pragma_profile(profile_typed)
-            assert profile_obj is not None
+            if profile_obj is None:
+                raise ValueError(f"Unknown SQLite pragma profile: {profile_typed!r}")
             pragmas = dict(profile_obj.pragmas)
             pragmas.update(overrides)
 
@@ -1080,5 +1088,6 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             self._sqlite_profile = "balanced"
             self._sqlite_pragma_overrides = {}
             balanced_profile = get_sqlite_pragma_profile("balanced")
-            assert balanced_profile is not None
+            if balanced_profile is None:
+                raise RuntimeError("Built-in 'balanced' SQLite pragma profile is unavailable")
             self._sqlite_pragmas = dict(balanced_profile.pragmas)

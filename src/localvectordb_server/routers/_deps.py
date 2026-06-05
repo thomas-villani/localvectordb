@@ -3,7 +3,7 @@
 
 from typing import Any
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from localvectordb_server._dbmanager import DatabaseManager
 from localvectordb_server.config import Config
@@ -22,9 +22,11 @@ def get_db_manager(request: Request) -> DatabaseManager:
 
 
 def get_db(db_name: str, request: Request) -> Any:
-    """Resolve a LocalVectorDB instance by name from the db_manager."""
+    """Resolve a LocalVectorDB instance by name from the db_manager.
+
+    Exceptions (e.g. ``APIError(DATABASE_NOT_FOUND)`` raised by the manager) are
+    allowed to propagate so the app's registered exception handlers produce the
+    standard ``{"error": {...}}`` envelope, consistent with every other route.
+    """
     db_manager = request.app.state.db_manager
-    try:
-        return db_manager.get_db(db_name)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Database '{db_name}' not found: {e}") from e
+    return db_manager.get_db(db_name)

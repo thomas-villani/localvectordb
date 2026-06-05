@@ -264,6 +264,7 @@ def integration_app(temp_dir, test_key_manager):
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
+    from localvectordb.exceptions import BaseLocalVectorDBException
     from localvectordb_server._error_handlers import APIError, ValidationError, standardize_error_response
 
     @app.exception_handler(APIError)
@@ -273,6 +274,13 @@ def integration_app(temp_dir, test_key_manager):
     @app.exception_handler(ValidationError)
     async def handle_validation_error(request: Request, exc: ValidationError):
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    # Mirror create_app: map library exceptions (e.g. DatabaseNotFoundError) to
+    # their proper status codes instead of the 500 catch-all.
+    @app.exception_handler(BaseLocalVectorDBException)
+    async def handle_domain_error(request: Request, exc: BaseLocalVectorDBException):
+        error_response, status_code = standardize_error_response(exc)
+        return JSONResponse(status_code=status_code, content=error_response)
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception):
