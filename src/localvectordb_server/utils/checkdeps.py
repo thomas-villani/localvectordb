@@ -1,4 +1,4 @@
-#  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 """
 localvectordb_server/utils/checkdeps.py

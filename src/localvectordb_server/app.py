@@ -1,4 +1,5 @@
-#  Copyright (c) 2023-2025 Tom Villani, Ph.D. All rights reserved.
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 localvectordb_server/app.py
 
@@ -249,7 +250,9 @@ def create_app(
 
         limiter = Limiter(key_func=get_remote_address, default_limits=[_config.server.rate_limit])
         app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        # slowapi's handler is typed for its own RateLimitExceeded rather than the
+        # broad Exception signature Starlette expects; the runtime contract is correct.
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
         logger.info(f"Rate limiting enabled: {_config.server.rate_limit}")
 
     # --- Exception handlers ---

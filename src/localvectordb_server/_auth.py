@@ -1,6 +1,5 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# src/localvectordb_server/_auth.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 Authentication utilities for the LocalVectorDB server using FastAPI dependency injection.
 """

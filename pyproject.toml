@@ -76,6 +76,27 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/localvectordb", "src/localvectordb_server"]
 
+[tool.hatch.build.targets.sdist]
+# Keep the source distribution to the Python package + its tests/docs. Internal
+# notes (competitive analysis, code reviews, scratch files) are gitignored and so
+# already excluded; this additionally drops dev-only and non-Python assets.
+exclude = [
+    "/sdk",
+    "/skills",
+    "/benchmarks",
+    "/scripts",
+    "/docs/build",
+    "/.github",
+    "/.claude",
+    "/.idea",
+    "/CLAUDE.md",
+    "/.env.example",
+    "/.pre-commit-config.yaml",
+    "/.python-version",
+    "/.gitignore",
+    "/uv.lock",
+]
+
 [project.optional-dependencies]
 server = [
     "bcrypt>=4.3.0",
@@ -169,6 +190,8 @@ dev = [
     "bandit[toml]>=1.8.0",
     "black>=24.0.0",
     "pre-commit>=4.0.0",
+    "build>=1.2.0",
+    "twine>=5.0.0",
 ]
 
 
@@ -237,3 +260,40 @@ skips = ["B101", "B110", "B112", "B108", "B608"]
 [tool.black]
 line-length = 120
 target-version = ["py312"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "--strict-markers --strict-config --tb=short --durations=10"
+markers = [
+    "unit: Unit tests for individual components",
+    "integration: Integration tests that exercise multiple components together",
+    "slow: Slow or timing-sensitive tests (excluded from the fast suite)",
+    "network: Tests that require network access",
+    "database: Tests that involve database operations",
+    "embedding: Tests that involve embedding operations",
+    "chunking: Tests that involve text chunking",
+    "client: Tests for the remote client",
+    "performance: Performance and benchmark tests",
+    "regression: Regression tests for specific bug fixes",
+]
+
+[tool.coverage.run]
+source = ["localvectordb", "localvectordb_server"]
+omit = ["*/tests/*", "*/test_*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

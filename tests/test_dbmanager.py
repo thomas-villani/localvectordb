@@ -25,18 +25,20 @@ from localvectordb_server.config import Config, DatabaseSettings, EmbeddingSetti
 
 
 def _make_mock_app(tmp_path):
-    """Create a mock Flask app with the minimal config needed by DatabaseManager."""
-    app = MagicMock()
-    app.config = {"DB_ROOT_DIR": str(tmp_path), "DB_TIMEOUT": 3600}
-    # Provide a real Config object so attribute access works correctly
+    """Build a real Config pointing at a temp dir.
+
+    DatabaseManager now takes a Config object directly (the FastAPI refactor dropped
+    the Flask app wrapper), so this returns a Config with the database root and an
+    in-process SimpleCache registry suitable for unit tests.
+    """
     config_obj = Config()
+    config_obj.database.root_dir = str(tmp_path)
     config_obj.server.db_registry_type = "SimpleCache"
     config_obj.server.db_registry_settings = {}
     config_obj.server.cache_type = "SimpleCache"
     config_obj.server.cache_settings = None
     config_obj.server.use_single_cache = False
-    app.config_obj = config_obj
-    return app
+    return config_obj
 
 
 def _make_mock_db(name="testdb", closed=False, doc_count=0, chunk_count=0):
@@ -61,13 +63,6 @@ def _make_mock_db(name="testdb", closed=False, doc_count=0, chunk_count=0):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _patch_flask_g():
-    """Patch Flask's g proxy so APIError can be constructed outside a request context."""
-    with patch("localvectordb_server._error_handlers.g", MagicMock()):
-        yield
 
 
 @pytest.fixture()
@@ -525,7 +520,7 @@ class TestCleanupInactive:
 
     @patch("localvectordb_server._dbmanager.DatabaseManager._sync_registry_from_filesystem")
     def test_cleanup_removes_old_connections(self, _mock_sync, mock_app):
-        mock_app.config["DB_TIMEOUT"] = 60  # 60 seconds
+        mock_app.server.db_timeout = 60  # 60 seconds
 
         mgr = DatabaseManager(mock_app)
         try:
@@ -548,7 +543,7 @@ class TestCleanupInactive:
 
     @patch("localvectordb_server._dbmanager.DatabaseManager._sync_registry_from_filesystem")
     def test_cleanup_no_effect_when_all_active(self, _mock_sync, mock_app):
-        mock_app.config["DB_TIMEOUT"] = 3600
+        mock_app.server.db_timeout = 3600
 
         mgr = DatabaseManager(mock_app)
         try:

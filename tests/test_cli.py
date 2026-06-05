@@ -1016,20 +1016,21 @@ class TestDbSearch:
 class TestServe:
 
     def test_serve_creates_app(self, runner, fake_config, config_file, tmp_db_folder):
-        """serve should call create_app and app.run."""
+        """serve should build the app and launch it via uvicorn."""
         mock_app = MagicMock()
-        mock_app.config_obj = fake_config
 
         with (
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch(
-                "localvectordb_server.create_app",
+                "localvectordb_server.app.create_app",
                 return_value=mock_app,
-            ),
+            ) as mock_create,
+            patch("uvicorn.run") as mock_run,
         ):
             result = runner.invoke(cli, ["serve", "--disable-ollama-check"])
         assert result.exit_code == 0
-        mock_app.run.assert_called_once()
+        mock_create.assert_called_once()
+        mock_run.assert_called_once()
 
     def test_serve_config_error(self, runner, fake_config, config_file, tmp_db_folder):
         """serve should report configuration errors."""
@@ -1038,7 +1039,7 @@ class TestServe:
         with (
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch(
-                "localvectordb_server.create_app",
+                "localvectordb_server.app.create_app",
                 side_effect=ConfigurationError("bad config"),
             ),
         ):

@@ -1,6 +1,5 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# src/localvectordb_server/_error_handlers.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 Error handling framework for LocalVectorDB Server (FastAPI).
 """

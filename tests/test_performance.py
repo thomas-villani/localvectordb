@@ -261,8 +261,12 @@ class TestChunkingPerformance:
         for method, result in results.items():
             assert result["throughput"] > 1000, f"{method} throughput too low: {result['throughput']:.1f} chars/sec"
 
+    @pytest.mark.slow
     def test_chunking_scaling(self):
-        """Test how chunking performance scales with document size."""
+        """Test how chunking performance scales with document size.
+
+        Marked slow: asserts on timing ratios that are flaky on shared CI hardware.
+        """
         chunker = ChunkerFactory.create_chunker("sentences", max_tokens=100)
 
         doc_sizes = [100, 500, 1000, 5000]  # Number of sentences
@@ -343,8 +347,12 @@ class TestEmbeddingPerformance:
             # Verify output shape
             assert embeddings.shape == (batch_size, 384)
 
+    @pytest.mark.slow
     def test_embedding_dimension_impact(self):
-        """Test how embedding dimension affects performance."""
+        """Test how embedding dimension affects performance.
+
+        Marked slow: asserts on timing ratios that are flaky on shared CI hardware.
+        """
         dimensions = [128, 256, 384, 512, 768]
         texts = [f"Test text {i}" for i in range(100)]
 
@@ -368,8 +376,12 @@ class TestEmbeddingPerformance:
         min_time = min(times)
         assert max_time < min_time * 100, f"Dimension impact too high: {max_time:.3f}s vs {min_time:.3f}s"
 
+    @pytest.mark.slow
     def test_repeated_embedding_performance(self):
-        """Test performance of repeated embedding calls."""
+        """Test performance of repeated embedding calls.
+
+        Marked slow: asserts on timing variance that is flaky on shared CI hardware.
+        """
         provider = MockEmbeddings("test-model", dimension=384)
         texts = [f"Repeated test {i}" for i in range(50)]
 

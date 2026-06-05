@@ -1,13 +1,4 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-# You may not use this file for commercial purposes without explicit permission.
-#
-# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
-#
-# Contact: thomas.villani@gmail.com
-#
-# tests/test_backup_restore.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 """Comprehensive tests for LocalVectorDB backup and restore functionality.
 
@@ -204,7 +195,13 @@ class TestBackupManager:
         assert restored_faiss.exists()
 
         # Verify restored data
-        restored_db_instance = LocalVectorDB("test", str(temp_dirs["restore"]), create_if_not_exists=False)
+        restored_db_instance = LocalVectorDB(
+            "test",
+            str(temp_dirs["restore"]),
+            create_if_not_exists=False,
+            embedding_provider="mock",
+            embedding_model="mock-model",
+        )
 
         # Check document count
         docs = restored_db_instance.filter()
@@ -304,7 +301,13 @@ class TestIncrementalBackup:
         assert restore_path == temp_dirs["restore"]
 
         # Verify restored database contains all data
-        restored_db = LocalVectorDB("test", str(temp_dirs["restore"]), create_if_not_exists=False)
+        restored_db = LocalVectorDB(
+            "test",
+            str(temp_dirs["restore"]),
+            create_if_not_exists=False,
+            embedding_provider="mock",
+            embedding_model="mock-model",
+        )
 
         docs = restored_db.filter()
         assert len(docs) >= 5  # Original 3 + 2 incremental
@@ -513,7 +516,13 @@ class TestIntegration:
         manager.restore_backup(backup_id, temp_dirs["restore"], overwrite_existing=True)
 
         # Verify restoration
-        restored_db = LocalVectorDB("test", str(temp_dirs["restore"]), create_if_not_exists=False)
+        restored_db = LocalVectorDB(
+            "test",
+            str(temp_dirs["restore"]),
+            create_if_not_exists=False,
+            embedding_provider="mock",
+            embedding_model="mock-model",
+        )
 
         original_docs = sample_database.filter()
         restored_docs = restored_db.filter()

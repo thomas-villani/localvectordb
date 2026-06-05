@@ -1,13 +1,4 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-# You may not use this file for commercial purposes without explicit permission.
-#
-# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
-#
-# Contact: thomas.villani@gmail.com
-#
-# src/localvectordb/backup.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 """Backup, restore, and recovery system for LocalVectorDB.
 
@@ -2121,16 +2112,21 @@ class IncrementalBackupManager:
                         row,
                     )
 
-                # Copy changed chunks with optimized bulk operations
-                cursor = inc_conn.execute("SELECT * FROM chunks")
+                # Copy changed chunks with optimized bulk operations. Build the column
+                # list dynamically (excluding the auto-increment `id`) so the restore
+                # stays correct as the chunks schema evolves (e.g. the section_id column).
+                cursor = inc_conn.execute("PRAGMA table_info(chunks)")
+                chunk_columns = [col[1] for col in cursor.fetchall() if col[1] != "id"]
+                chunk_columns_str = ", ".join(chunk_columns)
+                chunk_placeholders = ", ".join(["?" for _ in chunk_columns])
+
+                cursor = inc_conn.execute(f"SELECT {chunk_columns_str} FROM chunks")
                 all_chunk_rows = cursor.fetchall()
 
                 if all_chunk_rows:
                     # Collect unique document IDs that need chunk replacement
-                    affected_doc_ids: set[Any] = set()
-                    for row in all_chunk_rows:
-                        doc_id = row[1]  # document_id is second column
-                        affected_doc_ids.add(doc_id)
+                    doc_id_idx = chunk_columns.index("document_id")
+                    affected_doc_ids: set[Any] = {row[doc_id_idx] for row in all_chunk_rows}
 
                     # Bulk delete all chunks for affected documents
                     if affected_doc_ids:
@@ -2141,21 +2137,11 @@ class IncrementalBackupManager:
                         logger.debug(f"Bulk deleted chunks for {len(affected_doc_ids)} documents")
 
                     # Bulk insert all new chunks
-                    chunk_insert_data: List[Any] = []
-                    for row in all_chunk_rows:
-                        chunk_insert_data.append(row[1:])  # Skip the auto-increment ID
-
                     working_conn.executemany(
-                        """
-                        INSERT INTO chunks
-                        (document_id, chunk_index, content, content_hash,
-                         start_pos, end_pos, start_line, start_col, end_line, end_col,
-                         tokens, faiss_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                        chunk_insert_data,
+                        f"INSERT INTO chunks ({chunk_columns_str}) VALUES ({chunk_placeholders})",
+                        all_chunk_rows,
                     )
-                    logger.debug(f"Bulk inserted {len(chunk_insert_data)} chunks")
+                    logger.debug(f"Bulk inserted {len(all_chunk_rows)} chunks")
 
                 working_conn.commit()
 
@@ -2202,7 +2188,7 @@ class IncrementalBackupManager:
                 logger.warning("No vectors could be reconstructed from incremental index")
                 return
 
-            inc_vectors = np.array(inc_vectors, dtype=np.float32)
+            inc_array = np.array(inc_vectors, dtype=np.float32)
 
             # Remove old vectors with same IDs and add new ones
             for inc_id in inc_ids:
@@ -2212,7 +2198,7 @@ class IncrementalBackupManager:
                     pass  # ID not found, which is fine
 
             # Add updated vectors
-            working_index.add_with_ids(inc_vectors, inc_ids)
+            working_index.add_with_ids(inc_array, inc_ids)
 
             # Save updated index
             faiss.write_index(working_index, str(working_faiss_path))

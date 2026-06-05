@@ -1,6 +1,5 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# tests/test_server_integrated.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 Integration tests for LocalVectorDB server (FastAPI).
 

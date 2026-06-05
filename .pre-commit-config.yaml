@@ -23,7 +23,11 @@ repos:
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml, src/]
+        # Match CI's type-checking environment so server code (FastAPI/slowapi)
+        # is checked against real types rather than treated as Any.
         additional_dependencies:
           - types-requests
+          - fastapi
+          - slowapi
         pass_filenames: false
         files: ^src/

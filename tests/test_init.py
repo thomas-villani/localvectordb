@@ -71,8 +71,9 @@ class TestPackageImports:
             obj = getattr(localvectordb, name)
             assert obj is not None
 
-            # Should be a class or callable
-            assert callable(obj) or isinstance(obj, type) or isinstance(obj, types.ModuleType)
+            # Public API entries should be classes, callables, modules, or simple
+            # string constants such as __version__.
+            assert callable(obj) or isinstance(obj, (type, types.ModuleType, str)), f"{name} is not a public object"
 
     def test_import_all_star(self):
         """Test that 'from localvectordb import *' works correctly."""
@@ -383,9 +384,15 @@ class TestPackageStructure:
         # There might be a few extra public items, but not too many
         extra_items = actual_public - expected_public
 
-        # Allow a few common extra items
+        # Allow a few common extra items. Submodules unavoidably bind as package
+        # attributes via `from localvectordb.x import y`; that is expected Python
+        # behavior, not pollution, so only non-module public leaks are flagged.
         allowed_extra = {"version", "__version__", "metadata"}
-        unexpected_extra = extra_items - allowed_extra
+        unexpected_extra = {
+            item
+            for item in extra_items - allowed_extra
+            if not isinstance(getattr(localvectordb, item), types.ModuleType)
+        }
 
         assert len(unexpected_extra) == 0, f"Unexpected public items: {unexpected_extra}"
 

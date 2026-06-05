@@ -329,5 +329,7 @@ lvdb mcp status
 
 ## License
 
-This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-Contact: thomas.villani@gmail.com
+This project is licensed under the PolyForm Noncommercial License 1.0.0. See the
+[LICENSE](../../../LICENSE) file at the repository root for the full text.
+
+Contact: thomas.villani@njii.com

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """
 LocalVectorDB - Document-First Vector Database with SQLite + FAISS
 

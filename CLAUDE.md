@@ -120,9 +120,14 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
   - `_metadata.py` - Metadata management
 - `client.py` - RemoteVectorDB client for HTTP server communication
 - `factory.py` - VectorDB factory function for automatic local/remote selection
-- `embeddings.py` - Pluggable embedding providers (Ollama, OpenAI, Mock)
+- `embeddings.py` - Pluggable embedding providers (Ollama, OpenAI, Google, Jina, HuggingFace, SentenceTransformers, Mock)
+- `reranking.py` - Pluggable cross-encoder rerankers (Jina, SentenceTransformers, HuggingFace, Mock)
 - `chunking.py` - Position-aware text chunking with multiple strategies
 - `query_builder.py` - SQL-like query builder for metadata filtering
+- `extractors/` - File format extractors (PDF, DOCX, PPTX, XLSX, HTML, XML, RTF, EPUB)
+- `validation/` - LLM-based fact-checking / "reverse RAG" module
+- `visualization/` - tSNE/PCA maps, clustering, and chord/ribbon plots
+- `backup.py` - Backup/restore with incremental and point-in-time recovery
 
 **localvectordb_server/** - HTTP server implementation (FastAPI)
 - `app.py` - FastAPI application factory with lifespan, middleware, and exception handlers
@@ -146,7 +151,8 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
 - `_cache.py` - Framework-agnostic cache wrapper around cachelib
 - `config.py` - Configuration management (TOML/JSON + env vars)
 - `cli/` - Command-line interface (`lvdb` command)
-- `extractors/` - File format extractors (PDF, DOCX, etc.)
+- `mcp/` - Model Context Protocol server integration
+- `utils/` - Server helpers (dependency checks, host matching, schema utilities)
 
 ### Key Design Patterns
 

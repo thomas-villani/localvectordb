@@ -1,13 +1,5 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-# You may not use this file for commercial purposes without explicit permission.
-#
-# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
-#
-# Contact: thomas.villani@gmail.com
-#
-# src/localvectordb/database/ingest.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 Document ingestion pipelines (sync and async), chunk operations, and bulk DB ops.
 
@@ -219,38 +211,27 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         """Batch size for processing."""
         return self._batch_size
 
-    # _get_faiss_metric_type, _similarity_to_distance, and _remove_section_vectors
-    # are implemented in _core.py (LocalVectorDBCore).
-    # Declared under TYPE_CHECKING so mypy sees them without shadowing at runtime.
+    # These methods are implemented in _core.py (LocalVectorDBCore). They are declared
+    # under TYPE_CHECKING only so mypy sees the signatures; defining real bodies here
+    # would shadow the concrete implementations because PipelineMixin precedes
+    # LocalVectorDBCore in the LocalVectorDB MRO.
     if TYPE_CHECKING:
 
-        def _get_faiss_metric_type(self) -> str: ...  # noqa: E704
+        def _get_faiss_metric_type(self) -> str: ...
 
-        def _similarity_to_distance(  # noqa: E704
-            self, similarity: float, metric_type: Optional[str] = None
-        ) -> float: ...
+        def _similarity_to_distance(self, similarity: float, metric_type: Optional[str] = None) -> float: ...
 
-        def _remove_section_vectors(self, faiss_ids: List[int]) -> None: ...  # noqa: E704
+        def _remove_section_vectors(self, faiss_ids: List[int]) -> None: ...
 
-    def _remove_document_vectors(self, faiss_ids: List[int]) -> None:
-        """Remove document vectors from FAISS index. Implemented in _core.py."""
-        raise NotImplementedError
+        def _remove_document_vectors(self, faiss_ids: List[int]) -> None: ...
 
-    def _add_vectors_to_section_index(self, embeddings: np.ndarray, section_ids: np.ndarray) -> None:
-        """Add vectors to section FAISS index. Implemented in _core.py."""
-        raise NotImplementedError
+        def _add_vectors_to_section_index(self, embeddings: np.ndarray, section_ids: np.ndarray) -> None: ...
 
-    def _add_vectors_to_document_index(self, embeddings: np.ndarray, doc_ids: np.ndarray) -> None:
-        """Add vectors to document FAISS index. Implemented in _core.py."""
-        raise NotImplementedError
+        def _add_vectors_to_document_index(self, embeddings: np.ndarray, doc_ids: np.ndarray) -> None: ...
 
-    def _create_flat_index(self) -> Any:
-        """Create a flat FAISS index. Implemented in _core.py."""
-        raise NotImplementedError
+        def _create_flat_index(self) -> Any: ...
 
-    async def _generate_doc_id_async(self) -> str:
-        """Generate a unique document ID asynchronously. Implemented in _core.py."""
-        raise NotImplementedError
+        async def _generate_doc_id_async(self) -> str: ...
 
     # Pure business logic helpers for DRY elimination
     def _build_documents_bulk_insert_sql(self, mode: Literal["insert", "replace"] = "replace") -> tuple[str, List[str]]:

@@ -1,6 +1,5 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# src/localvectordb_server/_cache.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 Thin cache wrapper around cachelib (framework-agnostic).
 Replaces flask-caching with direct cachelib usage.

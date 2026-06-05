@@ -1,13 +1,5 @@
-# Copyright (c) 2023-2025 Tom Villani, Ph.D.
-#
-# This work is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
-# You may not use this file for commercial purposes without explicit permission.
-#
-# For more information, please visit: https://creativecommons.org/licenses/by-nc/4.0/
-#
-# Contact: thomas.villani@gmail.com
-#
-# src/localvectordb/database/_comparison.py
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """
 Document comparison and similarity analysis.
 
@@ -77,12 +69,15 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
     document_index: Optional["IndexIDMap2"]
     _section_detector: Optional["SectionDetector"]
 
-    # Forward-declared methods from sibling mixins (SearchMixin / LocalVectorDBCore)
-    def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
-        raise NotImplementedError
+    # Forward-declared methods implemented by sibling mixins (SearchMixin) and
+    # LocalVectorDBCore. Declared under TYPE_CHECKING only -- real bodies here would
+    # shadow the concrete implementations, since ComparisonMixin precedes
+    # LocalVectorDBCore in LocalVectorDB's MRO.
+    if TYPE_CHECKING:
 
-    def _get_documents_metadata_batch(self, conn: Any, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-        raise NotImplementedError
+        def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray: ...
+
+        def _get_documents_metadata_batch(self, conn: Any, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]: ...
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                     #

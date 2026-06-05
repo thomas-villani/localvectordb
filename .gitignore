@@ -28,5 +28,13 @@ htmlcov/
 benchmarks/.cache/
 benchmarks/results/
 
-# Project notes
+# Project notes / scratch (kept local, never published)
 etc/
+competitive-analysis.md
+todo-v2.md
+remote-layer-streaming.md
+claude-code-review-*.md
+/file
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
