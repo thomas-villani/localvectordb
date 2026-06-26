@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 localvectordb_server/utils/checkdeps.py
 Utility functions for checking system dependencies.

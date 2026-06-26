@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Static matplotlib plots for embedding visualisation."""
 
 from __future__ import annotations

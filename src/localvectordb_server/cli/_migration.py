@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Metadata schema migration CLI commands for LocalVectorDB.
 
 Provides command-line interface for metadata schema migration operations including:

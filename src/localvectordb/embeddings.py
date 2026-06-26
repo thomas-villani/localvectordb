@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Plugin-based embedding providers for LocalVectorDB v1.0
 

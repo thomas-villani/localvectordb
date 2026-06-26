@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Tests for QueryCursor and streaming query functionality."""
 
 import pytest

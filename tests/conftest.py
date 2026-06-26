@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Enhanced pytest fixtures with better test isolation for LocalVectorDB.
 """

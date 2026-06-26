@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Clustering utilities for document embeddings."""
 
 from __future__ import annotations

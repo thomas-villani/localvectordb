@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Comprehensive tests for LocalVectorDB backup and restore functionality.
 
 Tests cover:

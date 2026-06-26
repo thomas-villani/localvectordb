@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Document comparison and similarity analysis.
 
@@ -25,7 +23,7 @@ from localvectordb.core import (
 from localvectordb.database.base import LocalVectorDBBase
 
 if TYPE_CHECKING:
-    from faiss import IndexIDMap2
+    from faiss import Index
 
     from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
     from localvectordb.section_detection import SectionDetector
@@ -61,12 +59,12 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
     _read_write_lock: "ReadWriteLock"
     connection_pool: "ConnectionPool"
     async_connection_pool: Optional["AsyncConnectionPool"]
-    index: Optional["IndexIDMap2"]
+    index: Optional["Index"]
 
     _hierarchical_embeddings: bool
     _faiss_lock: "ReadWriteLock"
-    section_index: Optional["IndexIDMap2"]
-    document_index: Optional["IndexIDMap2"]
+    section_index: Optional["Index"]
+    document_index: Optional["Index"]
     _section_detector: Optional["SectionDetector"]
 
     # Forward-declared methods implemented by sibling mixins (SearchMixin) and

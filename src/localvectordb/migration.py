@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Metadata schema migration system for LocalVectorDB.
 
 This module provides comprehensive metadata schema migration capabilities for

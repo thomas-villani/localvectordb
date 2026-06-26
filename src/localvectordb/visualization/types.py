@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Dataclasses for the visualization module."""
 
 from __future__ import annotations

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Remote interface for LocalVectorDB over HTTP.
 
 This module provides a client interface to interact with a LocalVectorDB server.

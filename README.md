@@ -2,7 +2,7 @@
 
 A high-performance, document-first vector database with SQLite + FAISS backend, featuring intelligent chunking, unified search, and optional HTTP server.
 
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## ✨ Features
 
@@ -543,9 +543,7 @@ lvdb serve --debug
 
 ## 📄 License
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) — see the [LICENSE](LICENSE) file for details.
-
-You are free to use, modify, and distribute this software for any noncommercial purpose. For commercial licensing inquiries, please contact thomas.villani@njii.com.
+This project is licensed under the [MIT License](LICENSE) — see the [LICENSE](LICENSE) file for details.
 
 ## 🆘 Support
 

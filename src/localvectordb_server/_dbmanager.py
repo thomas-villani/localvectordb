@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Enhanced database manager for LocalVectorDB with multi-worker coordination.
 Uses cachelib for shared database registry across workers.

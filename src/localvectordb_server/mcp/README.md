@@ -329,7 +329,5 @@ lvdb mcp status
 
 ## License
 
-This project is licensed under the PolyForm Noncommercial License 1.0.0. See the
+This project is licensed under the MIT License. See the
 [LICENSE](../../../LICENSE) file at the repository root for the full text.
-
-Contact: thomas.villani@njii.com

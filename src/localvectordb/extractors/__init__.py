@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 File content extraction plugin system for LocalVectorDB Server.
 

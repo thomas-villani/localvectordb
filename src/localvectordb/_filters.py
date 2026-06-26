@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Enhanced filtering system for LocalVectorDB with SQL query generation.
 
 This module provides utilities for filtering vector database results based on metadata

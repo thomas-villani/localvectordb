@@ -23,11 +23,18 @@ repos:
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml, src/]
-        # Match CI's type-checking environment so server code (FastAPI/slowapi)
-        # is checked against real types rather than treated as Any.
+        # Install the project's type-affecting dependencies so this isolated env
+        # type-checks against real types exactly as CI's full venv does. Without
+        # faiss/numpy here, faiss is treated as Any and warn_unused_ignores then
+        # flags the (genuinely needed) ignores for faiss stub gaps as unused.
         additional_dependencies:
-          - types-requests
+          - faiss-cpu
+          - numpy
+          - tiktoken
+          - httpx
           - fastapi
           - slowapi
+          - types-requests
+          - types-toml
         pass_filenames: false
         files: ^src/

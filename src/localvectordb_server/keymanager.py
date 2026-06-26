@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 API Key Management System for LocalVectorDB Server v1.0
 

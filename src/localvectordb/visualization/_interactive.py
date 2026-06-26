@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Interactive plotly-based plots (optional dependency)."""
 
 from __future__ import annotations

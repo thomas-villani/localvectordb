@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Dimensionality reduction utilities (PCA, t-SNE)."""
 
 from __future__ import annotations
