@@ -68,7 +68,7 @@ lvdb = "localvectordb_server.cli:cli"
 [project.urls]
 Homepage = "https://github.com/thomas-villani/localvectordb"
 Repository = "https://github.com/thomas-villani/localvectordb"
-Documentation = "https://github.com/thomas-villani/localvectordb#readme"
+Documentation = "https://thomas-villani.github.io/localvectordb/"
 "Bug Tracker" = "https://github.com/thomas-villani/localvectordb/issues"
 Changelog = "https://github.com/thomas-villani/localvectordb/blob/master/CHANGELOG.md"
 
