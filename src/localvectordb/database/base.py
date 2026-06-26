@@ -126,8 +126,13 @@ class BaseVectorDB(ABC):
         batch_size: int = 50,
         cursor_ttl: float = 300.0,
     ) -> "QueryCursor":
-        """Create a QueryCursor for streaming results with lazy hydration."""
-        raise NotImplementedError("Subclass must implement query_cursor")
+        """Create a QueryCursor for streaming results with lazy hydration.
+
+        Intentionally concrete (not ``@abstractmethod``): cursor support is
+        optional, so backends that do not provide it (e.g. RemoteVectorDB) can
+        inherit this default, which raises if a caller actually invokes it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support query cursors")
 
     async def query_cursor_async(
         self,
@@ -149,8 +154,13 @@ class BaseVectorDB(ABC):
         batch_size: int = 50,
         cursor_ttl: float = 300.0,
     ) -> "QueryCursor":
-        """Create a QueryCursor for async streaming results with lazy hydration."""
-        raise NotImplementedError("Subclass must implement query_cursor_async")
+        """Create a QueryCursor for async streaming results with lazy hydration.
+
+        Intentionally concrete (not ``@abstractmethod``): cursor support is
+        optional, so backends that do not provide it (e.g. RemoteVectorDB) can
+        inherit this default, which raises if a caller actually invokes it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support query cursors")
 
     @abstractmethod
     def filter(

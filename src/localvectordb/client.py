@@ -148,6 +148,12 @@ from localvectordb.sqlite_tuning import SqliteProfile
 
 logger = logging.getLogger(__name__)
 
+# Default HTTP connection-pool limits for the client. Override per-instance via the
+# `connection_pool_limits` constructor argument.
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 20
+DEFAULT_MAX_CONNECTIONS = 100
+DEFAULT_KEEPALIVE_EXPIRY = 30.0
+
 
 class RemoteQueryBuilder:
     """
@@ -548,7 +554,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._connection_pool_limits = connection_pool_limits or httpx.Limits(
-            max_keepalive_connections=20, max_connections=100, keepalive_expiry=30.0
+            max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+            max_connections=DEFAULT_MAX_CONNECTIONS,
+            keepalive_expiry=DEFAULT_KEEPALIVE_EXPIRY,
         )
 
         # Configuration

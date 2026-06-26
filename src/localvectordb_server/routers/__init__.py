@@ -3,9 +3,13 @@
 
 from fastapi import FastAPI
 
+# Single source of truth for the API path prefix. Bump here (or pass an explicit
+# `prefix` to register_routers) to introduce a new API version.
+API_V1_PREFIX = "/api/v1"
 
-def register_routers(app: FastAPI) -> None:
-    """Register all API routers with the FastAPI app."""
+
+def register_routers(app: FastAPI, prefix: str = API_V1_PREFIX) -> None:
+    """Register all API routers with the FastAPI app under ``prefix``."""
     from localvectordb_server.routers.comparison import router as comparison_router
     from localvectordb_server.routers.databases import router as databases_router
     from localvectordb_server.routers.documents import router as documents_router
@@ -18,7 +22,6 @@ def register_routers(app: FastAPI) -> None:
     from localvectordb_server.routers.tuning import router as tuning_router
     from localvectordb_server.routers.upload import router as upload_router
 
-    prefix = "/api/v1"
     app.include_router(health_router, prefix=prefix)
     app.include_router(databases_router, prefix=prefix)
     app.include_router(documents_router, prefix=prefix)

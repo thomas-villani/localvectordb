@@ -5,6 +5,7 @@ This module provides chunkers that track exact positions in the original documen
 enabling perfect reconstruction and precise highlighting.
 """
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
@@ -12,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import tiktoken
 
 from localvectordb.core import Chunk, ChunkPosition
+
+logger = logging.getLogger(__name__)
 
 
 class PositionTrackingChunker(ABC):
@@ -86,9 +89,6 @@ class PositionTrackingChunker(ABC):
                 result.append(chunk)
             else:
                 # Split oversized chunk using CharChunker
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(
                     f"Chunk {chunk.index} exceeds max_tokens ({chunk.tokens} > {self.max_tokens}). "
                     f"Splitting with CharChunker."

@@ -145,7 +145,7 @@ class FilterQueryBuilder:
             If field name is invalid or doesn't exist
         """
         # Check for SQL injection patterns
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", field):
+        if not _SAFE_IDENTIFIER_PATTERN.match(field):
             raise DatabaseError(f"Invalid field name: {field}")
 
         # Check if it's a reserved column
