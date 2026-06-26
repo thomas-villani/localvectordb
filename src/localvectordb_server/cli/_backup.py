@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Backup and restore CLI commands for LocalVectorDB.
 
 Provides command-line interface for backup operations including:

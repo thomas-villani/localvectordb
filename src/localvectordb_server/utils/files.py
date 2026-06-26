@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Filesystem-safety helpers.
 
 Provides a dependency-free ``secure_filename`` so the server does not pull in

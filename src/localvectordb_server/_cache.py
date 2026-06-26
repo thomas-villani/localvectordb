@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Thin cache wrapper around cachelib (framework-agnostic).
 Replaces flask-caching with direct cachelib usage.

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Position-tracking chunking system for LocalVectorDB v1.0
 

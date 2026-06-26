@@ -17,8 +17,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from localvectordb.exceptions import DatabaseNotFoundError, DocumentNotFoundError
-from localvectordb_server.mcp.config import MCPConfig
+# The MCP server depends on the optional `mcp` extra (fastmcp). Skip the whole
+# module when it is not installed so the suite stays green without that extra.
+pytest.importorskip("fastmcp")
+
+from localvectordb.exceptions import DatabaseNotFoundError, DocumentNotFoundError  # noqa: E402
+from localvectordb_server.mcp.config import MCPConfig  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers

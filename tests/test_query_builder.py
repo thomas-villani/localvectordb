@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Tests for localvectordb.query_builder module.
 """

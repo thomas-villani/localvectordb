@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 SQLite performance tuning and optimization for LocalVectorDB.
 

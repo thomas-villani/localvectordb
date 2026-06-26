@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 CRUD, filter, stats facades that use base/ingest/search/metadata helpers.
 
@@ -405,7 +403,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
             if faiss_ids_to_remove and self.index is not None and hasattr(self.index, "remove_ids"):
                 try:
                     ids_array = np.array(faiss_ids_to_remove, dtype=np.int64)
-                    self.index.remove_ids(ids_array)
+                    # faiss accepts an ndarray of ids here (wrapped internally as an
+                    # IDSelectorBatch); the stub only types the IDSelector overload.
+                    self.index.remove_ids(ids_array)  # type: ignore[arg-type]
                     logger.info(f"Removed {len(faiss_ids_to_remove)} vectors from FAISS index")
                 except Exception as e:
                     logger.error(f"Failed to remove vectors from FAISS index: {e}")

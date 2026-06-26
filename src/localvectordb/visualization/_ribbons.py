@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Synteny and chord diagram visualisations for chunk-level document comparison.
 
 Synteny diagrams show two documents as parallel bars of chunk segments with

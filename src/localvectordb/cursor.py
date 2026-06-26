@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 QueryCursor for streaming query results with lazy SQLite hydration.
 

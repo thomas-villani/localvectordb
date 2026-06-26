@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Core initialization and infrastructure for LocalVectorDB.
 
@@ -58,7 +56,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     connection_pool: ConnectionPool
     async_connection_pool: Optional[AsyncConnectionPool]
     schema: DatabaseSchema
-    index: Optional[faiss.IndexIDMap2]
+    # Usually an IndexIDMap2, but may be a base faiss.Index (loaded via read_index)
+    # or a GpuIndex (after index_cpu_to_all_gpus), so the broad base type is correct.
+    index: Optional[faiss.Index]
     _read_write_lock: ReadWriteLock
     _faiss_lock: ReadWriteLock
     _metadata_schema: Dict[str, Any]
@@ -125,8 +125,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._section_pattern = section_pattern
         self._section_detector: Optional[SectionDetector] = None
         self._section_metadata_extractors: List[SectionMetadataExtractor] = []
-        self.section_index: Optional[faiss.IndexIDMap2] = None
-        self.document_index: Optional[faiss.IndexIDMap2] = None
+        self.section_index: Optional[faiss.Index] = None
+        self.document_index: Optional[faiss.Index] = None
         self.section_index_path: Optional[Path] = None
         self.document_index_path: Optional[Path] = None
         self._original_memory_request = name == ":memory:" or base_path == ":memory:"
@@ -414,6 +414,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             else:
                 raise DatabaseError("Expected FAISS index to have `id_map` attribute. Invalid faiss index!")
         else:
+            base_index: faiss.Index
             if faiss_index_type == "IndexFlatL2":
                 base_index = faiss.IndexFlatL2(self.embedding_dimension)
             elif faiss_index_type == "IndexFlatIP":
@@ -435,7 +436,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             try:
                 # Check if GPU methods are available (guards against faiss-cpu builds)
                 num_gpus = faiss.get_num_gpus()
-                if num_gpus > 0:
+                if num_gpus > 0 and self.index is not None:
                     try:
                         self.index = faiss.index_cpu_to_all_gpus(self.index)
                         logger.info("Moved FAISS index to GPU")
@@ -533,7 +534,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         try:
             with self._faiss_lock.write_lock():
                 ids_array = np.array(faiss_ids, dtype=np.int64)
-                self.section_index.remove_ids(ids_array)
+                # faiss accepts an ndarray of ids here (wrapped internally as an
+                # IDSelectorBatch); the stub only types the IDSelector overload.
+                self.section_index.remove_ids(ids_array)  # type: ignore[arg-type]
         except Exception as e:
             logger.warning(f"Failed to remove section vectors from FAISS: {e}")
 
@@ -544,7 +547,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         try:
             with self._faiss_lock.write_lock():
                 ids_array = np.array(faiss_ids, dtype=np.int64)
-                self.document_index.remove_ids(ids_array)
+                # faiss accepts an ndarray of ids here (wrapped internally as an
+                # IDSelectorBatch); the stub only types the IDSelector overload.
+                self.document_index.remove_ids(ids_array)  # type: ignore[arg-type]
         except Exception as e:
             logger.warning(f"Failed to remove document vectors from FAISS: {e}")
 
@@ -568,7 +573,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         try:
             with self._faiss_lock.write_lock():
                 ids_array = np.array(faiss_ids, dtype=np.int64)
-                self.index.remove_ids(ids_array)
+                # faiss accepts an ndarray of ids here (wrapped internally as an
+                # IDSelectorBatch); the stub only types the IDSelector overload.
+                self.index.remove_ids(ids_array)  # type: ignore[arg-type]
                 logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
         except Exception as e:
             logger.warning(f"Failed to remove vectors from FAISS: {e}")
@@ -642,7 +649,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Strategy 2: Efficient mapping using internal FAISS methods (if available)
         try:
             # Check if FAISS provides an efficient way to get internal indices
-            if hasattr(self.index, "get_ids") and hasattr(self.index.index, "reconstruct_batch"):
+            # `.index`/`.id_map` are IndexIDMap2-specific attributes, guarded here by
+            # hasattr/runtime checks; the widened faiss.Index base type does not expose them.
+            if hasattr(self.index, "get_ids") and hasattr(self.index.index, "reconstruct_batch"):  # type: ignore[attr-defined]
                 # Get all current IDs efficiently
                 current_ids = self.index.get_ids()
                 id_to_internal = {ext_id: internal_idx for internal_idx, ext_id in enumerate(current_ids)}
@@ -656,7 +665,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
                 if internal_indices:
                     internal_indices_array = np.array(internal_indices, dtype=np.int64)
-                    batch_result: np.ndarray = self.index.index.reconstruct_batch(internal_indices_array)
+                    batch_result: np.ndarray = self.index.index.reconstruct_batch(internal_indices_array)  # type: ignore[attr-defined]
                     logger.debug(
                         f"Successfully reconstructed {len(batch_result)} embeddings using efficient ID mapping"
                     )
@@ -676,7 +685,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             id_map_lookup = {}
             for i in range(self.index.ntotal):
                 try:
-                    external_id = self.index.id_map.at(i)
+                    external_id = self.index.id_map.at(i)  # type: ignore[attr-defined]
                     id_map_lookup[external_id] = i
                 except Exception:
                     continue
@@ -694,7 +703,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Use the base index's reconstruct_batch method with internal indices
         internal_indices_array = np.array(internal_indices, dtype=np.int64)
-        base_index = self.index.index
+        base_index = self.index.index  # type: ignore[attr-defined]
 
         if hasattr(base_index, "reconstruct_batch"):
             base_result: np.ndarray = base_index.reconstruct_batch(internal_indices_array)

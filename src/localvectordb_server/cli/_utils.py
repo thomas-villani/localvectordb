@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 import json
 import os
 from typing import TYPE_CHECKING, Any, Optional, Union, get_type_hints

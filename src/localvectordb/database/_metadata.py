@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Metadata validation, schema management, and metadata-embedding helpers.
 

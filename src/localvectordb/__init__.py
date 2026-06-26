@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """
 LocalVectorDB - Document-First Vector Database with SQLite + FAISS
 
@@ -6,8 +5,8 @@ A Python library providing a document-focused vector database built on SQLite,
 FAISS, and pluggable embedding providers. Offers both local and remote
 (client-server) usage with a unified API.
 
-Copyright (c) 2025 Tom Villani, Ph.D. / New Jersey Innovation Institute (NJII)
-Licensed under the PolyForm Noncommercial License 1.0.0.
+Copyright (c) 2025-2026 Tom Villani
+Licensed under the MIT License.
 """
 
 __version__ = "0.1.0"

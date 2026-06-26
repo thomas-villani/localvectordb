@@ -292,8 +292,12 @@ class TestChunkingPerformance:
             # Allow up to 2x overhead for larger documents
             assert ratio < size_ratio * 3, f"Chunking doesn't scale linearly: {ratio:.2f}x vs {size_ratio:.2f}x"
 
+    @pytest.mark.slow
     def test_chunk_overlap_performance(self):
-        """Test performance impact of chunk overlap."""
+        """Test performance impact of chunk overlap.
+
+        Marked slow: asserts on timing ratios that are flaky on shared CI hardware.
+        """
         doc = " ".join([f"Sentence {i} for overlap testing." for i in range(500)])
 
         overlap_values = [0, 1, 5, 10, 20]
@@ -323,8 +327,13 @@ class TestChunkingPerformance:
 class TestEmbeddingPerformance:
     """Test embedding generation performance."""
 
+    @pytest.mark.slow
     def test_mock_embedding_performance(self):
-        """Test MockEmbeddings performance."""
+        """Test MockEmbeddings performance.
+
+        Marked slow: asserts a throughput floor on a sub-millisecond mock operation,
+        which is dominated by fixed overhead and flaky on shared CI hardware.
+        """
         provider = MockEmbeddings("test-model", dimension=384)
 
         # Test different batch sizes
@@ -534,8 +543,12 @@ class TestMemoryPerformance:
 class TestScalabilityBenchmarks:
     """Comprehensive scalability benchmarks."""
 
+    @pytest.mark.slow
     def test_document_count_scaling(self, temp_dir):
-        """Test how performance scales with document count."""
+        """Test how performance scales with document count.
+
+        Marked slow: asserts on timing/throughput ratios that are flaky on shared CI hardware.
+        """
         with (
             patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_embedding,
             patch("faiss.IndexFlatL2") as mock_faiss,

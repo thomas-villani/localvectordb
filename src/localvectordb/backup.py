@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Backup, restore, and recovery system for LocalVectorDB.
 
 This module provides comprehensive backup and recovery capabilities for LocalVectorDB,
@@ -2193,7 +2191,9 @@ class IncrementalBackupManager:
             # Remove old vectors with same IDs and add new ones
             for inc_id in inc_ids:
                 try:
-                    working_index.remove_ids(np.array([inc_id], dtype=np.int64))
+                    # faiss accepts an ndarray of ids here (wrapped internally as an
+                    # IDSelectorBatch); the stub only types the IDSelector overload.
+                    working_index.remove_ids(np.array([inc_id], dtype=np.int64))  # type: ignore[arg-type]
                 except Exception:
                     pass  # ID not found, which is fine
 

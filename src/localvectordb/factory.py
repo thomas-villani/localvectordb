@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Enhanced Factory function for LocalVectorDB v1.0 with Async Support
 
 This module provides factory functions that automatically choose between

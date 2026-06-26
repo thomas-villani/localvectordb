@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Similarity graph construction and visualisation."""
 
 from __future__ import annotations

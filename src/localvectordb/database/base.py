@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -12,7 +10,7 @@ if TYPE_CHECKING:
 
 import aiosqlite
 import numpy as np
-from faiss import IndexIDMap2
+from faiss import Index
 
 from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema
@@ -563,7 +561,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         self.async_connection_pool: Optional[AsyncConnectionPool] = None
         self._metadata_schema: Dict[str, MetadataField] = {}
         self._embedding_provider: EmbeddingProvider
-        self.index: Optional[IndexIDMap2] = None
+        self.index: Optional[Index] = None
         self.db_path: Union[str, Path]
         self.async_max_connections: int = 10
         self.pipeline_queue_size: int = DEFAULT_QUEUE_SIZE

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """Database versioning and migration tracking system for LocalVectorDB.
 
 This module provides comprehensive database versioning capabilities using SQLite's

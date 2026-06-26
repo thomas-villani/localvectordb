@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 LocalVectorDB Server Command-Line Interface v1.0
 

@@ -12,66 +12,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          enable-cache: true
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+      - name: Set up Python 3.12
+        run: uv python install 3.12
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --dev
 
       - name: Format check with black
-        run: black --check src/ tests/
+        run: uv run black --check src/ tests/
 
       - name: Lint with ruff
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Type check with mypy
-        run: mypy src/
+        run: uv run mypy src/
 
       - name: Security lint with bandit
-        run: bandit -c pyproject.toml -r src/
+        run: uv run bandit -c pyproject.toml -r src/
 
   test:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        # The ubuntu/3.12 job additionally installs the `mcp` extra so the MCP
+        # server tests run; other jobs install the dev group only (the suite
+        # skips MCP tests gracefully when fastmcp is absent).
+        include:
+          - { os: ubuntu-latest, python: "3.12", extras: "--extra mcp" }
+          - { os: ubuntu-latest, python: "3.13", extras: "" }
+          - { os: ubuntu-latest, python: "3.14", extras: "" }
+          - { os: windows-latest, python: "3.12", extras: "" }
+          - { os: macos-latest, python: "3.12", extras: "" }
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --dev ${{ matrix.extras }} --python ${{ matrix.python }}
 
       - name: Run tests
-        run: pytest -m "not slow and not network" --cov=localvectordb --cov=localvectordb_server --cov-report=term-missing
+        run: uv run --python ${{ matrix.python }} pytest -m "not slow and not network" --cov=localvectordb --cov=localvectordb_server --cov-report=term-missing
 
   build:
     needs: test
@@ -79,21 +74,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          enable-cache: true
 
-      - name: Install build tooling
-        run: |
-          python -m pip install --upgrade pip
-          pip install build twine
+      - name: Set up Python 3.12
+        run: uv python install 3.12
 
       - name: Build sdist and wheel
-        run: python -m build
+        run: uv build
 
       - name: Check distribution metadata
-        run: twine check dist/*
+        run: uvx twine check dist/*
 
       - name: Verify sdist excludes internal docs
         run: |

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Search and query routes for the LocalVectorDB FastAPI server.
 

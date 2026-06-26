@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 import glob
 import json
 import os
@@ -1021,7 +1019,7 @@ def export_schema(ctx, output, format, include_data):
         # Write to file
         if format == "toml":
             try:
-                import toml  # type: ignore[import-untyped]
+                import toml
 
                 with open(output, "w") as f:
                     toml.dump({"metadata_schema": export_data}, f)

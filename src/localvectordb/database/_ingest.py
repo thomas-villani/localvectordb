@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 Document ingestion pipelines (sync and async), chunk operations, and bulk DB ops.
 
@@ -32,7 +30,7 @@ from localvectordb.section_detection import SectionDetector
 from localvectordb.utils import parse_iso8601
 
 if TYPE_CHECKING:
-    from faiss import IndexIDMap2
+    from faiss import Index
 
     from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
     from localvectordb._schema import DatabaseSchema
@@ -194,7 +192,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     _read_write_lock: "ReadWriteLock"
     connection_pool: "ConnectionPool"
     async_connection_pool: Optional["AsyncConnectionPool"]
-    index: "IndexIDMap2"
+    index: Optional["Index"]
     schema: "DatabaseSchema"
     chunker: "PositionTrackingChunker"
 
@@ -897,7 +895,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             existing_chunk_hashes: Optional pre-computed set of chunk hashes to avoid repeated DB queries.
                                   If None, will query from database (expensive on large datasets).
         """
-        if len(embeddings) == 0 or self.index.ntotal == 0:
+        # Bind to a local so the None-narrowing survives the intervening calls below.
+        index = self.index
+        if index is None or len(embeddings) == 0 or index.ntotal == 0:
             return chunks, embeddings, doc_chunk_mapping
 
         # Use provided hashes or query from database
@@ -914,7 +914,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         filtered_chunks = [chunks[i] for i in range(len(chunks)) if hash_mask[i]]
         filtered_embeddings = embeddings[hash_mask]
         filtered_mappings = [doc_chunk_mapping[i] for i in range(len(doc_chunk_mapping)) if hash_mask[i]]
-        if self.index.ntotal == 0 or similarity_threshold is None or similarity_threshold <= 0:
+        if index.ntotal == 0 or similarity_threshold is None or similarity_threshold <= 0:
             return filtered_chunks, filtered_embeddings, filtered_mappings
 
         # Get the metric type and convert similarity to distance threshold
@@ -924,7 +924,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             # We want to filter out chunks that are TOO similar (above threshold)
             distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
             with self._faiss_lock.read_lock():
-                distances, indices = self.index.search(filtered_embeddings, k=1)
+                distances, indices = index.search(filtered_embeddings, k=1)
             valid_matches = indices[:, 0] != -1
             too_similar = (distances[:, 0] > distance_threshold) & valid_matches
         else:
@@ -932,7 +932,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             # We want to filter out chunks that are TOO similar (below threshold)
             distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
             with self._faiss_lock.read_lock():
-                distances, indices = self.index.search(filtered_embeddings, k=1)
+                distances, indices = index.search(filtered_embeddings, k=1)
             valid_matches = indices[:, 0] != -1
             too_similar = (distances[:, 0] < distance_threshold) & valid_matches
         keep_mask = ~too_similar

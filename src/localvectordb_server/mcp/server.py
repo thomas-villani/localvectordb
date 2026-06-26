@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
 """
 LocalVectorDB MCP Server (stdio-based)
 
@@ -209,7 +207,7 @@ async def lifespan(mcp):
 mcp = FastMCP("LocalVectorDB MCP Server", lifespan=lifespan)
 
 # Store all tool functions for dynamic registration
-TOOL_REGISTRY = {}
+TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
 def register_tool(name: str, read_only: bool = True):
