@@ -462,7 +462,7 @@ class QueryCursor:
                 doc_ids_to_fetch.add(row["doc_id"])
 
             # Get metadata using the async method
-            doc_metadata_batch = await self._db._get_document_metadata_async(list(doc_ids_to_fetch))
+            doc_metadata_batch = await self._db._get_documents_metadata_async(list(doc_ids_to_fetch))
 
         results: List[QueryResult] = []
         for candidate in candidates:
@@ -669,7 +669,7 @@ class QueryCursor:
             async for row in cursor:
                 doc_content[row["id"]] = row["content"]
 
-            doc_metadata_batch = await self._db._get_document_metadata_async(doc_ids)
+            doc_metadata_batch = await self._db._get_documents_metadata_async(doc_ids)
 
         if self._config.filters:
             from localvectordb._filters import matches_metadata_filter

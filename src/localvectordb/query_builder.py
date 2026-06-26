@@ -654,7 +654,14 @@ class QueryBuilder:
         return self.aggregate(field, "max", alias or f"max_{field}")
 
     def having(self, field: str, operator: str, value: Any) -> "QueryBuilder":
-        """Add HAVING clause for post-aggregation filtering."""
+        """Add HAVING clause for post-aggregation filtering.
+
+        Note
+        ----
+        Unlike :meth:`filter`, ``having`` supports only the comparison operators
+        ``eq``, ``ne``, ``gt``, ``gte``, ``lt`` and ``lte``. Set/pattern operators
+        such as ``in``, ``like`` or ``contains`` are not available for HAVING clauses.
+        """
         valid_operators = ["eq", "ne", "gt", "gte", "lt", "lte"]
         if operator not in valid_operators:
             raise ValueError(f"operator must be one of: {', '.join(valid_operators)}")

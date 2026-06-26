@@ -376,7 +376,9 @@ class KeyManager:
         try:
             return bool(bcrypt.checkpw(key.encode("utf-8"), key_hash.encode("utf-8")))
         except Exception as e:
-            logger.warning(f"Error verifying key: {e}")
+            # Expected failure path (e.g. malformed stored hash); returns False to
+            # the caller. Logged at debug to avoid noise on routine auth failures.
+            logger.debug(f"Error verifying key: {e}")
             return False
 
     def create_key(

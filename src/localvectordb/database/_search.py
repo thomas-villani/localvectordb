@@ -2551,14 +2551,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         doc_ids = list(set(chunk["document_id"] for chunk in chunks_data))
         if not doc_ids:
             return chunks_data
-        doc_metadata = await self._get_document_metadata_async(doc_ids)
+        doc_metadata = await self._get_documents_metadata_async(doc_ids)
         filtered_doc_ids = set()
         for doc_id, metadata in doc_metadata.items():
             if matches_metadata_filter(metadata, filters):
                 filtered_doc_ids.add(doc_id)
         return [chunk for chunk in chunks_data if chunk["document_id"] in filtered_doc_ids]
 
-    async def _get_document_metadata_async(self, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    async def _get_documents_metadata_async(self, doc_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if not doc_ids:
             return {}
         # Get all columns but only put metadata fields in the metadata dict
@@ -2725,7 +2725,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             doc_content_map: Dict[str, str] = {}
             async for row in cursor:
                 doc_content_map[row["id"]] = row["content"]
-            doc_metadata_batch = await self._get_document_metadata_async(all_doc_ids)
+            doc_metadata_batch = await self._get_documents_metadata_async(all_doc_ids)
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None, self._compute_document_scores, method, method_options, doc_groups, doc_content_map, doc_metadata_batch
@@ -3050,7 +3050,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
             # Get document metadata for all results in batch
             doc_ids = [field_embedding_data_rows[idx]["document_id"] for idx in sorted_indices]
-            doc_metadata_batch = await self._get_document_metadata_async(doc_ids)
+            doc_metadata_batch = await self._get_documents_metadata_async(doc_ids)
 
             # Build results using shared business logic
             for idx in sorted_indices:
