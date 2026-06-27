@@ -10,17 +10,25 @@
     Delete a database
 """
 
+import glob
 import os
 
 import click
 
-from localvectordb_server.cli._utils import EXIT_CODE_CONFIGURATION_ERROR, EXIT_CODE_ERROR, EXIT_CODE_OLLAMA_ERROR
+from localvectordb_server.cli._utils import (
+    EXIT_CODE_CONFIGURATION_ERROR,
+    EXIT_CODE_ERROR,
+    EXIT_CODE_OLLAMA_ERROR,
+    error,
+    info,
+    success,
+)
 
 
 @click.command()
 @click.option(
     "--host",
-    "-h",
+    "-H",
     default=None,
     help="The interface to bind to (e.g. 127.0.0.1 for local serving).",
     envvar="LVDB_HOST",
@@ -131,7 +139,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
 
 
 @click.command("list")
-@click.option("--details", "-v", is_flag=True, default=False, help="Show details")
+@click.option("--details", is_flag=True, default=False, help="Show details")
 @click.pass_context
 def list_databases(ctx, details):
     """
@@ -337,3 +345,53 @@ def delete_database(ctx, name, confirm):
             raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     else:
         click.echo(f"Database {name} was not found in {os.path.abspath(db_folder)}! No action taken.")
+
+
+@click.command("rename")
+@click.argument("old_name")
+@click.argument("new_name")
+@click.pass_context
+def rename_database(ctx, old_name, new_name):
+    """
+    Rename a database.
+
+    Renames the database OLD_NAME to NEW_NAME by moving its on-disk files
+    (the SQLite database, the FAISS index, and any hierarchical sidecar
+    indexes). Database paths derive from the name, so no internal rewrite
+    is needed.
+
+    \b
+    Example:
+        \b
+        lvdb rename oldname newname
+    """
+    db_folder = ctx.obj["db_folder"]
+    if not db_folder or not os.path.exists(db_folder):
+        error("DB folder not specified or does not exist.")
+
+    if not os.path.exists(os.path.join(db_folder, f"{old_name}.sqlite")):
+        error(f"Database '{old_name}' was not found in {os.path.abspath(db_folder)}!")
+    if os.path.exists(os.path.join(db_folder, f"{new_name}.sqlite")):
+        error(f"A database named '{new_name}' already exists. No action taken.")
+
+    # Match the DB's own files only: "<name>.<ext>" and "<name>_<suffix>"
+    # (e.g. .sqlite, .sqlite-wal, .faiss, _sections.faiss, _documents.faiss).
+    moved = []
+    for pattern in (f"{old_name}.*", f"{old_name}_*"):
+        for path in glob.glob(os.path.join(db_folder, pattern)):
+            base = os.path.basename(path)
+            new_base = new_name + base[len(old_name) :]
+            os.rename(path, os.path.join(db_folder, new_base))
+            moved.append((base, new_base))
+
+    success(f"Renamed database '{old_name}' to '{new_name}'")
+    for old_base, new_base in moved:
+        info(f"  {old_base} -> {new_base}")
+
+
+@click.command("version")
+def version():
+    """Show the installed localvectordb version."""
+    from importlib.metadata import version as _pkg_version
+
+    click.echo(_pkg_version("localvectordb"))

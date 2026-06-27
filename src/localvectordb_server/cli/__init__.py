@@ -54,10 +54,6 @@ Examples:
 
         $ lvdb db mydatabase get doc_1
 
-    Find similar documents::
-
-        $ lvdb db mydatabase knn doc_1 --k 5
-
     Manage database interactively::
 
         $ lvdb db mydatabase shell
@@ -85,6 +81,7 @@ Notes:
     - Authentication can be enabled with the auth commands
 """
 
+import logging
 import os
 
 import click
@@ -106,14 +103,21 @@ import click
     help="The directory containing vector databases.",
     envvar="LVDB_DATABASE_ROOT_DIR",
 )
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose (DEBUG) logging.")
+@click.option("--quiet", "-q", is_flag=True, help="Only log errors (suppress warnings/info).")
 @click.version_option(None, "-V", "--version", package_name="localvectordb", message="%(version)s")
 @click.pass_context
-def cli(ctx, config, db_folder):
+def cli(ctx, config, db_folder, verbose, quiet):
     """LocalVectorDB Server command-line interface v1.0.
 
     Main entry point for the LocalVectorDB server CLI. Provides commands for
     managing and running the vector database server.
     """
+    # --verbose/--quiet control library logging verbosity (most chatty work
+    # happens in the library, which logs via the standard logging module).
+    log_level = logging.DEBUG if verbose else (logging.ERROR if quiet else logging.WARNING)
+    logging.basicConfig(level=log_level)
+
     if ctx.obj is None:
         ctx.obj = {}
     elif not config:
@@ -126,7 +130,7 @@ def cli(ctx, config, db_folder):
     config_path = find_config_file(config)
 
     if not config_path:
-        if ctx.invoked_subcommand not in ("config", "mcp", "tuning", "maintenance"):
+        if ctx.invoked_subcommand not in ("config", "mcp", "tuning", "maintenance", "version"):
             click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
             raise click.exceptions.Exit(1)
         cfg = config_path = api_key_path = db_folder = None
@@ -141,12 +145,26 @@ def cli(ctx, config, db_folder):
         else:
             cfg.database.root_dir = db_folder
 
-    ctx.obj = {"config": cfg, "config_path": config_path, "api_key_db_path": api_key_path, "db_folder": db_folder}
+    ctx.obj = {
+        "config": cfg,
+        "config_path": config_path,
+        "api_key_db_path": api_key_path,
+        "db_folder": db_folder,
+        "verbose": verbose,
+        "quiet": quiet,
+    }
 
 
 from localvectordb_server.cli._auth import auth  # noqa: E402
 from localvectordb_server.cli._backup import backup_group  # noqa: E402
-from localvectordb_server.cli._basic import create_vector_database, delete_database, list_databases, serve  # noqa: E402
+from localvectordb_server.cli._basic import (  # noqa: E402
+    create_vector_database,
+    delete_database,
+    list_databases,
+    rename_database,
+    serve,
+    version,
+)
 from localvectordb_server.cli._config import config_group  # noqa: E402
 from localvectordb_server.cli._db import db_group  # noqa: E402
 from localvectordb_server.cli._mcp import mcp_commands  # noqa: E402
@@ -157,6 +175,8 @@ cli.add_command(serve)
 cli.add_command(create_vector_database)
 cli.add_command(list_databases)
 cli.add_command(delete_database)
+cli.add_command(rename_database)
+cli.add_command(version)
 cli.add_command(db_group)
 cli.add_command(config_group)
 cli.add_command(auth)

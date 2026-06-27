@@ -17,6 +17,33 @@ EXIT_CODE_PERMISSION_ERROR = 4
 DEFAULT_CONFIG_FILE = ".lvdb-config"
 
 
+# --- Consistent console messaging ------------------------------------------
+# Status/diagnostic messages go to stderr so stdout carries only command data
+# (keeps `lvdb ... | jq` and friends clean). `error()` centralizes the
+# red-message-then-exit pattern with a meaningful exit code.
+
+
+def error(message: str, exit_code: int = EXIT_CODE_ERROR) -> None:
+    """Print an error to stderr (red) and exit with ``exit_code``."""
+    click.secho(message, fg="red", err=True)
+    raise click.exceptions.Exit(exit_code)
+
+
+def warn(message: str) -> None:
+    """Print a warning to stderr (yellow)."""
+    click.secho(message, fg="yellow", err=True)
+
+
+def info(message: str) -> None:
+    """Print a progress/status message to stderr (cyan)."""
+    click.secho(message, fg="cyan", err=True)
+
+
+def success(message: str) -> None:
+    """Print a success message to stderr (green)."""
+    click.secho(message, fg="green", err=True)
+
+
 def find_config_file(config_path: Optional[str] = None) -> Optional[str]:
     """Find configuration file in order of precedence"""
     # First check explicit path

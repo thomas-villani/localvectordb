@@ -329,6 +329,73 @@ class TestDeleteDatabase:
 
 
 # ============================================================================
+# lvdb rename
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestRenameDatabase:
+
+    def test_rename_moves_all_files(self, runner, fake_config, config_file, tmp_db_folder):
+        """Rename should move the sqlite, faiss, and hierarchical sidecar files."""
+        for suffix in (".sqlite", ".faiss", "_sections.faiss", "_documents.faiss"):
+            Path(tmp_db_folder, f"old{suffix}").write_text("x", encoding="utf-8")
+
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["rename", "old", "new"])
+
+        assert result.exit_code == 0
+        for suffix in (".sqlite", ".faiss", "_sections.faiss", "_documents.faiss"):
+            assert not Path(tmp_db_folder, f"old{suffix}").exists()
+            assert Path(tmp_db_folder, f"new{suffix}").exists()
+
+    def test_rename_does_not_touch_other_databases(self, runner, fake_config, config_file, tmp_db_folder):
+        """A similarly-named sibling database must not be renamed."""
+        Path(tmp_db_folder, "old.sqlite").write_text("x", encoding="utf-8")
+        Path(tmp_db_folder, "older.sqlite").write_text("x", encoding="utf-8")
+
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["rename", "old", "new"])
+
+        assert result.exit_code == 0
+        assert Path(tmp_db_folder, "new.sqlite").exists()
+        assert Path(tmp_db_folder, "older.sqlite").exists()  # untouched
+
+    def test_rename_source_not_found(self, runner, fake_config, config_file, tmp_db_folder):
+        """Renaming a missing database should fail with a non-zero exit code."""
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["rename", "missing", "new"])
+        assert result.exit_code != 0
+
+    def test_rename_target_exists(self, runner, fake_config, config_file, tmp_db_folder):
+        """Renaming onto an existing database name should fail without moving files."""
+        Path(tmp_db_folder, "old.sqlite").write_text("x", encoding="utf-8")
+        Path(tmp_db_folder, "new.sqlite").write_text("y", encoding="utf-8")
+
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["rename", "old", "new"])
+        assert result.exit_code != 0
+        assert Path(tmp_db_folder, "old.sqlite").exists()  # not moved
+
+
+# ============================================================================
+# lvdb version
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestVersion:
+
+    def test_version_prints_package_version(self, runner):
+        """`lvdb version` prints the installed version and exits 0 (no config needed)."""
+        from importlib.metadata import version as pkg_version
+
+        result = runner.invoke(cli, ["version"])
+        assert result.exit_code == 0
+        assert pkg_version("localvectordb") in result.output
+
+
+# ============================================================================
 # Priority 1: lvdb config show
 # ============================================================================
 
@@ -792,7 +859,7 @@ class TestDbAdd:
         }
 
         @click.pass_context
-        def _patched_cli_callback(ctx, config, db_folder):
+        def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
             ctx.ensure_object(dict)
             ctx.obj = obj
 
@@ -909,7 +976,7 @@ class TestDbSearch:
         }
 
         @click.pass_context
-        def _patched_cli_callback(ctx, config, db_folder):
+        def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
             ctx.ensure_object(dict)
             ctx.obj = obj
 
