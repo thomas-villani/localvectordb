@@ -154,7 +154,7 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
 
 @db_group.command("search")
 @click.argument("query")
-@click.option("--limit", "-k", "-n", default=5, help="Maximum number of results")
+@click.option("--limit", "-n", default=5, help="Maximum number of results")
 @click.option(
     "--search-type",
     "-t",
