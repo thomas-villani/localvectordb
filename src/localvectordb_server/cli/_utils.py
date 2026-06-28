@@ -95,7 +95,7 @@ def print_json_output(data: Any):
 
 
 def print_db_stats(db: LocalVectorDB):
-    """Print database statistics for v1.0"""
+    """Print database statistics."""
     try:
         stats = db.get_stats()
 

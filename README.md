@@ -549,7 +549,7 @@ This project is licensed under the [MIT License](LICENSE) — see the [LICENSE](
 
 - 🐛 **Issues**: [GitHub Issues](https://github.com/thomas-villani/localvectordb/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/thomas-villani/localvectordb/discussions)
-- 📧 **Contact**: thomas.villani@njii.com
+- 📧 **Contact**: thomas.villani@gmail.com
 
 ## 🙏 Acknowledgments
 

@@ -1,8 +1,8 @@
 """
-LocalVectorDB Server Command-Line Interface v1.0
+LocalVectorDB Server Command-Line Interface
 
 This module provides a comprehensive command-line interface for managing and interacting
-with LocalVectorDB v1.0 vector databases. It includes commands for starting the server,
+with LocalVectorDB vector databases. It includes commands for starting the server,
 managing configuration, and performing database operations.
 
 Main Components:
@@ -108,7 +108,7 @@ import click
 @click.version_option(None, "-V", "--version", package_name="localvectordb", message="%(version)s")
 @click.pass_context
 def cli(ctx, config, db_folder, verbose, quiet):
-    """LocalVectorDB Server command-line interface v1.0.
+    """LocalVectorDB Server command-line interface.
 
     Main entry point for the LocalVectorDB server CLI. Provides commands for
     managing and running the vector database server.

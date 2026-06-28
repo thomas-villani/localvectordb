@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from freezegun import freeze_time
 
 from localvectordb_server.keymanager import KeyManager, KeyRecord
 
@@ -90,8 +91,15 @@ class TestKeyRecord:
         no_expiry_key = KeyRecord(id="test", key_hash="hash", expires_at=None)
         assert no_expiry_key.is_expired is False
 
+    @freeze_time("2026-01-01 12:00:00")
     def test_days_until_expiry(self):
-        """Test is_expired logic with known dates."""
+        """Test is_expired logic with known dates.
+
+        Time is frozen so the ``now()`` at construction and the ``now()`` inside
+        ``days_until_expiry`` are identical. Otherwise ``timedelta.days`` truncates
+        the few-microsecond gap between the two calls down to 29 (which happens on
+        high-resolution clocks like Linux CI, but not on Windows' coarser clock).
+        """
         # Test with future expiry (not expired)
         future_key = KeyRecord(id="test", key_hash="hash", expires_at=datetime.now(UTC) + timedelta(days=30))
         assert future_key.days_until_expiry == 30

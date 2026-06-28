@@ -6,10 +6,10 @@ license-files = ["LICENSE"]
 description = "A lightweight vector database using SQLite, FAISS and pluggable embedding providers, including Ollama and OpenAI"
 readme = "README.md"
 authors = [
-    { name = "Tom Villani, Ph.D.", email = "thomas.villani@njii.com" }
+    { name = "Tom Villani, Ph.D.", email = "thomas.villani@gmail.com" }
 ]
 maintainers = [
-    { name = "Tom Villani, Ph.D.", email = "thomas.villani@njii.com" }
+    { name = "Tom Villani, Ph.D.", email = "thomas.villani@gmail.com" }
 ]
 requires-python = ">=3.12"
 classifiers = [
