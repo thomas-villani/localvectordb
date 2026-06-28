@@ -12,7 +12,7 @@ If you discover a security vulnerability in LocalVectorDB, please report it resp
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email **thomas.villani@njii.com** with:
+Instead, please email **thomas.villani@gmail.com** with:
 
 - A description of the vulnerability
 - Steps to reproduce the issue

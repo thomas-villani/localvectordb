@@ -656,10 +656,11 @@ class TestScalabilityBenchmarks:
                         db.query(f"user {user_id} query", k=5)
                         op_type = "query"
                     else:
-                        # Update operation - mock the get method to return a document
-                        with patch.object(db, "get") as mock_get:
-                            mock_get.return_value = Document(id=f"user_{user_id}_doc_{i}", content="existing content")
-                            db.update(f"user_{user_id}_doc_{i}", content=f"Updated by user {user_id}")
+                        # Update operation. db.get is patched once before the
+                        # threads start (see below); patching it per-call from
+                        # multiple threads races on the shared instance attribute
+                        # and intermittently raises AttributeError.
+                        db.update(f"user_{user_id}_doc_{i}", content=f"Updated by user {user_id}")
                         op_type = "update"
 
                     end_time = time.time()
@@ -672,7 +673,13 @@ class TestScalabilityBenchmarks:
 
             start_time = time.time()
 
-            with ThreadPoolExecutor(max_workers=num_users) as executor:
+            def _fake_get(doc_id, *args, **kwargs):
+                return Document(id=doc_id, content="existing content")
+
+            with (
+                patch.object(db, "get", side_effect=_fake_get),
+                ThreadPoolExecutor(max_workers=num_users) as executor,
+            ):
                 futures = [executor.submit(simulate_user, user_id, operations_per_user) for user_id in range(num_users)]
 
                 all_operations = []
