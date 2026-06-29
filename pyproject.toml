@@ -70,7 +70,7 @@ Homepage = "https://github.com/thomas-villani/localvectordb"
 Repository = "https://github.com/thomas-villani/localvectordb"
 Documentation = "https://thomas-villani.github.io/localvectordb/"
 "Bug Tracker" = "https://github.com/thomas-villani/localvectordb/issues"
-Changelog = "https://github.com/thomas-villani/localvectordb/blob/master/CHANGELOG.md"
+Changelog = "https://github.com/thomas-villani/localvectordb/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
