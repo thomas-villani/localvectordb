@@ -517,7 +517,7 @@ results = db.query("async def", search_type="keyword")
 
 ## 🤝 Contributing
 
-Contributions are welcome for noncommercial use under the project's license terms.
+Contributions are welcome! By submitting a contribution you agree to license it under the project's [MIT License](LICENSE).
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)

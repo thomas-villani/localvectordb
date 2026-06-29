@@ -199,4 +199,4 @@ const client = new LocalVectorDBClient({
 
 ## License
 
-CC-BY-NC-4.0
+MIT

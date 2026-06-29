@@ -1,7 +1,7 @@
 ---
 name: semantic-search
 description: Build and query semantic search systems with LocalVectorDB. Use when the user wants to create a vector database, add documents, perform semantic/keyword/hybrid search, or filter by metadata. Covers document ingestion, chunking, embedding, and retrieval.
-license: CC-BY-NC-4.0
+license: MIT
 compatibility: Requires Python 3.12+, faiss-cpu, and an embedding provider (Ollama, OpenAI, or mock for testing).
 metadata:
   author: localvectordb

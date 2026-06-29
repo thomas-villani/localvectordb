@@ -1,7 +1,7 @@
 ---
 name: fact-checking
 description: Verify text claims against a knowledge base using LocalVectorDB's FactChecker. Use when the user wants to fact-check LLM output, validate statements against source documents, detect contradictions, or ground generated text in trusted references.
-license: CC-BY-NC-4.0
+license: MIT
 compatibility: Requires Python 3.12+, localvectordb, and an LLM client (Anthropic, OpenAI, or Google).
 metadata:
   author: localvectordb

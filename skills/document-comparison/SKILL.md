@@ -1,7 +1,7 @@
 ---
 name: document-comparison
 description: Compare documents, find similar documents, build similarity matrices, and visualize embedding spaces with LocalVectorDB. Use when the user wants to measure document similarity, find nearest neighbors, detect partial overlap between documents, cluster documents, or create embedding visualizations.
-license: CC-BY-NC-4.0
+license: MIT
 compatibility: Requires Python 3.12+, localvectordb. Visualization features require scikit-learn and matplotlib (pip install localvectordb[visualization]).
 metadata:
   author: localvectordb
