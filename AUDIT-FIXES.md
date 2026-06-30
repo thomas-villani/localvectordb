@@ -2,6 +2,10 @@
 
 Remediation of the release blockers from `AUDIT-v0.1.0.md`. Checked items are landed in the working tree; see commit history for details.
 
+> **Follow-up themes (post-blocker):** the **Server API consistency** theme is being
+> delivered on branch `refactor/server-api-consistency` (stacked on the blocker PR).
+> See the [Server API consistency pass](#server-api-consistency-pass) section below.
+
 ## Blockers
 
 - [x] **B1 — Remote methods dead on the wire.** Added `base_url=self.base_url` to both pooled httpx clients (`_ensure_sync_client`, `_ensure_client`); bare-path methods now resolve, absolute `_build_url` paths pass through unchanged. `client.py`
@@ -24,3 +28,29 @@ Remediation of the release blockers from `AUDIT-v0.1.0.md`. Checked items are la
 ## Notes / decisions
 
 - **B2 default = `"hybrid"`**: maintainer chose hybrid as the product default (better general-purpose recall than vector-only). Applied uniformly to all unified-query entry points across library/client/server + README so the sync/async (and local/remote) split cannot reappear. Type-specific endpoints that force a type are unchanged.
+
+---
+
+## Server API consistency pass
+
+Follow-up theme from `AUDIT-v0.1.0.md` (the FastAPI server, audit-05). Branch
+`refactor/server-api-consistency`. Decision: comprehensive, breaking changes
+allowed (pre-1.0). Conventions are documented in `routers/_models.py`.
+
+**Foundation (commit 1):**
+- [x] **Error envelope unified.** Auth/`HTTPException` + host/proxy middleware + Pydantic 422 now all emit the standard `{"error": {...}}` envelope (was 3 shapes). Malformed `+00:00Z` timestamp fixed. (H2, H3, L1)
+- [x] **Serializers de-duplicated** into `_serializers.py` (was ×3 / ×2). Exception-handler registration extracted to a shared `register_exception_handlers()` used by `create_app` and the test fixture (removed fixture drift). (M15)
+
+**Model-driven router migration (commits 2–4) — all 12 routers:**
+- [x] **Pydantic request bodies** replace `await request.json()` + the 15+ duplicated empty-body/type checks; **`response_model`** typing gives real OpenAPI schemas. (H1)
+- [x] **Dependency injection** via `Depends(get_db)`/`get_config`/`get_db_manager` (was direct calls; `get_config` was dead). (M14)
+- [x] **Validation unified at 400** (Pydantic 422s remapped to `400 VALIDATION_ERROR`) so the shape — and the SDK's `400 → ValueError` mapping — stay stable.
+- [x] **Conventions applied:** partial update `PUT`→`PATCH` (documents); `/maintenance/{incremental_vacuum,checkpoint_if_large}` → kebab; factcheck `top_k`→`k` (M11); `/filter` request field `where`→`filters` (M7); pagination `page+limit`→`limit+offset` (documents, M8); `return_type` now accepts `sections` (M10); upload `batch_size` sentinel bug fixed (L2). SDK + tests updated in lockstep.
+
+**Deliberately deferred (tracked, not done):**
+- [ ] **Response-key renames** (`name`↔`database`, `total_results`/`count`/`total_count`) — high client-coupling, low value; kept existing keys stable so the SDK keeps working. (M9)
+- [ ] **DB-name route collision** (`/{db_name}` vs literal routes like `/search`) + reserved-name validation; **two DB-name validators** disagree. (M2, M12)
+- [ ] **`databases` create** still ignores the SDK's flat config payload (body is `extra="ignore"`); **provider whitelist** `ollama|openai` (M13) not relaxed. Honoring remote create-config end-to-end is a feature follow-up.
+- [ ] **Pre-existing SDK bugs** surfaced by the migration: `update_metadata_schema_async` POSTs a nonexistent `/update_schema`; `_RemoteEmbeddingProvider` reads an OpenAI-style `{"data":[...]}` envelope the `/embeddings` endpoint never returned.
+
+**Validation:** ruff + black + bandit + mypy clean (pre-commit); full fast suite **1305 passed**.
