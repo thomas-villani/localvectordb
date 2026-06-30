@@ -258,32 +258,11 @@ def integration_app(temp_dir, test_key_manager):
     app.state.key_manager = test_key_manager
     app.state.db_manager = DatabaseManagerMock(temp_dir)
 
-    # Register exception handlers
-    from fastapi import Request
-    from fastapi.responses import JSONResponse
+    # Use the same exception-handler registration as create_app so the test app
+    # can't drift from production (it previously omitted the HTTPException handler).
+    from localvectordb_server.app import register_exception_handlers
 
-    from localvectordb.exceptions import BaseLocalVectorDBException
-    from localvectordb_server._error_handlers import APIError, ValidationError, standardize_error_response
-
-    @app.exception_handler(APIError)
-    async def handle_api_error(request: Request, exc: APIError):
-        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-
-    @app.exception_handler(ValidationError)
-    async def handle_validation_error(request: Request, exc: ValidationError):
-        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-
-    # Mirror create_app: map library exceptions (e.g. DatabaseNotFoundError) to
-    # their proper status codes instead of the 500 catch-all.
-    @app.exception_handler(BaseLocalVectorDBException)
-    async def handle_domain_error(request: Request, exc: BaseLocalVectorDBException):
-        error_response, status_code = standardize_error_response(exc)
-        return JSONResponse(status_code=status_code, content=error_response)
-
-    @app.exception_handler(Exception)
-    async def handle_unexpected_error(request: Request, exc: Exception):
-        error_response, status_code = standardize_error_response(exc)
-        return JSONResponse(status_code=status_code, content=error_response)
+    register_exception_handlers(app)
 
     register_routers(app)
     yield app
@@ -315,11 +294,18 @@ class TestAuthenticationFlow:
     def test_request_without_api_key(self, integration_client):
         response = integration_client.get("/api/v1/databases")
         assert response.status_code == 401
+        # Auth failures must use the same {"error": {...}} envelope as every other
+        # error (not Starlette's {"detail": ...}).
+        body = response.json()
+        assert "error" in body and "detail" not in body
+        assert body["error"]["code"] == "UNAUTHORIZED"
+        assert "message" in body["error"]
 
     def test_request_with_invalid_api_key(self, integration_client):
         headers = {"Authorization": "Bearer invalid_key_12345"}
         response = integration_client.get("/api/v1/databases", headers=headers)
         assert response.status_code == 401
+        assert response.json()["error"]["code"] == "UNAUTHORIZED"
 
     def test_request_with_expired_api_key(self, integration_client, expired_auth_headers):
         response = integration_client.get("/api/v1/databases", headers=expired_auth_headers)

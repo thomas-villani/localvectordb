@@ -64,7 +64,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Literal, Optional, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Union, overload
 
 import numpy as np
 
@@ -818,6 +818,12 @@ class QueryBuilder:
         }
 
     # Execution methods
+    @overload
+    def execute(self, *, streaming: Literal[False] = ..., batch_size: int = ...) -> List[QueryResult]: ...
+
+    @overload
+    def execute(self, *, streaming: Literal[True], batch_size: int = ...) -> Iterator[List[QueryResult]]: ...
+
     def execute(
         self, *, streaming: bool = False, batch_size: int = 100
     ) -> Union[List[QueryResult], Iterator[List[QueryResult]]]:

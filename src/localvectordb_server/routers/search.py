@@ -21,39 +21,12 @@ from localvectordb_server._error_handlers import (
     validate_search_params,
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
+from localvectordb_server._serializers import serialize_document, serialize_query_result
 from localvectordb_server.routers._deps import get_db, get_db_manager
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["search"])
-
-
-def serialize_query_result(result) -> Dict[str, Any]:
-    """Serialize a QueryResult object for JSON response."""
-    data = {
-        "id": result.id,
-        "score": result.score,
-        "type": result.type,
-        "content": result.content,
-        "metadata": result.metadata,
-    }
-    if result.type == "chunk" and result.document_id:
-        data["document_id"] = result.document_id
-    if result.position:
-        data["position"] = result.position.to_dict()
-    return data
-
-
-def serialize_document(doc) -> Dict[str, Any]:
-    """Serialize a Document object for JSON response."""
-    return {
-        "id": doc.id,
-        "content": doc.content,
-        "metadata": doc.metadata,
-        "created_at": doc.created_at.isoformat() if doc.created_at else None,
-        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-        "content_hash": doc.content_hash,
-    }
 
 
 def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str, Any]:
