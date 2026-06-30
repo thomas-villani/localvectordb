@@ -1815,7 +1815,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
 
         # Prepare request payload
-        payload: Dict[str, Any] = {"where": where, "offset": offset}
+        payload: Dict[str, Any] = {"filters": where, "offset": offset}
 
         if order_by is not None:
             payload["order_by"] = order_by
@@ -3151,7 +3151,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
 
         # Prepare request payload
-        payload: Dict[str, Any] = {"where": where, "offset": offset}
+        payload: Dict[str, Any] = {"filters": where, "offset": offset}
 
         if order_by is not None:
             payload["order_by"] = order_by

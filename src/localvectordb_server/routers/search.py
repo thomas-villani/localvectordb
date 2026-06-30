@@ -7,26 +7,77 @@ multi-column search, metadata filtering, and global cross-database search.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+from pydantic import ConfigDict, Field
 
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
 from localvectordb_server._auth import require_read_permission
-from localvectordb_server._error_handlers import (
-    ValidationError,
-    validate_field_type,
-    validate_required_fields,
-    validate_search_params,
-)
+from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server._serializers import serialize_document, serialize_query_result
 from localvectordb_server.routers._deps import get_db, get_db_manager
+from localvectordb_server.routers._models import QueryBody, StrictModel
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["search"])
+
+
+# --------------------------------------------------------------------------- #
+# Request models
+# --------------------------------------------------------------------------- #
+
+
+class SearchBody(QueryBody):
+    """Unified ``query()`` body plus optional server-side semantic filters."""
+
+    semantic_filters: Optional[List[Dict[str, Any]]] = None
+
+
+class MultiColumnBody(QueryBody):
+    """Body for multi-column search (main content + embedding-enabled fields)."""
+
+    columns: Optional[List[str]] = None
+
+
+class FilterDocumentsBody(StrictModel):
+    """Metadata-only filtering with limit/offset pagination and ORDER BY."""
+
+    filters: Optional[Dict[str, Any]] = None
+    order_by: Optional[str] = None
+    limit: Optional[int] = Field(default=None, ge=1, le=10000)
+    offset: int = Field(default=0, ge=0)
+
+
+class QueryBuilderStateBody(StrictModel):
+    """Dynamic QueryBuilder state sent by ``RemoteVectorDB`` for execution.
+
+    Unlike the other models this one *ignores* unknown fields (``extra="ignore"``)
+    because the builder state is open-ended; every field is optional.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    search_clauses: List[Dict[str, Any]] = []
+    exact_filters: List[Dict[str, Any]] = []
+    semantic_filters: List[Dict[str, Any]] = []
+    search_type: Optional[Literal["vector", "keyword", "hybrid"]] = None
+    vector_weight: Optional[float] = None
+    return_type: Optional[Literal["documents", "chunks", "sections", "context"]] = None
+    order_by: List[Dict[str, Any]] = []
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    group_by: Optional[List[str]] = None
+    aggregations: List[Dict[str, Any]] = []
+
+
+class GlobalSearchBody(SearchBody):
+    """Cross-database search body (adds an optional target database list)."""
+
+    databases: Optional[List[str]] = None
 
 
 def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -39,16 +90,13 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
     db_name : str
         Name of the database (for logging).
     search_params : dict
-        Validated search parameters.
+        Validated search parameters (Pydantic-validated upstream).
 
     Returns
     -------
     dict
         Search results with metadata.
     """
-    # Validate search parameters
-    search_params = validate_search_params(search_params)
-
     query_text = search_params["query"]
     search_type = search_params.get("search_type", "hybrid")
     return_type = search_params.get("return_type", "documents")
@@ -197,101 +245,67 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
 
 @router.post("/{db_name}/query", dependencies=[Depends(require_read_permission)])
 @log_performance("query_documents")
-async def query_documents(db_name: str, request: Request):
+async def query_documents(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Unified query interface for all search types."""
-
     with request_context("query_documents"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        db = get_db(db_name, request)
-        return search_handler(db, db_name, data)
+        return search_handler(db, db_name, body.model_dump())
 
 
 @router.post("/{db_name}/search/vector", dependencies=[Depends(require_read_permission)])
 @log_performance("vector_search")
-async def vector_search(db_name: str, request: Request):
+async def vector_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Vector similarity search (convenience endpoint)."""
-
     with request_context("vector_search"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        # Force search_type to vector
-        data["search_type"] = "vector"
-        db = get_db(db_name, request)
-        return search_handler(db, db_name, data)
+        params = body.model_dump()
+        params["search_type"] = "vector"
+        return search_handler(db, db_name, params)
 
 
 @router.post("/{db_name}/search/keyword", dependencies=[Depends(require_read_permission)])
 @log_performance("keyword_search")
-async def keyword_search(db_name: str, request: Request):
+async def keyword_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Keyword search (convenience endpoint)."""
-
     with request_context("keyword_search"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        # Force search_type to keyword
-        data["search_type"] = "keyword"
-        db = get_db(db_name, request)
-        return search_handler(db, db_name, data)
+        params = body.model_dump()
+        params["search_type"] = "keyword"
+        return search_handler(db, db_name, params)
 
 
 @router.post("/{db_name}/search/hybrid", dependencies=[Depends(require_read_permission)])
 @log_performance("hybrid_search")
-async def hybrid_search(db_name: str, request: Request):
+async def hybrid_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Hybrid search (convenience endpoint)."""
-
     with request_context("hybrid_search"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        # Force search_type to hybrid
-        data["search_type"] = "hybrid"
-        db = get_db(db_name, request)
-        return search_handler(db, db_name, data)
+        params = body.model_dump()
+        params["search_type"] = "hybrid"
+        return search_handler(db, db_name, params)
 
 
 @router.post("/{db_name}/query_builder", dependencies=[Depends(require_read_permission)])
 @log_performance("query_builder")
-async def query_builder_execute(db_name: str, request: Request):
+async def query_builder_execute(db_name: str, body: QueryBuilderStateBody, db=Depends(get_db)):
     """Execute a QueryBuilder query with full state from client.
 
     This endpoint allows RemoteVectorDB to send a complete QueryBuilder state
     for server-side execution, including semantic filters.
     """
-
     with request_context("query_builder"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
         try:
-            db = get_db(db_name, request)
-
             # Reconstruct QueryBuilder from state
             from localvectordb.query_builder import QueryBuilder
 
             builder = QueryBuilder(db)
 
             # Apply search clauses
-            search_clauses = data.get("search_clauses", [])
-            for clause in search_clauses:
+            for clause in body.search_clauses:
                 builder = builder.search(clause["text"], search_type=clause.get("search_type", "hybrid"))
 
             # Apply exact filters
-            exact_filters = data.get("exact_filters", [])
-            for filter_item in exact_filters:
+            for filter_item in body.exact_filters:
                 builder = builder.filter(filter_item["field"], **filter_item["conditions"])
 
             # Apply semantic filters
-            semantic_filters = data.get("semantic_filters", [])
-            for sem_filter in semantic_filters:
+            for sem_filter in body.semantic_filters:
                 builder = builder.semantic_filter(
                     sem_filter["field"],
                     sem_filter["concept"],
@@ -300,31 +314,29 @@ async def query_builder_execute(db_name: str, request: Request):
                 )
 
             # Apply other builder settings
-            if "search_type" in data:
-                builder._search_type = data["search_type"]
+            if body.search_type is not None:
+                builder._search_type = body.search_type
 
-            if "vector_weight" in data:
-                builder._vector_weight = data["vector_weight"]
+            if body.vector_weight is not None:
+                builder._vector_weight = body.vector_weight
 
-            if "return_type" in data:
-                builder._return_type = data["return_type"]
+            if body.return_type is not None:
+                builder._return_type = body.return_type
 
-            if "order_by" in data:
-                for order in data["order_by"]:
-                    builder = builder.order_by(order["field"], order.get("direction", "asc"))
+            for order in body.order_by:
+                builder = builder.order_by(order["field"], order.get("direction", "asc"))
 
-            if "limit" in data:
-                builder = builder.limit(data["limit"])
+            if body.limit is not None:
+                builder = builder.limit(body.limit)
 
-            if "offset" in data:
-                builder = builder.offset(data["offset"])
+            if body.offset is not None:
+                builder = builder.offset(body.offset)
 
-            if "group_by" in data:
-                builder = builder.group_by(*data["group_by"])
+            if body.group_by is not None:
+                builder = builder.group_by(*body.group_by)
 
-            if "aggregations" in data:
-                for agg in data["aggregations"]:
-                    builder = builder.aggregate(agg["field"], agg["function"], agg.get("alias"))
+            for agg in body.aggregations:
+                builder = builder.aggregate(agg["field"], agg["function"], agg.get("alias"))
 
             # Execute the query
             results = builder.execute()
@@ -343,89 +355,31 @@ async def query_builder_execute(db_name: str, request: Request):
 
 @router.post("/{db_name}/query-multi-column", dependencies=[Depends(require_read_permission)])
 @log_performance("query_multi_column")
-async def query_multi_column(db_name: str, request: Request):
+async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get_db)):
     """Query across multiple columns (main content + embedding-enabled metadata fields)."""
-
     with request_context("query_multi_column"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        # Validate required fields
-        validate_required_fields(data, ["query"])
-
-        query_text = data["query"]
-        columns = data.get("columns")
-        search_type = data.get("search_type", "hybrid")
-        return_type = data.get("return_type", "documents")
-        k = data.get("k", 10)
-        score_threshold = data.get("score_threshold", 0.0)
-        filters = data.get("filters", data.get("metadata_filters"))
-        vector_weight = data.get("vector_weight", 0.7)
-        document_scoring_method = data.get("document_scoring_method", "frequency_boost")
-        document_scoring_options = data.get("document_scoring_options")
-
-        # Validate parameters
-        if not isinstance(query_text, str) or not query_text.strip():
-            raise ValidationError("Query must be a non-empty string", field="query")
-
-        if columns is not None:
-            if not isinstance(columns, list):
-                raise ValidationError("Columns must be a list of strings", field="columns")
-            for i, col in enumerate(columns):
-                if not isinstance(col, str):
-                    raise ValidationError(f"Column at index {i} must be a string", field=f"columns[{i}]")
-
-        if search_type not in ["vector", "keyword", "hybrid"]:
-            raise ValidationError("Search type must be 'vector', 'keyword', or 'hybrid'", field="search_type")
-
-        if return_type not in ["documents", "chunks", "context", "enriched"]:
-            raise ValidationError(
-                "Return type must be 'documents', 'chunks', 'context', or 'enriched'", field="return_type"
-            )
-
-        validate_field_type(data, "k", int)
-        # Upper bound is hardcoded; could be made configurable via server settings.
-        if k < 1 or k > 1000:
-            raise ValidationError("k must be between 1 and 1000", field="k", value=k)
-
-        validate_field_type(data, "score_threshold", (int, float))
-        if score_threshold < 0 or score_threshold > 1:
-            raise ValidationError(
-                "Score threshold must be between 0 and 1", field="score_threshold", value=score_threshold
-            )
-
-        validate_field_type(data, "vector_weight", (int, float))
-        if vector_weight < 0 or vector_weight > 1:
-            raise ValidationError("Vector weight must be between 0 and 1", field="vector_weight", value=vector_weight)
-
-        if filters is not None and not isinstance(filters, dict):
-            raise ValidationError("Filters must be a dictionary", field="filters")
-
         try:
-            db = get_db(db_name, request)
-
             db_logger.log_query(
                 "query_multi_column",
                 database_name=db_name,
-                search_type=search_type,
-                return_type=return_type,
-                k=k,
-                query_length=len(query_text),
-                columns_count=len(columns) if columns else None,
+                search_type=body.search_type,
+                return_type=body.return_type,
+                k=body.k,
+                query_length=len(body.query),
+                columns_count=len(body.columns) if body.columns else None,
             )
 
             results = db.query_multi_column(
-                query=query_text,
-                columns=columns,
-                search_type=search_type,
-                return_type=return_type,
-                k=k,
-                score_threshold=score_threshold,
-                filters=filters,
-                vector_weight=vector_weight,
-                document_scoring_method=document_scoring_method,
-                document_scoring_options=document_scoring_options,
+                query=body.query,
+                columns=body.columns,
+                search_type=body.search_type,
+                return_type=body.return_type,
+                k=body.k,
+                score_threshold=body.score_threshold,
+                filters=body.filters,
+                vector_weight=body.vector_weight,
+                document_scoring_method=body.document_scoring_method,
+                document_scoring_options=body.document_scoring_options,
             )
 
             # Serialize results
@@ -434,35 +388,37 @@ async def query_multi_column(db_name: str, request: Request):
             db_logger.log_query(
                 "query_multi_column_success",
                 database_name=db_name,
-                search_type=search_type,
+                search_type=body.search_type,
                 result_count=len(serialized_results),
             )
 
             return {
                 "results": serialized_results,
-                "search_type": search_type,
-                "return_type": return_type,
+                "search_type": body.search_type,
+                "return_type": body.return_type,
                 "total_results": len(serialized_results),
-                "columns_searched": columns,
+                "columns_searched": body.columns,
                 "processing_info": {
-                    "document_scoring_method": document_scoring_method if return_type == "documents" else None
+                    "document_scoring_method": (
+                        body.document_scoring_method if body.return_type == "documents" else None
+                    )
                 },
             }
 
         except Exception as e:
-            db_logger.log_error("query_multi_column", e, database_name=db_name, search_type=search_type)
+            db_logger.log_error("query_multi_column", e, database_name=db_name, search_type=body.search_type)
             raise
 
 
 @router.post("/{db_name}/filter", dependencies=[Depends(require_read_permission)])
 @log_performance("filter_documents")
-async def filter_documents(db_name: str, request: Request):
+async def filter_documents(db_name: str, body: FilterDocumentsBody, db=Depends(get_db)):
     """Filter documents by metadata with enhanced filtering capabilities.
 
     Request body supports::
 
         {
-            "where": {
+            "filters": {
                 // Simple format
                 "author": "John Doe",
                 "year": 2023,
@@ -496,34 +452,13 @@ async def filter_documents(db_name: str, request: Request):
     - Logical: $and, $or, $not
     - JSON: $contains, $not_contains (for JSON fields)
     """
-
     with request_context("filter_documents"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        where = data.get("where")
-        order_by = data.get("order_by")
-        limit = data.get("limit")
-        offset = data.get("offset", 0)
-
-        # Validate types
-        if where is not None:
-            validate_field_type(data, "where", dict)
-        if order_by is not None:
-            validate_field_type(data, "order_by", str)
-        if limit is not None:
-            validate_field_type(data, "limit", int)
-            if limit < 1 or limit > 10000:
-                raise ValidationError("Limit must be between 1 and 10000", field="limit", value=limit)
-
-        validate_field_type(data, "offset", int)
-        if offset < 0:
-            raise ValidationError("Offset must be >= 0", field="offset", value=offset)
+        filters = body.filters
+        order_by = body.order_by
+        limit = body.limit
+        offset = body.offset
 
         try:
-            db = get_db(db_name, request)
-
             # Perform secure ORDER BY validation with schema access
             if order_by is not None:
                 try:
@@ -544,12 +479,12 @@ async def filter_documents(db_name: str, request: Request):
             db_logger.log_query(
                 "filter_documents",
                 database_name=db_name,
-                has_where=where is not None,
-                filter_complexity=len(str(where)) if where else 0,
+                has_where=filters is not None,
+                filter_complexity=len(str(filters)) if filters else 0,
                 limit=limit,
             )
 
-            documents = db.filter(where=where, order_by=order_by, limit=limit, offset=offset)
+            documents = db.filter(where=filters, order_by=order_by, limit=limit, offset=offset)
 
             # Serialize results
             serialized_docs = [serialize_document(doc) for doc in documents]
@@ -560,7 +495,7 @@ async def filter_documents(db_name: str, request: Request):
                 "documents": serialized_docs,
                 "count": len(serialized_docs),
                 "filter_info": {
-                    "where_provided": where is not None,
+                    "where_provided": filters is not None,
                     "order_by_provided": order_by is not None,
                     "limit": limit,
                     "offset": offset,
@@ -579,7 +514,7 @@ async def filter_documents(db_name: str, request: Request):
 
 @router.post("/search", dependencies=[Depends(require_read_permission)])
 @log_performance("global_search")
-async def global_search(request: Request):
+async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manager)):
     """Search across multiple databases.
 
     Request body supports::
@@ -607,42 +542,24 @@ async def global_search(request: Request):
             "return_type": "documents"
         }
     """
-
     with request_context("global_search"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        # Validate search parameters
-        data = validate_search_params(data)
-
-        query = data["query"]
-        search_type = data.get("search_type", "hybrid")
-        return_type = data.get("return_type", "documents")
-        k = data.get("k", 10)
-        score_threshold = data.get("score_threshold", 0.0)
-        filters = data.get("filters")
-        databases = data.get("databases")  # Optional list of databases to search
-        vector_weight = data.get("vector_weight", 0.7)
-        context_window = data.get("context_window", 2)
-
         try:
-            results = get_db_manager(request).search_databases(
-                query=query,
-                database_names=databases,
-                search_type=search_type,
-                return_type=return_type,
-                k=k,
-                score_threshold=score_threshold,
-                filters=filters,
-                vector_weight=vector_weight,
-                context_window=context_window,
+            results = db_manager.search_databases(
+                query=body.query,
+                database_names=body.databases,
+                search_type=body.search_type,
+                return_type=body.return_type,
+                k=body.k,
+                score_threshold=body.score_threshold,
+                filters=body.filters,
+                vector_weight=body.vector_weight,
+                context_window=body.context_window,
             )
             for db_name, db_results in results.items():
                 results[db_name] = [serialize_query_result(result) for result in db_results]
 
-            return {"results": results, "search_type": search_type, "return_type": return_type}
+            return {"results": results, "search_type": body.search_type, "return_type": body.return_type}
 
         except Exception as e:
-            db_logger.log_error("global_search", e, search_type=search_type)
+            db_logger.log_error("global_search", e, search_type=body.search_type)
             raise

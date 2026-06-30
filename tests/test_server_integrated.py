@@ -415,7 +415,7 @@ class TestDatabaseLifecycle:
         result = response.json()
         assert len(result["results"]) >= 0
 
-        filter_data = {"where": {"author": "Alice"}}
+        filter_data = {"filters": {"author": "Alice"}}
         response = integration_client.post(
             "/api/v1/schema_test_db/filter", json=filter_data, headers=valid_auth_headers
         )
@@ -633,7 +633,7 @@ class TestCompleteWorkflow:
         result = response.json()
         assert "Updated" in result["content"]
 
-        filter_data = {"where": {"author": "Bob"}}
+        filter_data = {"filters": {"author": "Bob"}}
         response = integration_client.post(
             "/api/v1/workflow_test_db/filter", json=filter_data, headers=valid_auth_headers
         )

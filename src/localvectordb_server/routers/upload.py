@@ -5,19 +5,82 @@ import json
 import logging
 import mimetypes
 from datetime import UTC, datetime
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
-from localvectordb_server.routers._deps import get_db
+from localvectordb_server.config import Config
+from localvectordb_server.routers._deps import get_config, get_db
+from localvectordb_server.routers._models import StrictModel
 from localvectordb_server.utils.files import secure_filename
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["upload"])
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+# --------------------------------------------------------------------------- #
+
+
+class ExtractionResultItem(StrictModel):
+    """Per-file extraction outcome reported by the upload endpoint.
+
+    ``extraction_method`` / ``text_length`` are present only on successful
+    extractions; ``response_model_exclude_unset`` keeps them out of failure
+    entries to preserve the original response shape.
+    """
+
+    filename: str
+    extraction_success: bool
+    error: Optional[str] = None
+    metadata_fields_used: List[str]
+    metadata_fields_ignored: List[str]
+    extraction_method: Optional[str] = None
+    text_length: Optional[int] = None
+
+
+class ExtractionSummary(StrictModel):
+    total_files: int
+    successful_extractions: int
+    failed_extractions: int
+    supported_formats: Dict[str, Any]
+
+
+class UploadResponse(StrictModel):
+    message: str
+    files_processed: int
+    document_ids: List[str]
+    extraction_results: List[ExtractionResultItem]
+    status: str
+    extraction_summary: ExtractionSummary
+
+
+class ExtractPreviewResponse(StrictModel):
+    filename: str
+    original_filename: Optional[str] = None
+    file_size_bytes: int
+    mimetype: Optional[str] = None
+    extraction_success: bool
+    extraction_method: Optional[str] = None
+    extraction_metadata: Dict[str, Any]
+    extracted_text: str
+    text_length: int
+    text_preview: str
+    extraction_error: Optional[str] = None
+
+
+class SupportedFormatsResponse(StrictModel):
+    extraction_available: bool
+    supported_formats: Dict[str, Any]
+    basic_text_support: bool
+    text_file_extensions: List[str]
+    installation_hints: Optional[Dict[str, str]] = None
 
 
 def _extraction_kwargs(config) -> dict:
@@ -33,19 +96,25 @@ def _extraction_kwargs(config) -> dict:
     return {}
 
 
-@router.post("/{db_name}/upload", dependencies=[Depends(require_write_permission)])
+@router.post(
+    "/{db_name}/upload",
+    response_model=UploadResponse,
+    response_model_exclude_unset=True,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("upload_files")
 async def upload_files(
     db_name: str,
-    request: Request,
-    files: list[UploadFile] = File(...),  # noqa: B008
+    files: list[UploadFile] = File(...),
     metadata: str = Form(None),
-    batch_size: int = Form(100),
+    batch_size: int = Form(default=0),
     ids: str = Form(None),
     mode: str = Form("upsert"),
     errors: str = Form("raise"),
     similarity_threshold: float = Form(None),
     use_filename_as_id: str = Form("false"),
+    db=Depends(get_db),
+    config: Config = Depends(get_config),
 ):
     """Upload files to the database with automatic text extraction.
 
@@ -54,7 +123,6 @@ async def upload_files(
     """
     with request_context("upload_files"):
         # Check if server uploads are enabled
-        config = request.app.state.config
         file_upload_enabled = getattr(config.server, "file_upload_enabled", True)
         if not file_upload_enabled:
             raise APIError(
@@ -109,10 +177,11 @@ async def upload_files(
                     field="metadata",
                 )
 
-        # Get default batch size from config
-        default_batch_size = getattr(config.embedding, "batch_size", 100)
-        if batch_size == 100:
-            batch_size = default_batch_size
+        # Get default batch size from config. A client-supplied 0 (the Form
+        # default) means "use the configured default"; any explicit positive
+        # value (including 100) is honored as-is.
+        if batch_size <= 0:
+            batch_size = getattr(config.embedding, "batch_size", 100)
 
         # Validate batch size
         if batch_size < 1 or batch_size > 1000:
@@ -123,8 +192,6 @@ async def upload_files(
             )
 
         try:
-            db = get_db(db_name, request)
-
             documents = []
             metadata_list = []
             extraction_results = []
@@ -293,10 +360,14 @@ async def upload_files(
             raise
 
 
-@router.get("/upload/supported-formats", dependencies=[Depends(require_read_permission)])
-def get_upload_supported_formats(request: Request):
+@router.get(
+    "/upload/supported-formats",
+    response_model=SupportedFormatsResponse,
+    response_model_exclude_unset=True,
+    dependencies=[Depends(require_read_permission)],
+)
+def get_upload_supported_formats(config: Config = Depends(get_config)):
     """Get information about supported file formats for upload."""
-    config = request.app.state.config
     file_upload_enabled = getattr(config.server, "file_upload_enabled", True)
     if not file_upload_enabled:
         raise APIError(
@@ -339,11 +410,16 @@ def get_upload_supported_formats(request: Request):
     return response
 
 
-@router.post("/upload/extract-preview", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/upload/extract-preview",
+    response_model=ExtractPreviewResponse,
+    response_model_exclude_unset=True,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("extract_preview")
 async def extract_preview(
-    request: Request,
-    file: UploadFile = File(...),  # noqa: B008
+    file: UploadFile = File(...),
+    config: Config = Depends(get_config),
 ):
     """Preview text extraction from uploaded files without adding to database.
 
@@ -351,7 +427,6 @@ async def extract_preview(
     them to the database. Useful for validating extraction quality.
     """
     with request_context("extract_preview"):
-        config = request.app.state.config
         file_upload_enabled = getattr(config.server, "file_upload_enabled", True)
         if not file_upload_enabled:
             raise APIError(
