@@ -371,15 +371,15 @@ wheels = [
 
 [[package]]
 name = "beautifulsoup4"
-version = "4.13.5"
+version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "soupsieve" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/85/2e/3e5079847e653b1f6dc647aa24549d68c6addb4c595cc0d902d1b19308ad/beautifulsoup4-4.13.5.tar.gz", hash = "sha256:5e70131382930e7c3de33450a2f54a63d5e4b19386eab43a5b34d594268f3695", size = 622954, upload-time = "2025-08-24T14:06:13.168Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/65/318323f98dbee45d42dff61d8f047181bc6f2268a9068cfad035a46be5af/beautifulsoup4-4.15.0.tar.gz", hash = "sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7", size = 632571, upload-time = "2026-06-07T16:44:20.453Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/eb/f4151e0c7377a6e08a38108609ba5cede57986802757848688aeedd1b9e8/beautifulsoup4-4.13.5-py3-none-any.whl", hash = "sha256:642085eaa22233aceadff9c69651bc51e8bf3f874fb6d7104ece2beb24b47c4a", size = 105113, upload-time = "2025-08-24T14:06:14.884Z" },
+    { url = "https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl", hash = "sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9", size = 109924, upload-time = "2026-06-07T16:44:21.566Z" },
 ]
 
 [[package]]
@@ -1190,20 +1190,21 @@ wheels = [
 
 [[package]]
 name = "extract-msg"
-version = "0.55.0"
+version = "0.37.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
+    { name = "chardet" },
     { name = "compressed-rtf" },
     { name = "ebcdic" },
+    { name = "imapclient" },
     { name = "olefile" },
-    { name = "red-black-tree-mod" },
     { name = "rtfde" },
     { name = "tzlocal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/65/c70afb3b119a44b3ee36b029485dc15326cf3a7c50da19a1ecbbf949c5d1/extract_msg-0.55.0.tar.gz", hash = "sha256:cf08283498c3dfcc7f894dad1579f52e3ced9fb76b865c2355cbe757af8a54e1", size = 331170, upload-time = "2025-08-12T16:07:56.537Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/67/4659faa25f9cc15e2565cf77d7a308690bf722e5827a344e8b0c24fa12e9/extract_msg-0.37.1.tar.gz", hash = "sha256:3ec88641d799065daebc02076cc17fdc381f79baf6e90994effd01523727bc7c", size = 160190, upload-time = "2022-11-28T06:41:55.996Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/81/87d5241036046ea17c5c8db228f4c9e04e07e53b627015d4496a99449aaf/extract_msg-0.55.0-py3-none-any.whl", hash = "sha256:baf0cdee9a8d267b70c366bc57ceb03dbfa1e7ab2dca6824169a7fe623f0917c", size = 336033, upload-time = "2025-08-12T16:07:54.886Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/13/73a46c76fd62617ed8f3a291caf70ae10bfb312b703a01803efebec747de/extract_msg-0.37.1-py2.py3-none-any.whl", hash = "sha256:0bac3b8f25d81ac5d57fcfeed5e1350dcd29a438d5ac8247a247f0c217516377", size = 161296, upload-time = "2022-11-28T06:41:54.346Z" },
 ]
 
 [[package]]
@@ -1601,6 +1602,15 @@ wheels = [
 ]
 
 [[package]]
+name = "imapclient"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/79/8138f8c91e791f49cf4c2269b1eaaaddb93013d162e92ddc249b84d38105/imapclient-3.1.0.tar.gz", hash = "sha256:b0413a516ffcc4b4d69f2c611c0e95da57968edf5a5c78ac82d1bf882305facc", size = 199675, upload-time = "2026-01-17T18:50:12.186Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/a8/a0f86ed51f792d9e6afcc062db2766033be7d1028d1fd5deaf38b075430a/imapclient-3.1.0-py2.py3-none-any.whl", hash = "sha256:34c192ffe82936e940a998ac89c474296942cd7c4f6c208f0fccfcd972946038", size = 182536, upload-time = "2026-01-17T18:49:09.105Z" },
+]
+
+[[package]]
 name = "inflate64"
 version = "1.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1976,6 +1986,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "all2md", extra = ["docx", "epub", "html", "markdown", "odf", "openapi", "org", "pdf", "pptx", "rst", "rtf", "xlsx"] },
+    { name = "beautifulsoup4" },
     { name = "faiss-cpu" },
     { name = "httpx" },
     { name = "numpy" },
@@ -2070,6 +2081,7 @@ requires-dist = [
     { name = "all2md", extras = ["docx", "epub", "html", "markdown", "odf", "openapi", "org", "pdf", "pptx", "rst", "rtf", "xlsx"], specifier = ">=1.7.1" },
     { name = "all2md", extras = ["ocr"], marker = "extra == 'file-extraction-ocr'", specifier = ">=1.7.1" },
     { name = "bcrypt", marker = "extra == 'server'", specifier = ">=4.3.0" },
+    { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "cachelib", marker = "extra == 'server'", specifier = ">=0.13.0" },
     { name = "faiss-cpu", specifier = ">=1.11.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115.0" },
@@ -3695,12 +3707,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/5a/a9/104ec9234c8448c43
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/67/921ec3024056483db83953ae8e48079ad62b92db7880013ca77632921dd0/readme_renderer-44.0-py3-none-any.whl", hash = "sha256:2fbca89b81a08526aadf1357a8c2ae889ec05fb03f5da67f9769c9a592166151", size = 13310, upload-time = "2024-07-08T15:00:56.577Z" },
 ]
-
-[[package]]
-name = "red-black-tree-mod"
-version = "1.22"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/48/75/bfa342a2ebfc9623b701f1c6995b9906fd6dd2cedf6bce777d09e23303ac/red-black-tree-mod-1.22.tar.gz", hash = "sha256:38e3652903a2bf96379c27c2082ca0b7b905158662dd7ef0c97f4fd93a9aa908", size = 34173, upload-time = "2023-12-26T14:00:22.056Z" }
 
 [[package]]
 name = "referencing"
