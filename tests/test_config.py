@@ -14,10 +14,54 @@ from localvectordb_server.config import (
     Config,
     DatabaseSettings,
     EmbeddingSettings,
+    ExtractionSettings,
     SecuritySettings,
     ServerSettings,
     load_config,
 )
+
+
+@pytest.mark.unit
+class TestExtractionSettings:
+    """Test ExtractionSettings configuration."""
+
+    def test_secure_defaults(self):
+        settings = ExtractionSettings()
+        assert settings.allow_remote_fetch is False
+        assert settings.allowed_hosts is None
+        assert settings.strip_dangerous_elements is True
+        assert settings.attachment_mode == "skip"
+        assert settings.validate() is True
+
+    def test_extractor_kwargs(self):
+        settings = ExtractionSettings(allow_remote_fetch=True, attachment_mode="save", allowed_hosts=["example.com"])
+        kwargs = settings.extractor_kwargs()
+        assert kwargs == {
+            "allow_remote_fetch": True,
+            "allowed_hosts": ["example.com"],
+            "strip_dangerous_elements": True,
+            "attachment_mode": "save",
+        }
+
+    def test_validation_rejects_empty_attachment_mode(self):
+        with pytest.raises(ConfigurationError):
+            ExtractionSettings(attachment_mode="").validate()
+
+    def test_validation_rejects_bad_allowed_hosts(self):
+        with pytest.raises(ConfigurationError):
+            ExtractionSettings(allowed_hosts=["", "ok.com"]).validate()
+
+    def test_config_includes_extraction_section(self):
+        config = Config()
+        assert isinstance(config.extraction, ExtractionSettings)
+        assert "extraction" in config.to_dict()
+
+    def test_from_dict_and_merge(self):
+        config = Config.from_dict({"extraction": {"allow_remote_fetch": True, "attachment_mode": "save"}})
+        assert config.extraction.allow_remote_fetch is True
+        merged = Config().merge(config)
+        assert merged.extraction.allow_remote_fetch is True
+        assert merged.extraction.attachment_mode == "save"
 
 
 @pytest.mark.unit

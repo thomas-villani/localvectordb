@@ -231,6 +231,49 @@ class MigrationSettings(BaseSettings):
 
 
 @dataclass
+class ExtractionSettings(BaseSettings):
+    """Settings for file-content extraction (powered by all2md).
+
+    These map onto the security-relevant options of the all2md-backed extractor.
+    Defaults are hardened for untrusted uploads; relax them only for trusted
+    content. The values are forwarded to the extractor as keyword arguments by
+    :meth:`extractor_kwargs`.
+    """
+
+    # Allow the converter to fetch remote assets referenced by a document
+    # (images, stylesheets, etc.). Off by default to avoid SSRF on uploads.
+    allow_remote_fetch: bool = False
+    # Host allowlist applied when allow_remote_fetch is True (None = all hosts).
+    allowed_hosts: Optional[List[str]] = None
+    # HTML only: strip scripts / event handlers / other dangerous elements.
+    strip_dangerous_elements: bool = True
+    # How embedded attachments/assets are handled: "skip" (default), "save", etc.
+    attachment_mode: str = "skip"
+
+    def validate(self):
+        if not isinstance(self.attachment_mode, str) or not self.attachment_mode:
+            raise ConfigurationError("attachment_mode must be a non-empty string")
+
+        if self.allowed_hosts is not None:
+            if not isinstance(self.allowed_hosts, list):
+                raise ConfigurationError("allowed_hosts must be a list of strings or None")
+            for host in self.allowed_hosts:
+                if not isinstance(host, str) or not host:
+                    raise ConfigurationError("Each entry in allowed_hosts must be a non-empty string")
+
+        return True
+
+    def extractor_kwargs(self) -> Dict[str, Any]:
+        """Return the keyword arguments to forward to the extractor."""
+        return {
+            "allow_remote_fetch": self.allow_remote_fetch,
+            "allowed_hosts": self.allowed_hosts,
+            "strip_dangerous_elements": self.strip_dangerous_elements,
+            "attachment_mode": self.attachment_mode,
+        }
+
+
+@dataclass
 class SecuritySettings(BaseSettings):
     """Security-related settings for the server."""
 
@@ -550,6 +593,7 @@ class Config:
     server: ServerSettings = field(default_factory=ServerSettings)
     backup: BackupSettings = field(default_factory=BackupSettings)
     migration: MigrationSettings = field(default_factory=MigrationSettings)
+    extraction: ExtractionSettings = field(default_factory=ExtractionSettings)
 
     def validate(self):
         return (
@@ -558,6 +602,7 @@ class Config:
             and self.server.validate()
             and self.backup.validate()
             and self.migration.validate()
+            and self.extraction.validate()
         )
 
     @classmethod
@@ -631,6 +676,12 @@ class Config:
                 if hasattr(config.migration, key):
                     setattr(config.migration, key, value)
 
+        # Process extraction settings
+        if "extraction" in data and isinstance(data["extraction"], dict):
+            for key, value in data["extraction"].items():
+                if hasattr(config.extraction, key):
+                    setattr(config.extraction, key, value)
+
         return config
 
     @classmethod
@@ -661,7 +712,7 @@ class Config:
             name = env_name[len(prefix) :].lower()
             parts = name.split("_", 2)  # Allow for deeper nesting
 
-            if len(parts) >= 2 and parts[0] in ["database", "embedding", "server", "backup", "migration"]:
+            if len(parts) >= 2 and parts[0] in ["database", "embedding", "server", "backup", "migration", "extraction"]:
                 section_name = parts[0]
                 key = "_".join(parts[1:])
                 section_obj = getattr(config, section_name)
@@ -847,8 +898,13 @@ class Config:
                 cfg_obj = new_cfg.backup
             elif key == "migration":
                 cfg_obj = new_cfg.migration
+            elif key == "extraction":
+                cfg_obj = new_cfg.extraction
             else:
-                raise KeyError(f"Expected keys: 'database', 'embedding', 'server', 'backup', 'migration', found: {key}")
+                raise KeyError(
+                    "Expected keys: 'database', 'embedding', 'server', 'backup', 'migration', "
+                    f"'extraction', found: {key}"
+                )
 
             for cfg_key, cfg_value in values.items():
                 if hasattr(cfg_obj, cfg_key):
@@ -1028,6 +1084,7 @@ class Config:
             "server": asdict(self.server),
             "backup": asdict(self.backup),
             "migration": asdict(self.migration),
+            "extraction": asdict(self.extraction),
         }
 
     def apply_common_schema(self, schema_name: str):
@@ -1120,6 +1177,7 @@ class Config:
         merge_dataclass(self.server, other.server, result.server)
         merge_dataclass(self.backup, other.backup, result.backup)
         merge_dataclass(self.migration, other.migration, result.migration)
+        merge_dataclass(self.extraction, other.extraction, result.extraction)
 
         return result
 

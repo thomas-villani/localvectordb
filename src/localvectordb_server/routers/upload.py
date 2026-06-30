@@ -20,6 +20,19 @@ db_logger = DatabaseLogger()
 router = APIRouter(tags=["upload"])
 
 
+def _extraction_kwargs(config) -> dict:
+    """Build extractor keyword arguments (security options) from server config.
+
+    Returns an empty dict when no [extraction] settings are present so the
+    extractor falls back to its own hardened defaults.
+    """
+    extraction = getattr(config, "extraction", None)
+    if extraction is not None and hasattr(extraction, "extractor_kwargs"):
+        kwargs: dict = extraction.extractor_kwargs()
+        return kwargs
+    return {}
+
+
 @router.post("/{db_name}/upload", dependencies=[Depends(require_write_permission)])
 @log_performance("upload_files")
 async def upload_files(
@@ -118,6 +131,7 @@ async def upload_files(
             document_ids = []
 
             extractor_registry = get_extractor_registry()
+            extraction_kwargs = _extraction_kwargs(config)
 
             db_logger.log_query("upload_files", database_name=db_name, file_count=len(files))
 
@@ -165,7 +179,9 @@ async def upload_files(
 
                 # Extract text content
                 try:
-                    extraction_result = extractor_registry.extract_text(file_content, filename, mimetype)
+                    extraction_result = extractor_registry.extract_text(
+                        file_content, filename, mimetype, **extraction_kwargs
+                    )
 
                     if extraction_result.success:
                         documents.append(extraction_result.text)
@@ -312,11 +328,12 @@ def get_upload_supported_formats(request: Request):
     environment = getattr(config, "environment", None) or getattr(config.server, "environment", None)
     if environment == "development":
         response["installation_hints"] = {
-            "pdf": "pip install pdfplumber or pip install PyPDF2",
-            "docx": "pip install python-docx",
-            "pptx": "pip install python-pptx",
-            "xlsx": "pip install openpyxl",
-            "rtf": "pip install striprtf",
+            "common_formats": (
+                "Common formats (pdf, docx, pptx, xlsx, html, epub, rtf, odf, rst, org, markdown) "
+                "work out of the box via all2md."
+            ),
+            "extended_formats": "pip install 'localvectordb[file-extraction]' (latex, wiki, textile, archive, ...)",
+            "ocr": "pip install 'localvectordb[file-extraction-ocr]' (scanned PDFs; needs Tesseract binary)",
         }
 
     return response
@@ -358,7 +375,9 @@ async def extract_preview(
 
             # Extract text
             extractor_registry = get_extractor_registry()
-            extraction_result = extractor_registry.extract_text(file_content, filename, mimetype)
+            extraction_result = extractor_registry.extract_text(
+                file_content, filename, mimetype, **_extraction_kwargs(config)
+            )
 
             # Prepare response
             response_data = {

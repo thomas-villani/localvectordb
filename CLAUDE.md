@@ -128,7 +128,7 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
 - `reranking.py` - Pluggable cross-encoder rerankers (Jina, SentenceTransformers, HuggingFace, Mock)
 - `chunking.py` - Position-aware text chunking with multiple strategies
 - `query_builder.py` - SQL-like query builder for metadata filtering
-- `extractors/` - File format extractors (PDF, DOCX, PPTX, XLSX, HTML, XML, RTF, EPUB)
+- `extractors/` - File text extraction. A single `All2MdExtractor` delegates to the `all2md` library (20+ document formats, 200+ source/text formats), outputting Markdown. The plugin interface (`BaseExtractor`, `ExtractorRegistry`, `localvectordb.file_extractors` entry points) is retained for custom extractors.
 - `validation/` - LLM-based fact-checking / "reverse RAG" module
 - `visualization/` - tSNE/PCA maps, clustering, and chord/ribbon plots
 - `backup.py` - Backup/restore with incremental and point-in-time recovery
@@ -233,9 +233,14 @@ Key configuration sections:
 4. Add corresponding tests
 
 ### Adding New File Extractor
-1. Create extractor class with `extract_text()` method
-2. Add entry point to pyproject.toml under `localvectordb_server.file_extractors`
-3. Add MIME type mapping in extractors/__init__.py
+Most formats are handled by the built-in `All2MdExtractor` (via `all2md`). Add a
+custom extractor only for a format all2md does not cover, or to override its
+behaviour for a specific format:
+1. Subclass `BaseExtractor` and implement `_extract_text_impl()` (plus the
+   abstract properties: `supported_extensions`, `supported_mimetypes`,
+   `required_packages`, `priority`, `metadata_schema`, `_check_availability`).
+   Use a `priority` > 10 to take precedence over `All2MdExtractor`.
+2. Add an entry point to pyproject.toml under `localvectordb.file_extractors`.
 
 ### Extending Query Builder
 - Query builder supports SQL-like syntax for metadata filtering

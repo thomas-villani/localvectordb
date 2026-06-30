@@ -760,38 +760,37 @@ Supported File Formats
 - ``.py``, ``.js``, ``.html``, ``.css`` - Code and markup files
 - ``.json``, ``.xml``, ``.csv`` - Structured text files
 
-**Optionally Supported (With Additional Dependencies)**:
+**Built-in (no extra dependencies)**:
 
-- ``.pdf`` - PDF documents (via pdfplumber or pypdf)
-- ``.docx`` - Microsoft Word documents (via python-docx)
-- ``.pptx`` - Microsoft PowerPoint presentations (via python-pptx)
-- ``.xlsx``, ``.xls`` - Microsoft Excel spreadsheets (via openpyxl)
-- ``.html``, ``.htm`` - HTML web pages (via beautifulsoup4)
-- ``.xml``, ``.rss``, ``.atom``, ``.svg`` - XML documents and feeds (via beautifulsoup4)
-- ``.rtf`` - Rich Text Format documents (via striprtf)
-- ``.epub`` - EPUB e-books (via ebooklib)
+- ``.pdf`` - PDF documents
+- ``.docx``, ``.pptx``, ``.xlsx`` - Microsoft Office documents
+- ``.odt``, ``.odp``, ``.ods`` - OpenDocument formats
+- ``.html``, ``.htm`` - HTML web pages
+- ``.rtf`` - Rich Text Format documents
+- ``.epub`` - EPUB e-books
+- ``.rst``, ``.org``, structured text (``.json``, ``.yaml``, ``.csv``), ``.eml``, ``.ipynb``
+
+Extraction is powered by `all2md <https://all2md.readthedocs.io/>`_ and produces
+Markdown output.
 
 Installation Requirements
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Basic Installation**:
+**Basic Installation** (covers the built-in formats above):
 
 .. code-block:: bash
 
    pip install localvectordb[server]
 
-**With File Extraction Support**:
+**Extended formats and OCR**:
 
 .. code-block:: bash
 
-   # Standard file extraction capabilities
+   # Extended/niche formats: latex, wiki, textile, archives, .enex, .fb2, chm, outlook
    pip install localvectordb[file-extraction]
 
-   # For only .docx, .pptx, and .xlsx support
-   pip install localvectordb[file-extraction-office]
-
-   # Manual installation of specific extractors
-   pip install pypdf python-docx python-pptx openpyxl striprtf beautifulsoup4 ebooklib
+   # OCR for scanned PDFs (also requires the Tesseract system binary)
+   pip install localvectordb[file-extraction-ocr]
 
 Upload Files to Database
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -886,20 +885,20 @@ Upload one or more files to a database with automatic text extraction.
        {
          "filename": "document.pdf",
          "extraction_success": true,
-         "extraction_method": "pdfplumber",
+         "extraction_method": "All2MdExtractor:pdf",
          "text_length": 1543,
          "error": null,
          "metadata_fields_used": ["extraction_method", "file_size_bytes"],
-         "metadata_fields_ignored": ["page_count", "extraction_library"]
+         "metadata_fields_ignored": ["source_format", "title"]
        },
        {
          "filename": "presentation.pptx",
          "extraction_success": true,
-         "extraction_method": "python-pptx",
+         "extraction_method": "All2MdExtractor:pptx",
          "text_length": 892,
          "error": null,
          "metadata_fields_used": ["extraction_method"],
-         "metadata_fields_ignored": ["slide_count", "extraction_library"]
+         "metadata_fields_ignored": ["source_format"]
        }
      ],
      "extraction_summary": {
@@ -911,7 +910,7 @@ Upload one or more files to a database with automatic text extraction.
          "docx": true,
          "pptx": true,
          "xlsx": true,
-         "rtf": false
+         "rtf": true
        }
      },
      "status": "success"
@@ -957,25 +956,23 @@ Get information about supported file formats and extraction capabilities.
          "extensions": [".pdf"],
          "mimetypes": ["application/pdf"],
          "description": "PDF files",
-         "extractors": ["PDFPlumberExtractor", "PyPDF2Extractor"],
+         "extractors": ["All2MdExtractor"],
          "supported": true
        },
        "docx": {
          "extensions": [".docx"],
          "mimetypes": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
          "description": "DOCX files",
-         "extractors": ["DocxExtractor"],
+         "extractors": ["All2MdExtractor"],
          "supported": true
        }
      },
      "basic_text_support": true,
      "text_file_extensions": [".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".xml", ".csv"],
      "installation_hints": {  // Only returned in development mode
-       "pdf": "pip install pdfplumber or pip install pypdf",
-       "docx": "pip install python-docx",
-       "pptx": "pip install python-pptx",
-       "xlsx": "pip install openpyxl",
-       "rtf": "pip install striprtf"
+       "common_formats": "Common formats (pdf, docx, pptx, xlsx, html, epub, rtf, odf, rst, org, markdown) work out of the box via all2md.",
+       "extended_formats": "pip install 'localvectordb[file-extraction]' (latex, wiki, textile, archive, ...)",
+       "ocr": "pip install 'localvectordb[file-extraction-ocr]' (scanned PDFs; needs Tesseract binary)"
      }
    }
 
@@ -1027,11 +1024,12 @@ Preview text extraction from a file without adding it to the database.
      "file_size_bytes": 245760,
      "mimetype": "application/pdf",
      "extraction_success": true,
-     "extraction_method": "pdfplumber",
+     "extraction_method": "All2MdExtractor:pdf",
      "extraction_metadata": {
+       "source_format": "pdf",
+       "title": "Sample Document",
        "page_count": 5,
-       "extraction_library": "pdfplumber",
-       "processing_time_ms": 234
+       "character_count": 1543
      },
      "extracted_text": "Full extracted text content here...",
      "text_length": 1543,
