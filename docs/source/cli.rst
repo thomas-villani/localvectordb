@@ -1916,25 +1916,27 @@ Create Backups
    # Create full backup
    lvdb backup create my_database --type full
 
-   # Create incremental backup
-   lvdb backup create my_database --type incremental
+   # Create incremental backup (requires the parent backup ID)
+   lvdb backup create my_database --type incremental --parent backup-abc123
 
    # Create backup with compression
    lvdb backup create my_database --type full --compression gzip
 
    # Create backup with custom location
-   lvdb backup create my_database --type full --output-dir /backups/localvectordb
+   lvdb backup create my_database --type full --location /backups/localvectordb
 
-   # Create backup with description
-   lvdb backup create my_database --type full --description "Pre-migration backup"
+   # Create backup, skipping the FAISS index and integrity check
+   lvdb backup create my_database --type full --exclude-faiss --no-verify
 
 **Options**:
 
-- ``--type, -t``: Backup type (full, incremental)
-- ``--compression, -c``: Compression algorithm (none, gzip, lzma, zstd)
-- ``--output-dir, -o``: Directory to store backup files
-- ``--description, -d``: Description for the backup
-- ``--verify``: Verify backup integrity after creation
+- ``--type, -t``: Backup type (full, incremental; default ``full``)
+- ``--parent, -p``: Parent backup ID (required for incremental backups)
+- ``--location, -l``: Backup storage location (default ``./backups``)
+- ``--compression, -c``: Compression algorithm (none, gzip, lzma, bzip2; default ``gzip``)
+- ``--no-verify``: Skip backup integrity verification after creation
+- ``--exclude-faiss``: Exclude the FAISS index from the backup
+- ``--json``: Output the result in JSON format
 
 List Backups
 ^^^^^^^^^^^^^

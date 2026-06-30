@@ -12,11 +12,11 @@ validating the resulting configuration.
 Features:
 - Typed dataclass settings with validate() methods
 - Load from TOML, JSON
-- Load and override from environment variables (LVDB_ prefixed)
+- Load and override from environment variables (``LVDB_`` prefixed)
 - Generate TOML output and export Flask-compatible config
 - Intelligent merging that preserves non-default base values
 
-Supported environment variables (prefix LVDB_):
+Supported environment variables (prefix ``LVDB_``):
 - Sectioned variables like LVDB_DATABASE_* LVDB_SERVER_* LVDB_EMBEDDING_*
 - Nested server security variables like LVDB_SERVER_SECURITY_*
 

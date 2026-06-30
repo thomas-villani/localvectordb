@@ -305,11 +305,15 @@ Tuning & Maintenance
    // Checkpoint only if WAL is large
    await db.checkpointIfWalLarge(128);  // threshold in MB
 
-   // Auto-tuning recommendations
-   const recs = await db.autoTune({ workload: "read_heavy" });
+   // Auto-tuning recommendations (workload is a structured profile object;
+   // every field is optional and falls back to balanced defaults)
+   const recs = await db.autoTune({ workload: { workload_type: "read_heavy" } });
 
    // Apply recommendations automatically
-   await db.autoTune({ workload: "read_heavy", apply: true });
+   await db.autoTune({
+     workload: { workload_type: "read_heavy", memory_constraint: "generous" },
+     apply: true,
+   });
 
 Fact-Checking
 -------------
