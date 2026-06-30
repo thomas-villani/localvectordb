@@ -300,7 +300,10 @@ Topic Clustering
 
    from localvectordb.visualization import cluster_embeddings, find_optimal_clusters
 
-   embeddings, doc_ids = db._get_document_embeddings_batch(None)
+   # pairwise_similarity_matrix() returns the document embeddings and IDs for all
+   # documents (pass doc_ids=[...] to restrict to a subset).
+   matrix = db.pairwise_similarity_matrix()
+   embeddings, doc_ids = matrix.embeddings, matrix.doc_ids
    k = find_optimal_clusters(embeddings)
    clusters = cluster_embeddings(embeddings, n_clusters=k)
 
@@ -319,7 +322,10 @@ Use detailed comparison to find what was added between document versions:
 
    if result.unmatched_chunks_2:
        doc = db.get("doc_v2")
+       # db.get() returns document content/metadata only; re-derive the chunks
+       # (with their indices) using the database's chunker.
+       chunks = db.chunker.chunk(doc.content)
        print("New content in v2:")
-       for chunk in doc.chunks or []:
+       for chunk in chunks:
            if chunk.index in result.unmatched_chunks_2:
                print(f"  [{chunk.index}] {chunk.content[:100]}...")

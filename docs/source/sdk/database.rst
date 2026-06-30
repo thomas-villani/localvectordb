@@ -293,7 +293,8 @@ Tuning & Maintenance
    const tuning = await db.getTuning();
 
    // Apply a tuning profile
-   await db.setTuning("write_heavy", { persist: true });
+   // (valid profiles: balanced, fast_ingest, read_optimized, durable, memory_saver)
+   await db.setTuning("fast_ingest", { persist: true });
 
    // Maintenance operations
    await db.checkpoint("PASSIVE");

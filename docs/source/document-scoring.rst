@@ -123,7 +123,7 @@ Before document-level aggregation is applied, each chunk receives a raw similari
 score between 0.0 and 1.0. The normalization depends on the search type.
 
 Vector Search
-~~~~~~~~~~~~~
+^^^^^^^^^^^^^
 
 FAISS returns raw distances which are converted to similarity scores by
 ``_distance_to_similarity``:
@@ -134,7 +134,7 @@ FAISS returns raw distances which are converted to similarity scores by
   similarity, approaching 0 for very distant vectors.
 
 Keyword Search
-~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^
 
 Keyword search uses SQLite FTS5 with the BM25 ranking function. FTS5 BM25 scores are
 negative values where more negative means a better match. These are converted to
@@ -147,7 +147,7 @@ similarity scores using an exponential mapping:
 This produces scores in [0, 1] where better BM25 matches yield higher similarity.
 
 Hybrid Search
-~~~~~~~~~~~~~
+^^^^^^^^^^^^^
 
 Hybrid search runs vector and keyword searches independently, then merges the results
 with a weighted linear combination:

@@ -100,7 +100,7 @@ Combining Search with Filters
        db.query_builder()
        .search("machine learning algorithms")  # Find semantically similar documents
        .filter("category", "tech")  # Narrow down to tech category
-       .filter("priority", gte=3)  # Only include high priority (3+) documents
+       .filter("priority", gte_=3)  # Only include high priority (3+) documents
        .limit(5)  # Return only top 5 results
        .execute()
    )
@@ -196,19 +196,19 @@ Ordering Results
 
 .. code-block:: python
 
-   # Order results by publication date (ascending by default)
+   # Order results by publication date (descending by default, newest first)
    results = (
        db.query_builder()
        .filter(category="tech")
-       .order_by("publish_date")  # Sort from oldest to newest
+       .order_by("publish_date")  # Default direction is "desc" -> newest to oldest
        .execute()
    )
 
-   # Order results by publication date in descending order (newest first)
+   # Order results by publication date in ascending order (oldest first)
    results = (
        db.query_builder()
        .filter(category="tech")
-       .order_by("publish_date", "desc")  # Sort from newest to oldest
+       .order_by("publish_date", "asc")  # Sort from oldest to newest
        .execute()
    )
 
@@ -675,7 +675,7 @@ Combined Features
    results = (
        db.query_builder()
        .search("climate change")  # Find climate change related documents
-       .filter("publish_date", gte="2020-01-01")  # Published since 2020
+       .filter("publish_date", gte_="2020-01-01")  # Published since 2020
        .group_by("author", "institution")  # Group by author and institution
        .count_by("*", "publication_count")  # Count publications per group
        .max_by("citations", "max_citations")  # Find maximum citations per group

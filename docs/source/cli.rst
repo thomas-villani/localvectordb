@@ -26,27 +26,31 @@ Starting the Server
    # Basic server start
    lvdb serve
 
-   # Custom configuration
-   lvdb serve --host 0.0.0.0 --port 8080 --config production.toml
+   # Custom configuration (--config is a global option: it goes BEFORE the subcommand)
+   lvdb --config production.toml serve --host 0.0.0.0 --port 8080
 
    # Development mode
    lvdb serve --debug --log-level DEBUG
 
-   # Specific database folder
-   lvdb serve --db-folder /data/vector_databases
+   # Specific database folder (--db-folder is also a global option)
+   lvdb --db-folder /data/vector_databases serve
 
    # Disable Ollama check
    lvdb serve --disable-ollama-check
 
 **Options**:
 
-- ``--host, -h``: Interface to bind to (default: 127.0.0.1)
+- ``--host, -H``: Interface to bind to (default: 127.0.0.1)
 - ``--port, -p``: Port to bind to (default: 5000)
 - ``--debug``: Enable debug mode
-- ``--config, -c``: Path to configuration file
-- ``--db-folder, -d``: Database directory path
 - ``--log-level, -l``: Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - ``--disable-ollama-check, -x``: Skip Ollama availability check
+
+.. note::
+   ``--config, -c`` and ``--db-folder, -d`` are **global** options on the top-level ``lvdb``
+   group, not on ``serve``. They must be given **before** the subcommand, e.g.
+   ``lvdb --config production.toml serve``. (``-h`` is reserved for ``--help``; the host
+   short flag is ``-H``.)
 
 Configuration Management
 ------------------------
@@ -77,8 +81,8 @@ View Configuration
    # Show in different format
    lvdb config show --format json
 
-   # Show from specific file
-   lvdb config show --config /path/to/config.toml
+   # Show from specific file (--config is global; it precedes the subcommand)
+   lvdb --config /path/to/config.toml config show
 
 **Example Output**:
 
@@ -107,7 +111,6 @@ View Configuration
    log_level = "INFO"
    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
    max_request_size = 104857600
-   request_timeout = 300
 
    [server.security]
    require_api_key = false
@@ -302,7 +305,6 @@ Configuration values can be accessed using dot notation:
 - ``server.log_level`` - Logging level
 - ``server.log_format`` - Log message format
 - ``server.max_request_size`` - Maximum request size
-- ``server.request_timeout`` - Request timeout
 
 **Security Settings** (``server.security.*``):
 
@@ -719,13 +721,16 @@ List Databases
    # List with details
    lvdb list --details
 
-   # Specify database folder
-   lvdb list --folder /path/to/databases
+   # Specify database folder (--db-folder is a global option, before the subcommand)
+   lvdb --db-folder /path/to/databases list
 
 **Options:**
-- ``-c, --config``: Path to the config file for the server
-- ``-f, --folder``: Optionally provide the explicit path containing databases
-- ``-d, --details``: Show document/chunk count, model, and chunk method for each database
+
+- ``--details``: Show document/chunk count, model, and chunk method for each database
+
+The database folder and config file are selected with the **global** options
+``--db-folder, -d`` and ``--config, -c`` (given before ``list``), e.g.
+``lvdb --config server.toml list --details``.
 
 **Example Output**:
 
@@ -1777,11 +1782,11 @@ Configuration and Deployment
    # Create production configuration
    lvdb config init --format toml --output production.toml
 
-   # Start production server
-   lvdb serve --config production.toml --host 0.0.0.0 --port 8080
+   # Start production server (--config is global; it precedes the subcommand)
+   lvdb --config production.toml serve --host 0.0.0.0 --port 8080
 
-   # Create backup-friendly database
-   lvdb create backup_db --db-folder /backup/vector_dbs
+   # Create backup-friendly database (--db-folder is global; it precedes the subcommand)
+   lvdb --db-folder /backup/vector_dbs create backup_db
 
    # Monitor database growth
    watch 'lvdb list --details'
@@ -1794,8 +1799,13 @@ Pipeline Integration
    #!/bin/bash
    # Document processing pipeline
 
-   # Create database if not exists. Add 'documents' metadata schema so we can add file info
-   lvdb create research_pipeline --embedding-model nomic-embed-text --metadata-schema files
+   # Create database if not exists.
+   # NOTE: `lvdb create --metadata-schema` accepts: documents, research_papers,
+   # code_repository, customer_support. The file-oriented `files` schema
+   # (file_path, created_at, last_modified, file_size_bytes, ...) is only available
+   # via `lvdb config init --schema files`; create a config with it first if you need
+   # those fields, since metadata not present in the schema is ignored on insert.
+   lvdb create research_pipeline --embedding-model nomic-embed-text --metadata-schema documents
 
    # Process incoming documents
    find /incoming/documents -name "*.txt" -newer /tmp/last_processed | while IFS= read -r file; do

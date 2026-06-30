@@ -56,7 +56,6 @@ class MCPConfig:
             "filter_documents",
             "get_document",
             "check_documents_exist",
-            "global_search",
             "get_metadata_schema",
             "get_system_info",
         ]

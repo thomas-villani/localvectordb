@@ -3,7 +3,7 @@ Host Header Validation Utilities
 
 Provides robust host header validation with support for:
 - Automatic port stripping (host:port -> host)
-- Wildcard subdomain patterns (*.example.com)
+- Wildcard subdomain patterns (``*.example.com``)
 - Exact hostname matching
 - Case-insensitive comparison
 - IPv4 and IPv6 address handling

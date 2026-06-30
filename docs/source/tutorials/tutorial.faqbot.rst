@@ -145,11 +145,24 @@ Want a slightly more sophisticated bot? Here's an enhanced version:
 .. code-block:: python
 
    from localvectordb import LocalVectorDB
+   from localvectordb.core import MetadataField, MetadataFieldType
    import json
 
    class FAQBot:
        def __init__(self, faq_data):
-           self.db = LocalVectorDB(name="enhanced_faq", embedding_provider="ollama", embedding_model="nomic-embed-text")
+           # IMPORTANT: metadata fields are only stored if they are declared in the
+           # metadata_schema. Anything not in the schema is silently dropped, so we
+           # declare ``faq_id`` and ``category`` here to make them persist and filterable.
+           metadata_schema = {
+               "faq_id": MetadataField(type=MetadataFieldType.INTEGER, indexed=True),
+               "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+           }
+           self.db = LocalVectorDB(
+               name="enhanced_faq",
+               metadata_schema=metadata_schema,
+               embedding_provider="ollama",
+               embedding_model="nomic-embed-text",
+           )
            self.load_faqs(faq_data)
        
        def load_faqs(self, faqs):
@@ -227,7 +240,9 @@ Advanced Features to Add
 
 .. code-block:: python
 
-   # Search within specific categories
+   # Filtering only works on metadata fields declared in the database's
+   # metadata_schema (see the enhanced bot above, which declares "category").
+   # Store a real category per FAQ, then filter on it:
    results = db.query(question, filters={"category": "billing"})
 
 **Conversation Memory**

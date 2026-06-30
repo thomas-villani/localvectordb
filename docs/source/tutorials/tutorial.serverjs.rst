@@ -822,11 +822,13 @@ Add the code from the sections above to each respective file.
 Start the LocalVectorDB Server
 ------------------------------
 
-The LocalVectorDB server includes a built-in FastAPI web server that handles both the API and serves static files:
+The LocalVectorDB server is a FastAPI application that exposes the REST API under
+``/api/v1`` -- it does **not** serve your static HTML/CSS/JS files. We'll run the API server
+here and load the front-end files separately in the next step.
 
 .. code-block:: bash
 
-   # Start the LocalVectorDB server
+   # Start the LocalVectorDB server (serves the API only)
    lvdb serve
 
 You should see output indicating the server is running on `http://127.0.0.1:5000`.
@@ -834,10 +836,31 @@ You should see output indicating the server is running on `http://127.0.0.1:5000
 Access Your Search Engine
 -------------------------
 
-1. Make sure your LocalVectorDB server is running on port 5000
-2. Open your browser and navigate to `http://127.0.0.1:5000`
-3. Place your `index.html`, `styles.css`, and `script.js` files in the same directory as your config file
-4. Navigate to `http://127.0.0.1:5000/index.html`
+Because the LocalVectorDB server only serves the API (not static files), open the front-end
+yourself. You have two easy options:
+
+**Option A -- open the file directly**
+
+Just double-click ``index.html`` (or drag it into your browser). It will load from a
+``file://`` URL and call the API at ``http://127.0.0.1:5000``. This is a cross-origin request,
+which is exactly why we enabled CORS during configuration -- without it the browser would
+block the requests.
+
+**Option B -- run a tiny static file server**
+
+Serve the three files over HTTP from their directory using Python's built-in server:
+
+.. code-block:: bash
+
+   # In the directory containing index.html, styles.css, script.js
+   python -m http.server 8080
+
+Then:
+
+1. Make sure your LocalVectorDB API server is running on port 5000 (``lvdb serve``).
+2. Open your browser and navigate to ``http://127.0.0.1:8080/index.html``.
+3. (Either option) The page calls the API at ``http://127.0.0.1:5000/api/v1`` -- keep that
+   server running too.
 
 You should see your search engine! Try searching for terms like:
 
@@ -889,8 +912,8 @@ Troubleshooting
 
    .. code-block:: bash
 
-      lvdb config set server.cors_enabled true
-      lvdb config set server.cors_allowed_origins '["http://localhost:8080"]'
+      lvdb config set server.security.cors_enabled true
+      lvdb config set server.security.cors_allowed_origins '["http://localhost:8080"]'
 
 **Server Connection Failed**
    Verify the LocalVectorDB server is running:
@@ -917,20 +940,45 @@ Here are some ideas to extend your search engine:
 
 **Add Document Upload**
 
+The server has two distinct endpoints for adding documents, and they take different payloads:
+
+* ``POST /{db}/documents`` -- **JSON** body for text you already have in memory
+  (``{"documents": [...], "metadata": [...]}``).
+* ``POST /{db}/upload`` -- **multipart/form-data** for uploading actual files; the server
+  extracts the text for you. File upload must be enabled on the server
+  (``lvdb config init --enable-file-upload`` / ``lvdb config set server.file_upload_enabled true``).
+
+Upload a real file (multipart) to the ``/upload`` endpoint:
+
 .. code-block:: javascript
 
-   // Add a file input to your HTML
+   // Wire this to an <input type="file"> element, e.g. input.files[0]
    function handleFileUpload(file) {
        const formData = new FormData();
-       formData.append('documents', [file.content]);
+       formData.append('files', file);  // the server extracts text from the file
        formData.append('metadata', JSON.stringify({
            filename: file.name,
            uploaded_at: new Date().toISOString()
        }));
 
-       fetch(`${API_BASE_URL}/${DATABASE_NAME}/documents`, {
+       return fetch(`${API_BASE_URL}/${DATABASE_NAME}/upload`, {
            method: 'POST',
-           body: formData
+           body: formData  // do NOT set Content-Type; the browser sets the multipart boundary
+       });
+   }
+
+Or send raw text you already have as **JSON** to the ``/documents`` endpoint:
+
+.. code-block:: javascript
+
+   function addText(text) {
+       return fetch(`${API_BASE_URL}/${DATABASE_NAME}/documents`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({
+               documents: [text],
+               metadata: [{ uploaded_at: new Date().toISOString() }]
+           })
        });
    }
 

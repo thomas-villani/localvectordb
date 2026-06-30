@@ -49,11 +49,11 @@ Create an incremental backup:
 
     $ lvdb backup create mydatabase --type incremental
 
-Create a backup with specific compression:
+Create a backup with a specific compression algorithm:
 
 .. code-block:: bash
 
-    $ lvdb backup create mydatabase --compression lzma --compression-level 9
+    $ lvdb backup create mydatabase --compression lzma
 
 Listing Backups
 ^^^^^^^^^^^^^^^
@@ -88,17 +88,17 @@ Restore to a different location:
 Point-in-Time Recovery
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-Restore to a specific point in time:
-
-.. code-block:: bash
-
-    $ lvdb backup pitr "2024-01-15 14:30:00"
-
-Restore to a timestamp with custom location:
+Restore to a specific point in time (``--to-location`` is required):
 
 .. code-block:: bash
 
     $ lvdb backup pitr "2024-01-15 14:30:00" --to-location ./pitr-restored
+
+Validate a recovery point without restoring, widening the search tolerance:
+
+.. code-block:: bash
+
+    $ lvdb backup pitr "2024-01-15 14:30:00" --to-location ./pitr-restored --tolerance 120 --dry-run
 
 Backup Types
 ------------
@@ -119,12 +119,17 @@ Full backups are self-contained and can be restored independently.
 
 .. code-block:: python
 
-    from localvectordb.backup import BackupManager, BackupConfig
+    from localvectordb.backup import (
+        BackupManager,
+        BackupConfig,
+        BackupType,
+        CompressionAlgorithm,
+    )
 
     # Create backup configuration
     config = BackupConfig(
         backup_location="./backups",
-        compression_type="gzip"
+        compression_algorithm=CompressionAlgorithm.GZIP,
     )
 
     backup_manager = BackupManager(
@@ -149,13 +154,15 @@ Incremental backups only store changes since the last backup:
 
 .. code-block:: python
 
-    # Create an incremental backup
-    backup_id = backup_manager.create_backup(BackupType.INCREMENTAL)
-    
-    # List backup chain
-    chain = backup_manager.get_backup_chain(backup_id)
-    for backup in chain:
-        print(f"{backup['type']}: {backup['timestamp']}")
+    # An incremental backup is taken against a parent backup. Create (or look up)
+    # a full backup first, then pass its ID as ``parent_backup_id``.
+    full_id = backup_manager.create_backup(BackupType.FULL)
+
+    backup_id = backup_manager.create_backup(
+        BackupType.INCREMENTAL,
+        parent_backup_id=full_id,
+    )
+    print(f"Created incremental backup {backup_id} (parent {full_id})")
 
 Configuration
 -------------
@@ -260,14 +267,12 @@ Using PITR
 
 .. code-block:: bash
 
-    # Restore to a specific timestamp
-    $ lvdb backup pitr "2024-01-15 14:30:00" --database mydatabase
-    
-    # Restore to a relative time
-    $ lvdb backup pitr "1 hour ago" --database mydatabase
-    
-    # Restore with verification
-    $ lvdb backup pitr "2024-01-15 14:30:00" --verify
+    # Restore to a specific timestamp (timestamp must be
+    # "YYYY-MM-DD HH:MM:SS" or ISO 8601; --to-location is required)
+    $ lvdb backup pitr "2024-01-15 14:30:00" --to-location ./restored
+
+    # Widen the search window and validate without restoring
+    $ lvdb backup pitr "2024-01-15T14:30:00Z" --to-location ./restored --tolerance 120 --dry-run
 
 **Python API:**
 
@@ -285,14 +290,16 @@ Using PITR
         config=config
     )
 
-    # Restore to specific time using PITR
+    # Restore to a specific time using PITR. Returns a dict describing the
+    # recovery operation (status, the recovery point used, and details).
     target_time = datetime.now() - timedelta(hours=2)
-    restored_path = backup_manager.restore_to_point_in_time(
-        target_time=target_time,
-        restore_path="./restored_db"
+    result = backup_manager.restore_to_point_in_time(
+        target_timestamp=target_time,
+        restore_location="./restored_db",
+        tolerance_minutes=60,
     )
 
-    print(f"Database restored to: {restored_path}")
+    print(f"Recovery succeeded: {result['success']}")
 
 PITR Limitations
 ^^^^^^^^^^^^^^^^
@@ -307,47 +314,33 @@ Backup Management
 Verifying Backups
 ^^^^^^^^^^^^^^^^^
 
-Verify the integrity of a backup:
+Verify the integrity of a backup by ID:
 
 .. code-block:: bash
 
     $ lvdb backup verify backup-id-here
 
-Verify all backups for a database:
+To verify several backups, list them first and verify each ID:
 
 .. code-block:: bash
 
-    $ lvdb backup verify --database mydatabase --all
+    $ lvdb backup list --json
 
 **Python API:**
 
 .. code-block:: python
 
-    # Verify a specific backup
+    # Verify a specific backup. Returns True if the backup is intact.
     is_valid = backup_manager.verify_backup(backup_id)
-    
-    # Verify with detailed report
-    report = backup_manager.verify_backup(backup_id, detailed=True)
-    print(f"Checksum valid: {report['checksum_valid']}")
-    print(f"Files intact: {report['files_intact']}")
+    print(f"Backup valid: {is_valid}")
 
 Streaming Verification
 ^^^^^^^^^^^^^^^^^^^^^^
 
 For large backups or memory-constrained environments, LocalVectorDB provides streaming verification that can verify backup integrity without extracting the entire archive to disk. This is particularly useful for backups that exceed available disk space or memory.
 
-**Command Line:**
-
-.. code-block:: bash
-
-    # Streaming verification (memory-efficient)
-    $ lvdb backup verify backup-id-here --streaming
-
-    # Verify only archive and manifest checksums (fastest)
-    $ lvdb backup verify backup-id-here --streaming --quick
-
-    # Stream verify all backups for a database
-    $ lvdb backup verify --database mydatabase --all --streaming
+Streaming verification is available through the Python API via
+``verify_backup_streaming()``.
 
 **Python API:**
 
@@ -385,11 +378,11 @@ For large backups or memory-constrained environments, LocalVectorDB provides str
             print(f"❌ Verification error: {e}")
             return False
 
-    # Verify multiple backups with streaming
-    backup_ids = backup_manager.list_backups()
-    for backup_info in backup_ids:
-        backup_id = backup_info['backup_id']
-        size_mb = backup_info.get('size_bytes', 0) / (1024 * 1024)
+    # Verify multiple backups with streaming.
+    # list_backups() returns a list of BackupMetadata objects (attribute access).
+    for backup_info in backup_manager.list_backups():
+        backup_id = backup_info.backup_id
+        size_mb = backup_info.size_bytes / (1024 * 1024)
 
         # Use streaming verification for large backups
         if size_mb > 100:  # Backups larger than 100MB
@@ -463,7 +456,7 @@ Benefits of Streaming Verification
     # Example usage
     recent_backups = backup_manager.list_backups()[:3]  # Test latest 3 backups
     for backup_info in recent_backups:
-        compare_verification_methods(backup_info['backup_id'])
+        compare_verification_methods(backup_info.backup_id)
 
 Verification Options
 ~~~~~~~~~~~~~~~~~~~~
@@ -513,19 +506,20 @@ Use streaming verification in automated backup monitoring systems:
 
         logging.info("Starting automated backup health check")
 
-        # Get backups from last 7 days
-        cutoff_date = datetime.now() - timedelta(days=7)
+        # Get backups from the last 7 days.
+        # BackupMetadata.created_at is a datetime; derive a matching-tz cutoff.
         recent_backups = []
 
         for backup_info in backup_manager.list_backups():
-            backup_date = datetime.fromisoformat(backup_info['created_at'])
+            backup_date = backup_info.created_at
+            cutoff_date = datetime.now(backup_date.tzinfo) - timedelta(days=7)
             if backup_date >= cutoff_date:
                 recent_backups.append(backup_info)
 
         # Verify each recent backup
         failed_backups = []
         for backup_info in recent_backups:
-            backup_id = backup_info['backup_id']
+            backup_id = backup_info.backup_id
 
             try:
                 # Use quick streaming verification for daily checks
@@ -576,10 +570,15 @@ Best Practices for Streaming Verification
     def backup_verification_workflow(backup_id):
         """Best practice backup verification workflow."""
 
-        # Get backup metadata
-        backup_info = backup_manager.get_backup_metadata(backup_id)
-        size_mb = backup_info['size_bytes'] / (1024 * 1024)
-        age_days = (datetime.now() - backup_info['created_at']).days
+        # Look up this backup's metadata (list_backups returns BackupMetadata objects)
+        backup_info = next(
+            (b for b in backup_manager.list_backups() if b.backup_id == backup_id),
+            None,
+        )
+        if backup_info is None:
+            raise ValueError(f"Backup not found: {backup_id}")
+        size_mb = backup_info.size_bytes / (1024 * 1024)
+        age_days = (datetime.now(backup_info.created_at.tzinfo) - backup_info.created_at).days
 
         # Choose verification method based on size and age
         if size_mb > 100:
@@ -610,36 +609,29 @@ Best Practices for Streaming Verification
 Cleanup and Retention
 ^^^^^^^^^^^^^^^^^^^^^
 
-Clean up old backups based on retention policy:
+Clean up backups older than the default retention period:
 
 .. code-block:: bash
 
-    $ lvdb backup cleanup --database mydatabase
+    $ lvdb backup cleanup
 
-Force cleanup of backups older than 7 days:
-
-.. code-block:: bash
-
-    $ lvdb backup cleanup --database mydatabase --older-than 7
-
-Delete specific backup:
+Clean up backups older than 7 days, keeping at least 5 full backups, and preview
+the result first:
 
 .. code-block:: bash
 
-    $ lvdb backup delete backup-id-here
+    $ lvdb backup cleanup --older-than 7 --keep-full 5 --dry-run
 
 **Python API:**
 
 .. code-block:: python
 
-    # Clean up based on retention policy
-    deleted = backup_manager.cleanup_old_backups(
-        retention_days=30,
-        keep_min_backups=5
-    )
-    print(f"Deleted {len(deleted)} old backups")
-    
-    # Delete specific backup
+    # Clean up based on retention policy. Returns the number of backups deleted.
+    # If retention_days is omitted, the configured value is used.
+    deleted_count = backup_manager.cleanup_old_backups(retention_days=30)
+    print(f"Deleted {deleted_count} old backups")
+
+    # Delete a specific backup (returns True on success)
     backup_manager.delete_backup(backup_id)
 
 Backup Format
@@ -735,7 +727,9 @@ Each file within the backup has its own SHA-256 checksum stored in the manifest:
 .. code-block:: python
 
     # Access individual file checksums
-    metadata = backup_manager.get_backup_metadata(backup_id)
+    metadata = next(
+        b for b in backup_manager.list_backups() if b.backup_id == backup_id
+    )
 
     for filename, checksum in metadata.checksums.items():
         print(f"{filename}: {checksum}")
@@ -751,7 +745,9 @@ The manifest itself is protected with a checksum to detect tampering:
 .. code-block:: python
 
     # The manifest_checksum protects against manifest tampering
-    metadata = backup_manager.get_backup_metadata(backup_id)
+    metadata = next(
+        b for b in backup_manager.list_backups() if b.backup_id == backup_id
+    )
     print(f"Manifest checksum: {metadata.manifest_checksum}")
 
     # Verification process:
@@ -767,7 +763,9 @@ The archive_checksum provides end-to-end verification:
 .. code-block:: python
 
     # Archive checksum protects the entire backup file
-    metadata = backup_manager.get_backup_metadata(backup_id)
+    metadata = next(
+        b for b in backup_manager.list_backups() if b.backup_id == backup_id
+    )
     print(f"Archive checksum: {metadata.archive_checksum}")
 
     # This checksum is calculated after the archive is created
@@ -989,24 +987,39 @@ BackupManager
                      faiss_index_path: Optional[Union[str, Path]] = None,
                      config: Optional[BackupConfig] = None):
             """Initialize backup manager."""
-        
+
         def create_backup(self, backup_type: BackupType = BackupType.FULL,
-                         compression: str = "gzip",
-                         compression_level: int = 6) -> str:
-            """Create a backup and return backup ID."""
-        
-        def restore_backup(self, backup_id: str, 
-                          restore_path: Optional[str] = None) -> str:
-            """Restore from backup."""
-        
-        def list_backups(self, database_name: Optional[str] = None) -> List[Dict]:
-            """List available backups."""
-        
+                          parent_backup_id: Optional[str] = None,
+                          backup_id: Optional[str] = None) -> str:
+            """Create a backup and return its backup ID.
+
+            Compression is taken from the BackupConfig passed to the manager.
+            Incremental backups require ``parent_backup_id``.
+            """
+
+        def restore_backup(self, backup_id: str,
+                           restore_location: Optional[Union[str, Path]] = None,
+                           overwrite_existing: bool = False) -> Path:
+            """Restore from backup; returns the restored database directory."""
+
+        def list_backups(self,
+                         backup_type: Optional[BackupType] = None
+                         ) -> List[BackupMetadata]:
+            """List available backups as BackupMetadata objects."""
+
         def verify_backup(self, backup_id: str) -> bool:
             """Verify backup integrity."""
-        
-        def cleanup_old_backups(self, retention_days: int = 30) -> List[str]:
-            """Clean up old backups."""
+
+        def verify_backup_streaming(self, backup_id: str,
+                                    verify_archive_members: bool = True) -> bool:
+            """Verify backup integrity without full extraction."""
+
+        def cleanup_old_backups(self,
+                               retention_days: Optional[int] = None) -> int:
+            """Delete old backups; returns the number deleted."""
+
+        def delete_backup(self, backup_id: str) -> bool:
+            """Delete a specific backup."""
 
 Point-in-Time Recovery Methods
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1015,21 +1028,21 @@ Point-in-time recovery functionality is provided by the BackupManager class:
 
 .. code-block:: python
 
-    # PITR methods in BackupManager class
-    def restore_to_point_in_time(self, target_time: datetime,
-                                restore_path: str) -> str:
-        """Restore database to specific point in time."""
+    # PITR method on BackupManager
+    def restore_to_point_in_time(self, target_timestamp: datetime,
+                                 restore_location: Union[str, Path],
+                                 tolerance_minutes: int = 60,
+                                 dry_run: bool = False) -> Dict[str, Any]:
+        """Restore the database to a specific point in time.
 
-    def get_available_recovery_points(self) -> List[datetime]:
-        """Get list of available recovery points."""
-
-    def validate_recovery_point(self, target_time: datetime) -> bool:
-        """Check if recovery to target time is possible."""
+        Returns a dict describing the recovery operation (including a
+        ``success`` flag and the recovery point used). Pass ``dry_run=True``
+        to validate without restoring.
+        """
 
 See Also
 --------
 
-- :ref:`migrations` - Database migration system
-- :ref:`configuration` - Configuration options
-- :ref:`cli` - Command-line interface
-- :ref:`api` - Python API reference
+- :doc:`/migrations` - Database migration system
+- :doc:`/cli` - Command-line interface
+- :doc:`/installation` - Installation and configuration

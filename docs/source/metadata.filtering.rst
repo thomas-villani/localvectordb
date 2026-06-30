@@ -9,6 +9,15 @@ LocalVectorDB provides a powerful and secure metadata filtering system that allo
 their metadata fields. The filtering system supports MongoDB-style operators and generates safe parameterized
 SQL queries to prevent injection attacks.
 
+.. important::
+
+   **Metadata fields must be declared in the database's** ``metadata_schema`` **to be stored and
+   queryable.** Each declared field becomes a real column on the ``documents`` table. Any key you pass
+   in a document's metadata that is **not** part of the schema is silently dropped on insert (it is not
+   stored, and you cannot filter on it). Likewise, filtering on a field that is not in the schema raises
+   an error. Declare every field you intend to store, filter, or sort on when you create the database
+   (or add it later with ``update_metadata_schema()``).
+
 
 Key Features
 ^^^^^^^^^^^^
@@ -19,7 +28,7 @@ Key Features
 * **Type-safe operations** with schema validation
 * **JSON/Array support** for complex data structures
 * **Performance optimized** with proper indexing
-* **Multi-column embeddings** - Enable vector search on metadata fields (v1.1+)
+* **Multi-column embeddings** - Enable vector search on metadata fields
 * **Full-text search** - FTS5 support for metadata fields
 
 Metadata Field Attributes
@@ -92,9 +101,12 @@ String Operators
    * - Operator
      - Description
    * - ``$like``
-     - SQL LIKE pattern matching (case-sensitive)
+     - SQL ``LIKE`` pattern matching. This uses SQLite's built-in ``LIKE``,
+       which is case-insensitive for ASCII characters by default.
    * - ``$ilike``
-     - Case-insensitive LIKE pattern matching
+     - Case-insensitive ``LIKE`` matching. Lowercases both the column and the
+       value (``LOWER(field) LIKE ...``) for reliable case-insensitive
+       matching regardless of SQLite's ``LIKE`` settings.
    * - ``$contains``
      - Contains substring
    * - ``$startswith``

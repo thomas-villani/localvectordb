@@ -234,7 +234,7 @@ Document Operations
 
     # Sync: Add or update documents
     doc_ids = db.upsert(
-        contents=["Document 1", "Document 2"],
+        documents=["Document 1", "Document 2"],
         metadata=[
             {"author": "Alice", "year": 2024},
             {"author": "Bob", "year": 2023}
@@ -243,15 +243,15 @@ Document Operations
     )
 
     # Async variant
-    doc_ids = await db.upsert_async(contents, metadata, ids)
+    doc_ids = await db.upsert_async(documents, metadata, ids)
 
 **Insert Documents**::
 
     # Sync: Insert new documents (fails if IDs exist)
-    doc_ids = db.insert(contents, metadata, ids)
+    doc_ids = db.insert(documents, metadata, ids)
 
     # Async variant
-    doc_ids = await db.insert_async(contents, metadata, ids)
+    doc_ids = await db.insert_async(documents, metadata, ids)
 
 **Get Documents**::
 
@@ -319,24 +319,24 @@ File Operations
             {"source": "internal", "confidential": True}
         ],
         ids=["pdf1", "docx1"],  # Optional
-        chunk_metadata_inherit=True  # Chunks inherit document metadata
+        extractor_kwargs={"ocr": False}  # Optional, passed to the extractor
     )
 
     # Async variant
     doc_ids = await db.upsert_from_file_async(
-        file_paths, metadata, ids, chunk_metadata_inherit
+        file_paths, metadata, ids
     )
 
 **Insert from Files**::
 
     # Insert new files (fails if IDs exist)
     doc_ids = db.insert_from_file(
-        file_paths, metadata, ids, chunk_metadata_inherit
+        file_paths, metadata, ids, errors="raise"
     )
 
     # Async variant
     doc_ids = await db.insert_from_file_async(
-        file_paths, metadata, ids, chunk_metadata_inherit
+        file_paths, metadata, ids, errors="raise"
     )
 
 Chunk Operations
@@ -344,33 +344,41 @@ Chunk Operations
 
 **Upsert Chunks Directly**::
 
-    from localvectordb.core import Chunk
+    from localvectordb.core import Chunk, ChunkPosition
 
-    # Create chunks manually
-    chunks = [
-        Chunk(
-            parent_doc_id="doc1",
-            chunk_index=0,
-            start_pos=0,
-            end_pos=100,
-            content="First chunk content",
-            metadata={"section": "intro"}
-        ),
-        Chunk(
-            parent_doc_id="doc1",
-            chunk_index=1,
-            start_pos=100,
-            end_pos=200,
-            content="Second chunk content",
-            metadata={"section": "main"}
-        )
-    ]
+    # upsert_from_chunks takes a dict mapping each document ID to its chunks.
+    # Chunks may be plain strings or Chunk objects. A Chunk's fields are:
+    # content, position (a ChunkPosition), tokens, index, and the optional
+    # faiss_id / content_hash.
+    chunks_by_document = {
+        "doc1": [
+            Chunk(
+                content="First chunk content",
+                position=ChunkPosition(
+                    start=0, end=100, line=1, column=1, end_line=5, end_column=20
+                ),
+                tokens=18,
+                index=0,
+            ),
+            Chunk(
+                content="Second chunk content",
+                position=ChunkPosition(
+                    start=100, end=200, line=5, column=21, end_line=9, end_column=15
+                ),
+                tokens=20,
+                index=1,
+            ),
+        ]
+    }
 
-    # Upsert chunks
-    db.upsert_from_chunks(chunks)
+    # Upsert chunks (per-document metadata is optional)
+    db.upsert_from_chunks(chunks_by_document, metadata={"doc1": {"section": "intro"}})
+
+    # A list of plain strings per document also works:
+    db.upsert_from_chunks({"doc2": ["chunk one text", "chunk two text"]})
 
     # Async variant
-    await db.upsert_from_chunks_async(chunks)
+    await db.upsert_from_chunks_async(chunks_by_document)
 
 **Get Chunk Embeddings**::
 
@@ -389,9 +397,7 @@ Search and Query Operations
         query="machine learning algorithms",
         search_type="vector",
         k=10,
-        filters={"year": {">=": 2020}},
-        include_content=True,
-        include_metadata=True
+        filters={"year": {">=": 2020}}
     )
 
     # Keyword search (FTS)
@@ -406,8 +412,7 @@ Search and Query Operations
         query="neural networks",
         search_type="hybrid",
         k=10,
-        vector_weight=0.7,  # 70% vector, 30% keyword
-        keyword_weight=0.3
+        vector_weight=0.7  # 70% vector, 30% keyword (keyword weight = 1 - vector_weight)
     )
 
     # Async variants
@@ -415,19 +420,21 @@ Search and Query Operations
 
 **Multi-Column Search**::
 
-    # Search across multiple fields with different weights
+    # Search the main content plus embedding-enabled metadata columns.
+    # Pass a single query string and the columns to search (use "content"
+    # for the main document text). If columns is omitted, all
+    # embedding-enabled fields plus the main content are searched.
     results = db.query_multi_column(
-        queries={
-            "title": ("neural networks", 0.3),
-            "abstract": ("deep learning", 0.2),
-            "content": ("transformer models", 0.5)
-        },
+        "neural networks",
+        columns=["content", "title", "abstract"],
         search_type="vector",
         k=10
     )
 
     # Async variant
-    results = await db.query_multi_column_async(queries, **kwargs)
+    results = await db.query_multi_column_async(
+        "neural networks", columns=["content", "title", "abstract"]
+    )
 
 **MongoDB-style Filtering**::
 
@@ -444,9 +451,7 @@ Search and Query Operations
         },
         order_by="year DESC",
         limit=20,
-        offset=0,
-        include_content=True,
-        include_metadata=True
+        offset=0
     )
 
     # Async variant
@@ -501,8 +506,8 @@ RemoteVectorDB inherits from ``TuningMixin``, providing remote access to SQLite 
 
     # Apply tuning profile
     db.set_sqlite_tuning(
-        profile="fast_ingest",  # or "balanced", "fast_query"
-        custom_pragmas={"cache_size": -262144}  # 256MB cache
+        profile="fast_ingest",  # or "balanced", "read_optimized", "durable", "memory_saver"
+        overrides={"cache_size": -262144}  # 256MB cache
     )
 
     # Maintenance operations
@@ -537,8 +542,8 @@ Database Management
 
 **Health Checks**::
 
-    # Check if server is healthy
-    is_healthy = db.healthy()
+    # Check if server is healthy (property, not a method)
+    is_healthy = db.healthy
 
     # Ping server (with caching)
     is_alive = db.ping(force=False)  # Uses cached result if recent
@@ -546,8 +551,8 @@ Database Management
 
 **Connection Management**::
 
-    # Check if connection is closed
-    is_closed = db.closed()
+    # Check if connection is closed (property, not a method)
+    is_closed = db.closed
 
     # Save any pending changes
     db.save()
@@ -744,9 +749,7 @@ Build a Retrieval-Augmented Generation system::
                 query=query,
                 search_type="hybrid",
                 k=max_docs,
-                vector_weight=0.7,
-                include_content=True,
-                include_metadata=True
+                vector_weight=0.7
             )
 
             contexts = []
@@ -829,7 +832,7 @@ Process documents with metadata extraction::
 
             # Upsert to database
             doc_id = await self.db.upsert_async(
-                contents=[doc['content']],
+                documents=[doc['content']],
                 metadata=[metadata],
                 ids=[doc.get('id')]
             )
@@ -912,7 +915,7 @@ Monitor and handle connection health::
 
     def ensure_healthy_connection(db: RemoteVectorDB):
         """Ensure database connection is healthy"""
-        if db.closed():
+        if db.closed:  # property, not a method
             raise RuntimeError("Database connection is closed")
 
         if not db.ping():
@@ -921,7 +924,7 @@ Monitor and handle connection health::
             if not db.ping(force=True):
                 raise RuntimeError("Database server is not responding")
 
-        if not db.healthy():
+        if not db.healthy:  # property, not a method
             raise RuntimeError("Database is not healthy")
 
         return True
@@ -1037,7 +1040,7 @@ Best Practices
 
        async def health_check():
            try:
-               if not db.healthy():
+               if not db.healthy:  # property, not a method
                    alert_ops_team("Database unhealthy")
                    return False
                return True
@@ -1080,26 +1083,26 @@ Best Practices
 Migration Guide
 ---------------
 
-Migrating from LocalVectorDB v0.x
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Migrating from the legacy API
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If migrating from older versions::
+If migrating from an older, pre-release API::
 
-    # Old v0.x code
+    # Old (legacy) code
     from localvectordb import LocalVectorDB
 
     db = LocalVectorDB(path="./data/mydb.db")
     db.add_texts(["text1", "text2"])
     results = db.similarity_search("query")
 
-    # New v1.0 code (local)
+    # v0.1.0 code (local)
     from localvectordb import LocalVectorDB
 
     db = LocalVectorDB("mydb", "./data")
     db.upsert(["text1", "text2"])
     results = db.query("query", search_type="vector")
 
-    # New v1.0 code (remote)
+    # v0.1.0 code (remote)
     from localvectordb.client import RemoteVectorDB
 
     db = RemoteVectorDB("mydb", "http://server:5000")

@@ -24,11 +24,23 @@ Create ``index_downloads.py``:
 .. code-block:: python
 
    from localvectordb import LocalVectorDB
+   from localvectordb.core import MetadataField, MetadataFieldType
    import os
    from pathlib import Path
 
-   # Create database
-   db = LocalVectorDB(name="downloads_search", embedding_provider="ollama", embedding_model="nomic-embed-text")
+   # Create database. NOTE: metadata is only stored for fields declared in the
+   # metadata_schema -- anything else is silently dropped. We declare "filename"
+   # and "file_path" so they actually persist and appear in search results.
+   metadata_schema = {
+       "filename": MetadataField(type=MetadataFieldType.TEXT, indexed=True, required=True),
+       "file_path": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+   }
+   db = LocalVectorDB(
+       name="downloads_search",
+       metadata_schema=metadata_schema,
+       embedding_provider="ollama",
+       embedding_model="nomic-embed-text",
+   )
 
    # Find your Downloads folder
    downloads_path = Path.home() / "Downloads"
@@ -40,7 +52,7 @@ Create ``index_downloads.py``:
            with open(file_path, 'r', encoding='utf-8') as f:
                content = f.read()
            if content.strip():  # Skip empty files
-               db.upsert([content], metadata=[{"filename": file_path.name, "path": str(file_path)}])
+               db.upsert([content], metadata=[{"filename": file_path.name, "file_path": str(file_path)}])
                print(f"Indexed: {file_path.name}")
        except Exception as e:
            print(f"Skipped {file_path.name}: {e}")

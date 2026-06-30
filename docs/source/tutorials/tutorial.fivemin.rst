@@ -26,7 +26,9 @@ Step 1: Install (30 seconds)
 
    pip install localvectordb
 
-That's it! LocalVectorDB installs with everything you need.
+That installs the library itself. This tutorial's default embedding provider is Ollama,
+which runs locally and is installed separately (see `No Ollama? No Problem!`_ to use a hosted
+provider instead, or the Ollama setup steps near the end to install it).
 
 .. tip::
 

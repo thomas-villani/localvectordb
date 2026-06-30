@@ -96,15 +96,24 @@ For local embeddings without API keys:
 
 FAISS Installation
 ^^^^^^^^^^^^^^^^^^
-FAISS is automatically installed, but for GPU support:
+``faiss-cpu`` is a runtime dependency and is installed automatically with
+LocalVectorDB, so you normally do not need to install FAISS yourself.
 
 .. code-block:: bash
 
-   # CPU version (default)
+   # CPU version (this is the packaged runtime dependency)
    pip install faiss-cpu
 
-   # GPU version (if you have CUDA)
+   # GPU version (only if you have CUDA; install manually)
    pip install faiss-gpu
+
+.. note::
+
+   LocalVectorDB only depends on and packages ``faiss-cpu``. ``faiss-gpu`` is
+   **not** a declared dependency and is not pulled in by any extra; you must
+   install it yourself if you want GPU acceleration. Note that ``faiss-gpu``
+   is not published on PyPI for every FAISS/Python version, so it may need to
+   be installed via conda or built from source.
 
 SQLite FTS5
 ^^^^^^^^^^^
@@ -178,7 +187,7 @@ Troubleshooting
 ---------------
 Common Issues
 ^^^^^^^^^^^^^
-**ImportError: No module named ’faiss’**
+**ImportError: No module named 'faiss'**
 
 .. code-block:: bash
 

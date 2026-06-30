@@ -43,10 +43,11 @@ Use the ``lvdb`` CLI to create and populate specialized databases:
    # Create a specialized knowledge base
    lvdb create technical_docs --embedding-model nomic-embed-text
 
-   # Add documents using the CLI
-   lvdb db technical_docs add-file ./docs/api_reference.pdf
-   lvdb db technical_docs add-file ./docs/user_guide.md
-   lvdb db technical_docs add-text "Key troubleshooting steps..." --metadata '{"type": "troubleshooting"}'
+   # Add documents using the CLI (the command is `add`; it accepts files, globs, or stdin)
+   lvdb db technical_docs add ./docs/api_reference.pdf
+   lvdb db technical_docs add ./docs/user_guide.md
+   # Add text from stdin with `-`
+   echo "Key troubleshooting steps..." | lvdb db technical_docs add - --metadata '{"type": "troubleshooting"}'
 
 **Step 2: Configure Minimal Tool Set**
 
@@ -279,8 +280,8 @@ Example ``mcp_config.toml``:
    embedding_provider = "ollama"
    embedding_model = "nomic-embed-text"
    chunk_size = 500
-   chunk_overlap = 50
-   chunking_method = "sentences"
+   chunk_overlap = 1
+   chunking_method = "lines"
    enable_fts = true
    enable_gpu = false
 
