@@ -14,9 +14,11 @@ Conventions adopted in the model-driven server pass (v0.1.0):
   rather than a silently-ignored payload key.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+from localvectordb.core import DocumentScoringMethod
 
 # Shared pagination bounds (was inconsistent: 1000 for list, 10000 for filter).
 MAX_PAGE_LIMIT = 1000
@@ -102,3 +104,36 @@ class FilterBody(StrictModel):
     """Optional body carrying only metadata filters."""
 
     filters: Optional[Dict[str, Any]] = Field(default=None, description="MongoDB-style metadata filters")
+
+
+class QueryBody(StrictModel):
+    """Shared request body for the unified ``query()`` surface (query + streaming).
+
+    Mirrors the library ``query()`` parameters and replaces the hand-rolled
+    ``validate_search_params`` checks. ``filters`` accepts the legacy
+    ``metadata_filters`` alias. ``return_type`` includes ``sections`` (which the
+    engine supports but the old allow-list rejected).
+    """
+
+    query: str = Field(min_length=1)
+    search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
+    return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents"
+    search_level: Literal["chunks", "sections", "documents"] = "chunks"
+    k: int = Field(default=10, ge=1, le=1000)
+    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    filters: Optional[Dict[str, Any]] = Field(
+        default=None, validation_alias=AliasChoices("filters", "metadata_filters")
+    )
+    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    context_window: int = Field(default=2, ge=0, le=20)
+    semantic_dedup_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    document_scoring_method: DocumentScoringMethod = "frequency_boost"
+    document_scoring_options: Optional[Dict[str, Any]] = None
+    reranker_config: Optional[Dict[str, Any]] = None
+
+    @field_validator("query")
+    @classmethod
+    def _query_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Query must be a non-empty string")
+        return v

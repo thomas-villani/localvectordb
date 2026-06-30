@@ -1,14 +1,16 @@
 # src/localvectordb_server/routers/schema.py
-"""Metadata schema management routes."""
+"""Metadata schema management routes (Pydantic request/response models + dependency injection)."""
 
 import logging
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
 from localvectordb_server._auth import require_read_permission, require_write_permission
-from localvectordb_server._error_handlers import ValidationError, validate_required_fields
+from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.routers._deps import get_db
+from localvectordb_server.routers._models import StrictModel
 from localvectordb_server.utils.schema import parse_metadata_schema
 
 logger = logging.getLogger(__name__)
@@ -16,39 +18,64 @@ db_logger = DatabaseLogger()
 router = APIRouter(tags=["schema"])
 
 
-@router.put("/{db_name}/schema", dependencies=[Depends(require_write_permission)])
+# --------------------------------------------------------------------------- #
+# Request models
+# --------------------------------------------------------------------------- #
+
+
+class UpdateMetadataSchemaBody(StrictModel):
+    metadata_schema: Dict[str, Any]
+    drop_columns: bool = False
+    column_mapping: Optional[Dict[str, Any]] = None
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+# --------------------------------------------------------------------------- #
+
+
+class UpdateMetadataSchemaResponse(StrictModel):
+    message: str
+    status: str
+    changes: Dict[str, Any]
+    new_schema: Dict[str, Any]
+
+
+class SchemaInfoResponse(StrictModel):
+    database: str
+    schema_info: Dict[str, Any]
+    status: str
+
+
+# --------------------------------------------------------------------------- #
+# Endpoints
+# --------------------------------------------------------------------------- #
+
+
+@router.put(
+    "/{db_name}/schema",
+    response_model=UpdateMetadataSchemaResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("update_metadata_schema")
-async def update_metadata_schema(db_name: str, request: Request):
+async def update_metadata_schema(db_name: str, body: UpdateMetadataSchemaBody, db=Depends(get_db)):
     """Update the metadata schema for a database."""
     with request_context("update_metadata_schema"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        # Validate required fields
-        validate_required_fields(data, ["metadata_schema"])
-
         # Parse metadata schema
         try:
-            new_schema = parse_metadata_schema(data["metadata_schema"])
+            new_schema = parse_metadata_schema(body.metadata_schema)
+        except ValidationError:
+            raise
         except Exception as e:
             raise ValidationError(f"Invalid metadata schema: {str(e)}", field="metadata_schema") from e
 
         if not new_schema:
             raise ValidationError("Metadata schema cannot be empty", field="metadata_schema")
 
-        # Get optional parameters
-        drop_columns = data.get("drop_columns", False)
-        if not isinstance(drop_columns, bool):
-            raise ValidationError("drop_columns must be a boolean", field="drop_columns", value=drop_columns)
-
-        column_mapping = data.get("column_mapping", None)
-        if column_mapping is not None and not isinstance(column_mapping, dict):
-            raise ValidationError("column_mapping must be a dictionary", field="column_mapping", value=column_mapping)
+        drop_columns = body.drop_columns
+        column_mapping = body.column_mapping
 
         try:
-            db = get_db(db_name, request)
-
             db_logger.log_query(
                 "update_metadata_schema",
                 database_name=db_name,
@@ -70,7 +97,7 @@ async def update_metadata_schema(db_name: str, request: Request):
             )
 
             # Prepare response
-            response_data = {
+            return {
                 "message": f"Successfully updated metadata schema for database '{db_name}'",
                 "status": "success",
                 "changes": changes,
@@ -85,20 +112,21 @@ async def update_metadata_schema(db_name: str, request: Request):
                 },
             }
 
-            return response_data
-
         except Exception as e:
             db_logger.log_error("update_metadata_schema", e, database_name=db_name)
             raise
 
 
-@router.get("/{db_name}/schema", dependencies=[Depends(require_read_permission)])
+@router.get(
+    "/{db_name}/schema",
+    response_model=SchemaInfoResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("get_metadata_schema_info")
-def get_metadata_schema_info(db_name: str, request: Request):
+def get_metadata_schema_info(db_name: str, db=Depends(get_db)):
     """Get detailed information about the current metadata schema."""
     with request_context("get_metadata_schema_info"):
         try:
-            db = get_db(db_name, request)
             schema_info = db.get_metadata_schema_info()
 
             return {"database": db_name, "schema_info": schema_info, "status": "success"}
