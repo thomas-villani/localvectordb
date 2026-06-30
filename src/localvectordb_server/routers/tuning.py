@@ -1,28 +1,125 @@
 # src/localvectordb_server/routers/tuning.py
-"""SQLite tuning and maintenance routes."""
+"""SQLite tuning and maintenance routes (Pydantic request/response models + DI)."""
 
 import logging
+from typing import Any, Dict, Optional, Union
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+from pydantic import Field
 
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.routers._deps import get_db
+from localvectordb_server.routers._models import StrictModel
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["tuning"])
 
 
-@router.get("/{db_name}/tuning", dependencies=[Depends(require_read_permission)])
+# --------------------------------------------------------------------------- #
+# Request models
+# --------------------------------------------------------------------------- #
+
+
+class SetTuningBody(StrictModel):
+    profile: str
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+    persist: bool = True
+
+
+class CheckpointBody(StrictModel):
+    mode: str = "PASSIVE"
+
+
+class IncrementalVacuumBody(StrictModel):
+    pages: int = 2000
+
+
+class AutoTuneBody(StrictModel):
+    workload: Optional[Dict[str, Any]] = None
+    apply: bool = False
+
+
+class CheckpointIfLargeBody(StrictModel):
+    threshold_mb: Union[int, float] = 128
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+# --------------------------------------------------------------------------- #
+
+
+class TuningResponse(StrictModel):
+    database: str
+    tuning: Dict[str, Any]
+    status: str
+
+
+class SetTuningResponse(StrictModel):
+    database: str
+    message: str
+    tuning: Dict[str, Any]
+    status: str
+
+
+class CheckpointResponse(StrictModel):
+    database: str
+    message: str
+    mode: str
+    status: str
+
+
+class OptimizeResponse(StrictModel):
+    database: str
+    message: str
+    status: str
+
+
+class VacuumResponse(StrictModel):
+    database: str
+    message: str
+    warning: str
+    status: str
+
+
+class IncrementalVacuumResponse(StrictModel):
+    database: str
+    message: str
+    pages: int
+    status: str
+
+
+class AutoTuneResponse(StrictModel):
+    database: str
+    recommendation: Dict[str, Any]
+    status: str
+
+
+class CheckpointIfLargeResponse(StrictModel):
+    database: str
+    checkpointed: bool
+    threshold_mb: Union[int, float]
+    message: str
+    status: str
+
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/{db_name}/tuning",
+    response_model=TuningResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("get_sqlite_tuning")
-def get_sqlite_tuning(db_name: str, request: Request):
+def get_sqlite_tuning(db_name: str, db=Depends(get_db)):
     """Get current SQLite tuning configuration."""
     with request_context("get_sqlite_tuning"):
         try:
-            db = get_db(db_name, request)
-
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("get_sqlite_tuning", database_name=db_name)
 
@@ -35,25 +132,22 @@ def get_sqlite_tuning(db_name: str, request: Request):
             raise
 
 
-@router.put("/{db_name}/tuning", dependencies=[Depends(require_write_permission)])
+@router.put(
+    "/{db_name}/tuning",
+    response_model=SetTuningResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("set_sqlite_tuning")
-async def set_sqlite_tuning(db_name: str, request: Request):
+async def set_sqlite_tuning(db_name: str, body: SetTuningBody, db=Depends(get_db)):
     """Apply SQLite tuning profile with optional overrides."""
     with request_context("set_sqlite_tuning"):
         try:
-            db = get_db(db_name, request)
-
-            # Parse request data
-            data = await request.json()
-            if not data:
-                raise ValidationError("Request body must contain JSON data")
-
-            profile = data.get("profile")
+            profile = body.profile
             if not profile:
                 raise ValidationError("Profile name is required")
 
-            overrides = data.get("overrides", {})
-            persist = data.get("persist", True)
+            overrides = body.overrides
+            persist = body.persist
 
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query(
@@ -84,17 +178,17 @@ async def set_sqlite_tuning(db_name: str, request: Request):
             raise
 
 
-@router.post("/{db_name}/maintenance/checkpoint", dependencies=[Depends(require_write_permission)])
+@router.post(
+    "/{db_name}/maintenance/checkpoint",
+    response_model=CheckpointResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("sqlite_checkpoint")
-async def sqlite_checkpoint(db_name: str, request: Request):
+async def sqlite_checkpoint(db_name: str, body: Optional[CheckpointBody] = None, db=Depends(get_db)):
     """Run SQLite WAL checkpoint operation."""
     with request_context("sqlite_checkpoint"):
         try:
-            db = get_db(db_name, request)
-
-            # Parse request data
-            data = await request.json() or {}
-            mode = data.get("mode", "PASSIVE")
+            mode = body.mode if body else "PASSIVE"
 
             # Validate mode
             valid_modes = ["PASSIVE", "FULL", "RESTART", "TRUNCATE"]
@@ -121,14 +215,16 @@ async def sqlite_checkpoint(db_name: str, request: Request):
             raise
 
 
-@router.post("/{db_name}/maintenance/optimize", dependencies=[Depends(require_write_permission)])
+@router.post(
+    "/{db_name}/maintenance/optimize",
+    response_model=OptimizeResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("sqlite_optimize")
-async def sqlite_optimize(db_name: str, request: Request):
+async def sqlite_optimize(db_name: str, db=Depends(get_db)):
     """Run SQLite PRAGMA optimize."""
     with request_context("sqlite_optimize"):
         try:
-            db = get_db(db_name, request)
-
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("sqlite_optimize", database_name=db_name)
 
@@ -148,14 +244,16 @@ async def sqlite_optimize(db_name: str, request: Request):
             raise
 
 
-@router.post("/{db_name}/maintenance/vacuum", dependencies=[Depends(require_write_permission)])
+@router.post(
+    "/{db_name}/maintenance/vacuum",
+    response_model=VacuumResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("sqlite_vacuum")
-async def sqlite_vacuum(db_name: str, request: Request):
+async def sqlite_vacuum(db_name: str, db=Depends(get_db)):
     """Run SQLite VACUUM operation."""
     with request_context("sqlite_vacuum"):
         try:
-            db = get_db(db_name, request)
-
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("sqlite_vacuum", database_name=db_name)
 
@@ -177,19 +275,16 @@ async def sqlite_vacuum(db_name: str, request: Request):
 
 
 @router.post(
-    "/{db_name}/maintenance/incremental_vacuum",
+    "/{db_name}/maintenance/incremental-vacuum",
+    response_model=IncrementalVacuumResponse,
     dependencies=[Depends(require_write_permission)],
 )
 @log_performance("sqlite_incremental_vacuum")
-async def sqlite_incremental_vacuum(db_name: str, request: Request):
+async def sqlite_incremental_vacuum(db_name: str, body: Optional[IncrementalVacuumBody] = None, db=Depends(get_db)):
     """Run incremental VACUUM operation."""
     with request_context("sqlite_incremental_vacuum"):
         try:
-            db = get_db(db_name, request)
-
-            # Parse request data
-            data = await request.json() or {}
-            pages = data.get("pages", 2000)
+            pages = body.pages if body else 2000
 
             # Validate pages parameter
             if not isinstance(pages, int) or pages <= 0:
@@ -215,18 +310,18 @@ async def sqlite_incremental_vacuum(db_name: str, request: Request):
             raise
 
 
-@router.post("/{db_name}/auto-tune", dependencies=[Depends(require_write_permission)])
+@router.post(
+    "/{db_name}/auto-tune",
+    response_model=AutoTuneResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("auto_tune_database")
-async def auto_tune_database(db_name: str, request: Request):
+async def auto_tune_database(db_name: str, body: Optional[AutoTuneBody] = None, db=Depends(get_db)):
     """Get auto-tuning recommendations for database."""
     with request_context("auto_tune_database"):
         try:
-            db = get_db(db_name, request)
-
-            # Parse request data
-            data = await request.json() or {}
-            workload = data.get("workload")
-            apply_settings = data.get("apply", False)
+            workload = body.workload if body else None
+            apply_settings = body.apply if body else False
 
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query(
@@ -259,19 +354,16 @@ async def auto_tune_database(db_name: str, request: Request):
 
 
 @router.post(
-    "/{db_name}/maintenance/checkpoint_if_large",
+    "/{db_name}/maintenance/checkpoint-if-large",
+    response_model=CheckpointIfLargeResponse,
     dependencies=[Depends(require_write_permission)],
 )
 @log_performance("checkpoint_if_wal_large")
-async def checkpoint_if_wal_large(db_name: str, request: Request):
+async def checkpoint_if_wal_large(db_name: str, body: Optional[CheckpointIfLargeBody] = None, db=Depends(get_db)):
     """Check if WAL is large and checkpoint if needed."""
     with request_context("checkpoint_if_wal_large"):
         try:
-            db = get_db(db_name, request)
-
-            # Parse request data
-            data = await request.json() or {}
-            threshold_mb = data.get("threshold_mb", 128)
+            threshold_mb = body.threshold_mb if body else 128
 
             # Validate threshold
             if not isinstance(threshold_mb, (int, float)) or threshold_mb <= 0:

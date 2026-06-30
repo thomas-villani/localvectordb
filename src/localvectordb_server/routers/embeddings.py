@@ -1,27 +1,64 @@
 # src/localvectordb_server/routers/embeddings.py
-"""Embedding generation routes."""
+"""Embedding generation routes (Pydantic request/response models + dependency injection)."""
 
 import logging
+from typing import List, Optional, Union
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
 from localvectordb_server._auth import require_read_permission
-from localvectordb_server._error_handlers import (
-    APIError,
-    ValidationError,
-    validate_required_fields,
-)
+from localvectordb_server._error_handlers import APIError, ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.routers._deps import get_db
+from localvectordb_server.routers._models import StrictModel
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["embeddings"])
 
 
-@router.post("/{db_name}/embeddings", dependencies=[Depends(require_read_permission)])
+# --------------------------------------------------------------------------- #
+# Request / response models
+# --------------------------------------------------------------------------- #
+
+
+class DbEmbeddingsBody(StrictModel):
+    """Get embeddings for existing chunk ``ids`` *or* for custom ``texts``."""
+
+    ids: Optional[Union[str, List[str]]] = None
+    texts: Optional[Union[str, List[str]]] = None
+
+
+class DbEmbeddingsResponse(StrictModel):
+    embeddings: List[List[float]]
+    provider: str
+    model: str
+
+
+class EmbeddingsBody(StrictModel):
+    """Get embeddings from an explicitly named provider and model."""
+
+    provider: str
+    model: str
+    texts: Union[str, List[str]]
+
+
+class EmbeddingsResponse(StrictModel):
+    embeddings: List[List[float]]
+
+
+# --------------------------------------------------------------------------- #
+# Endpoints
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/{db_name}/embeddings",
+    response_model=DbEmbeddingsResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("get_embeddings_for_db")
-async def get_embeddings_for_db(db_name: str, request: Request):
+async def get_embeddings_for_db(db_name: str, body: DbEmbeddingsBody, db=Depends(get_db)):
     """Get embeddings using the database's embedding provider, or for existing chunks by id.
 
     Request body to get embeddings for existing chunks from the database::
@@ -45,29 +82,18 @@ async def get_embeddings_for_db(db_name: str, request: Request):
         }
     """
     with request_context("get_embeddings_for_db"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        id_list = data.get("ids")
-        if id_list:
-            if isinstance(id_list, str):
-                id_list = [id_list]
-            elif not isinstance(id_list, list):
-                raise ValidationError("`ids` must be a string or array of strings", field="ids")
-        else:
-            validate_required_fields(data, ["texts"])
-            texts = data["texts"]
-            if isinstance(texts, str):
-                texts = [texts]
-            elif not isinstance(texts, list):
-                raise ValidationError("`texts` must be a string or array of strings", field="texts")
-
         try:
-            db = get_db(db_name, request)
-            if id_list:
-                embeddings = db.get_chunk_embeddings(id_list)
+            if body.ids:
+                id_list = [body.ids] if isinstance(body.ids, str) else body.ids
+                embeddings = db.get_chunk_embeddings(id_list).tolist()
             else:
+                if not body.texts:
+                    raise ValidationError(
+                        "Missing required fields: texts",
+                        field="texts",
+                        details={"missing_fields": ["texts"]},
+                    )
+                texts = [body.texts] if isinstance(body.texts, str) else body.texts
                 embeddings = db.embedding_provider.embed_sync(texts).tolist()
 
             return {
@@ -81,9 +107,13 @@ async def get_embeddings_for_db(db_name: str, request: Request):
             raise
 
 
-@router.post("/embeddings", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/embeddings",
+    response_model=EmbeddingsResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("get_embeddings")
-async def get_embeddings(request: Request):
+async def get_embeddings(body: EmbeddingsBody):
     """Get embeddings from specified provider and model.
 
     Request body::
@@ -101,20 +131,9 @@ async def get_embeddings(request: Request):
         }
     """
     with request_context("get_embeddings"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        validate_required_fields(data, ["texts", "provider", "model"])
-
-        texts = data["texts"]
-        provider = data["provider"]
-        model = data["model"]
-
-        if isinstance(texts, str):
-            texts = [texts]
-        elif not isinstance(texts, list):
-            raise ValidationError("Texts must be a string or array of strings", field="texts")
+        provider = body.provider
+        model = body.model
+        texts = [body.texts] if isinstance(body.texts, str) else body.texts
 
         from localvectordb.embeddings import EmbeddingRegistry
 

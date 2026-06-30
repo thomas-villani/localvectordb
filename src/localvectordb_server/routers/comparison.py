@@ -1,37 +1,110 @@
 # src/localvectordb_server/routers/comparison.py
-"""Document comparison endpoints exposing ComparisonMixin methods."""
+"""Document comparison endpoints exposing ComparisonMixin methods.
+
+Migrated to the model-driven router pattern: Pydantic request/response models,
+``db=Depends(get_db)`` dependency injection, and inline ``response_model``
+declarations. Response keys are preserved exactly so existing clients keep
+working.
+"""
 
 import logging
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
 from localvectordb_server._auth import require_read_permission
-from localvectordb_server._error_handlers import APIError, ValidationError, validate_required_fields
+from localvectordb_server._error_handlers import APIError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server._serializers import serialize_query_result
 from localvectordb_server.routers._deps import get_db
+from localvectordb_server.routers._models import StrictModel
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["comparison"])
 
 
-@router.post("/{db_name}/compare", dependencies=[Depends(require_read_permission)])
+# --------------------------------------------------------------------------- #
+# Request models
+# --------------------------------------------------------------------------- #
+
+
+class CompareBody(StrictModel):
+    doc_id_1: str
+    doc_id_2: str
+
+
+class CompareDetailedBody(StrictModel):
+    doc_id_1: str
+    doc_id_2: str
+    chunk_threshold: float = 0.7
+
+
+class NearestNeighborsBody(StrictModel):
+    doc_id: str
+    k: int = 5
+
+
+class SimilarityMatrixBody(StrictModel):
+    """Optional body; an empty/absent body means "use defaults"."""
+
+    doc_ids: Optional[List[str]] = None
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+# --------------------------------------------------------------------------- #
+
+
+class CompareResponse(StrictModel):
+    doc_id_1: str
+    doc_id_2: str
+    similarity: float
+    status: str
+
+
+class CompareDetailedResponse(StrictModel):
+    doc_id_1: str
+    doc_id_2: str
+    overall_similarity: float
+    chunk_similarities: List[Any]
+    status: str
+    # Optional fields, emitted only when the result object provides them.
+    common_themes: Optional[Any] = None
+    unique_to_doc1: Optional[Any] = None
+    unique_to_doc2: Optional[Any] = None
+
+
+class NearestNeighborsResponse(StrictModel):
+    doc_id: str
+    k: int
+    results: List[Dict[str, Any]]
+    total_results: int
+    status: str
+
+
+class SimilarityMatrixResponse(StrictModel):
+    doc_ids: Optional[List[str]] = None
+    status: str
+    # Optional fields, emitted only when the matrix object provides them.
+    matrix: Optional[Any] = None
+    similarity_pairs: Optional[Any] = None
+
+
+# --------------------------------------------------------------------------- #
+# Endpoints
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/{db_name}/compare",
+    response_model=CompareResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("compare_documents")
-async def compare_documents(db_name: str, request: Request):
+async def compare_documents(db_name: str, body: CompareBody, db=Depends(get_db)):
     """Compare two documents by their IDs and return similarity score."""
     with request_context("compare_documents"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        validate_required_fields(data, ["doc_id_1", "doc_id_2"])
-
-        doc_id_1 = data["doc_id_1"]
-        doc_id_2 = data["doc_id_2"]
-
-        db = get_db(db_name, request)
-
         if not hasattr(db, "compare_documents"):
             raise APIError(
                 message="Document comparison is not available for this database",
@@ -40,10 +113,10 @@ async def compare_documents(db_name: str, request: Request):
             )
 
         try:
-            similarity = db.compare_documents(doc_id_1, doc_id_2)
+            similarity = db.compare_documents(body.doc_id_1, body.doc_id_2)
             return {
-                "doc_id_1": doc_id_1,
-                "doc_id_2": doc_id_2,
+                "doc_id_1": body.doc_id_1,
+                "doc_id_2": body.doc_id_2,
                 "similarity": similarity,
                 "status": "success",
             }
@@ -52,23 +125,16 @@ async def compare_documents(db_name: str, request: Request):
             raise
 
 
-@router.post("/{db_name}/compare/detailed", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/{db_name}/compare/detailed",
+    response_model=CompareDetailedResponse,
+    response_model_exclude_unset=True,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("compare_documents_detailed")
-async def compare_documents_detailed(db_name: str, request: Request):
+async def compare_documents_detailed(db_name: str, body: CompareDetailedBody, db=Depends(get_db)):
     """Compare two documents with detailed chunk-level analysis."""
     with request_context("compare_documents_detailed"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        validate_required_fields(data, ["doc_id_1", "doc_id_2"])
-
-        doc_id_1 = data["doc_id_1"]
-        doc_id_2 = data["doc_id_2"]
-        chunk_threshold = data.get("chunk_threshold", 0.7)
-
-        db = get_db(db_name, request)
-
         if not hasattr(db, "compare_documents_detailed"):
             raise APIError(
                 message="Detailed document comparison is not available for this database",
@@ -77,48 +143,40 @@ async def compare_documents_detailed(db_name: str, request: Request):
             )
 
         try:
-            result = db.compare_documents_detailed(doc_id_1, doc_id_2, chunk_threshold=chunk_threshold)
+            result = db.compare_documents_detailed(body.doc_id_1, body.doc_id_2, chunk_threshold=body.chunk_threshold)
 
-            # Serialize the DocumentComparisonResult
-            response = {
-                "doc_id_1": doc_id_1,
-                "doc_id_2": doc_id_2,
+            # Serialize the DocumentComparisonResult, preserving conditional keys.
+            fields: Dict[str, Any] = {
+                "doc_id_1": body.doc_id_1,
+                "doc_id_2": body.doc_id_2,
                 "overall_similarity": result.overall_similarity,
                 "chunk_similarities": result.chunk_similarities if hasattr(result, "chunk_similarities") else [],
                 "status": "success",
             }
 
-            # Include additional fields if available
             if hasattr(result, "common_themes"):
-                response["common_themes"] = result.common_themes
+                fields["common_themes"] = result.common_themes
             if hasattr(result, "unique_to_doc1"):
-                response["unique_to_doc1"] = result.unique_to_doc1
+                fields["unique_to_doc1"] = result.unique_to_doc1
             if hasattr(result, "unique_to_doc2"):
-                response["unique_to_doc2"] = result.unique_to_doc2
+                fields["unique_to_doc2"] = result.unique_to_doc2
 
-            return response
+            return CompareDetailedResponse(**fields)
 
         except Exception as e:
             db_logger.log_error("compare_documents_detailed", e, database_name=db_name)
             raise
 
 
-@router.post("/{db_name}/nearest-neighbors", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/{db_name}/nearest-neighbors",
+    response_model=NearestNeighborsResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("nearest_neighbors")
-async def nearest_neighbors(db_name: str, request: Request):
+async def nearest_neighbors(db_name: str, body: NearestNeighborsBody, db=Depends(get_db)):
     """Find nearest neighbors for a document."""
     with request_context("nearest_neighbors"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        validate_required_fields(data, ["doc_id"])
-
-        doc_id = data["doc_id"]
-        k = data.get("k", 5)
-
-        db = get_db(db_name, request)
-
         if not hasattr(db, "nearest_neighbors"):
             raise APIError(
                 message="Nearest neighbors search is not available for this database",
@@ -127,11 +185,11 @@ async def nearest_neighbors(db_name: str, request: Request):
             )
 
         try:
-            results = db.nearest_neighbors(doc_id, k=k)
+            results = db.nearest_neighbors(body.doc_id, k=body.k)
             serialized = [serialize_query_result(r) for r in results]
             return {
-                "doc_id": doc_id,
-                "k": k,
+                "doc_id": body.doc_id,
+                "k": body.k,
                 "results": serialized,
                 "total_results": len(serialized),
                 "status": "success",
@@ -141,18 +199,17 @@ async def nearest_neighbors(db_name: str, request: Request):
             raise
 
 
-@router.post("/{db_name}/similarity-matrix", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/{db_name}/similarity-matrix",
+    response_model=SimilarityMatrixResponse,
+    response_model_exclude_unset=True,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("pairwise_similarity_matrix")
-async def pairwise_similarity_matrix(db_name: str, request: Request):
+async def pairwise_similarity_matrix(db_name: str, body: Optional[SimilarityMatrixBody] = None, db=Depends(get_db)):
     """Compute pairwise similarity matrix for documents."""
     with request_context("pairwise_similarity_matrix"):
-        data = await request.json()
-        if not data:
-            data = {}
-
-        doc_ids = data.get("doc_ids")
-
-        db = get_db(db_name, request)
+        doc_ids = body.doc_ids if body else None
 
         if not hasattr(db, "pairwise_similarity_matrix"):
             raise APIError(
@@ -164,8 +221,8 @@ async def pairwise_similarity_matrix(db_name: str, request: Request):
         try:
             matrix = db.pairwise_similarity_matrix(doc_ids=doc_ids)
 
-            # Serialize the DocumentSimilarityMatrix
-            response = {
+            # Serialize the DocumentSimilarityMatrix, preserving conditional keys.
+            fields: Dict[str, Any] = {
                 "doc_ids": matrix.doc_ids if hasattr(matrix, "doc_ids") else doc_ids,
                 "status": "success",
             }
@@ -173,14 +230,11 @@ async def pairwise_similarity_matrix(db_name: str, request: Request):
             if hasattr(matrix, "matrix"):
                 # Convert numpy array to list if needed
                 mat = matrix.matrix
-                if hasattr(mat, "tolist"):
-                    response["matrix"] = mat.tolist()
-                else:
-                    response["matrix"] = mat
+                fields["matrix"] = mat.tolist() if hasattr(mat, "tolist") else mat
             if hasattr(matrix, "similarity_pairs"):
-                response["similarity_pairs"] = matrix.similarity_pairs
+                fields["similarity_pairs"] = matrix.similarity_pairs
 
-            return response
+            return SimilarityMatrixResponse(**fields)
 
         except Exception as e:
             db_logger.log_error("pairwise_similarity_matrix", e, database_name=db_name)

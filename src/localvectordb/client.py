@@ -3374,7 +3374,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Run incremental VACUUM via remote server."""
         payload = {"pages": pages}
         response = self._make_request_with_retry(
-            "POST", f"/api/v1/{self.name}/maintenance/incremental_vacuum", json=payload
+            "POST", f"/api/v1/{self.name}/maintenance/incremental-vacuum", json=payload
         )
         self._handle_response(response)
 
@@ -3387,7 +3387,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Check if remote WAL is large and checkpoint if needed."""
         payload = {"threshold_mb": wal_mb_threshold}
         response = self._make_request_with_retry(
-            "POST", f"/api/v1/{self.name}/maintenance/checkpoint_if_large", json=payload
+            "POST", f"/api/v1/{self.name}/maintenance/checkpoint-if-large", json=payload
         )
         data = self._handle_response(response)
         checkpointed: bool = data.get("checkpointed", False)
@@ -3727,7 +3727,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "similarity_threshold": similarity_threshold,
             "min_grounding_score": min_grounding_score,
             "search_type": search_type,
-            "top_k": top_k,
+            "k": top_k,
         }
         if llm_api_key:
             payload["llm_api_key"] = llm_api_key
@@ -3755,7 +3755,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "similarity_threshold": similarity_threshold,
             "min_grounding_score": min_grounding_score,
             "search_type": search_type,
-            "top_k": top_k,
+            "k": top_k,
         }
         if llm_api_key:
             payload["llm_api_key"] = llm_api_key

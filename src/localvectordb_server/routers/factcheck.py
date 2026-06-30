@@ -2,69 +2,120 @@
 """Fact-checking endpoints using LLM-based validation."""
 
 import logging
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+from pydantic import Field
 
 from localvectordb_server._auth import require_read_permission
-from localvectordb_server._error_handlers import APIError, ValidationError, validate_required_fields
+from localvectordb_server._error_handlers import APIError, ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server.routers._deps import get_db, get_db_manager
+from localvectordb_server.routers._models import StrictModel
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["factcheck"])
 
 
-@router.post("/{db_name}/factcheck", dependencies=[Depends(require_read_permission)])
+# --------------------------------------------------------------------------- #
+# Request models
+# --------------------------------------------------------------------------- #
+
+
+class FactCheckBody(StrictModel):
+    """Request body for fact-checking text against a single database."""
+
+    text: str = Field(..., description="The text to fact-check")
+    llm_provider: str = Field(default="anthropic", description="LLM provider (anthropic/openai/gemini)")
+    llm_api_key: Optional[str] = Field(default=None, description="API key for the LLM provider")
+    model: Optional[str] = Field(default=None, description="Model name")
+    similarity_threshold: float = Field(default=0.3, ge=0.0, le=1.0, description="Min similarity for evidence")
+    min_grounding_score: float = Field(default=0.5, ge=0.0, le=1.0, description="Min grounding score for claims")
+    search_type: str = Field(default="hybrid", description="Search type for evidence retrieval")
+    # Convention (M11): the rest of the HTTP surface uses ``k`` for top-k; accept
+    # ``k`` on the wire and forward it to the library's ``top_k`` parameter.
+    k: int = Field(default=10, ge=1, description="Number of evidence documents to retrieve")
+
+
+class MultiFactCheckBody(FactCheckBody):
+    """Request body for fact-checking text across multiple databases."""
+
+    databases: Optional[List[str]] = Field(
+        default=None, description="Database names to check against (defaults to all)"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+# --------------------------------------------------------------------------- #
+
+
+class FactCheckEvidence(StrictModel):
+    content: str
+    score: Optional[float] = None
+    source_id: Optional[Any] = None
+
+
+class FactCheckClaim(StrictModel):
+    text: str
+    supported: Optional[bool] = None
+    score: Optional[float] = None
+    evidence: List[FactCheckEvidence] = Field(default_factory=list)
+
+
+class FactCheckResponse(StrictModel):
+    """Serialized single-database fact-check result (mirrors ``_serialize_factcheck_result``)."""
+
+    grounding_score: Optional[float] = None
+    verdict: Optional[Any] = None
+    claims: Optional[List[FactCheckClaim]] = None
+    evidence: Optional[List[FactCheckEvidence]] = None
+    explanation: Optional[str] = None
+    database: str
+    status: str
+
+
+class MultiFactCheckResponse(StrictModel):
+    """Per-database fact-check results across multiple databases."""
+
+    results: Dict[str, Any]
+    databases_checked: List[str]
+    status: str
+
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/{db_name}/factcheck",
+    response_model=FactCheckResponse,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("factcheck_single_db")
-async def factcheck_single_db(db_name: str, request: Request):
-    """Check text against a specific database for factual grounding.
-
-    Request body:
-        text: str - The text to fact-check
-        llm_provider: str - LLM provider (anthropic/openai/gemini)
-        llm_api_key: str - API key for the LLM provider (optional, can use server env)
-        model: str - Model name (optional)
-        similarity_threshold: float - Min similarity for evidence (default 0.3)
-        min_grounding_score: float - Min grounding score (default 0.5)
-        search_type: str - Search type (default "hybrid")
-        top_k: int - Number of evidence documents (default 10)
-    """
+async def factcheck_single_db(db_name: str, body: FactCheckBody, db=Depends(get_db)):
+    """Check text against a specific database for factual grounding."""
     with request_context("factcheck_single_db"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        validate_required_fields(data, ["text"])
-
-        text = data["text"]
-        llm_provider = data.get("llm_provider", "anthropic")
-        llm_api_key = data.get("llm_api_key")
-        model = data.get("model")
-        similarity_threshold = data.get("similarity_threshold", 0.3)
-        min_grounding_score = data.get("min_grounding_score", 0.5)
-        search_type = data.get("search_type", "hybrid")
-        top_k = data.get("top_k", 10)
-
-        db = get_db(db_name, request)
-
         try:
             from localvectordb.validation import FactChecker
 
             # Build the LLM identifier (provider or api_key)
-            llm_id = llm_api_key or llm_provider
+            llm_id = body.llm_api_key or body.llm_provider
 
             checker = FactChecker(
                 databases=db,
                 llm=llm_id,
-                model=model,
-                similarity_threshold=similarity_threshold,
-                min_grounding_score=min_grounding_score,
-                search_type=search_type,
-                top_k=top_k,
+                model=body.model,
+                similarity_threshold=body.similarity_threshold,
+                min_grounding_score=body.min_grounding_score,
+                search_type=body.search_type,
+                top_k=body.k,
             )
 
-            result = await checker.check_async(text)
+            result = await checker.check_async(body.text)
 
             # Serialize result
             response = _serialize_factcheck_result(result)
@@ -83,44 +134,18 @@ async def factcheck_single_db(db_name: str, request: Request):
             raise
 
 
-@router.post("/factcheck", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/factcheck",
+    response_model=MultiFactCheckResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("factcheck_multi_db")
-async def factcheck_multi_db(request: Request):
-    """Check text against multiple databases for factual grounding.
-
-    Request body:
-        text: str - The text to fact-check
-        databases: list[str] - Database names to check against (optional, defaults to all)
-        llm_provider: str - LLM provider
-        llm_api_key: str - API key for the LLM provider
-        model: str - Model name
-        similarity_threshold: float - Min similarity for evidence
-        min_grounding_score: float - Min grounding score
-        search_type: str - Search type
-        top_k: int - Number of evidence documents per database
-    """
+async def factcheck_multi_db(body: MultiFactCheckBody, db_manager=Depends(get_db_manager)):
+    """Check text against multiple databases for factual grounding."""
     with request_context("factcheck_multi_db"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
-
-        validate_required_fields(data, ["text"])
-
-        text = data["text"]
-        database_names = data.get("databases")
-        llm_provider = data.get("llm_provider", "anthropic")
-        llm_api_key = data.get("llm_api_key")
-        model = data.get("model")
-        similarity_threshold = data.get("similarity_threshold", 0.3)
-        min_grounding_score = data.get("min_grounding_score", 0.5)
-        search_type = data.get("search_type", "hybrid")
-        top_k = data.get("top_k", 10)
-
-        db_manager = get_db_manager(request)
-
         # Get list of databases to check
-        if database_names:
-            db_names = database_names
+        if body.databases:
+            db_names = body.databases
         else:
             db_names = db_manager.list_databases()
 
@@ -130,8 +155,8 @@ async def factcheck_multi_db(request: Request):
         try:
             from localvectordb.validation import FactChecker
 
-            results_by_db = {}
-            llm_id = llm_api_key or llm_provider
+            results_by_db: Dict[str, Any] = {}
+            llm_id = body.llm_api_key or body.llm_provider
 
             for db_name in db_names:
                 try:
@@ -139,14 +164,14 @@ async def factcheck_multi_db(request: Request):
                     checker = FactChecker(
                         databases=db,
                         llm=llm_id,
-                        model=model,
-                        similarity_threshold=similarity_threshold,
-                        min_grounding_score=min_grounding_score,
-                        search_type=search_type,
-                        top_k=top_k,
+                        model=body.model,
+                        similarity_threshold=body.similarity_threshold,
+                        min_grounding_score=body.min_grounding_score,
+                        search_type=body.search_type,
+                        top_k=body.k,
                     )
 
-                    result = await checker.check_async(text)
+                    result = await checker.check_async(body.text)
 
                     results_by_db[db_name] = _serialize_factcheck_result(result)
 

@@ -1,9 +1,11 @@
 # src/localvectordb_server/routers/databases.py
-"""Database management routes."""
+"""Database management routes (Pydantic request/response models + dependency injection)."""
 
 import logging
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+from pydantic import ConfigDict, Field
 
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import (
@@ -12,7 +14,9 @@ from localvectordb_server._error_handlers import (
     validate_database_creation_params,
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
-from localvectordb_server.routers._deps import get_db, get_db_manager
+from localvectordb_server.config import Config
+from localvectordb_server.routers._deps import get_config, get_db, get_db_manager
+from localvectordb_server.routers._models import StrictModel
 from localvectordb_server.utils.schema import parse_metadata_schema
 
 logger = logging.getLogger(__name__)
@@ -20,18 +24,106 @@ db_logger = DatabaseLogger()
 router = APIRouter(tags=["databases"])
 
 
-@router.post("/databases", dependencies=[Depends(require_write_permission)])
-async def create_database(request: Request):
+# --------------------------------------------------------------------------- #
+# Request models
+# --------------------------------------------------------------------------- #
+
+
+class CreateDatabaseBody(StrictModel):
+    # NOTE: extra="ignore" (not the StrictModel default "forbid"). The SDK's
+    # _create_database still posts a legacy flat payload (embedding_provider,
+    # chunk_size, ...) that this endpoint has always ignored in favor of server
+    # defaults. Forbidding extras would 400 every remote create. Honoring that
+    # config end-to-end (and relaxing the ollama|openai provider whitelist, M13)
+    # is tracked as a follow-up; until then we preserve the lenient behavior.
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(..., min_length=1)
+    metadata_schema: Optional[Dict[str, Any]] = None
+    database: Optional[Dict[str, Any]] = None
+    embedding: Optional[Dict[str, Any]] = None
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+# --------------------------------------------------------------------------- #
+
+
+class MetadataFieldInfo(StrictModel):
+    type: str
+    indexed: bool
+    required: bool
+    default_value: Any = None
+
+
+class DatabaseConfigInfo(StrictModel):
+    embedding_provider: str
+    embedding_model: str
+    embedding_dimension: int
+    chunking_method: str
+    chunk_size: int
+    chunk_overlap: int
+    metadata_schema: Dict[str, MetadataFieldInfo]
+    fts_enabled: bool
+
+
+class CreateDatabaseConfigInfo(DatabaseConfigInfo):
+    name: str
+
+
+class CreateDatabaseResponse(StrictModel):
+    message: str
+    status: str
+    config: CreateDatabaseConfigInfo
+
+
+class DatabaseInfoResponse(StrictModel):
+    name: str
+    stats: Dict[str, Any]
+    config: DatabaseConfigInfo
+
+
+class DatabaseListResponse(StrictModel):
+    databases: List[str]
+    count: int
+
+
+class DeleteDatabaseResponse(StrictModel):
+    message: str
+    status: str
+
+
+# --------------------------------------------------------------------------- #
+# Endpoints
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/databases",
+    response_model=CreateDatabaseResponse,
+    dependencies=[Depends(require_write_permission)],
+)
+async def create_database(
+    body: CreateDatabaseBody,
+    db_manager=Depends(get_db_manager),
+    config: Config = Depends(get_config),
+):
     """Create a new vector database with optional metadata schema."""
     with request_context("create_database"):
-        data = await request.json()
-        if not data:
-            raise ValidationError("Request body cannot be empty")
+        # Reconstruct the payload dict so the existing semantic validation (name
+        # character checks, chunk_size bounds, embedding provider whitelist) keeps
+        # running unchanged. Free-form config dicts stay untyped on the wire.
+        data: Dict[str, Any] = {"name": body.name}
+        if body.metadata_schema is not None:
+            data["metadata_schema"] = body.metadata_schema
+        if body.database is not None:
+            data["database"] = body.database
+        if body.embedding is not None:
+            data["embedding"] = body.embedding
 
         data = validate_database_creation_params(data)
         name = data["name"]
 
-        db_manager = get_db_manager(request)
         existing_dbs = db_manager.list_databases()
         if name in existing_dbs:
             raise APIError(
@@ -41,11 +133,9 @@ async def create_database(request: Request):
                 recoverable=True,
             )
 
-        config = request.app.state.config
         db_config = config.database.copy()
         embedding_config = config.embedding.copy()
 
-        metadata_schema = None
         if "metadata_schema" in data:
             metadata_schema = parse_metadata_schema(data["metadata_schema"])
         else:
@@ -97,13 +187,16 @@ async def create_database(request: Request):
             raise
 
 
-@router.get("/databases", dependencies=[Depends(require_read_permission)])
+@router.get(
+    "/databases",
+    response_model=DatabaseListResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("list_databases")
-def list_databases(request: Request):
+def list_databases(db_manager=Depends(get_db_manager)):
     """List all available databases."""
     with request_context("list_databases"):
         try:
-            db_manager = get_db_manager(request)
             databases = db_manager.list_databases()
             return {"databases": databases, "count": len(databases)}
         except Exception as e:
@@ -111,13 +204,16 @@ def list_databases(request: Request):
             raise
 
 
-@router.get("/{db_name}/info", dependencies=[Depends(require_read_permission)])
+@router.get(
+    "/{db_name}/info",
+    response_model=DatabaseInfoResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("get_database_info")
-def get_database_info(db_name: str, request: Request):
+def get_database_info(db_name: str, db=Depends(get_db)):
     """Get information about a specific database."""
     with request_context("get_database_info"):
         try:
-            db = get_db(db_name, request)
             stats = db.get_stats()
             return {
                 "name": db.name,
@@ -146,12 +242,15 @@ def get_database_info(db_name: str, request: Request):
             raise
 
 
-@router.delete("/{db_name}", dependencies=[Depends(require_write_permission)])
+@router.delete(
+    "/{db_name}",
+    response_model=DeleteDatabaseResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("delete_database")
-def delete_database(db_name: str, request: Request):
+def delete_database(db_name: str, db_manager=Depends(get_db_manager)):
     """Delete a database."""
     with request_context("delete_database"):
-        db_manager = get_db_manager(request)
         success = db_manager.delete_database(db_name)
         return {
             "message": (
