@@ -33,6 +33,8 @@ Submodules
    localvectordb.migration
    localvectordb.query_builder
    localvectordb.reranking
+   localvectordb.section_detection
+   localvectordb.section_metadata
    localvectordb.sqlite_tuning
    localvectordb.utils
    localvectordb.versioning

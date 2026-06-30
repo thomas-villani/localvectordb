@@ -845,6 +845,14 @@ Add Documents
    # Add with custom IDs
    lvdb db my_database add file1.txt file2.txt --id "doc_1,doc_2"
 
+.. note::
+
+   ``add`` reads files as UTF-8 **text** — it does not run extraction. Use it for
+   text, Markdown, and source files. To ingest PDF/DOCX/PPTX/XLSX and other
+   binary formats (extracted to Markdown), upload them through the server
+   ``/upload`` endpoint or use ``db.upsert_from_file(...)`` in the Python API.
+   See :doc:`/file-extraction`.
+
 Get Documents
 """""""""""""
 

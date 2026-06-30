@@ -44,7 +44,9 @@ Use the ``lvdb`` CLI to create and populate specialized databases:
    lvdb create technical_docs --embedding-model nomic-embed-text
 
    # Add documents using the CLI (the command is `add`; it accepts files, globs, or stdin)
-   lvdb db technical_docs add ./docs/api_reference.pdf
+   # Note: `add` reads files as UTF-8 text — it does NOT run extraction. Use it for
+   # text/Markdown/source files. For PDF/DOCX/etc., extract via the server `/upload`
+   # endpoint or `db.upsert_from_file(...)` (see :doc:`/file-extraction`).
    lvdb db technical_docs add ./docs/user_guide.md
    # Add text from stdin with `-`
    echo "Key troubleshooting steps..." | lvdb db technical_docs add - --metadata '{"type": "troubleshooting"}'

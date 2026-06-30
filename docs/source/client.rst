@@ -319,7 +319,8 @@ File Operations
             {"source": "internal", "confidential": True}
         ],
         ids=["pdf1", "docx1"],  # Optional
-        extractor_kwargs={"ocr": False}  # Optional, passed to the extractor
+        # Optional security options passed through to the extractor
+        extractor_kwargs={"strip_dangerous_elements": True}
     )
 
     # Async variant

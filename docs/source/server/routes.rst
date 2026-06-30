@@ -792,6 +792,18 @@ Installation Requirements
    # OCR for scanned PDFs (also requires the Tesseract system binary)
    pip install localvectordb[file-extraction-ocr]
 
+Extraction Security
+^^^^^^^^^^^^^^^^^^^
+
+Because the upload route accepts untrusted files, extraction runs with hardened
+defaults: remote asset/document fetching and local ``file://`` access are
+disabled, HTML scripts and event handlers are stripped, and embedded attachments
+are skipped. A file-size guard and a ZIP-bomb guard (for ZIP-based formats such
+as ``.docx``/``.xlsx``/``.pptx``/``.epub``/``.odt``) run before content reaches
+all2md. These defaults can be relaxed for trusted content via the
+``[extraction]`` configuration section (see :doc:`/file-extraction` and
+:doc:`config`).
+
 Upload Files to Database
 ^^^^^^^^^^^^^^^^^^^^^^^^
 

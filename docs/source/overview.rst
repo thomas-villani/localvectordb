@@ -571,6 +571,16 @@ Choose chunking methods based on your content type:
    # Code-specific chunking for programming content
    db_code = VectorDB("code", "./data", chunking_method="code-blocks", chunk_size=500)
 
+   # Section-based for Markdown / extracted documents (splits on headings)
+   db_sections = VectorDB("docs", "./data", chunking_method="sections", chunk_size=1000)
+
+.. note::
+
+   Files ingested via ``upsert_from_file`` or the server ``/upload`` endpoint are
+   extracted to **Markdown** (preserving headings, tables, and lists), which
+   makes structure-aware strategies such as ``"sections"`` and ``"paragraphs"``
+   work especially well. See :doc:`/file-extraction` and :doc:`/chunking`.
+
 Performance Optimization
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 

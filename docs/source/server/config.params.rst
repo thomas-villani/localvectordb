@@ -106,6 +106,13 @@ Full Configuration File
    cors_allowed_headers = ["Content-Type", "Authorization"]
    cors_max_age = 86400
 
+   [extraction]
+   # Hardened defaults for untrusted uploads; relax only for trusted content.
+   allow_remote_fetch = false           # Fetch remote assets referenced by a document (SSRF risk)
+   allowed_hosts = []                   # Host allowlist applied when allow_remote_fetch = true
+   strip_dangerous_elements = true      # HTML: strip scripts and event handlers
+   attachment_mode = "skip"             # How embedded attachments/assets are handled
+
 
 .. note::
 
@@ -370,6 +377,38 @@ Server Settings
      - ``86400``
      - Maximum time (in seconds) for browsers to cache CORS preflight responses.
 
+Extraction Settings
+-------------------
+
+These live under the ``[extraction]`` table and control how uploaded files are
+converted to Markdown (via all2md). Defaults are hardened for untrusted uploads.
+See :doc:`/file-extraction` for the full security model.
+
+.. list-table::
+   :header-rows: 1
+
+   * - **Parameter**
+     - **Type**
+     - **Default**
+     - **Description**
+   * - ``allow_remote_fetch``
+     - bool
+     - ``false``
+     - Allow fetching remote assets referenced by a document. Leaving this off avoids an SSRF surface.
+   * - ``allowed_hosts``
+     - list of str or null
+     - ``null``
+     - Host allowlist applied when ``allow_remote_fetch`` is enabled (``null`` = all hosts).
+   * - ``strip_dangerous_elements``
+     - bool
+     - ``true``
+     - HTML only: strip ``<script>`` tags and inline event handlers.
+   * - ``attachment_mode``
+     - str
+     - ``"skip"``
+     - How embedded attachments/assets are handled during extraction.
+
 .. note::
    All configuration parameters can also be set via environment variables with the ``LVDB_`` prefix,
-   using uppercase and underscores, e.g., ``LVDB_SERVER_DEBUG``, ``LVDB_DATABASE_ROOT_DIR``, etc.
+   using uppercase and underscores, e.g., ``LVDB_SERVER_DEBUG``, ``LVDB_DATABASE_ROOT_DIR``,
+   ``LVDB_EXTRACTION_ALLOW_REMOTE_FETCH``, etc.

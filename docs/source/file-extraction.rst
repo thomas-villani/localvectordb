@@ -151,7 +151,7 @@ through the extractor before chunking and embedding:
    from localvectordb import LocalVectorDB
 
    db = LocalVectorDB("documents")
-   db.upsert_from_files(["report.docx", "notes.md", "paper.pdf"])
+   db.upsert_from_file(["report.docx", "notes.md", "paper.pdf"])
 
 Security
 --------
@@ -221,7 +221,7 @@ persisted; unknown keys are ignored.
            "source_format": {"type": "text", "indexed": True},
        },
    )
-   db.upsert_from_files(["research_paper.pdf"])
+   db.upsert_from_file(["research_paper.pdf"])
    results = db.filter(where={"author": "Jane Smith"})
 
 Extractor priority and selection
