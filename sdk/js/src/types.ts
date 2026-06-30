@@ -217,8 +217,27 @@ export interface SetTuningOptions {
   persist?: boolean;
 }
 
+/**
+ * Workload characteristics used to bias auto-tuning recommendations.
+ *
+ * All fields are optional; omitted fields fall back to balanced server-side
+ * defaults. Mirrors the server's `WorkloadProfile`.
+ */
+export interface WorkloadProfile {
+  workload_type?:
+    | "read_heavy"
+    | "write_heavy"
+    | "balanced"
+    | "batch_ingest"
+    | "real_time";
+  document_size?: "small" | "medium" | "large";
+  concurrent_users?: number;
+  durability_level?: "critical" | "high" | "normal" | "low";
+  memory_constraint?: "generous" | "moderate" | "limited";
+}
+
 export interface AutoTuneOptions {
-  workload?: string;
+  workload?: WorkloadProfile;
   apply?: boolean;
 }
 
