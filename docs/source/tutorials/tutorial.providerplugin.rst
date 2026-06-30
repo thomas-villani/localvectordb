@@ -26,6 +26,21 @@ LocalVectorDB uses a plugin-based architecture for embedding providers. All embe
 * Batch processing capabilities
 * Error handling and configuration management
 
+.. note::
+
+   **You may not need a custom plugin at all.** LocalVectorDB already ships providers that
+   run Hugging Face models locally:
+
+   * ``sentence_transformers`` -- runs any `sentence-transformers <https://www.sbert.net/>`_
+     model locally (install the ``sentence-transformers`` extra).
+   * ``huggingface_local`` -- runs a local Hugging Face Transformers model.
+   * ``huggingface`` -- calls the hosted Hugging Face Inference API.
+
+   So for most cases you can just pass ``embedding_provider="sentence_transformers"``. This
+   tutorial builds a custom provider anyway, because it's the clearest way to learn the
+   plugin contract and the pattern you'd follow for a provider that isn't built in (a private
+   model server, a new vendor API, a bespoke pooling strategy, and so on).
+
 Prerequisites
 =============
 
@@ -44,44 +59,70 @@ For GPU support (recommended for better performance):
 Examining the Base Provider Interface
 =====================================
 
-First, let's look at the base class we need to implement. Based on the codebase, here's what we need to know:
+Let's look at the real ``localvectordb.embeddings.EmbeddingProvider`` base class so we
+implement the right contract. The important thing to understand is that **the base class
+already implements the public, batching, retry, and sync/async machinery for you**
+(``embed_batch``, ``embed_async``, and ``embed_sync``). Those methods are concrete -- do
+*not* reimplement them. Instead, you implement one async worker method plus a few pieces of
+metadata. Here is the shape of the contract (abbreviated):
 
 .. code-block:: python
 
    from abc import ABC, abstractmethod
+   from typing import Any, List, Optional
    import numpy as np
-   from typing import List, Union, Optional, Any, Dict
 
    class EmbeddingProvider(ABC):
-       """
-       Abstract base class for embedding providers.
-       All custom embedding providers must inherit from this class.
-       """
+       """Abstract base class for embedding providers (abbreviated)."""
 
-       def __init__(self, model: str, **kwargs):
+       def __init__(
+           self,
+           model: str,
+           *,
+           timeout: int = 90,
+           max_retries: int = 3,
+           retry_delay: float = 1.0,
+           max_concurrent_requests: int = 5,
+           **kwargs: Any,
+       ) -> None:
            self.model = model
-           self.provider_name = "custom_provider"
            self.config = kwargs
+           # ... stores timeout/retry/concurrency settings ...
 
+       # --- The ONE method you must implement: it embeds a single batch ---
        @abstractmethod
-       def validate_model(self) -> bool:
-           """Check if the specified model is available and valid."""
-           pass
+       async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
+           """Return one embedding (a list of floats) for each text in ``texts``."""
 
+       # --- Metadata the database needs -----------------------------------
        @abstractmethod
        def get_dimension(self) -> int:
            """Return the embedding dimension for this model."""
-           pass
 
        @abstractmethod
-       def embed_sync(self, texts: Union[str, List[str]]) -> np.ndarray:
-           """Generate embeddings synchronously."""
-           pass
+       def validate_model(self) -> bool:
+           """Check that the model is available and functional."""
 
-       async def embed_async(self, texts: Union[str, List[str]]) -> np.ndarray:
-           """Generate embeddings asynchronously (optional implementation)."""
-           # Default implementation calls sync version
-           return self.embed_sync(texts)
+       @property
+       @abstractmethod
+       def provider_name(self) -> str:
+           """Short, unique provider name."""
+
+       @property
+       @abstractmethod
+       def max_batch_size(self) -> int:
+           """Largest batch the base class should send to ``_embed_single_batch``."""
+
+       # --- Provided FOR you by the base class (do NOT reimplement) --------
+       # async def embed_batch(self, texts: List[str], batch_size=None) -> np.ndarray
+       # async def embed_async(self, texts: List[str], batch_size=None) -> np.ndarray
+       # def embed_sync(self, texts: List[str], batch_size=None) -> np.ndarray
+
+.. important::
+
+   The public methods take a **list of strings**. The database always calls them that way
+   (e.g. ``embed_sync([query])`` and ``embed_sync(batch_texts, batch_size)``). When you call
+   ``embed_sync`` yourself, always pass a list -- never a bare string.
 
 Creating the Hugging Face Provider
 ===================================
@@ -90,273 +131,156 @@ Now let's create our custom Hugging Face embedding provider:
 
 .. code-block:: python
 
-   import torch
-   import numpy as np
-   from sentence_transformers import SentenceTransformer
-   from transformers import AutoTokenizer, AutoModel
-   from typing import List, Union, Optional, Dict, Any
+   import asyncio
    import logging
+   from typing import Any, List, Optional
+
+   from sentence_transformers import SentenceTransformer
+
+   from localvectordb.embeddings import EmbeddingProvider
 
    logger = logging.getLogger(__name__)
 
-   class HuggingFaceEmbeddingProvider:
+   class HuggingFaceEmbeddingProvider(EmbeddingProvider):
        """
-       Custom embedding provider for Hugging Face models using sentence-transformers
-       and transformers libraries.
+       Custom embedding provider backed by sentence-transformers.
+
+       We inherit from ``EmbeddingProvider`` and implement only the abstract members.
+       The base class supplies ``embed_batch`` / ``embed_async`` / ``embed_sync`` (with
+       batching, concurrency, and retries) and calls our ``_embed_single_batch`` to do
+       the actual work.
        """
 
        def __init__(
            self,
            model: str,
+           *,
            device: Optional[str] = None,
-           max_seq_length: Optional[int] = None,
            batch_size: int = 32,
            normalize_embeddings: bool = True,
-           use_sentence_transformers: bool = True,
            trust_remote_code: bool = False,
-           **kwargs
-       ):
+           **kwargs: Any,
+       ) -> None:
            """
            Initialize the Hugging Face embedding provider.
 
            Args:
-               model: Hugging Face model name or path
-               device: Device to run on ('cpu', 'cuda', 'auto')
-               max_seq_length: Maximum sequence length (model default if None)
-               batch_size: Batch size for processing multiple texts
+               model: Hugging Face / sentence-transformers model name or path
+               device: Device to run on ('cpu', 'cuda', 'mps', or 'auto'/None to auto-detect)
+               batch_size: Batch size for the underlying ``encode`` call
                normalize_embeddings: Whether to normalize embeddings to unit vectors
-               use_sentence_transformers: Use sentence-transformers library if available
                trust_remote_code: Whether to trust remote code (for custom models)
-               **kwargs: Additional configuration options
+               **kwargs: Forwarded to EmbeddingProvider (timeout, max_retries, etc.)
            """
-           self.model = model
-           self.provider_name = "huggingface"
-           self.device = self._setup_device(device)
-           self.max_seq_length = max_seq_length
-           self.batch_size = batch_size
+           # Forward retry/timeout/concurrency settings to the base class.
+           super().__init__(model, **kwargs)
+
+           self.device = self._resolve_device(device)
+           self._batch_size = batch_size
            self.normalize_embeddings = normalize_embeddings
-           self.use_sentence_transformers = use_sentence_transformers
-           self.trust_remote_code = trust_remote_code
-           self.config = kwargs
 
-           # Initialize the model
-           self._model = None
-           self._tokenizer = None
-           self._dimension = None
+           # Load the model once, up front, and cache its dimension.
+           logger.info(f"Loading sentence-transformer model {model!r} on {self.device}")
+           self._model = SentenceTransformer(
+               model, device=self.device, trust_remote_code=trust_remote_code
+           )
+           self._dimension = self._model.get_sentence_embedding_dimension()
 
-           self._load_model()
-
-       def _setup_device(self, device: Optional[str]) -> str:
-           """Setup the appropriate device for the model."""
-           if device == "auto" or device is None:
-               if torch.cuda.is_available():
-                   device = "cuda"
-               elif torch.backends.mps.is_available():  # Apple Silicon
-                   device = "mps"
-               else:
-                   device = "cpu"
-
-           logger.info(f"Using device: {device}")
-           return device
-
-       def _load_model(self):
-           """Load the Hugging Face model."""
+       @staticmethod
+       def _resolve_device(device: Optional[str]) -> str:
+           """Pick a device, auto-detecting CUDA / Apple Silicon when not specified."""
+           if device and device != "auto":
+               return device
            try:
-               if self.use_sentence_transformers:
-                   # Try sentence-transformers first (easier and often better)
-                   try:
-                       logger.info(f"Loading sentence-transformer model: {self.model}")
-                       self._model = SentenceTransformer(
-                           self.model,
-                           device=self.device,
-                           trust_remote_code=self.trust_remote_code
-                       )
+               import torch
 
-                       if self.max_seq_length:
-                           self._model.max_seq_length = self.max_seq_length
+               if torch.cuda.is_available():
+                   return "cuda"
+               if torch.backends.mps.is_available():  # Apple Silicon
+                   return "mps"
+           except Exception:
+               pass
+           return "cpu"
 
-                       # Get dimension from the model
-                       self._dimension = self._model.get_sentence_embedding_dimension()
-                       self._use_sentence_transformers = True
+       # --- The one method the base class calls to do real work ------------
+       async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
+           """Embed one batch and return a list of vectors (one list of floats per text)."""
+           # ``encode`` is blocking (CPU/GPU bound), so run it off the event loop.
+           embeddings = await asyncio.to_thread(
+               self._model.encode,
+               texts,
+               batch_size=self._batch_size,
+               convert_to_numpy=True,
+               normalize_embeddings=self.normalize_embeddings,
+           )
+           return embeddings.tolist()
 
-                       logger.info(f"Successfully loaded sentence-transformer model with dimension {self._dimension}")
-                       return
-
-                   except Exception as e:
-                       logger.warning(f"Failed to load as sentence-transformer: {e}")
-                       logger.info("Falling back to transformers library")
-
-               # Fallback to transformers library
-               logger.info(f"Loading transformers model: {self.model}")
-               self._tokenizer = AutoTokenizer.from_pretrained(
-                   self.model,
-                   trust_remote_code=self.trust_remote_code
-               )
-               self._model = AutoModel.from_pretrained(
-                   self.model,
-                   trust_remote_code=self.trust_remote_code
-               ).to(self.device)
-
-               # Set max sequence length
-               if self.max_seq_length:
-                   self._tokenizer.model_max_length = self.max_seq_length
-
-               # Get dimension from model config
-               self._dimension = self._model.config.hidden_size
-               self._use_sentence_transformers = False
-
-               logger.info(f"Successfully loaded transformers model with dimension {self._dimension}")
-
-           except Exception as e:
-               raise RuntimeError(f"Failed to load model {self.model}: {str(e)}")
+       # --- Metadata the database needs ------------------------------------
+       def get_dimension(self) -> int:
+           """Return the embedding dimension."""
+           return self._dimension
 
        def validate_model(self) -> bool:
-           """Check if the model is properly loaded and functional."""
+           """Check the model is loaded and produces embeddings of the right shape."""
            try:
-               # Test with a simple input
-               test_result = self.embed_sync("Test input for validation.")
-               return test_result is not None and len(test_result.shape) == 2
+               # embed_sync is provided by the base class; always pass a LIST.
+               result = self.embed_sync(["validation text"])
+               return result.shape == (1, self._dimension)
            except Exception as e:
                logger.error(f"Model validation failed: {e}")
                return False
 
-       def get_dimension(self) -> int:
-           """Return the embedding dimension."""
-           if self._dimension is None:
-               raise RuntimeError("Model not properly initialized")
-           return self._dimension
+       @property
+       def provider_name(self) -> str:
+           # Must NOT collide with a built-in provider name.
+           return "hf_custom"
 
-       def embed_sync(self, texts: Union[str, List[str]]) -> np.ndarray:
-           """
-           Generate embeddings synchronously.
-
-           Args:
-               texts: Single text or list of texts to embed
-
-           Returns:
-               numpy array of embeddings with shape (n_texts, embedding_dim)
-           """
-           # Normalize input
-           if isinstance(texts, str):
-               texts = [texts]
-
-           if not texts:
-               return np.array([]).reshape(0, self._dimension)
-
-           try:
-               if self._use_sentence_transformers:
-                   return self._embed_with_sentence_transformers(texts)
-               else:
-                   return self._embed_with_transformers(texts)
-
-           except Exception as e:
-               logger.error(f"Error generating embeddings: {e}")
-               raise RuntimeError(f"Failed to generate embeddings: {str(e)}")
-
-       def _embed_with_sentence_transformers(self, texts: List[str]) -> np.ndarray:
-           """Generate embeddings using sentence-transformers."""
-           embeddings = self._model.encode(
-               texts,
-               batch_size=self.batch_size,
-               show_progress_bar=len(texts) > 100,
-               convert_to_numpy=True,
-               normalize_embeddings=self.normalize_embeddings
-           )
-           return embeddings
-
-       def _embed_with_transformers(self, texts: List[str]) -> np.ndarray:
-           """Generate embeddings using transformers library."""
-           all_embeddings = []
-
-           # Process in batches
-           for i in range(0, len(texts), self.batch_size):
-               batch_texts = texts[i:i + self.batch_size]
-               batch_embeddings = self._process_batch(batch_texts)
-               all_embeddings.append(batch_embeddings)
-
-           embeddings = np.vstack(all_embeddings)
-
-           if self.normalize_embeddings:
-               # Normalize to unit vectors
-               norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-               embeddings = embeddings / (norms + 1e-8)  # Add small epsilon to avoid division by zero
-
-           return embeddings
-
-       def _process_batch(self, texts: List[str]) -> np.ndarray:
-           """Process a batch of texts with the transformers model."""
-           # Tokenize
-           encoded = self._tokenizer(
-               texts,
-               padding=True,
-               truncation=True,
-               max_length=self.max_seq_length or self._tokenizer.model_max_length,
-               return_tensors='pt'
-           )
-
-           # Move to device
-           encoded = {k: v.to(self.device) for k, v in encoded.items()}
-
-           # Generate embeddings
-           with torch.no_grad():
-               outputs = self._model(**encoded)
-
-               # Use mean pooling of last hidden states
-               embeddings = self._mean_pooling(outputs.last_hidden_state, encoded['attention_mask'])
-
-           return embeddings.cpu().numpy()
-
-       @staticmethod
-       def _mean_pooling(hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-           """Apply mean pooling to get sentence embeddings."""
-           # Expand attention mask to match hidden states dimensions
-           expanded_mask = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
-
-           # Apply mask and sum
-           sum_embeddings = torch.sum(hidden_states * expanded_mask, dim=1)
-           sum_mask = torch.clamp(expanded_mask.sum(dim=1), min=1e-9)
-
-           return sum_embeddings / sum_mask
-
-       async def embed_async(self, texts: Union[str, List[str]]) -> np.ndarray:
-           """
-           Generate embeddings asynchronously.
-
-           Note: This is a simple implementation that runs sync code in a thread.
-           For true async support, you'd want to use asyncio-compatible libraries.
-           """
-           import asyncio
-           import concurrent.futures
-
-           loop = asyncio.get_event_loop()
-           with concurrent.futures.ThreadPoolExecutor() as executor:
-               result = await loop.run_in_executor(executor, self.embed_sync, texts)
-
-           return result
+       @property
+       def max_batch_size(self) -> int:
+           return self._batch_size
 
 Registering the Plugin
 ======================
 
-Now we need to register our custom provider with LocalVectorDB's embedding registry:
+The recommended, packaging-native way to register a provider is a **Python entry point**
+in your project's ``pyproject.toml`` under the ``localvectordb.embedding_providers`` group.
+LocalVectorDB auto-discovers entry points in this group, so once your package is installed
+the provider name works everywhere -- no imports or manual registration needed.
+
+.. code-block:: toml
+
+   # pyproject.toml of YOUR plugin package
+   [project.entry-points."localvectordb.embedding_providers"]
+   hf_custom = "your_package.huggingface_provider:HuggingFaceEmbeddingProvider"
+
+The key (``hf_custom``) becomes the ``embedding_provider`` value; the value is
+``module:Class``. After installing your package (e.g. ``pip install -e .``) you can use it:
+
+.. code-block:: python
+
+   from localvectordb import LocalVectorDB
+
+   db = LocalVectorDB(
+       name="hf_demo",
+       embedding_provider="hf_custom",
+       embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+   )
+
+For quick, in-process experiments (e.g. in a notebook) where you don't want to package
+anything yet, register the class at runtime instead. Pass the **class** (the base class's
+factory instantiates it as ``ProviderClass(model, **embedding_config)``):
 
 .. code-block:: python
 
    from localvectordb.embeddings import EmbeddingRegistry
 
-   def register_huggingface_provider():
-       """Register the Hugging Face provider with LocalVectorDB."""
+   EmbeddingRegistry.register("hf_custom", HuggingFaceEmbeddingProvider)
 
-       def create_huggingface_provider(model: str, **kwargs):
-           """Factory function to create Hugging Face provider instances."""
-           return HuggingFaceEmbeddingProvider(model=model, **kwargs)
+.. warning::
 
-       # Register the provider
-       EmbeddingRegistry.register("huggingface", create_huggingface_provider)
-
-       logger.info("Hugging Face embedding provider registered successfully")
-
-   # Register the provider when this module is imported
-   register_huggingface_provider()
+   Choose a name that does **not** collide with a built-in provider. LocalVectorDB already
+   ships ``sentence_transformers``, ``huggingface_local``, and ``huggingface`` -- registering
+   one of those names would silently override the built-in. We use ``hf_custom`` here.
 
 Using the Custom Provider
 =========================
@@ -367,9 +291,12 @@ Now let's see how to use our custom Hugging Face provider with LocalVectorDB:
 
    from localvectordb import LocalVectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
+   from localvectordb.embeddings import EmbeddingRegistry
 
-   # Import our custom provider (this also registers it)
-   from your_module import HuggingFaceEmbeddingProvider, register_huggingface_provider
+   # Import our custom provider and register it for in-process use.
+   # (If you installed it via a pyproject.toml entry point, skip the register call.)
+   from your_package.huggingface_provider import HuggingFaceEmbeddingProvider
+   EmbeddingRegistry.register("hf_custom", HuggingFaceEmbeddingProvider)
 
    def create_db_with_huggingface_embeddings():
        """Create a LocalVectorDB instance using Hugging Face embeddings."""
@@ -386,7 +313,7 @@ Now let's see how to use our custom Hugging Face provider with LocalVectorDB:
            name="hf_knowledge_base",
            base_path="./hf_vector_storage",
            metadata_schema=metadata_schema,
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model="sentence-transformers/all-MiniLM-L6-v2",  # Fast and good quality
            embedding_config={
                "device": "auto",  # Use GPU if available
@@ -415,7 +342,7 @@ Multilingual Models
        db = LocalVectorDB(
            name="multilingual_kb",
            base_path="./multilingual_storage",
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
            embedding_config={
                "device": "auto",
@@ -456,14 +383,13 @@ Domain-Specific Models
        db = LocalVectorDB(
            name="scientific_kb",
            base_path="./scientific_storage",
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model="allenai/scibert_scivocab_uncased",  # Scientific domain model
            embedding_config={
                "device": "auto",
                "batch_size": 16,  # Smaller batch for larger model
                "normalize_embeddings": True,
-               "max_seq_length": 512,
-               "use_sentence_transformers": False  # Use transformers directly
+               "max_seq_length": 512
            }
        )
 
@@ -475,14 +401,13 @@ Domain-Specific Models
        db = LocalVectorDB(
            name="legal_kb",
            base_path="./legal_storage",
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model="nlpaueb/legal-bert-base-uncased",
            embedding_config={
                "device": "auto",
                "batch_size": 16,
                "normalize_embeddings": True,
-               "max_seq_length": 512,
-               "use_sentence_transformers": False
+               "max_seq_length": 512
            }
        )
 
@@ -499,14 +424,13 @@ Code-Specific Models
        db = LocalVectorDB(
            name="code_kb",
            base_path="./code_storage",
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model="microsoft/codebert-base",
            embedding_config={
                "device": "auto",
                "batch_size": 32,
                "normalize_embeddings": True,
-               "max_seq_length": 512,
-               "use_sentence_transformers": False
+               "max_seq_length": 512
            },
            chunking_method="code-blocks",  # Use code-aware chunking
            chunk_size=800  # Larger chunks for code
@@ -576,7 +500,7 @@ Model Selection Guide
        db = LocalVectorDB(
            name=f"optimized_kb_{model_type}",
            base_path=f"./storage_{model_type}",
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model=model_config["model"],
            embedding_config={
                "device": "auto",
@@ -657,7 +581,8 @@ Let's create comprehensive tests for our custom provider:
        def test_single_text_embedding(self):
            """Test embedding a single text."""
            text = "This is a test sentence."
-           embedding = self.provider.embed_sync(text)
+           # embed_sync always takes a LIST of texts, even for a single one.
+           embedding = self.provider.embed_sync([text])
 
            self.assertEqual(embedding.shape, (1, self.provider.get_dimension()))
            self.assertTrue(np.isfinite(embedding).all())
@@ -688,7 +613,7 @@ Let's create comprehensive tests for our custom provider:
            different_text = "Quantum physics is fascinating."
 
            similar_embeddings = self.provider.embed_sync(similar_texts)
-           different_embedding = self.provider.embed_sync(different_text)
+           different_embedding = self.provider.embed_sync([different_text])
 
            # Calculate cosine similarity
            sim_similarity = np.dot(similar_embeddings[0], similar_embeddings[1])
@@ -745,10 +670,14 @@ Here's a complete example that puts everything together:
    # Configure logging
    logging.basicConfig(level=logging.INFO)
 
-   # Import our custom provider
-   from huggingface_provider import HuggingFaceEmbeddingProvider, register_huggingface_provider
+   # Import our custom provider and register it for in-process use.
+   # (If you installed it via a pyproject.toml entry point, skip the register call.)
+   from huggingface_provider import HuggingFaceEmbeddingProvider
    from localvectordb import LocalVectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
+   from localvectordb.embeddings import EmbeddingRegistry
+
+   EmbeddingRegistry.register("hf_custom", HuggingFaceEmbeddingProvider)
 
    def main():
        """Main demonstration function."""
@@ -770,7 +699,7 @@ Here's a complete example that puts everything together:
                'category': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
                'language': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
            },
-           embedding_provider="huggingface",
+           embedding_provider="hf_custom",
            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
            embedding_config={
                "device": "auto",
@@ -852,10 +781,10 @@ Here's a complete example that puts everything together:
                    batch_size=32
                )
 
-               # Test embedding generation
+               # Test embedding generation (embed_sync always takes a list)
                import time
                start_time = time.time()
-               embedding = provider.embed_sync(test_text)
+               embedding = provider.embed_sync([test_text])
                duration = time.time() - start_time
 
                print(f"  ✅ Dimension: {embedding.shape[1]}, Time: {duration:.3f}s")
@@ -949,13 +878,16 @@ Error Handling and Monitoring
            return wrapper
        return decorator
 
-   # Enhanced provider with monitoring
+   # Enhanced provider with monitoring.
+   # NOTE: the base class already retries failed batches (see ``max_retries``); this
+   # subclass mainly adds timing/monitoring. ``embed_sync`` keeps the base signature
+   # so the database can still call it as ``embed_sync(texts, batch_size)``.
    class ProductionHuggingFaceProvider(HuggingFaceEmbeddingProvider):
        """Production-ready version with enhanced error handling."""
 
        @with_retry_and_monitoring(max_retries=3, backoff_factor=1.0)
-       def embed_sync(self, texts):
-           return super().embed_sync(texts)
+       def embed_sync(self, texts, batch_size=None):
+           return super().embed_sync(texts, batch_size)
 
 Conclusion
 ==========

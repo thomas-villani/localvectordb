@@ -4,7 +4,7 @@ Quickstart
 Overview
 --------
 
-LocalVectorDB is a **document-first vector database** that combines the simplicity of SQLite with the power of FAISS for vector similarity search. Version 1.0 introduces a completely redesigned architecture focused on documents rather than chunks, making it easier to work with while providing more powerful features.
+LocalVectorDB is a **document-first vector database** that combines the simplicity of SQLite with the power of FAISS for vector similarity search. Its architecture is focused on documents rather than chunks, making it easier to work with while providing more powerful features.
 
 **Key Features:**
 

@@ -45,6 +45,7 @@ Configuration:
    # Default Ollama configuration
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="ollama",
        embedding_model="nomic-embed-text",
        embedding_config={
@@ -55,6 +56,7 @@ Configuration:
    # Custom Ollama configuration
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="ollama",
        embedding_model="mxbai-embed-large",
        embedding_config={
@@ -88,6 +90,7 @@ Configuration:
    # Using environment variable
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="openai",
        embedding_model="text-embedding-3-small"
    )
@@ -95,6 +98,7 @@ Configuration:
    # Explicit API key
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="openai",
        embedding_model="text-embedding-3-large",
        embedding_config={
@@ -132,6 +136,7 @@ Configuration:
    # Basic configuration
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="jina",
        embedding_model="jina-embeddings-v4"
    )
@@ -139,6 +144,7 @@ Configuration:
    # Advanced configuration with task-specific optimization
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="jina",
        embedding_model="jina-embeddings-v4",
        embedding_config={
@@ -153,6 +159,7 @@ Configuration:
    # Code embeddings
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="jina",
        embedding_model="jina-code-embeddings-1.5b",
        embedding_config={
@@ -207,6 +214,7 @@ Configuration:
    # Basic configuration
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="google",
        embedding_model="gemini-embedding-001"
    )
@@ -214,6 +222,7 @@ Configuration:
    # Advanced configuration with task optimization
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="google",
        embedding_model="gemini-embedding-001",
        embedding_config={
@@ -261,6 +270,7 @@ Configuration:
    # Basic usage
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="sentence_transformers",
        embedding_model="all-MiniLM-L6-v2"
    )
@@ -268,6 +278,7 @@ Configuration:
    # With Matryoshka dimension truncation
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="sentence_transformers",
        embedding_model="all-MiniLM-L6-v2",
        embedding_config={
@@ -295,6 +306,7 @@ Configuration:
    # Using HuggingFace Inference API
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="huggingface",
        embedding_model="BAAI/bge-small-en-v1.5"
    )
@@ -302,6 +314,7 @@ Configuration:
    # With a custom TEI (Text Embeddings Inference) endpoint
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="huggingface",
        embedding_model="BAAI/bge-small-en-v1.5",
        embedding_config={
@@ -326,6 +339,7 @@ Configuration:
 
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="huggingface_local",
        embedding_model="BAAI/bge-small-en-v1.5",
        embedding_config={
@@ -350,6 +364,7 @@ This reduces storage and speeds up similarity search.
    # Reduce OpenAI embeddings from 1536 to 256 dimensions
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="openai",
        embedding_model="text-embedding-3-small",
        embedding_config={
@@ -365,6 +380,7 @@ This reduces storage and speeds up similarity search.
    # Reduce Ollama embeddings with client-side truncation
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="ollama",
        embedding_model="nomic-embed-text",
        embedding_config={
@@ -423,6 +439,7 @@ Custom Provider Example
    # Use custom provider
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="custom",
        embedding_model="your-model",
        embedding_config={
@@ -555,7 +572,7 @@ plus provider-specific options.
 | Provider             | Parameter                     | Description                                              |
 +======================+===============================+==========================================================+
 | Ollama               | ``base_url``                  | Ollama server URL (default: ``$OLLAMA_URL`` or           |
-|                      |                               | ``http://localhost:11434``)                               |
+|                      |                               | ``http://localhost:11434``)                              |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | Ollama               | ``requested_dimensions``      | Truncate output to N dims (Matryoshka/MRL)               |
 +----------------------+-------------------------------+----------------------------------------------------------+
@@ -563,8 +580,6 @@ plus provider-specific options.
 +----------------------+-------------------------------+----------------------------------------------------------+
 | OpenAI               | ``api_key``                   | API key (default: ``$OPENAI_API_KEY``). Prefix with      |
 |                      |                               | ``$`` to read from a custom env var, e.g. ``$MY_KEY``    |
-+----------------------+-------------------------------+----------------------------------------------------------+
-| OpenAI               | ``base_url``                  | API base URL for OpenAI-compatible endpoints             |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | OpenAI               | ``requested_dimensions``      | Output dims (MRL, v3 models only)                        |
 +----------------------+-------------------------------+----------------------------------------------------------+
@@ -625,13 +640,18 @@ Batch Processing
 
 .. code-block:: python
 
-   # Configure batch sizes for optimal performance
+   # Configure batch sizes for optimal performance.
+   # The DB-level ``batch_size`` controls how many texts are accumulated before
+   # each embedding call (capped by the provider's ``max_batch_size``). It is a
+   # top-level VectorDB argument -- it is NOT read from ``embedding_config``.
+   # ``embedding_config`` holds provider request settings such as ``timeout``.
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        embedding_provider="ollama",
        embedding_model="nomic-embed-text",
+       batch_size=32,         # Texts per embedding call (DB-level argument)
        embedding_config={
-           "batch_size": 32,  # Process 32 texts at once
            "timeout": 120     # Longer timeout for large batches
        }
    )
@@ -655,6 +675,7 @@ Error Handling and Retries
    try:
        db = VectorDB(
            "my_db",
+           "./vector_storage",
            embedding_provider="ollama",
            embedding_model="nonexistent-model"
        )
@@ -664,6 +685,7 @@ Error Handling and Retries
        # Fallback to different model
        db = VectorDB(
            "my_db",
+           "./vector_storage",
            embedding_provider="ollama",
            embedding_model="all-minilm"  # Smaller, more reliable model
        )
@@ -673,7 +695,7 @@ Provider Selection Strategy
 
 .. code-block:: python
 
-   def create_db_with_fallback(name, preferred_provider="ollama"):
+   def create_db_with_fallback(name, base_path, preferred_provider="ollama"):
        """Create database with provider fallback"""
 
        providers_to_try = [
@@ -692,6 +714,7 @@ Provider Selection Strategy
                if test_provider.validate_model():
                    return VectorDB(
                        name,
+                       base_path,
                        embedding_provider=provider,
                        embedding_model=model
                    )
@@ -702,7 +725,7 @@ Provider Selection Strategy
        raise Exception("No embedding providers available")
 
    # Use with fallback
-   db = create_db_with_fallback("my_db", preferred_provider="ollama")
+   db = create_db_with_fallback("my_db", "./vector_storage", preferred_provider="ollama")
 
 Plugin Development
 ------------------
@@ -712,26 +735,21 @@ Creating an Embedding Plugin
 
 Create a Python package with entry points.
 
-**setup.py**:
+**pyproject.toml**:
 
-.. code-block:: python
+.. code-block:: toml
 
-   from setuptools import setup
+   [project]
+   name = "my-embedding-provider"
+   version = "1.0.0"
+   dependencies = [
+       "localvectordb>=0.1.0",
+       "requests",  # Your dependencies
+   ]
 
-   setup(
-       name="my-embedding-provider",
-       version="1.0.0",
-       packages=["my_embedding_provider"],
-       entry_points={
-           'localvectordb.embedding_providers': [
-               'my_provider = my_embedding_provider:MyEmbeddingProvider',
-           ],
-       },
-       install_requires=[
-           "localvectordb>=1.0.0",
-           "requests",  # Your dependencies
-       ]
-   )
+   # Discovered automatically by LocalVectorDB's EmbeddingRegistry
+   [project.entry-points."localvectordb.embedding_providers"]
+   my_provider = "my_embedding_provider:MyEmbeddingProvider"
 
 **my_embedding_provider/__init__.py**:
 
@@ -794,6 +812,7 @@ Installation and Usage:
    from localvectordb import VectorDB
    db = VectorDB(
        'test_db',
+       './vector_storage',
        embedding_provider='my_provider',
        embedding_model='my-model-v1',
        embedding_config={'api_key': 'your_key'}

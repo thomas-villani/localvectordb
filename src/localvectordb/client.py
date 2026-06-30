@@ -105,8 +105,8 @@ MongoDB-like filtering::
 
 .. Note::
 
-    This client requires a running LocalVectorDB v1.0 server. The interface is designed
-    to be a drop-in replacement for the new LocalVectorDB, allowing code to work with
+    This client requires a running LocalVectorDB server. The interface is designed
+    to be a drop-in replacement for the local LocalVectorDB, allowing code to work with
     either local or remote databases with minimal changes.
 """
 

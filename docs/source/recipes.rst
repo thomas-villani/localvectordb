@@ -310,7 +310,7 @@ The LocalVectorDB server includes built-in extractors for many file types. Here'
    import mimetypes
    from pathlib import Path
    from typing import Optional, Dict, Any
-   from localvectordb_server.extractors import ExtractorRegistry
+   from localvectordb.extractors import ExtractorRegistry
 
    def add_file_with_extraction(db, file_path: str, metadata: Optional[Dict[str, Any]] = None):
        """
@@ -770,16 +770,21 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
 
        // Create a new database
        async createDatabase(name, config = {}) {
-           return this.makeRequest(`/api/v1/${name}`, {
+           return this.makeRequest(`/api/v1/databases`, {
                method: 'POST',
                headers: { 'Content-Type': 'application/json' },
                body: JSON.stringify({
-                   embedding_provider: config.embedding_provider || 'ollama',
-                   embedding_model: config.embedding_model || 'nomic-embed-text',
+                   name: name,
                    metadata_schema: config.metadata_schema || {},
-                   chunking_method: config.chunking_method || 'sentences',
-                   chunk_size: config.chunk_size || 500,
-                   enable_fts: config.enable_fts !== false
+                   embedding: {
+                       provider: config.embedding_provider || 'ollama',
+                       model: config.embedding_model || 'nomic-embed-text'
+                   },
+                   database: {
+                       chunking_method: config.chunking_method || 'sentences',
+                       chunk_size: config.chunk_size || 500,
+                       enable_fts: config.enable_fts !== false
+                   }
                })
            });
        }
@@ -862,9 +867,9 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
            return this.makeRequest('/api/v1/upload/supported-formats');
        }
 
-       // Get database statistics
-       async getStats(dbName) {
-           return this.makeRequest(`/api/v1/${dbName}/stats`);
+       // Get database info (stats, schema, configuration)
+       async getInfo(dbName) {
+           return this.makeRequest(`/api/v1/${dbName}/info`);
        }
 
        // Get document by ID
@@ -1075,7 +1080,7 @@ Complete HTML page showing how to integrate with the LocalVectorDB server.
 
    Remember to:
 
-   - Start the LocalVectorDB server with ``python -m localvectordb_server`` or use the setup script above
+   - Start the LocalVectorDB server with ``lvdb serve`` or use the setup script above
    - Create an API key using the CLI: ``lvdb auth create-key --description "Web Interface"``
    - Enable CORS if accessing from a different domain
    - Check supported file formats with ``GET /api/v1/upload/supported-formats``

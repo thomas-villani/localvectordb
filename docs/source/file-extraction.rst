@@ -102,11 +102,11 @@ PDF Documents
      - Package
    * - PDFPlumber
      - Better table extraction, layout preservation
-     - High (20)
+     - High (15)
      - ``pdfplumber``
    * - PyPDF
      - Faster, smaller memory footprint
-     - Medium (15)
+     - Medium (12)
      - ``pypdf``
 
 **Example**:
@@ -421,30 +421,35 @@ Using Extracted Metadata
 Extractor Priority System
 --------------------------
 
-When multiple extractors can handle the same file format, LocalVectorDB uses a priority system to select the best one:
+When multiple extractors can handle the same file format, LocalVectorDB uses a priority
+system to select the best one. Priority only matters among extractors that support the same
+format -- higher numbers win:
 
 Priority Levels
 ^^^^^^^^^^^^^^^
 
 .. list-table:: Extractor Priorities
    :header-rows: 1
-   :widths: 20 15 65
+   :widths: 25 15 60
 
    * - Extractor
      - Priority
      - Reasoning
    * - PDFPlumberExtractor
-     - 20
+     - 15
      - Better table extraction and layout preservation
    * - PyPDFExtractor
-     - 15
+     - 12
      - Faster but less accurate for complex layouts
    * - DocxExtractor
-     - 10
+     - 15
      - Standard priority for office formats
    * - TextFileExtractor
-     - 5
-     - Fallback for any text-readable format
+     - 20
+     - Handles text-readable files (``.txt``, ``.md``, source code, etc.)
+   * - TextFallbackExtractor
+     - 1
+     - Last-resort fallback for any file
 
 **Priority Selection Example**:
 
@@ -459,8 +464,8 @@ Priority Levels
        print(f"{extractor.name}: priority {extractor.priority}")
 
    # Output:
-   # PDFPlumberExtractor: priority 20
-   # PyPDFExtractor: priority 15
+   # PDFPlumberExtractor: priority 15
+   # PyPDFExtractor: priority 12
 
 **Manual Extractor Selection**:
 
@@ -862,7 +867,6 @@ Production Deployment
 See Also
 --------
 
-- :ref:`installation` - Installing optional dependencies
-- :ref:`server-routes` - File upload API endpoints
-- :ref:`metadata-filtering` - Working with extracted metadata
-- :ref:`cli` - Command-line file upload tools
+- :doc:`/installation` - Installing optional dependencies
+- :doc:`/metadata.filtering` - Working with extracted metadata
+- :doc:`/cli` - Command-line file upload tools

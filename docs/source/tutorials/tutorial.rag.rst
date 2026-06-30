@@ -52,10 +52,14 @@ Let's start by creating our vector database with a proper metadata schema for do
 
 .. code-block:: python
 
-   from localvectordb import VectorDB
+   from localvectordb import VectorDB, LocalVectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
    from pathlib import Path
    import logging
+
+   # We create the database with the ``VectorDB`` factory (which returns a
+   # ``LocalVectorDB`` for a local path); ``LocalVectorDB`` is imported as well so
+   # we can use it in the type annotations of the helper functions below.
 
    # Configure logging to see what's happening
    logging.basicConfig(level=logging.INFO)
@@ -300,7 +304,7 @@ Now let's create the core RAG functionality:
                    prompt=prompt,
                    options={
                        'temperature': 0.7,
-                       'max_tokens': 500,
+                       'num_predict': 500,  # Ollama's name for max tokens to generate
                        'top_p': 0.9
                    }
                )
@@ -593,7 +597,7 @@ Conversation Memory
                    prompt=prompt,
                    options={
                        'temperature': 0.7,
-                       'max_tokens': 500,
+                       'num_predict': 500,  # Ollama's name for max tokens to generate
                        'top_p': 0.9
                    }
                )
@@ -676,7 +680,7 @@ Here's the complete script you can run:
    from pathlib import Path
    from typing import List, Dict, Any, Optional
 
-   from localvectordb import VectorDB
+   from localvectordb import VectorDB, LocalVectorDB
    from localvectordb.core import MetadataField, MetadataFieldType
 
    # Configure logging

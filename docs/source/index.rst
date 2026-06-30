@@ -38,6 +38,7 @@ scale to distributed deployments without changing your code.
    querybuilder
    document-scoring
    comparison
+   performance
    file-extraction
    server/index
    sdk/index

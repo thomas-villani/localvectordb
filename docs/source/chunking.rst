@@ -27,9 +27,10 @@ Splits text at sentence boundaries while respecting token limits.
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="sentences",
        chunk_size=500,          # Max tokens per chunk
-       overlap=1          # Number of sentences to overlap
+       chunk_overlap=1          # Number of sentences to overlap
    )
 
    # Example document
@@ -54,9 +55,10 @@ Splits text at paragraph boundaries (double newlines).
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="paragraphs",
        chunk_size=800,
-       overlap=1  # Number of paragraphs to overlap
+       chunk_overlap=1  # Number of paragraphs to overlap
    )
 
 **Best for**: Blog posts, essays, structured documents
@@ -70,9 +72,10 @@ Splits text at token boundaries using tiktoken encoding.
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="tokens",
        chunk_size=400,
-       overlap=50  # Number of tokens to overlap
+       chunk_overlap=50  # Number of tokens to overlap
    )
 
 **Best for**: Maximum control over chunk size, technical content
@@ -86,9 +89,10 @@ Splits text at word boundaries.
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="words",
        chunk_size=300,
-       overlap=20  # Number of words to overlap
+       chunk_overlap=20  # Number of words to overlap
    )
 
 **Best for**: Social media content, short-form text
@@ -102,9 +106,10 @@ Splits text at line boundaries.
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="lines",
        chunk_size=600,
-       overlap=3  # Number of lines to overlap
+       chunk_overlap=3  # Number of lines to overlap
    )
 
 **Best for**: Log files, CSV data, structured line-based content
@@ -118,6 +123,7 @@ Splits text at markdown-style headers (`#`, `##`, `###`).
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="sections",
        chunk_size=1000
        # Sections typically don't overlap
@@ -134,9 +140,10 @@ Intelligent code-aware chunking that preserves logical code structure.
 
    db = VectorDB(
        "code_db",
+       "./vector_storage",
        chunking_method="code-blocks",
        chunk_size=800,
-       overlap=2  # Number of lines to overlap
+       chunk_overlap=2  # Number of lines to overlap
    )
 
 **Features**:
@@ -157,9 +164,10 @@ Fine-grained chunking at character level.
 
    db = VectorDB(
        "docs",
+       "./vector_storage",
        chunking_method="characters",
        chunk_size=500,
-       overlap=50  # Number of characters to overlap
+       chunk_overlap=50  # Number of characters to overlap
    )
 
 **Best for**: Non-Western languages, specialized text processing
@@ -223,6 +231,7 @@ There are two ways to use a custom chunker.
    # Now use it by name when creating a database
    db = VectorDB(
        "my_db",
+       "./vector_storage",
        chunking_method="regex",
        chunk_size=400,
    )
@@ -277,17 +286,19 @@ Language-Specific Code Chunking
    # Python-specific chunking
    db_python = VectorDB(
        "python_code",
+       "./vector_storage",
        chunking_method="code-blocks",
        chunk_size=600,
-       overlap=2
+       chunk_overlap=2
    )
 
    # JavaScript-specific chunking
    db_js = VectorDB(
        "javascript_code",
+       "./vector_storage",
        chunking_method="code-blocks",
        chunk_size=500,
-       overlap=1
+       chunk_overlap=1
    )
 
 Position Tracking
@@ -300,10 +311,12 @@ Every chunk maintains precise position information:
    from localvectordb.core import ChunkPosition
 
    # ChunkPosition attributes:
-   # - start: Character position in original document
-   # - end: Character position in original document
-   # - line: Line number (1-based)
-   # - column: Column number (1-based)
+   # - start: Start character position in original document
+   # - end: End character position in original document
+   # - line: Start line number (1-based)
+   # - column: Start column number (1-based)
+   # - end_line: End line number (1-based)
+   # - end_column: End column number (1-based)
 
    # Access position information
    results = db.query("search term", return_type="chunks")
@@ -319,13 +332,14 @@ Perfect reconstruction capabilities:
 
 .. code-block:: python
 
-   from localvectordb.chunking import reconstruct_document
+   from localvectordb.chunking import ChunkerFactory, reconstruct_document
 
-   # Get all chunks for a document
-   results = db.query("", return_type="chunks", filters={"document_id": "doc_1"})
-   chunks = [result for result in results]
+   # Chunk a document, keeping the chunk objects (each carries its position)
+   original_doc = "Your original document text..."
+   chunker = ChunkerFactory.create_chunker("sentences", max_tokens=200)
+   chunks = chunker.chunk(original_doc)
 
-   # Reconstruct original document
+   # Reconstruct original document from its position-tracked chunks
    original_text = reconstruct_document(chunks, original_length=len(original_doc))
 
    # Find specific chunk by iterating through chunks
@@ -347,12 +361,16 @@ Academic Papers
 
 .. code-block:: python
 
+   from localvectordb import VectorDB
+   from localvectordb.core import MetadataField, MetadataFieldType
+
    # Academic papers with citations and references
    db_papers = VectorDB(
        "academic_papers",
+       "./vector_storage",
        chunking_method="paragraphs",  # Preserve paragraph structure
        chunk_size=600,                # Larger chunks for context
-       overlap=1,               # Overlap paragraphs
+       chunk_overlap=1,               # Overlap paragraphs
        metadata_schema={
            'title': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'authors': MetadataField(type=MetadataFieldType.JSON),
@@ -369,9 +387,10 @@ Source Code Repositories
    # Code repositories with multiple languages
    db_code = VectorDB(
        "source_code",
+       "./vector_storage",
        chunking_method="code-blocks",
        chunk_size=500,
-       overlap=2,
+       chunk_overlap=2,
        metadata_schema={
            'file_path': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'language': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -388,9 +407,10 @@ Legal Documents
    # Legal documents requiring precise citation
    db_legal = VectorDB(
        "legal_docs",
+       "./vector_storage",
        chunking_method="sections",    # Preserve legal structure
        chunk_size=1000,               # Large chunks for legal context
-       overlap=0,                     # No overlap to avoid confusion
+       chunk_overlap=0,               # No overlap to avoid confusion
        metadata_schema={
            'case_number': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'court': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
@@ -407,9 +427,10 @@ Customer Support
    # Customer support tickets and responses
    db_support = VectorDB(
        "support_tickets",
+       "./vector_storage",
        chunking_method="sentences",   # Natural conversation flow
        chunk_size=300,                # Shorter for specific queries
-       overlap=2,                     # Maintain conversation context
+       chunk_overlap=2,               # Maintain conversation context
        metadata_schema={
            'ticket_id': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
            'customer_id': MetadataField(type=MetadataFieldType.TEXT, indexed=True),

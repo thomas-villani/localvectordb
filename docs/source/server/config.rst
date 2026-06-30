@@ -96,7 +96,6 @@ Server Configuration
 
    # Performance settings
    max_request_size = 104857600   # 100MB max request size
-   request_timeout = 300          # Request timeout in seconds
 
 
 Security Configuration
@@ -167,7 +166,6 @@ High-Performance Setup
    connection_pool_size = 50
    enable_gpu = true
    enable_fts = true
-   auto_save_interval = 600
 
    # Optimized chunking
    chunk_size = 400
@@ -187,10 +185,7 @@ High-Performance Setup
    port = 8080
    log_level = "INFO"
    max_request_size = 209715200  # 200MB
-   request_timeout = 600
-   worker_count = 8
-   enable_async_processing = true
-   enable_performance_metrics = true
+   enable_performance_logging = true
 
    [server.security]
    # Security for production
@@ -517,8 +512,8 @@ Performance Configuration
    # Optimize connection pooling
    connection_pool_size = 20        # Increase for high concurrency
 
-   # Batch processing optimization
-   auto_save_interval = 1800        # Less frequent saves for performance
+   # Longer timeout for large operations
+   timeout = 600
 
    # GPU acceleration
    enable_gpu = true                # If NVIDIA GPU available
@@ -531,7 +526,6 @@ Performance Configuration
    [server]
    # Optimize request handling
    max_request_size = 209715200     # 200MB for large document uploads
-   request_timeout = 600            # Longer timeout for large operations
 
 
 Deployment Strategies
@@ -574,7 +568,7 @@ Docker Deployment
        CMD curl -f http://localhost:8080/api/v1/health || exit 1
 
    # Start server
-   CMD ["lvdb", "serve", "--config", "/app/.lvdb-config.toml", "--host", "0.0.0.0", "--port", "8080"]
+   CMD ["lvdb", "--config", "/app/.lvdb-config.toml", "serve", "--host", "0.0.0.0", "--port", "8080"]
 
 .. code-block:: yaml
 
@@ -705,7 +699,7 @@ Systemd Service
    Group=vectordb
    WorkingDirectory=/opt/localvectordb
    Environment=LVDB_SERVER_CONFIG=/etc/localvectordb/production.toml
-   ExecStart=/opt/localvectordb/venv/bin/lvdb serve --config /etc/localvectordb/production.toml
+   ExecStart=/opt/localvectordb/venv/bin/lvdb --config /etc/localvectordb/production.toml serve
    Restart=always
    RestartSec=5
    StandardOutput=journal
@@ -794,7 +788,6 @@ High Memory Usage:
    # Reduce memory usage
    [database]
    connection_pool_size = 5        # Reduce connections
-   auto_save_interval = 300        # More frequent saves
 
    [embedding]
    batch_size = 32                 # Smaller batches
@@ -809,7 +802,7 @@ Slow Performance:
    connection_pool_size = 20       # More connections
 
    [server]
-   enable_async_processing = true  # Async processing
+   enable_performance_logging = true  # Surface slow operations in logs
 
 Connection Errors:
 

@@ -371,9 +371,9 @@ Database Statistics
    # Get database statistics
    stats = db.get_stats()
    
-   print(f"Total documents: {stats['total_documents']}")
-   print(f"Total chunks: {stats['total_chunks']}")
-   print(f"Index size: {stats['faiss_index_size']}")
+   print(f"Total documents: {stats['documents']}")
+   print(f"Total chunks: {stats['chunks']}")
+   print(f"Index vectors: {stats['index_vectors']}")
 
 Connection Pool Metrics
 -----------------------
@@ -717,8 +717,7 @@ Remote tuning requires appropriate API permissions:
    remote_db = RemoteVectorDB(
        name="production_db",
        base_url="https://db-server.company.com",
-       api_key="admin_write_key",  # Must be read_write key
-       verify_ssl=True
+       api_key="admin_write_key"  # Must be read_write key
    )
 
    try:

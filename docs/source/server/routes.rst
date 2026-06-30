@@ -33,10 +33,22 @@ Route Permissions
 * ``GET /api/v1/<db_name>/documents`` - List documents
 * ``POST /api/v1/<db_name>/documents/exists`` - Check document existence
 * ``POST /api/v1/<db_name>/query`` - Query documents
+* ``POST /api/v1/<db_name>/query/stream`` - Stream query results (SSE)
 * ``POST /api/v1/<db_name>/search/*`` - All search endpoints
+* ``POST /api/v1/<db_name>/query_builder`` - Execute a QueryBuilder query
+* ``POST /api/v1/<db_name>/query-multi-column`` - Multi-column query
 * ``POST /api/v1/<db_name>/filter`` - Filter documents
 * ``POST /api/v1/<db_name>/embeddings`` - Get embeddings
 * ``GET /api/v1/<db_name>/schema`` - Get metadata schema
+* ``POST /api/v1/<db_name>/compare`` - Compare two documents
+* ``POST /api/v1/<db_name>/compare/detailed`` - Detailed document comparison
+* ``POST /api/v1/<db_name>/nearest-neighbors`` - Nearest neighbors of a document
+* ``POST /api/v1/<db_name>/similarity-matrix`` - Pairwise similarity matrix
+* ``POST /api/v1/<db_name>/factcheck`` - Fact-check text against a database
+* ``POST /api/v1/factcheck`` - Fact-check text across databases
+* ``POST /api/v1/<db_name>/documents/count`` - Count documents
+* ``GET /api/v1/<db_name>/tuning`` - Get SQLite tuning configuration
+* ``GET /api/v1/system/resources`` - Analyze system resources
 
 **Write Routes** (require read_write keys):
 
@@ -44,22 +56,33 @@ Route Permissions
 * ``DELETE /api/v1/<db_name>`` - Delete database
 * ``POST /api/v1/<db_name>/documents`` - Add/update documents
 * ``POST /api/v1/<db_name>/documents/insert`` - Insert documents
+* ``POST /api/v1/<db_name>/documents/chunks`` - Upsert from pre-chunked data
+* ``POST /api/v1/<db_name>/documents/chunks/insert`` - Insert from pre-chunked data
+* ``POST /api/v1/<db_name>/documents/delete`` - Batch-delete documents by ID
 * ``PUT /api/v1/<db_name>/documents/<doc_id>`` - Update document
 * ``DELETE /api/v1/<db_name>/documents/<doc_id>`` - Delete document
 * ``POST /api/v1/<db_name>/upload`` - Upload files
 * ``PUT /api/v1/<db_name>/schema`` - Update metadata schema
+* ``PUT /api/v1/<db_name>/tuning`` - Apply SQLite tuning profile
+* ``POST /api/v1/<db_name>/auto-tune`` - Auto-tune recommendations
+* ``POST /api/v1/<db_name>/maintenance/*`` - Maintenance operations
 
 Error Responses
 ^^^^^^^^^^^^^^^
 
-When a read-only key attempts a write operation:
+When a read-only key attempts a write operation, the server responds with HTTP ``403 Forbidden``:
 
 .. code-block:: json
 
    {
-     "error": "Insufficient permissions. This endpoint requires read_write access.",
-     "status_code": 401
+     "detail": "Insufficient permissions. This endpoint requires read_write access."
    }
+
+.. note::
+   Authentication failures (missing, malformed, invalid, or expired key) return HTTP
+   ``401 Unauthorized``, while authorization failures (a valid read-only key used on a
+   write endpoint) return HTTP ``403 Forbidden``. Both are emitted by FastAPI as
+   ``{"detail": "..."}``.
 
 
 
@@ -601,9 +624,11 @@ List documents with pagination, filtering, or bulk-get by ID.
   Comma-separated list of document IDs to retrieve.
   If **ids** is provided:
 
-  - Only the listed IDs are returned (in the order given).
+  - Only the listed IDs are returned.
   - Pagination (``page``/``limit``) and metadata filters are **ignored**.
-  - If any ID does not exist, a ``404`` is returned with a JSON error listing the missing IDs.
+  - The response is ``200 OK`` with the shape ``{"documents": [...], "returned_ids": [...],
+    "missing_ids": [...]}``. Any IDs that do not exist are reported in ``missing_ids`` rather
+    than producing a ``404``.
 
 - ``page``
   Page number (default: 1). Used **only** when **ids** is *not* provided.
@@ -653,6 +678,68 @@ List documents with pagination, filtering, or bulk-get by ID.
    resp = requests.get(base, headers=headers, params={"author": "Alice", "limit": 5})
    print(resp.json()["documents"])
 
+Count Documents
+^^^^^^^^^^^^^^^
+
+Count documents, optionally matching metadata filters.
+
+**Endpoint**: ``POST /api/v1/{db_name}/documents/count``
+
+**Request Body** (optional):
+
+.. code-block:: json
+
+   {
+     "filters": {"journal": "Science", "year": {"$gte": 2020}}
+   }
+
+**Response**: ``{"count": 42}``
+
+Batch Delete Documents
+^^^^^^^^^^^^^^^^^^^^^^
+
+Delete multiple documents by ID in a single request (max 1000 IDs).
+
+**Endpoint**: ``POST /api/v1/{db_name}/documents/delete``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "ids": ["doc_1", "doc_2", "doc_3"]
+   }
+
+**Response**: ``{"message": "...", "status": "success", "deleted_count": 2, "failed_ids": ["doc_3"]}``
+(IDs that do not exist are reported in ``failed_ids``.)
+
+Upsert / Insert From Pre-Chunked Data
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Upsert (or insert) documents from chunks you have already produced, bypassing server-side
+chunking. ``chunks_by_document`` maps each document ID to its list of chunk strings (or
+objects with a ``content``/``text`` field).
+
+**Endpoints**:
+
+- ``POST /api/v1/{db_name}/documents/chunks`` - Upsert from chunks
+- ``POST /api/v1/{db_name}/documents/chunks/insert`` - Insert from chunks (conflict handling via ``errors``)
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "chunks_by_document": {
+       "doc_1": ["First chunk text", "Second chunk text"]
+     },
+     "metadata": {"doc_1": {"title": "My Doc"}},
+     "batch_size": 100,
+     "similarity_threshold": 0.95
+   }
+
+**Response**: ``{"message": "...", "ids": ["doc_1"], "status": "success"}``
+
 
 File Upload Operations
 ----------------------
@@ -675,13 +762,14 @@ Supported File Formats
 
 **Optionally Supported (With Additional Dependencies)**:
 
-- ``.pdf`` - PDF documents (via PyPDF2 or pdfplumber)
+- ``.pdf`` - PDF documents (via pdfplumber or pypdf)
 - ``.docx`` - Microsoft Word documents (via python-docx)
 - ``.pptx`` - Microsoft PowerPoint presentations (via python-pptx)
 - ``.xlsx``, ``.xls`` - Microsoft Excel spreadsheets (via openpyxl)
 - ``.html``, ``.htm`` - HTML web pages (via beautifulsoup4)
 - ``.xml``, ``.rss``, ``.atom``, ``.svg`` - XML documents and feeds (via beautifulsoup4)
 - ``.rtf`` - Rich Text Format documents (via striprtf)
+- ``.epub`` - EPUB e-books (via ebooklib)
 
 Installation Requirements
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -703,7 +791,7 @@ Installation Requirements
    pip install localvectordb[file-extraction-office]
 
    # Manual installation of specific extractors
-   pip install PyPDF2 python-docx python-pptx openpyxl striprtf beautifulsoup4
+   pip install pypdf python-docx python-pptx openpyxl striprtf beautifulsoup4 ebooklib
 
 Upload Files to Database
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -883,7 +971,7 @@ Get information about supported file formats and extraction capabilities.
      "basic_text_support": true,
      "text_file_extensions": [".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".xml", ".csv"],
      "installation_hints": {  // Only returned in development mode
-       "pdf": "pip install pdfplumber or pip install PyPDF2",
+       "pdf": "pip install pdfplumber or pip install pypdf",
        "docx": "pip install python-docx",
        "pptx": "pip install python-pptx",
        "xlsx": "pip install openpyxl",
@@ -906,7 +994,7 @@ Preview text extraction from a file without adding it to the database.
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/my_database/upload/extract-preview" \
+   curl -X POST "http://localhost:5000/api/v1/upload/extract-preview" \
      -H "Authorization: Bearer lvdb_your_api_key" \
      -F "file=@sample.pdf"
 
@@ -918,7 +1006,7 @@ Preview text extraction from a file without adding it to the database.
        files = {'file': ('sample.pdf', f, 'application/pdf')}
 
        response = requests.post(
-           "http://localhost:5000/api/v1/my_database/upload/extract-preview",
+           "http://localhost:5000/api/v1/upload/extract-preview",
            headers={"Authorization": "Bearer lvdb_your_api_key"},
            files=files
        )
@@ -1224,6 +1312,77 @@ Hybrid Search (Convenience Endpoint)
        "k": 5,
        "vector_weight": 0.8
      }'
+
+Streaming Query Results (SSE)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Stream query results incrementally over `Server-Sent Events
+<https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events>`_. Accepts the same
+parameters as ``/query`` plus an optional ``batch_size``. The response is an ``text/event-stream``
+emitting ``result`` events (one serialized result each), a final ``done`` event with
+``{"total_results": N}``, and an ``error`` event if streaming fails.
+
+**Endpoint**: ``POST /api/v1/{db_name}/query/stream``
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -N -X POST http://localhost:5000/api/v1/research_papers/query/stream \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer your_api_key" \
+     -d '{
+       "query": "neural networks",
+       "search_type": "vector",
+       "k": 20,
+       "batch_size": 10
+     }'
+
+QueryBuilder Execution
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Execute a full QueryBuilder state server-side (used by the ``RemoteVectorDB`` query builder).
+The body carries the serialized builder state: ``search_clauses``, ``exact_filters``,
+``semantic_filters``, plus optional ``search_type``, ``vector_weight``, ``return_type``,
+``order_by``, ``limit``, ``offset``, ``group_by``, and ``aggregations``.
+
+**Endpoint**: ``POST /api/v1/{db_name}/query_builder``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "search_clauses": [{"text": "machine learning", "search_type": "hybrid"}],
+     "exact_filters": [{"field": "journal", "conditions": {"eq": "Science"}}],
+     "semantic_filters": [{"field": "abstract", "concept": "climate", "threshold": 0.7}],
+     "order_by": [{"field": "year", "direction": "desc"}],
+     "limit": 25
+   }
+
+**Response**: ``{"results": [...], "total_results": N}``
+
+Multi-Column Query
+^^^^^^^^^^^^^^^^^^
+
+Query across the main content column plus embedding-enabled metadata columns.
+
+**Endpoint**: ``POST /api/v1/{db_name}/query-multi-column``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "query": "machine learning",
+     "columns": ["content", "title", "abstract"],
+     "search_type": "vector",
+     "return_type": "documents",
+     "k": 10,
+     "vector_weight": 0.7
+   }
+
+``query`` is required; ``columns`` defaults to all embedding-enabled columns when omitted.
 
 Filtering and Metadata Operations
 ---------------------------------
@@ -1561,6 +1720,103 @@ Search across multiple databases simultaneously.
        for result in results:
            print(f"  {result['id']}: {result['score']:.3f}")
 
+Document Comparison
+-------------------
+
+Compare documents and explore similarity. All comparison endpoints require a read key. If the
+underlying database does not support comparison, the server responds with HTTP ``501``.
+
+Compare Two Documents
+^^^^^^^^^^^^^^^^^^^^^
+
+**Endpoint**: ``POST /api/v1/{db_name}/compare``
+
+**Request Body**: ``{"doc_id_1": "doc_1", "doc_id_2": "doc_2"}``
+
+**Response**:
+
+.. code-block:: json
+
+   {
+     "doc_id_1": "doc_1",
+     "doc_id_2": "doc_2",
+     "similarity": 0.873,
+     "status": "success"
+   }
+
+Detailed Comparison
+^^^^^^^^^^^^^^^^^^^
+
+Chunk-level comparison of two documents.
+
+**Endpoint**: ``POST /api/v1/{db_name}/compare/detailed``
+
+**Request Body**: ``{"doc_id_1": "doc_1", "doc_id_2": "doc_2", "chunk_threshold": 0.7}``
+
+**Response**: ``{"doc_id_1", "doc_id_2", "overall_similarity", "chunk_similarities", "status"}``
+(and, when available, ``common_themes``, ``unique_to_doc1``, ``unique_to_doc2``).
+
+Nearest Neighbors
+^^^^^^^^^^^^^^^^^
+
+Find the documents most similar to a given document.
+
+**Endpoint**: ``POST /api/v1/{db_name}/nearest-neighbors``
+
+**Request Body**: ``{"doc_id": "doc_1", "k": 5}``
+
+**Response**: ``{"doc_id", "k", "results": [...], "total_results", "status"}``
+
+Similarity Matrix
+^^^^^^^^^^^^^^^^^
+
+Compute a pairwise similarity matrix across documents.
+
+**Endpoint**: ``POST /api/v1/{db_name}/similarity-matrix``
+
+**Request Body** (optional): ``{"doc_ids": ["doc_1", "doc_2", "doc_3"]}`` (omit to use all documents)
+
+**Response**: ``{"doc_ids", "matrix": [[...]], "similarity_pairs": [...], "status"}``
+
+Fact-Checking
+-------------
+
+LLM-based factual grounding of text against your databases ("reverse RAG"). These endpoints
+require a read key and the ``localvectordb`` validation module; if it is unavailable the server
+responds with HTTP ``501``.
+
+Fact-Check Against One Database
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Endpoint**: ``POST /api/v1/{db_name}/factcheck``
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "text": "The claim to verify.",
+     "llm_provider": "anthropic",
+     "llm_api_key": "sk-...",
+     "model": "claude-sonnet-4-5",
+     "similarity_threshold": 0.3,
+     "min_grounding_score": 0.5,
+     "search_type": "hybrid",
+     "top_k": 10
+   }
+
+Only ``text`` is required. ``llm_provider`` defaults to ``anthropic``; ``llm_api_key`` may be
+omitted if the server has provider credentials in its environment. The response includes the
+serialized fact-check result plus ``"database"`` and ``"status": "success"``.
+
+Fact-Check Across Databases
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Endpoint**: ``POST /api/v1/factcheck``
+
+Same body as above, plus an optional ``"databases": ["db_a", "db_b"]`` list (defaults to all
+databases). The response is ``{"results": {<db>: {...}}, "databases_checked": [...], "status": "success"}``.
+
 Embedding Operations
 --------------------
 
@@ -1662,7 +1918,7 @@ Check server and system health.
    health = response.json()
 
    print(f"Status: {health['status']}")
-   print(f"Databases: {health['databases']}")
+   print(f"Version: {health['version']}")
    print(f"Ollama available: {health['ollama_available']}")
 
 **Response**:
@@ -1671,15 +1927,19 @@ Check server and system health.
 
    {
      "status": "healthy",
-     "version": "2.0.0",
-     "databases": 3,
-     "ollama_available": true
+     "version": "0.1.0",
+     "ollama_available": true,
+     "timestamp": "2026-01-15T10:30:45.123456+00:00"
    }
+
+.. note::
+   The health endpoint is unauthenticated. ``version`` is the installed ``localvectordb``
+   package version. If the check fails, the response is ``{"status": "unhealthy", "error": "..."}``.
 
 Database Tuning Operations
 ---------------------------
 
-The LocalVectorDB server provides comprehensive SQLite tuning capabilities through HTTP endpoints, allowing remote optimization of database performance. These operations require ``read_write`` API keys and provide the same functionality as the local tuning interface.
+The LocalVectorDB server provides comprehensive SQLite tuning capabilities through HTTP endpoints, allowing remote optimization of database performance. Reading the current configuration requires a ``read_only`` (or ``read_write``) key; applying tuning profiles, auto-tuning, and maintenance operations require a ``read_write`` key. These endpoints provide the same functionality as the local tuning interface.
 
 Get SQLite Tuning Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1705,27 +1965,31 @@ Retrieve current SQLite tuning settings for a database.
    )
    config = response.json()
 
-   print(f"Current profile: {config['profile']}")
-   print(f"Pragma overrides: {config['overrides']}")
+   print(f"Database: {config['database']}")
+   print(f"Tuning: {config['tuning']}")
 
 **Response**:
 
 .. code-block:: json
 
    {
-     "profile": "read_optimized",
-     "overrides": {
-       "cache_size": -131072,
-       "mmap_size": 536870912
+     "database": "mydatabase",
+     "tuning": {
+       "profile": "read_optimized",
+       "overrides": {
+         "cache_size": -131072,
+         "mmap_size": 536870912
+       },
+       "pragmas": {
+         "cache_size": -131072,
+         "mmap_size": 536870912,
+         "synchronous": "NORMAL",
+         "wal_autocheckpoint": 1000,
+         "temp_store": "MEMORY",
+         "busy_timeout": 3000
+       }
      },
-     "pragmas": {
-       "cache_size": -131072,
-       "mmap_size": 536870912,
-       "synchronous": "NORMAL",
-       "wal_autocheckpoint": 1000,
-       "temp_store": "MEMORY",
-       "busy_timeout": 3000
-     }
+     "status": "success"
    }
 
 Set SQLite Tuning Configuration
@@ -1733,7 +1997,7 @@ Set SQLite Tuning Configuration
 
 Apply a tuning profile with optional pragma overrides to a database.
 
-**Endpoint**: ``POST /api/v1/<db_name>/tuning``
+**Endpoint**: ``PUT /api/v1/<db_name>/tuning``
 
 **Request Body**:
 
@@ -1748,11 +2012,14 @@ Apply a tuning profile with optional pragma overrides to a database.
      "persist": true
    }
 
+``profile`` is required. ``overrides`` (object) and ``persist`` (boolean, default ``true``)
+are optional.
+
 **curl Example**:
 
 .. code-block:: bash
 
-   curl -X POST \
+   curl -X PUT \
         -H "Authorization: Bearer your_api_key" \
         -H "Content-Type: application/json" \
         -d '{
@@ -1766,7 +2033,7 @@ Apply a tuning profile with optional pragma overrides to a database.
 
 .. code-block:: python
 
-   response = requests.post(
+   response = requests.put(
        "http://localhost:5000/api/v1/mydatabase/tuning",
        headers={"Authorization": "Bearer your_api_key"},
        json={
@@ -1781,38 +2048,14 @@ Apply a tuning profile with optional pragma overrides to a database.
 .. code-block:: json
 
    {
-     "success": true,
-     "message": "SQLite tuning profile 'fast_ingest' applied successfully",
-     "applied_profile": "fast_ingest",
-     "applied_overrides": {
-       "cache_size": -262144
-     }
-   }
-
-Get Available Tuning Profiles
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-List all available SQLite tuning profiles and their descriptions.
-
-**Endpoint**: ``GET /api/v1/<db_name>/tuning/profiles``
-
-**curl Example**:
-
-.. code-block:: bash
-
-   curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/mydatabase/tuning/profiles
-
-**Response**:
-
-.. code-block:: json
-
-   {
-     "balanced": "Balanced profile for mixed workloads",
-     "fast_ingest": "Optimized for high-throughput data ingestion",
-     "read_optimized": "Optimized for query-heavy workloads",
-     "durable": "Maximum data safety with frequent checkpoints",
-     "memory_saver": "Minimal memory usage for resource-constrained environments"
+     "database": "mydatabase",
+     "message": "Applied SQLite tuning profile 'fast_ingest'",
+     "tuning": {
+       "profile": "fast_ingest",
+       "overrides": {"cache_size": -262144},
+       "pragmas": {}
+     },
+     "status": "success"
    }
 
 Auto-Tune Database
@@ -1820,7 +2063,7 @@ Auto-Tune Database
 
 Get auto-tuning recommendations based on server resources and workload characteristics.
 
-**Endpoint**: ``POST /api/v1/<db_name>/tuning/auto``
+**Endpoint**: ``POST /api/v1/<db_name>/auto-tune``
 
 **Request Body**:
 
@@ -1834,9 +2077,10 @@ Get auto-tuning recommendations based on server resources and workload character
        "durability_level": "normal",
        "memory_constraint": "generous"
      },
-     "interactive": false,
      "apply": false
    }
+
+``workload`` (object) and ``apply`` (boolean, default ``false``) are both optional.
 
 **curl Example**:
 
@@ -1852,58 +2096,61 @@ Get auto-tuning recommendations based on server resources and workload character
           },
           "apply": true
         }' \
-        http://localhost:5000/api/v1/mydatabase/tuning/auto
+        http://localhost:5000/api/v1/mydatabase/auto-tune
 
 **Response**:
 
 .. code-block:: json
 
    {
-     "profile_name": "read_optimized",
-     "pragma_overrides": {
-       "cache_size": -262144,
-       "mmap_size": 1073741824
+     "database": "mydatabase",
+     "recommendation": {
+       "profile_name": "read_optimized",
+       "pragma_overrides": {
+         "cache_size": -262144,
+         "mmap_size": 1073741824
+       },
+       "reasoning": [
+         "Read-heavy workload detected",
+         "Generous memory available (16GB+)",
+         "SSD storage detected - enabling memory mapping",
+         "High concurrent users - increasing cache size"
+       ],
+       "estimated_memory_mb": 512,
+       "applied": true
      },
-     "reasoning": [
-       "Read-heavy workload detected",
-       "Generous memory available (16GB+)",
-       "SSD storage detected - enabling memory mapping",
-       "High concurrent users - increasing cache size"
-     ],
-     "estimated_memory_mb": 512,
-     "applied": true,
-     "current_settings": {
-       "profile": "read_optimized",
-       "overrides": {"cache_size": -262144},
-       "pragmas": {...}
-     }
+     "status": "success"
    }
 
 Analyze System Resources
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Get server system resource information for tuning decisions.
+Get server system resource information for tuning decisions. This is a server-level endpoint
+and is **not** scoped to a database.
 
-**Endpoint**: ``GET /api/v1/<db_name>/tuning/system``
+**Endpoint**: ``GET /api/v1/system/resources``
 
 **curl Example**:
 
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/mydatabase/tuning/system
+        http://localhost:5000/api/v1/system/resources
 
 **Response**:
 
 .. code-block:: json
 
    {
-     "total_ram_mb": 16384,
-     "available_ram_mb": 8192,
-     "cpu_cores": 8,
-     "disk_type": "SSD",
-     "disk_free_gb": 500,
-     "os_type": "Linux"
+     "system_resources": {
+       "total_ram_mb": 16384,
+       "available_ram_mb": 8192,
+       "cpu_cores": 8,
+       "disk_type": "SSD",
+       "disk_free_gb": 500,
+       "os_type": "Linux"
+     },
+     "status": "success"
    }
 
 Database Maintenance Operations
@@ -1925,15 +2172,30 @@ Perform maintenance operations on the database's SQLite backend.
 
 **Endpoint**: ``POST /api/v1/<db_name>/maintenance/optimize``
 
-**SQLite Vacuum**
+**SQLite Vacuum** (full VACUUM; takes no body parameters)
 
 **Endpoint**: ``POST /api/v1/<db_name>/maintenance/vacuum``
+
+**SQLite Incremental Vacuum** (separate endpoint)
+
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/incremental_vacuum``
 
 .. code-block:: json
 
    {
-     "incremental": true,
-     "pages": 5000
+     "pages": 2000
+   }
+
+``pages`` (positive integer, default ``2000``) is optional.
+
+**Checkpoint If WAL Large**
+
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/checkpoint_if_large``
+
+.. code-block:: json
+
+   {
+     "threshold_mb": 128
    }
 
 **Example curl commands**:
@@ -1952,54 +2214,73 @@ Perform maintenance operations on the database's SQLite backend.
         -H "Authorization: Bearer your_api_key" \
         http://localhost:5000/api/v1/mydatabase/maintenance/optimize
 
+   # Run a full vacuum (no body)
+   curl -X POST \
+        -H "Authorization: Bearer your_api_key" \
+        http://localhost:5000/api/v1/mydatabase/maintenance/vacuum
+
    # Run incremental vacuum
    curl -X POST \
         -H "Authorization: Bearer your_api_key" \
         -H "Content-Type: application/json" \
-        -d '{"incremental": true, "pages": 2000}' \
-        http://localhost:5000/api/v1/mydatabase/maintenance/vacuum
+        -d '{"pages": 2000}' \
+        http://localhost:5000/api/v1/mydatabase/maintenance/incremental_vacuum
 
 Tuning Endpoint Security
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 All tuning endpoints have specific security requirements:
 
-- **API Key Level**: Requires ``read_write`` API keys (read-only keys will receive 401 errors)
+- **API Key Level**: Applying tuning, auto-tuning, and maintenance operations require ``read_write`` API keys (read-only keys receive HTTP ``403`` errors). Reading the tuning configuration (``GET /tuning``) only requires a read key.
 - **Audit Logging**: All tuning operations are logged on the server
 - **Rate Limiting**: Tuning endpoints respect server rate limits (typically lower limits for administrative operations)
 - **Validation**: All tuning parameters are validated before application
 
-**Error Response Example**:
+**Error Response Example** (HTTP ``403``):
 
 .. code-block:: json
 
    {
-     "error": "Insufficient permissions. Tuning operations require read_write access.",
-     "status_code": 401,
-     "type": "authentication_error"
+     "detail": "Insufficient permissions. This endpoint requires read_write access."
    }
 
 Error Handling
 --------------
 
-The API uses standard HTTP status codes and returns structured error responses:
+The API uses standard HTTP status codes and returns structured error responses. Domain and
+unexpected errors are wrapped in an ``error`` object:
 
 **Error Response Format**:
 
 .. code-block:: json
 
    {
-     "error": "Error description",
-     "type": "error_type"
+     "error": {
+       "message": "Error description",
+       "code": "ERROR_CODE",
+       "timestamp": "2026-01-15T10:30:45.123456+00:00",
+       "request_id": "req_abc123",
+       "details": {},
+       "recoverable": true
+     }
    }
 
-**Common Error Types**:
+.. note::
+   Authentication and authorization failures are raised by FastAPI and use the simpler
+   ``{"detail": "..."}`` shape instead (``401`` for missing/invalid keys, ``403`` for a
+   read-only key on a write endpoint).
 
-- ``database_not_found`` (404): Database doesn't exist
-- ``duplicate_document_id`` (409): Document ID already exists
-- ``embedding_error`` (503): Embedding generation failed
-- ``authentication_error`` (401): Invalid or missing API key
-- ``database_error`` (500): General database error
+**Common Error Codes**:
+
+- ``DATABASE_NOT_FOUND`` (404): Database doesn't exist
+- ``DOCUMENT_NOT_FOUND`` (404): Document ID doesn't exist
+- ``DUPLICATE_DOCUMENT_ID`` (409): Document ID already exists
+- ``EMBEDDING_ERROR`` (503): Embedding generation failed
+- ``OLLAMA_NOT_AVAILABLE`` (503): Ollama service unavailable
+- ``DATABASE_CONNECTION_ERROR`` (503): Connection pool error
+- ``CONFIGURATION_ERROR`` (500): Server configuration error
+- ``DATABASE_ERROR`` (500): General database error
+- ``INTERNAL_ERROR`` (500): Unexpected server error
 
 **Python Error Handling**:
 
@@ -2015,10 +2296,11 @@ The API uses standard HTTP status codes and returns structured error responses:
 
    except requests.exceptions.HTTPError as e:
        if e.response.status_code == 404:
-           error = e.response.json()
-           if error.get("type") == "database_not_found":
+           error = e.response.json().get("error", {})
+           if error.get("code") == "DATABASE_NOT_FOUND":
                print("Database not found - create it first")
-       elif e.response.status_code == 401:
-           print("Authentication failed - check API key")
+       elif e.response.status_code in (401, 403):
+           # Auth/permission errors use {"detail": "..."}
+           print(f"Auth failed: {e.response.json().get('detail')}")
        else:
-           print(f"API error: {e.response.json()['error']}")
+           print(f"API error: {e.response.json().get('error', {}).get('message')}")

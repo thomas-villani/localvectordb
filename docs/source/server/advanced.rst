@@ -150,7 +150,7 @@ LocalVectorDB Server includes a comprehensive API key management system with per
 
 .. code-block:: toml
 
-   [server]
+   [server.security]
    require_api_key = true
    key_database_path = "./.lvdb/api_keys.db"    # Auto-determined if not set
    default_key_expiry_days = 90                 # Default expiration
@@ -267,7 +267,7 @@ Configure CORS for web applications:
 
 .. code-block:: toml
 
-   [server]
+   [server.security]
    cors_enabled = true
    cors_allowed_origins = ["https://myapp.com", "https://dashboard.myapp.com"]
    cors_allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
@@ -288,11 +288,11 @@ Configure CORS for web applications:
 Trusted Hosts
 ^^^^^^^^^^^^^
 
-Protect against Host header attacks:
+Protect against Host header attacks (``trusted_hosts`` lives under ``[server.security]``):
 
 .. code-block:: toml
 
-   [server]
+   [server.security]
    trusted_hosts = ["api.example.com", "vectordb.internal.com"]
 
 Proxy Configuration
@@ -304,6 +304,10 @@ When running behind reverse proxies (Nginx, Apache, load balancers):
 
    [server]
    proxy_enabled = true
+
+   # REQUIRED when proxy_enabled = true: trusted proxy IPs / CIDR blocks allowed to
+   # set forwarded headers. Configuration validation fails if this is empty.
+   trusted_proxies = ["10.0.0.0/8", "127.0.0.1"]
 
    # For single proxy (most common)
    proxy_settings = { x_for = 1, x_proto = 1 }
@@ -364,8 +368,9 @@ LocalVectorDB Server supports comprehensive logging with structured output:
    log_level = "INFO"                    # DEBUG, INFO, WARNING, ERROR, CRITICAL
    enable_structured_logging = true     # JSON format logs
    enable_performance_logging = true    # Performance metrics
-   auth_log_level = "INFO"              # Authentication events
-   security_log_level = "WARNING"       # Security events
+
+   [server.security]
+   auth_log_level = "INFO"              # Authentication / security events
 
 Log Destinations
 ^^^^^^^^^^^^^^^^
@@ -376,7 +381,7 @@ Log Destinations
    lvdb serve --log-level DEBUG
 
    # File logging (production)
-   lvdb serve --config production.toml  # Uses config file settings
+   lvdb --config production.toml serve  # Uses config file settings (--config is global)
 
 Log file structure in production:
 
@@ -516,7 +521,7 @@ Docker Deployment
 
    EXPOSE 5000
 
-   CMD ["lvdb", "serve", "--config", "/app/config/production.toml"]
+   CMD ["lvdb", "--config", "/app/config/production.toml", "serve"]
 
 **docker-compose.yml**
 
@@ -731,7 +736,7 @@ Response:
 
    {
      "status": "healthy",
-     "version": "1.0.0",
+     "version": "0.1.0",
      "ollama_available": true,
      "timestamp": "2024-12-01T10:30:45Z"
    }

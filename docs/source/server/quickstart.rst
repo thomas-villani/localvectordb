@@ -11,10 +11,11 @@ The easiest way to get started with the server is through the CLI.
    lvdb serve
 
    # Start with custom configuration
-   lvdb serve --config production.toml --host 0.0.0.0 --port 8080
+   # (--config is a global option, so it comes BEFORE the `serve` subcommand)
+   lvdb --config production.toml serve --host 0.0.0.0 --port 8080
 
-   # Start with specific database folder
-   lvdb serve --db-folder /path/to/databases --log-level DEBUG
+   # Start with specific database folder (--db-folder is also a global option)
+   lvdb --db-folder /path/to/databases serve --log-level DEBUG
 
 Basic API Usage
 ^^^^^^^^^^^^^^^
@@ -58,7 +59,7 @@ For production use, enable API key authentication:
 .. code-block:: bash
 
    # Enable authentication in server config
-   lvdb config set server.require_api_key true
+   lvdb config set server.security.require_api_key true
 
    # Create API keys with appropriate permissions
    # Read-write key for admin operations

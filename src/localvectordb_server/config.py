@@ -1144,6 +1144,7 @@ def load_config(
     ----------
     configuration : Union[str, Config, None], optional
         Source of configuration to load. May be:
+
         - a path to a configuration file (TOML, JSON, or INI), in which case the
           file will be loaded if it exists;
         - a Config instance, which will be merged into defaults;

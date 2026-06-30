@@ -57,6 +57,9 @@ Full Configuration File
    rate_limit_storage_uri = "memory://"
 
    proxy_enabled = true
+   # REQUIRED when proxy_enabled = true: list of trusted proxy IPs / CIDR blocks
+   # allowed to set forwarded headers. Validation fails if this is empty.
+   trusted_proxies = ["10.0.0.0/8", "127.0.0.1"]
 
    cache_enabled = true
    cache_ignore_errors = true
@@ -70,9 +73,9 @@ Full Configuration File
    password = "$REDIS_PASSWORD"   # '$' prefix indicates to load the environment variable
    key_prefix = "my-db-prefix-"   # Allows you to run multiple servers using single redis db.
 
-   # IMPORTANT: if ``proxy_settings = true``, you must set the proxy settings.
+   # IMPORTANT: if ``proxy_enabled = true``, you must set the proxy settings AND trusted_proxies.
    # The specific values depend on your server set-up. Set the number of proxies forwarding each header.
-   # When behind a reverse proxy (nginx, etc.), configure trusted_hosts and proxy settings.
+   # When behind a reverse proxy (nginx, etc.), configure trusted_hosts, trusted_proxies, and proxy settings.
    [server.proxy_settings]
    x_for = 1
    x_proto = 1
@@ -216,6 +219,13 @@ Embedding Settings
 Server Settings
 ---------------
 
+.. note::
+   Parameters from ``require_api_key`` onward in the table below (authentication, key
+   management, ``trusted_hosts``, and CORS settings) live under the ``[server.security]``
+   table, **not** ``[server]``. The remaining parameters (``debug`` … ``trusted_proxies``)
+   live under ``[server]``. Use the dot-notation paths accordingly, e.g.
+   ``server.security.require_api_key`` and ``server.host``.
+
 .. list-table::
    :header-rows: 1
 
@@ -299,6 +309,10 @@ Server Settings
      - dict or null
      - ``null``
      - Proxy configuration settings. Required if ``proxy_enabled`` is true. Must be a dict with: x_for, x_proto, x_host, x_prefix, set to the number of proxies forwarding the ``X-Forwarded-`` headers. Set as a TOML table under ``[server.proxy_settings]``.
+   * - ``trusted_proxies``
+     - list of str
+     - ``[]``
+     - List of trusted proxy IP addresses or CIDR blocks allowed to set forwarded headers. **Required (non-empty) when** ``proxy_enabled`` **is true** — configuration validation fails otherwise. Set under ``[server]``.
    * - ``require_api_key``
      - bool
      - ``false``

@@ -136,7 +136,7 @@ file-extraction-office = [
 ]
 file-extraction-pdf = [
     "pdfplumber>=0.11.6",
-    "pypdf2>=3.0.1",
+    "pypdf>=3.1.0",
 ]
 file-extraction-web = [
     "beautifulsoup4>=4.13.4",

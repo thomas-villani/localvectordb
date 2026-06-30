@@ -397,7 +397,6 @@ for different use cases, and various document scoring methods to control how chu
        columns=["content", "title", "tags", "solution"],
        search_type="hybrid",
        return_type="context",          # Include surrounding chunks for readability
-       context_window=2,               # 2 chunks before and after each match
        k=10,
        filters={"status": "resolved"},
        score_threshold=0.7
@@ -561,16 +560,16 @@ Choose chunking methods based on your content type:
 .. code-block:: python
 
    # Sentence-based chunking for general text
-   db_sentences = VectorDB("docs", chunking_method="sentences", chunk_size=300)
-   
+   db_sentences = VectorDB("docs", "./data", chunking_method="sentences", chunk_size=300)
+
    # Paragraph-based for structured documents
-   db_paragraphs = VectorDB("docs", chunking_method="paragraphs", chunk_size=800)
-   
+   db_paragraphs = VectorDB("docs", "./data", chunking_method="paragraphs", chunk_size=800)
+
    # Token-based for precise control
-   db_tokens = VectorDB("docs", chunking_method="tokens", chunk_size=512)
-   
+   db_tokens = VectorDB("docs", "./data", chunking_method="tokens", chunk_size=512)
+
    # Code-specific chunking for programming content
-   db_code = VectorDB("code", chunking_method="code-blocks", chunk_size=500)
+   db_code = VectorDB("code", "./data", chunking_method="code-blocks", chunk_size=500)
 
 Performance Optimization
 ^^^^^^^^^^^^^^^^^^^^^^^^^

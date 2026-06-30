@@ -136,12 +136,13 @@ class Migration(ABC):
         Returns
         -------
         Dict[str, Any]
-            Schema changes specification with the following structure:
-            {
-                'new_schema': Dict[str, MetadataField],  # Complete new schema
-                'column_mapping': Dict[str, str],        # Rename mappings: old -> new
-                'drop_columns': bool                     # Whether to drop unused columns
-            }
+            Schema changes specification with the following structure::
+
+                {
+                    'new_schema': Dict[str, MetadataField],  # Complete new schema
+                    'column_mapping': Dict[str, str],        # Rename mappings: old -> new
+                    'drop_columns': bool                     # Whether to drop unused columns
+                }
 
         Examples
         --------
