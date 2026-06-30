@@ -8,26 +8,12 @@ from fastapi import APIRouter, Depends, Request
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import APIError, ValidationError, validate_required_fields
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
+from localvectordb_server._serializers import serialize_query_result
 from localvectordb_server.routers._deps import get_db
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["comparison"])
-
-
-def serialize_query_result(result) -> dict:
-    data = {
-        "id": result.id,
-        "score": result.score,
-        "type": result.type,
-        "content": result.content,
-        "metadata": result.metadata,
-    }
-    if result.type == "chunk" and result.document_id:
-        data["document_id"] = result.document_id
-    if result.position:
-        data["position"] = result.position.to_dict()
-    return data
 
 
 @router.post("/{db_name}/compare", dependencies=[Depends(require_read_permission)])

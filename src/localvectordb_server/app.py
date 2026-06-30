@@ -12,8 +12,11 @@ from contextlib import asynccontextmanager
 from typing import Union
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from localvectordb.exceptions import BaseLocalVectorDBException, ConfigurationError
@@ -39,6 +42,83 @@ except ImportError:
 
 
 logger = logging.getLogger("localvectordb_server")
+
+# Maps HTTP status codes raised via HTTPException (e.g. by auth) to stable error
+# codes so 4xx/5xx responses share the standard {"error": {...}} envelope.
+_HTTP_STATUS_ERROR_CODES = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    415: "UNSUPPORTED_MEDIA_TYPE",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMIT_EXCEEDED",
+}
+
+
+def _error_response(status_code: int, message: str, error_code: str) -> JSONResponse:
+    """Build a JSONResponse using the standard ``{"error": {...}}`` envelope.
+
+    Used by middleware (which runs outside the exception-handler stack) so that
+    host/proxy rejections match the envelope every other failure uses.
+    """
+    api_error = APIError(message=message, error_code=error_code, status_code=status_code, recoverable=status_code < 500)
+    return JSONResponse(status_code=status_code, content=api_error.to_dict())
+
+
+def register_exception_handlers(app: FastAPI, *, debug: bool = False) -> None:
+    """Register the standard exception handlers on ``app``.
+
+    Shared by ``create_app`` and the integration test fixtures so the error
+    envelope stays identical everywhere. Every handler emits the standard
+    ``{"error": {...}}`` envelope, including auth/HTTP errors (which otherwise
+    use Starlette's ``{"detail": ...}``) and Pydantic 422 validation errors.
+    """
+
+    @app.exception_handler(APIError)
+    async def handle_api_error(request: Request, exc: APIError):
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    @app.exception_handler(ValidationError)
+    async def handle_validation_error(request: Request, exc: ValidationError):
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    @app.exception_handler(BaseLocalVectorDBException)
+    async def handle_domain_error(request: Request, exc: BaseLocalVectorDBException):
+        # Map known library exceptions (e.g. DatabaseNotFoundError -> 404) to the
+        # standard envelope. Registering an explicit handler keeps these as proper
+        # client errors rather than falling through to the 500 catch-all.
+        error_response, status_code = standardize_error_response(exc, debug=debug)
+        return JSONResponse(status_code=status_code, content=error_response)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(request: Request, exc: StarletteHTTPException):
+        # Auth (and any HTTPException) goes through the standard envelope instead
+        # of Starlette's default {"detail": ...}, so clients parse one error shape.
+        error_code = _HTTP_STATUS_ERROR_CODES.get(exc.status_code, "HTTP_ERROR")
+        api_error = APIError(
+            message=str(exc.detail),
+            error_code=error_code,
+            status_code=exc.status_code,
+            recoverable=exc.status_code < 500,
+        )
+        return JSONResponse(
+            status_code=exc.status_code, content=api_error.to_dict(), headers=getattr(exc, "headers", None)
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(request: Request, exc: RequestValidationError):
+        # Pydantic body/query validation (422) also uses the standard envelope.
+        api_error = ValidationError("Request validation failed", details={"errors": jsonable_encoder(exc.errors())})
+        api_error.status_code = 422
+        return JSONResponse(status_code=422, content=api_error.to_dict())
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(request: Request, exc: Exception):
+        error_response, status_code = standardize_error_response(exc, debug=debug)
+        return JSONResponse(status_code=status_code, content=error_response)
 
 
 def _is_trusted_proxy(remote_addr: str, trusted_proxies: list) -> bool:
@@ -106,21 +186,20 @@ class HostValidationMiddleware(BaseHTTPMiddleware):
             remote_addr = request.client.host if request.client else None
             if remote_addr and not _is_trusted_proxy(remote_addr, self.config.server.trusted_proxies):
                 logger.warning(f"Rejected request from untrusted proxy: {remote_addr}")
-                return JSONResponse(status_code=403, content={"detail": "Request from untrusted proxy"})
+                return _error_response(403, "Request from untrusted proxy", "UNTRUSTED_PROXY")
 
             forwarded_host = request.headers.get("x-forwarded-host")
             if forwarded_host and not validate_host_against_patterns(forwarded_host, self.trusted_patterns):
                 logger.warning(f"Rejected request with untrusted X-Forwarded-Host: {forwarded_host}")
-                detail = f"Invalid X-Forwarded-Host header: {forwarded_host}"
-                return JSONResponse(status_code=400, content={"detail": detail})
+                return _error_response(400, f"Invalid X-Forwarded-Host header: {forwarded_host}", "INVALID_HOST")
 
             if not validate_host_against_patterns(host, self.trusted_patterns):
                 logger.warning(f"Rejected request with untrusted effective Host header: {host}")
-                return JSONResponse(status_code=400, content={"detail": f"Invalid Host header: {host}"})
+                return _error_response(400, f"Invalid Host header: {host}", "INVALID_HOST")
         else:
             if not validate_host_against_patterns(host, self.trusted_patterns):
                 logger.warning(f"Rejected request with untrusted Host header: {host}")
-                return JSONResponse(status_code=400, content={"detail": f"Invalid Host header: {host}"})
+                return _error_response(400, f"Invalid Host header: {host}", "INVALID_HOST")
 
         return await call_next(request)
 
@@ -253,27 +332,8 @@ def create_app(
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
         logger.info(f"Rate limiting enabled: {_config.server.rate_limit}")
 
-    # --- Exception handlers ---
-    @app.exception_handler(APIError)
-    async def handle_api_error(request: Request, exc: APIError):
-        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-
-    @app.exception_handler(ValidationError)
-    async def handle_validation_error(request: Request, exc: ValidationError):
-        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-
-    @app.exception_handler(BaseLocalVectorDBException)
-    async def handle_domain_error(request: Request, exc: BaseLocalVectorDBException):
-        # Map known library exceptions (e.g. DatabaseNotFoundError -> 404) to the
-        # standard envelope. Registering an explicit handler keeps these as proper
-        # client errors rather than falling through to the 500 catch-all.
-        error_response, status_code = standardize_error_response(exc, debug=debug)
-        return JSONResponse(status_code=status_code, content=error_response)
-
-    @app.exception_handler(Exception)
-    async def handle_unexpected_error(request: Request, exc: Exception):
-        error_response, status_code = standardize_error_response(exc, debug=debug)
-        return JSONResponse(status_code=status_code, content=error_response)
+    # --- Exception handlers (shared with tests via register_exception_handlers) ---
+    register_exception_handlers(app, debug=debug)
 
     # --- Register routers ---
     from localvectordb_server.routers import register_routers

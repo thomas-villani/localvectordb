@@ -11,26 +11,12 @@ from sse_starlette.sse import EventSourceResponse
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import ValidationError, validate_search_params
 from localvectordb_server._logcfg import DatabaseLogger
+from localvectordb_server._serializers import serialize_query_result
 from localvectordb_server.routers._deps import get_db
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["streaming"])
-
-
-def serialize_query_result(result) -> dict:
-    data = {
-        "id": result.id,
-        "score": result.score,
-        "type": result.type,
-        "content": result.content,
-        "metadata": result.metadata,
-    }
-    if result.type == "chunk" and result.document_id:
-        data["document_id"] = result.document_id
-    if result.position:
-        data["position"] = result.position.to_dict()
-    return data
 
 
 @router.post("/{db_name}/query/stream", dependencies=[Depends(require_read_permission)])

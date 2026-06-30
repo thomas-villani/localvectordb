@@ -4,7 +4,6 @@
 import json
 import logging
 from math import ceil
-from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Request
 
@@ -18,23 +17,12 @@ from localvectordb_server._error_handlers import (
     validate_required_fields,
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
+from localvectordb_server._serializers import serialize_document
 from localvectordb_server.routers._deps import get_db
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
 router = APIRouter(tags=["documents"])
-
-
-def serialize_document(doc) -> Dict[str, Any]:
-    """Serialize a Document object for JSON response."""
-    return {
-        "id": doc.id,
-        "content": doc.content,
-        "metadata": doc.metadata,
-        "created_at": doc.created_at.isoformat() if doc.created_at else None,
-        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-        "content_hash": doc.content_hash,
-    }
 
 
 @router.post("/{db_name}/documents", dependencies=[Depends(require_write_permission)])

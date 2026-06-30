@@ -35,7 +35,9 @@ class APIError(Exception):
         self.status_code = status_code
         self.details = details or {}
         self.recoverable = recoverable
-        self.timestamp = datetime.now(UTC).isoformat() + "Z"
+        # isoformat() on an aware UTC datetime already yields a '+00:00' offset;
+        # appending 'Z' produced an invalid '...+00:00Z'. Keep the ISO-8601 offset.
+        self.timestamp = datetime.now(UTC).isoformat()
         self.request_id = request_id_var.get()
         super().__init__(message)
 
