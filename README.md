@@ -375,17 +375,21 @@ lvdb config set database.chunk_size 1000
 
 ## 📁 File Extraction
 
-Supports automatic text extraction from various formats:
+Text extraction is powered by [all2md](https://all2md.readthedocs.io/), which
+converts 20+ document formats and 200+ source/text formats to Markdown. Common
+formats work out of the box; extended/niche formats and OCR are opt-in extras.
 
-| Format | Library | Status |
-|--------|---------|--------|
-| PDF | pdfplumber, PyPDF2 | ✅ |
-| DOCX | python-docx | ✅ |
-| PPTX | python-pptx | ✅ |
-| XLSX | openpyxl | ✅ |
-| RTF | striprtf | ✅ |
-| EPUB | ebooklib | ✅ |
-| TXT, MD, etc. | Built-in | ✅ |
+| Formats | Availability |
+|---------|--------------|
+| PDF, DOCX, PPTX, XLSX | Built-in |
+| HTML, EPUB, RTF, ODT/ODP/ODS | Built-in |
+| Markdown, reStructuredText, Org, CSV, JSON, YAML, `.eml`, `.ipynb` | Built-in |
+| Source code & plain text (200+ extensions) | Built-in |
+| LaTeX, MediaWiki, Textile, archives, `.enex`, `.fb2`, CHM, Outlook | `localvectordb[file-extraction]` |
+| OCR for scanned PDFs (Tesseract) | `localvectordb[file-extraction-ocr]` |
+
+Extracted content is **Markdown**, preserving headings, tables, and lists for
+better chunk boundaries.
 
 ```python
 # Upload files via HTTP API

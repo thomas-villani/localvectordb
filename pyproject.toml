@@ -27,6 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "aiosqlite>=0.21.0",
+    "all2md[docx,epub,html,markdown,odf,openapi,org,pdf,pptx,rst,rtf,xlsx]>=1.7.1",
     "faiss-cpu>=1.11.0",
     "httpx>=0.28.1",
     "numpy>=2.2.6",
@@ -51,16 +52,11 @@ huggingface = "localvectordb.reranking:HuggingFaceReranker"
 mock = "localvectordb.reranking:MockReranker"
 
 [project.entry-points."localvectordb.file_extractors"]
-docx = "localvectordb.extractors.office_extractors:DocxExtractor"
-pptx = "localvectordb.extractors.office_extractors:PptxExtractor"
-xlsx = "localvectordb.extractors.office_extractors:XlsxExtractor"
-html = "localvectordb.extractors.web_extractors:HTMLExtractor"
-xml = "localvectordb.extractors.web_extractors:XMLExtractor"
-text = "localvectordb.extractors.text_extractors:TextFileExtractor"
-pypdf = "localvectordb.extractors.pdf_extractors:PyPDFExtractor"
-pdfplumber = "localvectordb.extractors.pdf_extractors:PDFPlumberExtractor"
-epub = "localvectordb.extractors.other_extractors:EPubExtractor"
-rtf = "localvectordb.extractors.other_extractors:RTFExtractor"
+# A single all2md-backed extractor covers every built-in format (20+ document
+# formats and 200+ source/text formats). Additional formats can still be plugged
+# in by registering an extractor under this entry-point group with a higher
+# priority than All2MdExtractor (10).
+all2md = "localvectordb.extractors.all2md_extractor:All2MdExtractor"
 
 [project.scripts]
 lvdb = "localvectordb_server.cli:cli"
@@ -117,35 +113,22 @@ mcp = [
     "fastmcp>=2.12.2",
 ]
 
+# File extraction is provided by all2md, which is a core dependency. The common
+# document formats (docx, pdf, pptx, xlsx, html, epub, rtf, odf, rst, org,
+# openapi, markdown) work out of the box with a base `pip install localvectordb`.
+#
+# This extra adds all2md's extended/less-common format parsers plus the HTML
+# readability + sanitizer helpers. It deliberately omits `pdf-layout` (Polyform
+# Noncommercial license, incompatible with this project's MIT license) and OCR
+# (see file-extraction-ocr below).
 file-extraction = [
-    "openpyxl>=3.1.5",
-    "python-docx>=1.1.2",
-    "python-pptx>=1.0.2",
-    "pdfplumber>=0.11.6",
-    "pypdf>=3.1.0",
-    "beautifulsoup4>=4.13.4",
-    "lxml>=5.4.0",
-    "defusedxml>=0.7.1",  # XXE protection for XML parsing
-    "ebooklib>=0.19",
-    "striprtf>=0.0.29",
+    "all2md[archive,chm,enex,fb2,html-readability,latex,outlook,sanitizer,textile,wiki]>=1.7.1",
 ]
-file-extraction-office = [
-    "openpyxl>=3.1.5",
-    "python-docx>=1.1.2",
-    "python-pptx>=1.0.2",
-]
-file-extraction-pdf = [
-    "pdfplumber>=0.11.6",
-    "pypdf>=3.1.0",
-]
-file-extraction-web = [
-    "beautifulsoup4>=4.13.4",
-    "lxml>=5.4.0",
-    "defusedxml>=0.7.1",  # XXE protection for XML parsing
-]
-file-extraction-rtf-epub = [
-    "ebooklib>=0.19",
-    "striprtf>=0.0.29",
+# Optional OCR support for scanned/image-only PDFs (Tesseract engine; also
+# requires the Tesseract system binary to be installed). Excludes the EasyOCR
+# engine (heavy PyTorch dependency) and pdf-layout (noncommercial license).
+file-extraction-ocr = [
+    "all2md[ocr]>=1.7.1",
 ]
 sentence-transformers = [
     "sentence-transformers>=3.0.0",

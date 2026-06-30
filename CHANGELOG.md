@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **File extraction now uses [all2md](https://all2md.readthedocs.io/).** The
+  former per-format extractors (DOCX, PPTX, XLSX, PDF, HTML, XML, EPUB, RTF,
+  plain text) are replaced by a single `All2MdExtractor` that delegates to
+  all2md, covering 20+ document formats and 200+ source/text formats. The
+  plugin interface (`BaseExtractor`, `ExtractorRegistry`, the
+  `localvectordb.file_extractors` entry-point group) is unchanged, so custom
+  extractors continue to work.
+- **Extracted content is now Markdown** instead of plain text, preserving
+  document structure (headings, tables, lists) for better chunk boundaries.
+  Re-ingesting existing corpora will change the stored text.
+- Hardened extraction defaults for untrusted uploads: remote fetching and local
+  file access disabled, HTML dangerous elements stripped, attachments skipped;
+  file-size and ZIP-bomb guards retained.
+
+### Added
+
+- `[extraction]` server configuration section (and `LVDB_EXTRACTION_*`
+  environment variables) exposing extraction security options
+  (`allow_remote_fetch`, `allowed_hosts`, `strip_dangerous_elements`,
+  `attachment_mode`).
+- `file-extraction-ocr` extra for OCR of scanned PDFs (Tesseract).
+
+### Removed
+
+- Native extractor modules (`office_extractors`, `pdf_extractors`,
+  `web_extractors`, `other_extractors`, `text_extractors`) and their direct
+  dependencies (`python-docx`, `python-pptx`, `openpyxl`, `pdfplumber`, `pypdf`,
+  `beautifulsoup4`, `lxml`, `defusedxml`, `ebooklib`, `striprtf`); these formats
+  are now handled by all2md.
+- The `file-extraction-office`, `file-extraction-pdf`, `file-extraction-web`,
+  and `file-extraction-rtf-epub` extras. Common formats are now covered by the
+  base install; the `file-extraction` extra now installs all2md's
+  extended/niche format parsers.
+
 ## [0.1.0] - 2026-06-28
 
 ### Added

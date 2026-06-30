@@ -422,7 +422,9 @@ class ExtractorRegistry:
         return suitable
 
     @classmethod
-    def extract_text(cls, file_content: bytes, filename: str, mimetype: Optional[str] = None) -> ExtractionResult:
+    def extract_text(
+        cls, file_content: bytes, filename: str, mimetype: Optional[str] = None, **kwargs: Any
+    ) -> ExtractionResult:
         """
         Extract text using the best available extractor.
 
@@ -434,6 +436,9 @@ class ExtractorRegistry:
             Original filename
         mimetype : Optional[str]
             MIME type hint
+        kwargs
+            Optional extractor-specific keyword arguments (e.g. security options)
+            forwarded to the selected extractor's ``extract_text``.
 
         Returns
         -------
@@ -446,7 +451,7 @@ class ExtractorRegistry:
             # No specific extractor found, try fallback
             fallback = cls._extractors.get("TextFallbackExtractor")
             if fallback and fallback.available:
-                return fallback.extract_text(file_content, filename, mimetype)
+                return fallback.extract_text(file_content, filename, mimetype, **kwargs)
 
             return ExtractionResult(
                 text="", success=False, method="none", error=f"No suitable extractor found for file: {filename}"
@@ -455,7 +460,7 @@ class ExtractorRegistry:
         # Try extractors in priority order
         last_error = None
         for extractor in extractors:
-            result = extractor.extract_text(file_content, filename, mimetype)
+            result = extractor.extract_text(file_content, filename, mimetype, **kwargs)
             if result.success:
                 return result
             last_error = result.error

@@ -28,7 +28,9 @@ This project uses the following tools to maintain code security:
 - **Bandit** - Static analysis for common Python security issues
 - **CodeQL** - Automated semantic code analysis via GitHub Actions
 - **Ruff** - Linting rules that catch potential security issues
-- **defusedxml** - Protection against XML External Entity (XXE) attacks
+- **Hardened file extraction** - Uploads are converted with remote fetching and
+  local-file access disabled, HTML scripts stripped, and file-size / ZIP-bomb
+  guards applied before parsing (see the ``[extraction]`` config section)
 - **Pre-commit hooks** - Automated checks before code is committed
 
 ## Scope
