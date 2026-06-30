@@ -430,7 +430,7 @@ class TestRemoteVectorDBQuery:
         call_args = mock_httpx_client.request.call_args
         assert "/filter" in call_args[0][1]
         payload = call_args[1]["json"]
-        assert payload["where"] == {"author": "Test"}
+        assert payload["filters"] == {"author": "Test"}
         assert payload["order_by"] == "created_at DESC"
         assert payload["limit"] == 10
         assert payload["offset"] == 5
