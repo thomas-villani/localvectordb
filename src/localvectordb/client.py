@@ -605,6 +605,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Ensure sync HTTP client is available for connection pooling"""
         if self._sync_client is None or self._sync_client.is_closed:
             self._sync_client = httpx.Client(
+                base_url=self.base_url,
                 timeout=httpx.Timeout(self.request_timeout) if self.request_timeout else None,
                 limits=self._connection_pool_limits,
                 headers=self._get_headers(),
@@ -1527,7 +1528,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         query: str,
         *,
-        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
         search_level: Literal["chunks", "sections", "documents"] = "chunks",
         k: int = 10,
@@ -1607,7 +1608,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         query: str,
         *,
         columns: Optional[List[str]] = None,
-        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks"] = "documents",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -2219,6 +2220,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Ensure HTTP client is available"""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
+                base_url=self.base_url,
                 timeout=httpx.Timeout(self.request_timeout) if self.request_timeout else None,
                 limits=self._connection_pool_limits,
                 headers=self._get_headers(),
@@ -2953,7 +2955,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         query: str,
         *,
-        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
         search_level: Literal["chunks", "sections", "documents"] = "chunks",
         k: int = 10,
@@ -3031,7 +3033,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         query: str,
         *,
         columns: Optional[List[str]] = None,
-        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks"] = "documents",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -3376,7 +3378,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         query: str,
         *,
-        search_type: str = "vector",
+        search_type: str = "hybrid",
         return_type: str = "documents",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -3470,7 +3472,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         query: str,
         *,
-        search_type: str = "vector",
+        search_type: str = "hybrid",
         return_type: str = "documents",
         k: int = 10,
         score_threshold: float = 0.0,

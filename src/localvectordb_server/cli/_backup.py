@@ -9,6 +9,7 @@ Provides command-line interface for backup operations including:
 - Point-in-time recovery operations
 """
 
+import tempfile
 from datetime import timezone
 from pathlib import Path
 
@@ -495,7 +496,7 @@ def verify_backup(backup_id, location, output_json):
         database_name = manifest_data["database_name"]
 
         # Create temporary backup manager for verification
-        temp_db_path = Path("/tmp") / f"{database_name}.sqlite"
+        temp_db_path = Path(tempfile.gettempdir()) / f"{database_name}.sqlite"
         config = BackupConfig(backup_location=backup_location)
         backup_manager = BackupManager(temp_db_path, config=config)
 
@@ -595,7 +596,7 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
             database_name = manifest_data["database_name"]
 
             # Create temporary paths for managers
-            temp_db_path = Path("/tmp") / f"{database_name}.sqlite"
+            temp_db_path = Path(tempfile.gettempdir()) / f"{database_name}.sqlite"
             config = BackupConfig(backup_location=backup_location, retention_days=older_than)
 
             backup_manager = BackupManager(temp_db_path, config=config)

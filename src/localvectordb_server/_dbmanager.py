@@ -935,7 +935,7 @@ class DatabaseManager:
         self,
         query: str,
         database_names: Optional[List[str]] = None,
-        search_type: Literal["vector", "keyword", "hybrid"] = "vector",
+        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks"] = "documents",
         k: int = 10,
         score_threshold: float = 0.0,

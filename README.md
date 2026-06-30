@@ -274,7 +274,7 @@ doc_ids = db.upsert(
 )
 ```
 
-#### `query(query, search_type='vector', k=10, filters=None)`
+#### `query(query, search_type='hybrid', k=10, filters=None)`
 Unified search interface.
 
 ```python

@@ -228,7 +228,11 @@ Key configuration sections:
 
 ### Adding New Embedding Provider
 1. Create class inheriting from `EmbeddingProvider`
-2. Implement `embed_documents()` and `embed_query()` methods
+2. Implement the abstract methods: `_embed_single_batch()` (async, embeds one
+   batch and returns `List[List[float]]`), `get_dimension()`, `validate_model()`,
+   and the `provider_name` / `max_batch_size` properties. Consumers call the
+   provided public API — `embed_batch()` / `embed_async()` / `embed_sync()` —
+   which handle batching and retry on top of `_embed_single_batch()`.
 3. Add entry point to pyproject.toml
 4. Add corresponding tests
 

@@ -4,7 +4,7 @@
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 
 from localvectordb.utils import get_system_version
 from localvectordb_server._auth import require_read_permission
@@ -18,18 +18,18 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 @log_performance("health_check")
-def health_check():
+def health_check(response: Response):
     """System health check endpoint."""
     try:
-        status = {
+        return {
             "status": "healthy",
             "version": get_system_version(),
             "ollama_available": check_ollama_service(),
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        return status
     except Exception as e:
         logger.error(f"Health check failed: {e}")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "unhealthy", "error": str(e)}
 
 

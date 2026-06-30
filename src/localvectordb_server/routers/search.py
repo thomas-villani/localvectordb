@@ -77,7 +77,7 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
     search_params = validate_search_params(search_params)
 
     query_text = search_params["query"]
-    search_type = search_params.get("search_type", "vector")
+    search_type = search_params.get("search_type", "hybrid")
     return_type = search_params.get("return_type", "documents")
     k = search_params.get("k", 10)
     score_threshold = search_params.get("score_threshold", 0.0)
@@ -379,7 +379,7 @@ async def query_multi_column(db_name: str, request: Request):
 
         query_text = data["query"]
         columns = data.get("columns")
-        search_type = data.get("search_type", "vector")
+        search_type = data.get("search_type", "hybrid")
         return_type = data.get("return_type", "documents")
         k = data.get("k", 10)
         score_threshold = data.get("score_threshold", 0.0)
