@@ -241,6 +241,20 @@ line-length = 120
 select = ["E", "F", "W", "B", "I"]
 ignore = []
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency/param markers are designed to be called in argument
+# defaults; they are effectively immutable singletons, so B008 does not apply.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Form",
+    "fastapi.File",
+    "fastapi.Header",
+    "fastapi.Cookie",
+]
+
 [tool.mypy]
 python_version = "3.12"
 disallow_untyped_defs = false

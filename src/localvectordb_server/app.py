@@ -110,10 +110,11 @@ def register_exception_handlers(app: FastAPI, *, debug: bool = False) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation_error(request: Request, exc: RequestValidationError):
-        # Pydantic body/query validation (422) also uses the standard envelope.
+        # Pydantic body/query validation uses the same 400 VALIDATION_ERROR shape as
+        # the hand-rolled ValidationError, so all validation failures look identical
+        # to clients (the SDK maps HTTP 400 -> ValueError).
         api_error = ValidationError("Request validation failed", details={"errors": jsonable_encoder(exc.errors())})
-        api_error.status_code = 422
-        return JSONResponse(status_code=422, content=api_error.to_dict())
+        return JSONResponse(status_code=api_error.status_code, content=api_error.to_dict())
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception):
