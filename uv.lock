@@ -55,9 +55,6 @@ archive = [
     { name = "py7zr" },
     { name = "rarfile" },
 ]
-chm = [
-    { name = "pychm" },
-]
 docx = [
     { name = "python-docx" },
 ]
@@ -1987,7 +1984,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
-    { name = "all2md", extra = ["archive", "chm", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"] },
+    { name = "all2md", extra = ["archive", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"] },
     { name = "bcrypt" },
     { name = "cachelib" },
     { name = "fastapi" },
@@ -2008,7 +2005,7 @@ benchmark = [
     { name = "psutil" },
 ]
 file-extraction = [
-    { name = "all2md", extra = ["archive", "chm", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"] },
+    { name = "all2md", extra = ["archive", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"] },
 ]
 file-extraction-ocr = [
     { name = "all2md", extra = ["ocr"] },
@@ -2069,7 +2066,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.21.0" },
-    { name = "all2md", extras = ["archive", "chm", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"], marker = "extra == 'file-extraction'", specifier = ">=1.7.1" },
+    { name = "all2md", extras = ["archive", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"], marker = "extra == 'file-extraction'", specifier = ">=1.7.1" },
     { name = "all2md", extras = ["docx", "epub", "html", "markdown", "odf", "openapi", "org", "pdf", "pptx", "rst", "rtf", "xlsx"], specifier = ">=1.7.1" },
     { name = "all2md", extras = ["ocr"], marker = "extra == 'file-extraction-ocr'", specifier = ">=1.7.1" },
     { name = "bcrypt", marker = "extra == 'server'", specifier = ">=4.3.0" },
@@ -3140,12 +3137,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/d8/70c5e5701926fc67dae02101f0298d21c0b89ff83fa705712c3b4da252e5/pybcj-1.0.7-cp314-cp314t-win_amd64.whl", hash = "sha256:7e94aa712d0fa5fda9875828441755ece7121fc3f8c5cc3bc8ee92d05b853590", size = 25826, upload-time = "2025-11-29T00:53:27.655Z" },
     { url = "https://files.pythonhosted.org/packages/d1/5d/7a87ba32c0c0756f36000fafe642fa4609be2c26a50a7913a057a47eabdf/pybcj-1.0.7-cp314-cp314t-win_arm64.whl", hash = "sha256:16fd4e51a5556d1f38d7ba5d1fab588bfb60ae23d2299b5179779bf9900adf71", size = 24049, upload-time = "2025-11-29T00:53:28.679Z" },
 ]
-
-[[package]]
-name = "pychm"
-version = "0.8.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/89/3d/2272705cfac544288fdcda172e25f4399c57371780943ad2d1b4acb67092/pychm-0.8.6.tar.gz", hash = "sha256:26606fec1e30cf7506c7afa943460c31e8dac87f35b7f178f437574d654cf672", size = 19562, upload-time = "2019-12-12T21:51:42.274Z" }
 
 [[package]]
 name = "pycparser"
