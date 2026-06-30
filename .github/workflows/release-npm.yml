@@ -1,0 +1,95 @@
+name: Publish SDK to npm
+
+# Same trigger as the PyPI release workflow: a v* tag push publishes the
+# TypeScript SDK to npm at the matching version. workflow_dispatch supports a
+# build-only dry run.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and test only; do not publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: sdk/js
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          echo "Tag version: $tag / package.json version: $version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag v$tag does not match sdk/js package.json version $version"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack (smoke-check the publishable tarball)
+        run: npm pack --dry-run
+
+      - name: Upload tarball artifact
+        run: npm pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: sdk/js/*.tgz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish on real tag pushes, never on a dry-run dispatch.
+    if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
+    permissions:
+      contents: read
+      id-token: write # enables npm provenance attestations
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

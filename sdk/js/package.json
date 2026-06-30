@@ -1,8 +1,29 @@
 {
   "name": "@localvectordb/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for LocalVectorDB",
+  "description": "TypeScript SDK for LocalVectorDB — a document-first vector database with SQLite + FAISS, hybrid search, and an HTTP server",
   "type": "module",
+  "author": "Tom Villani <thomas.villani@gmail.com>",
+  "homepage": "https://github.com/thomas-villani/localvectordb/tree/main/sdk/js#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thomas-villani/localvectordb.git",
+    "directory": "sdk/js"
+  },
+  "bugs": {
+    "url": "https://github.com/thomas-villani/localvectordb/issues"
+  },
+  "keywords": [
+    "vector-database",
+    "embeddings",
+    "semantic-search",
+    "hybrid-search",
+    "rag",
+    "faiss",
+    "sdk",
+    "typescript",
+    "localvectordb"
+  ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -35,6 +56,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT"
 }

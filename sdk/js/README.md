@@ -1,6 +1,6 @@
 # @localvectordb/sdk
 
-TypeScript SDK for [LocalVectorDB](https://github.com/yourusername/localvectordb) — a document-first vector database.
+TypeScript SDK for [LocalVectorDB](https://github.com/thomas-villani/localvectordb) — a document-first vector database.
 
 Zero runtime dependencies. Works in Node.js 18+ and modern browsers.
 
