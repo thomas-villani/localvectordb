@@ -448,11 +448,6 @@ class ExtractorRegistry:
         extractors = cls.get_extractors_for_file(filename, mimetype)
 
         if not extractors:
-            # No specific extractor found, try fallback
-            fallback = cls._extractors.get("TextFallbackExtractor")
-            if fallback and fallback.available:
-                return fallback.extract_text(file_content, filename, mimetype, **kwargs)
-
             return ExtractionResult(
                 text="", success=False, method="none", error=f"No suitable extractor found for file: {filename}"
             )
