@@ -1039,3 +1039,57 @@ class TestRemoteVectorDBAsyncChunkOperations:
 
             result = await db.insert_from_chunks_async(chunks, errors="raise", batch_size=50)
             assert result == ["new_async_chunk"]
+
+
+@pytest.mark.client
+class TestRemoteRerankerWiring:
+    """B4: remote query must forward reranker_config (and search_level), and must
+    reject a non-serializable reranker instance instead of silently dropping it."""
+
+    @pytest.fixture
+    def mock_db(self, mock_httpx_client):
+        return RemoteVectorDB("test_db", api_key="test-key")
+
+    def test_query_forwards_reranker_config_and_search_level(self, mock_httpx_client, mock_db):
+        mock_httpx_client.request.return_value.json.return_value = {"results": []}
+
+        mock_db.query(
+            "test query",
+            search_level="sections",
+            reranker_config={"provider": "jina", "model": "jina-reranker-v2-base-multilingual"},
+        )
+
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert payload["search_level"] == "sections"
+        assert payload["reranker_config"] == {
+            "provider": "jina",
+            "model": "jina-reranker-v2-base-multilingual",
+        }
+
+    def test_query_rejects_reranker_instance(self, mock_db):
+        class _FakeReranker:
+            pass
+
+        with pytest.raises(ValueError, match="reranker_config"):
+            mock_db.query("test query", reranker=_FakeReranker())
+
+    async def test_query_async_forwards_reranker_config(self):
+        from unittest.mock import AsyncMock
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"results": []}
+            mock_client.request.return_value = mock_response
+            mock_client_class.return_value = mock_client
+
+            db = RemoteVectorDB(name="test_db", base_url="http://localhost:5000")
+            await db.query_async("test query", reranker_config={"provider": "jina", "model": "m"})
+
+            payload = mock_client.request.call_args[1]["json"]
+            assert payload["reranker_config"] == {"provider": "jina", "model": "m"}
+
+    async def test_query_async_rejects_reranker_instance(self, mock_db):
+        with pytest.raises(ValueError, match="reranker_config"):
+            await mock_db.query_async("test query", reranker=object())

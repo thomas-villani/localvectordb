@@ -70,7 +70,7 @@ import numpy as np
 
 from localvectordb._filters import FILTER_OPERATORS
 from localvectordb.core import Document, DocumentScoringMethod, QueryResult
-from localvectordb.cursor import QueryCursor
+from localvectordb.cursor import _RERANK_STREAMING_UNSUPPORTED, QueryCursor
 from localvectordb.database.base import BaseVectorDB
 from localvectordb.utils import parse_iso8601
 
@@ -1436,6 +1436,8 @@ class QueryExecutor(_QueryExecutorBase):
         """Create a QueryCursor by delegating to db.query_cursor()."""
         if not self.builder._search_clauses:
             raise ValueError("cursor() requires a search clause; use .search() first")
+        if self.builder._rerank_config:
+            raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
 
         clause = self.builder._search_clauses[0]
         filters = self._combine_exact_filters()
@@ -1708,6 +1710,8 @@ class AsyncQueryExecutor(_QueryExecutorBase):
         """Create a QueryCursor asynchronously by delegating to db.query_cursor_async()."""
         if not self.builder._search_clauses:
             raise ValueError("cursor() requires a search clause; use .search() first")
+        if self.builder._rerank_config:
+            raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
 
         clause = self.builder._search_clauses[0]
         filters = self._combine_exact_filters()

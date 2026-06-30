@@ -148,6 +148,15 @@ from localvectordb.sqlite_tuning import SqliteProfile
 
 logger = logging.getLogger(__name__)
 
+# A reranker *instance* cannot cross the HTTP boundary; only a JSON-serializable
+# reranker_config can. The server reconstructs the reranker from that config.
+_REMOTE_RERANKER_INSTANCE_UNSUPPORTED = (
+    "Passing a reranker instance to a remote database is not supported because it "
+    "cannot be serialized over HTTP. Use reranker_config instead "
+    "(e.g. {'provider': 'jina', 'model': 'jina-reranker-v2-base-multilingual'}); "
+    "the server constructs the reranker from it."
+)
+
 # Default HTTP connection-pool limits for the client. Override per-instance via the
 # `connection_pool_limits` constructor argument.
 DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 20
@@ -1576,11 +1585,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         List[QueryResult]
             Search results with normalized scores
         """
+        if reranker is not None:
+            raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
+
         # Prepare request payload
         payload = {
             "query": query,
             "search_type": search_type,
             "return_type": return_type,
+            "search_level": search_level,
             "k": k,
             "score_threshold": score_threshold,
             "vector_weight": vector_weight,
@@ -1594,6 +1607,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if semantic_dedup_threshold is not None:
             payload["semantic_dedup_threshold"] = semantic_dedup_threshold
+
+        if reranker_config is not None:
+            payload["reranker_config"] = reranker_config
 
         url = self._build_url(f"/api/v1/{self.name}/query")
         response = self._make_request_with_retry("POST", url, json=payload)
@@ -3003,11 +3019,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Search results with normalized scores
         """
 
+        if reranker is not None:
+            raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
+
         # Prepare request payload
         payload = {
             "query": query,
             "search_type": search_type,
             "return_type": return_type,
+            "search_level": search_level,
             "k": k,
             "score_threshold": score_threshold,
             "vector_weight": vector_weight,
@@ -3019,6 +3039,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if filters is not None:
             payload["filters"] = filters
+
+        if reranker_config is not None:
+            payload["reranker_config"] = reranker_config
 
         url = self._build_url(f"/api/v1/{self.name}/query")
         response = await self._make_request_with_retry_async("POST", url, json=payload)

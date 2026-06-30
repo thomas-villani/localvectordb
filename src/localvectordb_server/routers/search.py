@@ -79,6 +79,7 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
     query_text = search_params["query"]
     search_type = search_params.get("search_type", "hybrid")
     return_type = search_params.get("return_type", "documents")
+    search_level = search_params.get("search_level", "chunks")
     k = search_params.get("k", 10)
     score_threshold = search_params.get("score_threshold", 0.0)
     filters = search_params.get("filters", search_params.get("metadata_filters"))
@@ -88,6 +89,7 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
     semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
     document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
     document_scoring_options = search_params.get("document_scoring_options", None)
+    reranker_config = search_params.get("reranker_config")
     semantic_filters = search_params.get("semantic_filters")
 
     try:
@@ -104,6 +106,7 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
             query=query_text,
             search_type=search_type,
             return_type=return_type,
+            search_level=search_level,
             k=k,
             score_threshold=score_threshold,
             filters=filters,
@@ -112,6 +115,7 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
             semantic_dedup_threshold=semantic_dedup_threshold,
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
+            reranker_config=reranker_config,
         )
 
         # Apply semantic filters server-side if provided
