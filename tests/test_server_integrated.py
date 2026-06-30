@@ -620,7 +620,8 @@ class TestCompleteWorkflow:
         assert response.status_code == 200
 
         update_data = {"content": "Updated first document", "metadata": {"author": "Alice Updated"}}
-        response = integration_client.put(
+        # Partial document update is PATCH (was PUT) in the model-driven API.
+        response = integration_client.patch(
             f"/api/v1/workflow_test_db/documents/{doc_ids[0]}", json=update_data, headers=valid_auth_headers
         )
         assert response.status_code == 200

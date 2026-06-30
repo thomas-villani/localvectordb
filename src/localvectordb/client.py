@@ -1524,7 +1524,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             payload["metadata"] = metadata
 
         url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
-        response = self._make_request_with_retry("PUT", url, json=payload)
+        response = self._make_request_with_retry("PATCH", url, json=payload)
 
         try:
             result = self._handle_response(response)
@@ -2960,7 +2960,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
 
         try:
-            response = await self._make_request_with_retry_async("PUT", url, json=payload)
+            response = await self._make_request_with_retry_async("PATCH", url, json=payload)
             result = self._handle_response(response)
             updated: bool = result.get("updated", False)
             return updated
