@@ -377,3 +377,37 @@ class TestQueryBuilderCursor:
         async for batch in db_with_docs.query_builder().search("test").limit(5).stream_async(batch_size=2):
             total += len(batch)
         assert total > 0
+
+
+# ---------------------------------------------------------------------------
+# B4: reranking is rejected (not silently dropped) on cursor/stream paths
+# ---------------------------------------------------------------------------
+
+
+class TestCursorRerankingRejected:
+    """Reranking needs the fully materialized result set, which is incompatible
+    with lazy cursor hydration. The cursor/stream paths must raise rather than
+    silently ignore a configured reranker."""
+
+    def test_query_cursor_rejects_reranker_config(self, db_with_docs):
+        with pytest.raises(ValueError, match="Reranking is not supported"):
+            db_with_docs.query_cursor("test", reranker_config={"provider": "mock", "model": "m"})
+
+    def test_query_cursor_rejects_reranker_instance(self, db_with_docs):
+        with pytest.raises(ValueError, match="Reranking is not supported"):
+            db_with_docs.query_cursor("test", reranker=object())
+
+    async def test_query_cursor_async_rejects_reranker(self, db_with_docs):
+        with pytest.raises(ValueError, match="Reranking is not supported"):
+            await db_with_docs.query_cursor_async("test", reranker_config={"provider": "mock", "model": "m"})
+
+    def test_query_builder_cursor_rejects_rerank(self, db_with_docs):
+        builder = db_with_docs.query_builder().search("test").rerank_by_recency()
+        with pytest.raises(ValueError, match="Reranking is not supported"):
+            builder.cursor()
+
+    def test_query_builder_stream_rejects_rerank(self, db_with_docs):
+        builder = db_with_docs.query_builder().search("test").rerank_by_recency()
+        with pytest.raises(ValueError, match="Reranking is not supported"):
+            # stream() delegates to cursor(), so the guard fires before iteration
+            list(builder.stream())

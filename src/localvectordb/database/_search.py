@@ -18,7 +18,12 @@ import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
 from localvectordb.core import ChunkPosition, DocumentScoringMethod, MetadataFieldType, QueryResult
-from localvectordb.cursor import CursorCandidate, CursorConfig, QueryCursor
+from localvectordb.cursor import (
+    _RERANK_STREAMING_UNSUPPORTED,
+    CursorCandidate,
+    CursorConfig,
+    QueryCursor,
+)
 from localvectordb.database.base import LocalVectorDBBase
 
 if TYPE_CHECKING:
@@ -473,7 +478,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         -------
         QueryCursor
             A cursor that can be iterated to fetch results in batches.
+
+        Raises
+        ------
+        ValueError
+            If a ``reranker`` or ``reranker_config`` is supplied. Reranking
+            requires scoring the fully materialized result set, which is
+            incompatible with lazy cursor hydration; use ``query()`` instead.
         """
+        if reranker is not None or reranker_config:
+            raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
+
         with self._read_write_lock.read_lock():
             effective_return_type = return_type if return_type != "sections" else "chunks"
             initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
@@ -514,12 +529,6 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     deduped = self._apply_semantic_deduplication(temp_results, semantic_dedup_threshold)
                     kept_ids = {r.id for r in deduped}
                     candidates = [c for c in candidates if f"_:{c.faiss_id}" in kept_ids]
-
-            # Apply reranking (requires content — falls back to eager loading)
-            if reranker is not None or reranker_config:
-                # Must hydrate all candidates to rerank, then rebuild cursor
-                # This is a known limitation: reranking negates lazy loading benefit
-                pass  # Reranking handled via regular query() path for now
 
             candidates.sort(key=lambda c: c.score, reverse=True)
 
@@ -565,7 +574,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         batch_size: int = 50,
         cursor_ttl: float = 300.0,
     ) -> QueryCursor:
-        """Async version of query_cursor. Returns a QueryCursor for async iteration."""
+        """Async version of query_cursor. Returns a QueryCursor for async iteration.
+
+        Raises ``ValueError`` if a ``reranker``/``reranker_config`` is supplied;
+        reranking is incompatible with lazy cursor hydration (use ``query_async()``).
+        """
+        if reranker is not None or reranker_config:
+            raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
+
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
 

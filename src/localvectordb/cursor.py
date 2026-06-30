@@ -22,6 +22,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Reranking must score the fully materialized result set, which is incompatible
+# with the lazy, batch-at-a-time hydration of cursor/streaming queries. Rather
+# than silently ignore a configured reranker, the cursor/stream paths reject it.
+_RERANK_STREAMING_UNSUPPORTED = (
+    "Reranking is not supported with cursor/streaming queries because a reranker "
+    "must score the fully materialized result set, which is incompatible with lazy "
+    "cursor hydration. Use query()/query_async() (or QueryBuilder.execute()) for "
+    "reranked results."
+)
+
 
 @dataclass
 class CursorCandidate:
