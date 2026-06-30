@@ -65,7 +65,7 @@ because all2md (and the extras needed for these formats) is a core dependency:
 - **Source code and plain text**: 200+ extensions
 
 Extended and less-common formats (LaTeX, MediaWiki/wiki, Textile, archives,
-Evernote ``.enex``, FictionBook ``.fb2``, CHM, Outlook) are available via the
+Evernote ``.enex``, FictionBook ``.fb2``, Outlook) are available via the
 ``file-extraction`` extra. Optical character recognition for scanned PDFs is
 available via the ``file-extraction-ocr`` extra.
 

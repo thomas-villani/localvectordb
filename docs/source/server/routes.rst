@@ -786,7 +786,7 @@ Installation Requirements
 
 .. code-block:: bash
 
-   # Extended/niche formats: latex, wiki, textile, archives, .enex, .fb2, chm, outlook
+   # Extended/niche formats: latex, wiki, textile, archives, .enex, .fb2, outlook
    pip install localvectordb[file-extraction]
 
    # OCR for scanned PDFs (also requires the Tesseract system binary)
