@@ -210,7 +210,11 @@ class TestAll2MdExtractor:
 
     def test_extract_html_strips_dangerous_and_extracts_title(self):
         result = self.extractor.extract_text(TestSampleFiles.html(), "page.html")
-        assert result.success is True
+        assert result.success is True, (
+            f"HTML extraction failed: method={result.method!r} error={result.error!r} "
+            f"html_supported={'.html' in self.extractor.supported_extensions} "
+            f"resolved={self.extractor._resolve_format(TestSampleFiles.html(), 'page.html')!r}"
+        )
         assert "Main Title" in result.text
         # Dangerous script content must be stripped by default.
         assert "alert" not in result.text
