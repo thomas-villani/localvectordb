@@ -28,6 +28,11 @@ classifiers = [
 dependencies = [
     "aiosqlite>=0.21.0",
     "all2md[docx,epub,html,markdown,odf,openapi,org,pdf,pptx,rst,rtf,xlsx]>=1.7.1",
+    # all2md's HTML parser enforces a runtime beautifulsoup4>=4.14.2 check that
+    # its own packaging metadata under-specifies (it depends on bs4 with no
+    # floor), so the resolver can otherwise pin an older bs4 that fails HTML
+    # extraction at parse time. Pin the floor explicitly here.
+    "beautifulsoup4>=4.14.2",
     "faiss-cpu>=1.11.0",
     "httpx>=0.28.1",
     "numpy>=2.2.6",
