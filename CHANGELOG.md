@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened extraction defaults for untrusted uploads: remote fetching and local
   file access disabled, HTML dangerous elements stripped, attachments skipped;
   file-size and ZIP-bomb guards retained.
+- Section detection and the `sections` chunking strategy now ignore Markdown
+  headers (`#`) that appear inside fenced code blocks (```` ``` ```` and
+  `~~~`), so example snippets in extracted documents no longer create spurious
+  section boundaries.
 
 ### Added
 

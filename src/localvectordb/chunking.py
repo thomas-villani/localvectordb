@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import tiktoken
 
 from localvectordb.core import Chunk, ChunkPosition
+from localvectordb.section_detection import _position_in_spans, find_code_fence_spans
 
 logger = logging.getLogger(__name__)
 
@@ -682,8 +683,11 @@ class SectionChunker(PositionTrackingChunker):
         # Use a simple approach: treat headers as preferred break points
         # but don't let headers get orphaned
 
-        # First, identify all header positions
-        headers = list(self.header_pattern.finditer(text))
+        # First, identify all header positions. Headers inside fenced code
+        # blocks are skipped so example snippets in Markdown content do not act
+        # as section break points.
+        fence_spans = find_code_fence_spans(text)
+        headers = [m for m in self.header_pattern.finditer(text) if not _position_in_spans(m.start(), fence_spans)]
         header_positions = {h.start() for h in headers}
 
         # If no headers, just use paragraph chunking
@@ -822,7 +826,8 @@ class SectionChunker(PositionTrackingChunker):
     def _split_into_sections(self, text: str) -> List[Tuple[int, int, str, int]]:
         """Split text into sections based on headers"""
         sections = []
-        headers = list(self.header_pattern.finditer(text))
+        fence_spans = find_code_fence_spans(text)
+        headers = [m for m in self.header_pattern.finditer(text) if not _position_in_spans(m.start(), fence_spans)]
 
         if not headers:
             # No headers found, treat entire text as one section
