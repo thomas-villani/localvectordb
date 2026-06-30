@@ -207,7 +207,7 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         raise ValidationError("Query must be a non-empty string", field="query")
 
-    search_type = data.get("search_type", "vector")
+    search_type = data.get("search_type", "hybrid")
     if search_type not in ["vector", "keyword", "hybrid"]:
         raise ValidationError(
             "search_type must be one of: vector, keyword, hybrid", field="search_type", value=search_type

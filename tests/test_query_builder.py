@@ -35,7 +35,7 @@ class TestSearchClause:
         clause = SearchClause(field="content", query="test")
 
         assert clause.weight == 1.0
-        assert clause.search_type == "vector"
+        assert clause.search_type == "hybrid"
 
 
 class TestSemanticFilter:

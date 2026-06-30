@@ -93,7 +93,7 @@ class SearchClause:
     field: str  # Currently only 'content' is supported
     query: str
     weight: float = 1.0
-    search_type: Literal["vector", "keyword", "hybrid"] = "vector"
+    search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
     score_threshold: Optional[float] = None
 
 

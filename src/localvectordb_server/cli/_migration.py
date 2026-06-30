@@ -11,6 +11,7 @@ These commands focus on evolving the metadata schema using LocalVectorDB's
 built-in DatabaseSchema functionality rather than raw SQL operations.
 """
 
+import tempfile
 from pathlib import Path
 
 import click
@@ -442,7 +443,7 @@ def create_migration(description, version, migrations_dir, template, output_json
 
         # Create dummy migration engine to access template functionality
         # We use a dummy path since we're just creating templates
-        dummy_db_path = Path("/tmp/dummy.sqlite")
+        dummy_db_path = Path(tempfile.gettempdir()) / "dummy.sqlite"
         migration_engine = MigrationEngine(database_path=dummy_db_path, migrations_directory=migrations_dir)
 
         # Create migration template
@@ -521,7 +522,7 @@ def list_migrations(migrations_dir, show_dependencies, output_json):
             return
 
         # Create dummy migration engine to discover migrations
-        dummy_db_path = Path("/tmp/dummy.sqlite")
+        dummy_db_path = Path(tempfile.gettempdir()) / "dummy.sqlite"
         migration_engine = MigrationEngine(database_path=dummy_db_path, migrations_directory=migrations_dir)
 
         # Discover migrations

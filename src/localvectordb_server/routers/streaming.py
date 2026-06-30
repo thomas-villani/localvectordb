@@ -47,7 +47,7 @@ async def query_stream(db_name: str, request: Request):
     data = validate_search_params(data)
 
     query_text = data["query"]
-    search_type = data.get("search_type", "vector")
+    search_type = data.get("search_type", "hybrid")
     return_type = data.get("return_type", "documents")
     k = data.get("k", 10)
     score_threshold = data.get("score_threshold", 0.0)

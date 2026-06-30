@@ -434,10 +434,10 @@ def shell(ctx):
                     limit = int(args[0]) if len(args) > 0 and args[0].isdigit() else 20
                     offset = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
 
-                    doc_ids = db.list_document_ids(limit=limit, offset=offset)
-                    if doc_ids:
-                        for doc_id in doc_ids:
-                            click.echo(doc_id)
+                    docs = db.filter(limit=limit, offset=offset)
+                    if docs:
+                        for doc in docs:
+                            click.echo(doc.id)
                     else:
                         click.echo("No documents found")
                     continue
@@ -493,7 +493,7 @@ def shell(ctx):
                     search_type = args[2] if len(args) > 2 and args[2] in ["vector", "keyword", "hybrid"] else "vector"
 
                     try:
-                        results = db.search(query, limit=limit, search_type=search_type)
+                        results = db.query(query, search_type=search_type, k=limit)
 
                         if results:
                             click.echo(f"Found {len(results)} results:")
