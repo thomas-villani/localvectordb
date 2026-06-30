@@ -117,7 +117,11 @@ Splits text at line boundaries.
 Sections
 ~~~~~~~~
 
-Splits text at markdown-style headers (`#`, `##`, `###`).
+Splits text at Markdown-style headers (``#``, ``##``, ``###``), using them as
+preferred break points and keeping small sections whole. Headers that appear
+**inside fenced code blocks** (```` ``` ```` or ``~~~``) are ignored, so example
+snippets containing ``#`` comments or shell prompts do not create spurious
+breaks.
 
 .. code-block:: python
 
@@ -129,7 +133,15 @@ Splits text at markdown-style headers (`#`, `##`, `###`).
        # Sections typically don't overlap
    )
 
-**Best for**: Markdown documents, technical documentation, structured content
+**Best for**: Markdown documents, technical documentation, structured content.
+
+.. tip::
+
+   Files ingested via :meth:`~localvectordb.LocalVectorDB.upsert_from_file` or
+   the server ``/upload`` endpoint are extracted to **Markdown** (see
+   :doc:`/file-extraction`), so ``"sections"`` is an especially good fit for
+   PDFs, DOCX, and other documents whose heading structure is preserved during
+   extraction.
 
 Code Blocks
 ~~~~~~~~~~~
@@ -352,6 +364,48 @@ Perfect reconstruction capabilities:
    
    if found_chunk:
        print(f"Character {target_position} is in chunk {found_chunk.index}")
+
+Section Detection (Hierarchical)
+--------------------------------
+
+Section detection is an **overlay** on top of chunking. Rather than changing how
+a document is split, it identifies the document's section structure (from
+Markdown headings) and groups the resulting chunks under those sections. This
+provides a mid-level abstraction between whole documents and individual chunks,
+enabling hierarchical retrieval — for example, finding the most relevant
+*section* and then drilling into its chunks.
+
+It is implemented by :class:`~localvectordb.section_detection.SectionDetector`,
+which scans the text for headings and emits
+:class:`~localvectordb.core.SectionBoundary` objects:
+
+.. code-block:: python
+
+   from localvectordb.section_detection import SectionDetector
+
+   detector = SectionDetector()           # defaults to Markdown headers (# … ######)
+   sections = detector.detect_sections(document_text)
+
+   for s in sections:
+       print(s.heading_level, s.heading, s.start_pos, s.end_pos)
+
+Key behaviors:
+
+- **Preamble handling**: text before the first heading becomes a leading section
+  with ``heading=None``.
+- **Code-fence aware**: ``#`` lines inside fenced code blocks (```` ``` ````/
+  ``~~~``) are not treated as headings. This matters because extracted content
+  is now Markdown and frequently contains fenced code. The helper
+  :func:`~localvectordb.section_detection.find_code_fence_spans` computes the
+  fenced regions used to exclude these false headers.
+- **Custom patterns**: pass a ``pattern`` with two capture groups (level
+  indicator, heading text) to detect non-Markdown structures, e.g.
+  ``SectionDetector(pattern=r"^(SECTION \d+): (.+)$")``.
+
+Chunks are mapped to their containing section by position with
+:meth:`SectionDetector.assign_chunks_to_sections`. Hierarchical (section-level)
+embeddings are an opt-in database feature; when enabled, section centroids are
+indexed alongside chunk vectors so queries can search at the section level.
 
 Chunking Strategies by Content Type
 -----------------------------------

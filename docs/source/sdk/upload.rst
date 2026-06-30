@@ -4,6 +4,12 @@ File Upload
 The SDK supports uploading files to a database with automatic server-side text extraction.
 Supported formats include PDF, DOCX, PPTX, XLSX, TXT, Markdown, and more.
 
+Extraction is powered by `all2md <https://all2md.readthedocs.io/>`_ and returns
+**Markdown**, preserving headings, tables, and lists — which makes the server's
+structure-aware chunking (e.g. ``sections``) more effective. If you run your own
+server, the extended-format parsers come from the ``file-extraction`` extra
+(and ``file-extraction-ocr`` for scanned PDFs). See :doc:`/file-extraction`.
+
 .. contents:: Table of Contents
    :local:
    :depth: 2

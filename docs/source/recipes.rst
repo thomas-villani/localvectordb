@@ -300,164 +300,99 @@ Keep a directory of code files synchronized with your database, using filenames 
 Adding Multiple File Types
 ==========================
 
-Using Built-in Extractors
+Using Built-in Extraction
 --------------------------
 
-The LocalVectorDB server includes built-in extractors for many file types. Here's how to add various file formats to your database.
+LocalVectorDB extracts text from files through the :class:`All2MdExtractor`
+(backed by `all2md <https://all2md.readthedocs.io/>`_), which covers 20+
+document formats (PDF, DOCX, PPTX, XLSX, HTML, EPUB, ODT, email, notebooks, …)
+plus many source/text formats. Extracted content is **Markdown**, preserving
+headings, tables, and lists. Install the extended-format parsers with
+``pip install "localvectordb[file-extraction]"`` (see :doc:`/file-extraction`).
+
+The simplest path is :meth:`~localvectordb.LocalVectorDB.upsert_from_file`,
+which runs each file through the extractor, merges any extracted metadata
+(``title``, ``author``, ``source_format``, …) with your own, then chunks and
+embeds:
 
 .. code-block:: python
 
-   import mimetypes
-   from pathlib import Path
-   from typing import Optional, Dict, Any
-   from localvectordb.extractors import ExtractorRegistry
-
-   def add_file_with_extraction(db, file_path: str, metadata: Optional[Dict[str, Any]] = None):
-       """
-       Add a file to the database with automatic content extraction.
-
-       Supports: PDF, DOCX, PPTX, XLSX, RTF, and all text-based files.
-       For advanced extraction, use the server's upload endpoints.
-       """
-       path = Path(file_path)
-       if not path.exists():
-           raise FileNotFoundError(f"File not found: {file_path}")
-
-       # Detect file type
-       mime_type, _ = mimetypes.guess_type(str(path))
-
-       try:
-           with open(path, "rb") as file_obj:
-               content_bytes = file_obj.read()
-               content = ExtractorRegistry.extract_text(content_bytes, path, mime_type)
-
-           if not content or len(content.strip()) < 10:
-               print(f"Warning: No meaningful content extracted from {file_path}")
-               return None
-
-           # Prepare metadata
-           file_metadata = {
-               'filename': path.name,
-               'file_path': str(path),
-               'file_extension': path.suffix,
-               'file_size': path.stat().st_size,
-               'mime_type': mime_type or 'unknown',
-               'character_count': len(content)
-           }
-
-           if metadata:
-               file_metadata.update(metadata)
-
-           # Insert into database
-           doc_ids = db.upsert(
-               documents=[content],
-               metadata=[file_metadata],
-               ids=[str(path)]  # Use file path as ID
-           )
-
-           print(f"Successfully added: {path.name} ({len(content)} characters)")
-           return doc_ids[0] if doc_ids else None
-
-       except Exception as e:
-           print(f"Failed to process {file_path}: {e}")
-           return None
-
-
-   # Usage examples
    db = create_code_db()  # Or any database
 
-   # Add different file types
-   add_file_with_extraction(db, "./documents/report.pdf",
-                           metadata={'category': 'report', 'department': 'research'})
+   db.upsert_from_file(
+       ["./documents/report.pdf",
+        "./docs/presentation.pptx",
+        "./data/analysis.xlsx"],
+       metadata=[
+           {"category": "report", "department": "research"},
+           {"category": "presentation", "author": "John Doe"},
+           {"category": "data", "project": "quarterly_review"},
+       ],
+   )
 
-   add_file_with_extraction(db, "./docs/presentation.pptx",
-                           metadata={'category': 'presentation', 'author': 'John Doe'})
+To inspect extraction output before ingesting, call the registry directly. Note
+that :meth:`ExtractorRegistry.extract_text` returns an ``ExtractionResult``
+(with ``.success``, ``.text``, ``.method``, ``.metadata``) — not a bare string:
 
-   add_file_with_extraction(db, "./data/analysis.xlsx",
-                           metadata={'category': 'data', 'project': 'quarterly_review'})
+.. code-block:: python
+
+   from localvectordb.extractors import ExtractorRegistry
+
+   with open("report.pdf", "rb") as f:
+       result = ExtractorRegistry.extract_text(file_content=f.read(), filename="report.pdf")
+
+   if result.success:
+       print(result.text[:500])   # Markdown
+       print(result.metadata)     # {'title': ..., 'source_format': 'pdf', ...}
+   else:
+       print("Extraction failed:", result.error)
 
 .. note::
 
-   **Server Extractors**: The LocalVectorDB server includes a comprehensive extraction system
-   that supports many more file types and extraction methods. When using the server, you can
-   upload files directly via the API and let the server handle extraction automatically.
-
-   Use ``GET /api/v1/upload/supported-formats`` to see all supported formats in your server installation.
+   Because extracted content is Markdown, ``chunking_method="sections"`` is a
+   strong choice for ingested documents — it splits on Markdown headings while
+   ignoring ``#`` lines inside fenced code blocks. See :doc:`/chunking`.
 
 Using Directory Processing
 ---------------------------
 
-Process multiple file types from a directory automatically.
+Process every supported file in a directory by collecting paths and passing them
+to :meth:`~localvectordb.LocalVectorDB.upsert_from_file` in one call. Use
+:meth:`ExtractorRegistry.get_supported_formats` to discover which extensions the
+installed extractors can handle, rather than hard-coding a list:
 
 .. code-block:: python
 
-   def process_mixed_directory(db, directory_path: str, recursive: bool = True):
-       """
-       Process a directory containing mixed file types.
+   from pathlib import Path
+   from localvectordb.extractors import ExtractorRegistry
 
-       Automatically detects and extracts content from supported file types.
-       """
+   def process_directory(db, directory_path: str, recursive: bool = True):
        directory = Path(directory_path)
        if not directory.exists():
            raise ValueError(f"Directory does not exist: {directory_path}")
 
-       # Find all files
-       if recursive:
-           all_files = [f for f in directory.rglob("*") if f.is_file()]
-       else:
-           all_files = [f for f in directory.iterdir() if f.is_file()]
+       supported = set(ExtractorRegistry.get_supported_formats())  # {'pdf', 'docx', ...} (no dot)
+       paths = directory.rglob("*") if recursive else directory.iterdir()
 
-       results = {'success': [], 'failed': [], 'skipped': []}
+       files, metas = [], []
+       for file_path in paths:
+           if not file_path.is_file() or file_path.suffix.lower().lstrip(".") not in supported:
+               continue
+           if file_path.stat().st_size > 10 * 1024 * 1024:   # skip files > 10 MB
+               print(f"Skipping large file: {file_path.name}")
+               continue
+           files.append(str(file_path))
+           metas.append({
+               "source_directory": directory.name,
+               "relative_path": str(file_path.relative_to(directory)),
+           })
 
-       # Supported extensions for content extraction
-       supported_extensions = {
-           '.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.csv',
-           '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.rtf'
-       }
-
-       for file_path in all_files:
-           try:
-               # Skip unsupported file types
-               if file_path.suffix.lower() not in supported_extensions:
-                   results['skipped'].append(str(file_path))
-                   continue
-
-               # Skip very large files (>10MB)
-               if file_path.stat().st_size > 10 * 1024 * 1024:
-                   print(f"Skipping large file: {file_path.name}")
-                   results['skipped'].append(str(file_path))
-                   continue
-
-               # Process file
-               relative_path = file_path.relative_to(directory)
-               doc_id = add_file_with_extraction(
-                   db,
-                   str(file_path),
-                   metadata={
-                       'source_directory': directory.name,
-                       'relative_path': str(relative_path),
-                       'processed_date': Path(file_path).stat().st_mtime
-                   }
-               )
-
-               if doc_id:
-                   results['success'].append(str(file_path))
-               else:
-                   results['failed'].append(str(file_path))
-
-           except Exception as e:
-               print(f"Error processing {file_path}: {e}")
-               results['failed'].append(str(file_path))
-
-       print(f"Processing complete:")
-       print(f"  Successful: {len(results['success'])}")
-       print(f"  Failed: {len(results['failed'])}")
-       print(f"  Skipped: {len(results['skipped'])}")
-
-       return results
+       doc_ids = db.upsert_from_file(files, metadata=metas)
+       print(f"Ingested {len(doc_ids)} document(s) from {len(files)} file(s)")
+       return doc_ids
 
    # Usage
-   results = process_mixed_directory(db, "./mixed_documents", recursive=True)
+   doc_ids = process_directory(db, "./mixed_documents", recursive=True)
 
 Multi-Column Search Recipes
 ============================

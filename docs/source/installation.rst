@@ -56,6 +56,33 @@ For local inference with HuggingFace transformers models:
 
    pip install localvectordb[local-embeddings]
 
+File Extraction Installation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Common document formats (PDF, DOCX, PPTX, XLSX, HTML, Markdown, …) are extracted
+with the base install. To add all2md's extended/niche format parsers (archives,
+LaTeX, Outlook ``.msg``, FictionBook, wikitext, and more):
+
+.. code-block:: bash
+
+   pip install localvectordb[file-extraction]
+
+For OCR of scanned PDFs and images (requires the Tesseract binary — see
+*System Dependencies* below):
+
+.. code-block:: bash
+
+   pip install localvectordb[file-extraction-ocr]
+
+Extracted content is returned as **Markdown**, preserving headings, tables, and
+lists. See :doc:`/file-extraction` for the full format list and security
+options.
+
+.. note::
+
+   The heavier ``pdf-layout`` (Polyform Noncommercial license) and EasyOCR
+   (PyTorch) extras are deliberately **not** exposed, to keep LocalVectorDB MIT
+   and its install footprint small.
+
 Development Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^
 For contributing or advanced usage, install the development dependency group with
@@ -93,6 +120,22 @@ For local embeddings without API keys:
 
    # Pull embedding model
    ollama pull nomic-embed-text
+
+Tesseract (Optional, for OCR)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Required only when using the ``file-extraction-ocr`` extra to extract text from
+scanned PDFs and images:
+
+.. code-block:: bash
+
+   # macOS
+   brew install tesseract
+
+   # Linux (Debian/Ubuntu)
+   sudo apt-get install tesseract-ocr
+
+   # Windows
+   # Install from https://github.com/UB-Mannheim/tesseract/wiki
 
 FAISS Installation
 ^^^^^^^^^^^^^^^^^^

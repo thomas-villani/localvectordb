@@ -124,6 +124,22 @@ Security Configuration
    cors_max_age = 86400
 
 
+Extraction Configuration
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Controls how uploaded files are converted to text (via all2md). Defaults are
+hardened for untrusted uploads; relax them only for trusted content. See
+:doc:`/file-extraction` for the full security model.
+
+.. code-block:: toml
+
+   [extraction]
+   allow_remote_fetch = false           # Fetch remote assets referenced by a document (SSRF risk)
+   allowed_hosts = []                   # Host allowlist applied when allow_remote_fetch = true
+   strip_dangerous_elements = true      # HTML: strip scripts and event handlers
+   attachment_mode = "skip"             # How embedded attachments/assets are handled
+
+
 Environment Variables
 ---------------------
 
@@ -148,6 +164,11 @@ All configuration options can be overridden with environment variables using the
 
    # Security settings
    export LVDB_SERVER_REQUIRE_API_KEY=true
+
+   # Extraction settings
+   export LVDB_EXTRACTION_ALLOW_REMOTE_FETCH=false
+   export LVDB_EXTRACTION_STRIP_DANGEROUS_ELEMENTS=true
+   export LVDB_EXTRACTION_ATTACHMENT_MODE="skip"
 
    # Start server with environment overrides
    lvdb serve

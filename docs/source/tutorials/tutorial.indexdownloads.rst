@@ -399,32 +399,30 @@ Then search from the command line:
 Advanced Features
 =================
 
-**PDF Support** (requires PyPDF2):
+**Built-in Extraction for PDF, DOCX, and More**
+
+You don't need to hand-roll readers for binary formats. LocalVectorDB ships with
+built-in extraction (via `all2md <https://all2md.readthedocs.io/>`_) covering
+PDF, DOCX, PPTX, XLSX, HTML, EPUB, ODT, and 20+ other document formats. Install
+the extended-format parsers once::
+
+   pip install "localvectordb[file-extraction]"
+
+Then let the database extract and ingest files for you with
+:meth:`~localvectordb.LocalVectorDB.upsert_from_file`, which replaces the manual
+``_read_*`` helpers above for these formats:
 
 .. code-block:: python
 
-   def _read_pdf_file(self, file_path):
-       """Read PDF files."""
-       import PyPDF2
-       with open(file_path, 'rb') as f:
-           reader = PyPDF2.PdfReader(f)
-           text = []
-           for page in reader.pages:
-               text.append(page.extract_text())
-       return '\n'.join(text)
+   # PDFs, Word docs, spreadsheets, slides — extracted automatically
+   self.db.upsert_from_file(
+       [str(p) for p in self.downloads_path.glob("*.pdf")],
+   )
 
-   # Add to supported_extensions
-   self.supported_extensions['.pdf'] = self._read_pdf_file
-
-**Word Document Support** (requires python-docx):
-
-.. code-block:: python
-
-   def _read_docx_file(self, file_path):
-       """Read Word documents."""
-       from docx import Document
-       doc = Document(file_path)
-       return '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+Extracted content is **Markdown**, so headings, tables, and lists are preserved
+— which makes ``chunking_method="sections"`` an effective choice for these
+documents. See :doc:`/file-extraction` for the full format list and security
+options.
 
 **Automatic Re-indexing**:
 
@@ -482,6 +480,6 @@ What's Next?
 Your Downloads folder is now searchable! Consider:
 
 - **Expand to Other Folders**: Index Documents, Desktop, or project folders
-- **Add More File Types**: Support for Excel, PowerPoint, images with OCR
+- **Index Scanned PDFs**: Enable OCR with ``pip install "localvectordb[file-extraction-ocr]"``
 - **Web Interface**: Build a simple web UI for family/team use
 - **Scheduled Indexing**: Set up automatic re-indexing with cron jobs
