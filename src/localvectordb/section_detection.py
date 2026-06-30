@@ -13,7 +13,7 @@ import bisect
 import hashlib
 import logging
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from localvectordb.core import Chunk, SectionBoundary
 
@@ -21,11 +21,61 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SECTION_PATTERN = r"^(#{1,6})\s+(.+)$"
 
+# A fence line is up to three leading spaces followed by 3+ backticks or 3+
+# tildes. An *opening* fence may carry an info string (e.g. ```python); a
+# *closing* fence is the same character, at least as long, and bare. This
+# matters now that extracted content is Markdown: a ``#`` comment or shell
+# prompt inside a fenced code block must not be mistaken for a section header.
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+
+
+def find_code_fence_spans(text: str) -> List[tuple[int, int]]:
+    """Return ``(start, end)`` character spans covered by fenced code blocks.
+
+    Both backtick (```` ``` ````) and tilde (``~~~``) fences are recognised,
+    including unterminated fences (which extend to end of text) following
+    CommonMark behaviour. Spans are returned in document order and are used to
+    suppress header matches that fall inside code, so example Markdown or shell
+    snippets in extracted documents do not create spurious section boundaries.
+    """
+    spans: List[tuple[int, int]] = []
+    open_fence: Optional[str] = None
+    open_start = 0
+    pos = 0
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\n").rstrip("\r")
+        if open_fence is None:
+            m = _FENCE_OPEN_RE.match(stripped)
+            if m:
+                open_fence = m.group(1)
+                open_start = pos
+        else:
+            cm = _FENCE_CLOSE_RE.match(stripped)
+            # A closing fence must use the same character and be at least as long.
+            if cm and cm.group(1)[0] == open_fence[0] and len(cm.group(1)) >= len(open_fence):
+                spans.append((open_start, pos + len(line)))
+                open_fence = None
+        pos += len(line)
+
+    if open_fence is not None:
+        spans.append((open_start, len(text)))
+
+    return spans
+
+
+def _position_in_spans(position: int, spans: List[tuple[int, int]]) -> bool:
+    """Return True if ``position`` falls within any ``(start, end)`` span."""
+    return any(start <= position < end for start, end in spans)
+
 
 class SectionDetector:
     """Detects section boundaries in documents using regex patterns.
 
-    By default, detects markdown-style headers (# through ######).
+    By default, detects markdown-style headers (# through ######). Headers
+    inside fenced code blocks are ignored, so example snippets in extracted
+    Markdown do not create spurious sections.
     Custom patterns can be provided for other document formats.
 
     Parameters
@@ -59,7 +109,11 @@ class SectionDetector:
         if not text:
             return []
 
-        matches = list(self._compiled.finditer(text))
+        # Exclude headers that live inside fenced code blocks: extracted content
+        # is now Markdown, so a ``# comment`` in a ```` ``` ```` block is text,
+        # not a section boundary.
+        fence_spans = find_code_fence_spans(text)
+        matches = [m for m in self._compiled.finditer(text) if not _position_in_spans(m.start(), fence_spans)]
 
         if not matches:
             # No headers found: entire document is one section

@@ -155,6 +155,41 @@ class TestSectionDetector:
         # Header at line 3
         assert sections[1].start_line == 3
 
+    def test_ignores_headers_in_fenced_code(self, section_detector):
+        """Markdown ``#`` lines inside fenced code blocks are not sections."""
+        text = (
+            "# Real Heading\n\n"
+            "Intro.\n\n"
+            "```python\n"
+            "# a comment, not a heading\n"
+            "## also not a heading\n"
+            "def f():\n"
+            "    pass\n"
+            "```\n\n"
+            "## Real Subsection\n\n"
+            "Body.\n"
+        )
+        sections = section_detector.detect_sections(text)
+        headings = [s.heading for s in sections if s.heading]
+        assert headings == ["Real Heading", "Real Subsection"]
+        # The whole code block stays inside the first section's span.
+        intro = next(s for s in sections if s.heading == "Real Heading")
+        assert "# a comment, not a heading" in text[intro.start_pos : intro.end_pos]
+
+    def test_ignores_headers_in_tilde_fenced_code(self, section_detector):
+        """Tilde fences (~~~) are recognised as code as well."""
+        text = "# Heading\n\n~~~\n# not a heading\n~~~\n\n## Next\n"
+        sections = section_detector.detect_sections(text)
+        headings = [s.heading for s in sections if s.heading]
+        assert headings == ["Heading", "Next"]
+
+    def test_unterminated_fence_swallows_rest(self, section_detector):
+        """An unterminated fence extends to EOF, suppressing later ``#`` lines."""
+        text = "# Heading\n\n```\n# inside code\n## still code\n"
+        sections = section_detector.detect_sections(text)
+        headings = [s.heading for s in sections if s.heading]
+        assert headings == ["Heading"]
+
 
 class TestChunkToSectionAssignment:
     """Test chunk-to-section mapping."""

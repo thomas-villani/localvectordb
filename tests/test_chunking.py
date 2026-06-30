@@ -612,6 +612,28 @@ Content 3."""
         assert 1 in levels
         assert max(levels) >= 2
 
+    def test_ignores_headers_in_fenced_code(self):
+        """``#`` lines inside fenced code blocks are not treated as headers."""
+        chunker = SectionChunker()
+        text = """# Real Heading
+Intro.
+
+```python
+# not a heading
+## also not a heading
+code = 1
+```
+
+## Real Subsection
+Body."""
+
+        sections = chunker._split_into_sections(text)
+        headers = [content.splitlines()[0] for _, _, content, _ in sections]
+        # Only the two genuine headers are detected as section starts.
+        assert any("Real Heading" in h for h in headers)
+        assert any("Real Subsection" in h for h in headers)
+        assert not any("not a heading" in h for h in headers)
+
 
 @pytest.mark.unit
 @pytest.mark.chunking
