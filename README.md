@@ -28,6 +28,11 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 - **Batch Upload**: Multi-file processing with metadata extraction
 - **Format Detection**: Automatic MIME type detection and processing
 
+### 🤖 **AI / LLM Integration**
+- **MCP Server**: Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server for Claude Desktop, Claude Code, and other MCP clients
+- **Read-Only by Default**: Safe knowledge-base access; opt into read-write explicitly
+- **TypeScript SDK**: First-class browser/Node client (`@localvectordb/sdk`)
+
 ### 🛠️ **Developer Experience**
 - **CLI Tools**: Database management, server control, interactive shell
 - **Configuration**: TOML/JSON config with environment variable support
@@ -188,6 +193,67 @@ lvdb auth list-keys --active-only
 # Revoke key
 lvdb auth revoke-key key_20241201_abc123
 ```
+
+## 🤖 MCP Server (Claude Desktop / Claude Code)
+
+LocalVectorDB ships a built-in [Model Context Protocol](https://modelcontextprotocol.io/)
+server, so an LLM agent can search and manage your vector databases directly. It
+works with **Claude Desktop**, **Claude Code**, and any other MCP client.
+
+```bash
+# Install with MCP support
+pip install localvectordb[mcp]
+
+# Start the server (read-only by default — safe for knowledge bases)
+lvdb mcp serve
+
+# Enable writes when you need them
+lvdb mcp serve --mode read-write
+```
+
+Register it with Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "localvectordb": {
+      "command": "lvdb",
+      "args": ["mcp", "serve"],
+      "env": {
+        "LVDB_MCP_MODE": "read-only",
+        "LVDB_MCP_DATABASES_ROOT": "/path/to/databases"
+      }
+    }
+  }
+}
+```
+
+The server exposes focused tools — `query_database`, `filter_documents`,
+`get_document`, `list_databases`, and (in read-write mode) `upsert_documents`,
+`create_database`, and more. Tool sets are configurable per deployment. See the
+[MCP documentation](https://thomas-villani.github.io/localvectordb/mcp.html) for
+the full tool list, configuration, and security guidance.
+
+## 🟦 TypeScript SDK
+
+A zero-dependency TypeScript/JavaScript client is available for the HTTP server
+(Node.js 18+ and modern browsers):
+
+```bash
+npm install @localvectordb/sdk
+```
+
+```typescript
+import { LocalVectorDBClient } from "@localvectordb/sdk";
+
+const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
+const db = client.database("my_docs");
+
+await db.upsert(["First document", "Second document"]);
+const results = await db.query("search text", { search_type: "hybrid", k: 5 });
+```
+
+See [`sdk/js/README.md`](sdk/js/README.md) for the full SDK API.
 
 ## 📚 API Reference
 
