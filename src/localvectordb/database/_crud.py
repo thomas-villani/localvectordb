@@ -701,7 +701,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
             await conn.execute("BEGIN")
             try:
-                cursor = await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
+                await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
                 cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
                 deleted_count = cursor.rowcount or 0
                 await conn.commit()

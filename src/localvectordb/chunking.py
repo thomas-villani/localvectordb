@@ -711,8 +711,6 @@ class SectionChunker(PositionTrackingChunker):
             # Try to build a chunk up to max_tokens
             while chunk_end < len(text):
                 # Find next potential break point (paragraph, line break, or end)
-                next_break = chunk_end
-
                 # Look for next line break
                 next_newline = text.find("\n", chunk_end + 1)
                 if next_newline == -1:
@@ -1253,15 +1251,14 @@ class CodeBlockChunker(PositionTrackingChunker):
                 chunks.append(chunk)
                 chunk_index += 1
 
-                # Start a new chunk, with overlap if applicable
+                # Start a new chunk, with overlap if applicable. current_tokens is
+                # recomputed below once this block's lines are appended, so we only
+                # need to reset the line list here.
                 if self.overlap > 0 and current_chunk_lines:
-                    # Calculate how many lines to include for overlap
                     overlap_lines = min(self.overlap, len(current_chunk_lines))
                     current_chunk_lines = current_chunk_lines[-overlap_lines:]
-                    current_tokens = self.count_tokens("\n".join([line["line"] for line in current_chunk_lines]))
                 else:
                     current_chunk_lines = []
-                    current_tokens = 0
 
             # Add block to current chunk
             for i, line in enumerate(block_lines):
