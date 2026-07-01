@@ -185,6 +185,7 @@ class CrossPlatformFileLock:
             try:
                 self.file_handle.close()
             except Exception:
+                # Best-effort close during cleanup; handle is cleared regardless.
                 pass
             finally:
                 self.file_handle = None
@@ -321,6 +322,7 @@ class DatabaseRegistry:
                 try:
                     del self.cache[metadata_key]
                 except KeyError:
+                    # Metadata entry already absent; nothing to remove.
                     pass
 
             logger.info(f"Unregistered database '{name}' from shared registry")
@@ -785,6 +787,7 @@ class DatabaseManager:
                         try:
                             db.close()
                         except Exception:
+                            # Best-effort close of an unhealthy db before eviction.
                             pass
                         del self.databases[name]
 
@@ -794,6 +797,7 @@ class DatabaseManager:
                     try:
                         db.close()
                     except Exception:
+                        # Best-effort close of an unhealthy db before eviction.
                         pass
                     del self.databases[name]
 
@@ -1242,6 +1246,7 @@ class DatabaseManager:
                     db, _ = self.databases[name]
                     db.close()
                 except Exception:
+                    # Best-effort close of an unhealthy db before eviction.
                     pass
 
                 del self.databases[name]
@@ -1332,11 +1337,7 @@ class DatabaseManager:
     def __del__(self):
         """Destructor to ensure cleanup on garbage collection"""
         try:
-            if not self._shutdown_complete:
-                logger.debug(
-                    "DatabaseManager garbage collected, ensuring cleanup "
-                    f"(worker: {getattr(self, 'worker_id', 'unknown')})"
-                )
+            if not getattr(self, "_shutdown_complete", True):
                 self.close_all()
         except Exception as e:
             # Use print since logging might not work during GC

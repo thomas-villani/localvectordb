@@ -334,7 +334,7 @@ def delete_database(ctx, name, confirm):
             )
             if confirm != "confirm":
                 click.echo("Aborted by user!")
-                return 0
+                return
         try:
             for f in files:
                 os.remove(f)

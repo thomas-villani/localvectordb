@@ -940,10 +940,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         and isinstance(value, str)
                     ):
                         try:
-                            import json
-
                             value = json.loads(value)
                         except (json.JSONDecodeError, TypeError):
+                            # Leave the raw value in place if it is not valid JSON.
                             pass
                 metadata[col_name] = value
             result[doc_id] = metadata
@@ -1210,12 +1209,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 # Parse section-specific metadata
                 if row["metadata"]:
                     try:
-                        import json
-
                         raw = row["metadata"]
                         section_meta = json.loads(raw) if isinstance(raw, str) else raw
                         section_metadata.update(section_meta)
                     except (json.JSONDecodeError, TypeError):
+                        # Skip section metadata that is not valid JSON.
                         pass
 
                 result = QueryResult(
@@ -2185,8 +2183,6 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         # Hierarchical search levels: delegate to sync for now
         if search_level in ("sections", "documents") and self._hierarchical_embeddings:
-            import asyncio
-
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 None,
@@ -2546,6 +2542,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         try:
                             value = json.loads(value)
                         except (json.JSONDecodeError, TypeError):
+                            # Leave the raw value in place if it is not valid JSON.
                             pass
                     metadata[field_name] = value
             chunks_data.append(
@@ -2606,6 +2603,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         try:
                             value = json.loads(value)
                         except (json.JSONDecodeError, TypeError):
+                            # Leave the raw value in place if it is not valid JSON.
                             pass
                 metadata[field_name] = value
             doc_metadata[doc_id] = metadata

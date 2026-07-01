@@ -82,8 +82,8 @@ def temp_dir():
     with tempfile.TemporaryDirectory(prefix="lvdb_test_") as tmpdir:
         temp_path = Path(tmpdir)
 
-        # Ensure the directory is writable
-        os.chmod(temp_path, 0o755)
+        # Ensure the directory is writable (owner-only; no need for group/other access)
+        os.chmod(temp_path, 0o700)
 
         yield temp_path
 

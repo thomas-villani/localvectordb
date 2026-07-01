@@ -132,11 +132,8 @@ class ConnectionPool:
     @contextmanager
     def get_connection_context(self) -> Generator[sqlite3.Connection, None, None]:
         """Alternative context manager interface"""
-        pooled_conn = self.get_connection()
-        try:
-            yield pooled_conn.connection
-        finally:
-            pooled_conn.close()
+        with self.get_connection() as connection:
+            yield connection
 
     def close_all(self) -> None:
         """Close all connections in the pool"""

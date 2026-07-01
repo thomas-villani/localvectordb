@@ -398,8 +398,6 @@ def add_to_database(ctx, files_or_text, metadata, id):
 
     # Handle metadata
     if metadata:
-        # if metadata == "auto":
-        #     metadata = auto_metadata
         if os.path.isfile(metadata):
             with open(metadata, "r", encoding="utf-8") as f:
                 metadata = json.load(f)

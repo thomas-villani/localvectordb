@@ -41,6 +41,7 @@ try:
 
     _PLOTLY_AVAILABLE = True
 except ImportError:
+    # plotly is an optional extra; interactive plots stay disabled without it.
     pass
 
 

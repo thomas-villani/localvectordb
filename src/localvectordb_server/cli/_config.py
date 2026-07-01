@@ -266,6 +266,7 @@ def set_config_value(ctx, key, value, dry_run, force):
             if str(actual_value) != value:
                 click.secho(f"Applied value: {_format_value_for_display(actual_value)}", fg="blue")
         except Exception:
+            # Display-only echo; skip silently if the value can't be re-read.
             pass
 
     except ValueError as e:
@@ -361,7 +362,8 @@ def init_config(
     """
 
     if interactive:
-        return _interactive_config_init(format, output)
+        _interactive_config_init(format, output)
+        return
 
     if not output:
         output = f"./{DEFAULT_CONFIG_FILE}.{format}"
@@ -370,7 +372,7 @@ def init_config(
         click.echo(f"Configuration file `{output}` exists! Overwrite (Y/n)?")
         char = click.getchar()
         if char.lower() != "y":
-            return 0
+            return
 
     from localvectordb_server.config import Config
 
@@ -718,6 +720,7 @@ def _parse_redis_url(redis_url):
         try:
             settings["db"] = int(parsed.path[1:])  # Remove leading '/'
         except ValueError:
+            # Non-numeric db path segment in the Redis URL; leave db unset.
             pass
 
     if parsed.password:

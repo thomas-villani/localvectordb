@@ -630,6 +630,7 @@ class BackupManager:
                             try:
                                 pragma_settings["overrides"] = json.loads(value)
                             except (json.JSONDecodeError, TypeError):
+                                # Ignore malformed override JSON; keep defaults.
                                 pass
                 except sqlite3.Error:
                     pass  # Config table may not exist
