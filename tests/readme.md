@@ -8,8 +8,6 @@ and include unit tests, integration tests, and performance benchmarks.
 ```
 tests/
 ├── conftest.py              # Common fixtures and utilities
-├── pytest.ini              # Pytest configuration
-├── test_runner.py          # Test runner script
 ├── test_core.py            # Core components tests
 ├── test_embeddings.py      # Embedding providers tests
 ├── test_chunking.py        # Text chunking tests
@@ -21,9 +19,12 @@ tests/
 ├── test_init.py            # Package import tests
 ├── test_integration.py     # Integration tests
 ├── test_performance.py     # Performance benchmarks
-├── ... maybe more?
-└── README.md               # This file
+├── ...                     # and many more (server, CLI, MCP, backup, ...)
+└── readme.md               # This file
 ```
+
+Pytest configuration lives in ``[tool.pytest.ini_options]`` in the project's
+``pyproject.toml`` (there is no separate ``pytest.ini``).
 
 ## 🏷️ Test Categories
 
@@ -43,13 +44,17 @@ Tests are organized using pytest markers:
 
 ### Prerequisites
 
-Install testing dependencies:
+Install the development environment (test, lint, and docs tooling) with
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
-pip install pytest pytest-cov pytest-mock pytest-xdist psutil
+uv sync --dev
 ```
 
 ### Running Tests
+
+Prefix commands with `uv run` (e.g. `uv run pytest`) or activate the virtualenv
+first. Requires Python 3.12+.
 
 ```bash
 # Run all tests
@@ -232,21 +237,18 @@ class TestComponentName:
 #### Tests Fail with Import Errors
 
 ```bash
-# Ensure package is installed in development mode
-pip install -e .
-
-# Or add to PYTHONPATH
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+# Ensure the dev environment (with the package installed editable) is synced
+uv sync --dev
 ```
 
 #### Coverage Reports Missing
 
 ```bash
-# Install coverage dependencies
-pip install pytest-cov
+# pytest-cov ships in the dev group; ensure it's synced
+uv sync --dev
 
-# Ensure source code is in the right location
-pytest --cov=localvectordb --cov-report=term-missing
+# Then run with coverage
+pytest --cov=localvectordb --cov=localvectordb_server --cov-report=term-missing
 ```
 
 #### Slow Test Performance
@@ -301,28 +303,27 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.8, 3.9, "3.10", "3.11"]
-    
+        python-version: ["3.12", "3.13", "3.14"]
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
         python-version: ${{ matrix.python-version }}
-    
+
     - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .[test]
-    
+      run: uv sync --dev
+
     - name: Run tests
-      run: |
-        python test_runner.py fast --coverage
-    
+      run: uv run pytest -m "not slow and not network" --cov=localvectordb --cov=localvectordb_server
+
     - name: Upload coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
 ```
+
+The project's actual CI lives in ``.github/workflows/test.yml``.
 
 ## 🤝 Contributing
 

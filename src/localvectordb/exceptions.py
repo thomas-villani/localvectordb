@@ -2,11 +2,11 @@ from typing import List, Union
 
 
 class BaseLocalVectorDBException(Exception):
-    pass
+    """Base class for all LocalVectorDB exceptions."""
 
 
 class DatabaseError(BaseLocalVectorDBException):
-    pass
+    """Raised for general database operation failures."""
 
 
 class DatabaseNotFoundError(DatabaseError, KeyError):
@@ -36,7 +36,7 @@ class DocumentNotFoundError(DatabaseError, KeyError):
 
 
 class EmbeddingError(BaseLocalVectorDBException, RuntimeError):
-    pass
+    """Raised when an embedding provider fails to generate embeddings."""
 
 
 class OllamaNotFoundError(EmbeddingError):
@@ -46,7 +46,7 @@ class OllamaNotFoundError(EmbeddingError):
 
 
 class ConfigurationError(BaseLocalVectorDBException, RuntimeError):
-    pass
+    """Raised when configuration is invalid or inconsistent."""
 
 
 class ValidationError(BaseLocalVectorDBException, ValueError):
@@ -56,7 +56,7 @@ class ValidationError(BaseLocalVectorDBException, ValueError):
 
 
 class ConnectionPoolError(BaseLocalVectorDBException):
-    pass
+    """Raised when a database connection cannot be acquired from the pool."""
 
 
 class RerankerError(BaseLocalVectorDBException, RuntimeError):

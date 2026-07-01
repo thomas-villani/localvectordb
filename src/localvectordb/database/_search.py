@@ -1902,7 +1902,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     method_metadata["secondary_score"] = secondary_score
                     method_metadata["primary_percentile"] = primary_percentile
                     method_metadata["secondary_percentile"] = secondary_percentile
-                    method_metadata["primary_wieght"] = primary_weight
+                    method_metadata["primary_weight"] = primary_weight
                     final_score = primary_score * primary_weight + secondary_score * (1 - primary_weight)
             elif method == "geometric_mean":
                 stabilization_factor = 0.1

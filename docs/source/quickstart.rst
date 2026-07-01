@@ -22,17 +22,20 @@ Quick Installation
 
 .. code-block:: bash
 
-    # Basic installation
-    pip install localvectordb
+    # Basic installation (uv recommended; pip works too)
+    uv add localvectordb
+    # pip install localvectordb
 
     # With server dependencies
-    pip install localvectordb[server]
+    uv add "localvectordb[server]"
+    # pip install "localvectordb[server]"
 
     # Development environment (dev tooling + test extras), via uv
     uv sync --dev
 
     # The whole kit and kaboodle:
-    pip install localvectordb[all]
+    uv add "localvectordb[all]"
+    # pip install "localvectordb[all]"
 
 
 5-Minute Example

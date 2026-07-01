@@ -85,7 +85,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 if field_name in self.metadata_schema:
                     field_def = self.metadata_schema[field_name]
                     if (
-                        value
+                        value is not None
                         and isinstance(field_def.type, MetadataFieldType)
                         and not isinstance(value, field_def.type.valid_types())
                     ):

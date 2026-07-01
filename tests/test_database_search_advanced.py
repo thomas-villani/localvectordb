@@ -164,7 +164,7 @@ class TestDocumentScoringMethods:
             # Weighted average should have weights in metadata
             if hasattr(result, "metadata") and result.metadata:
                 if "method_metadata" in result.metadata:
-                    assert "weights" in result.metadata["method_metadata"] or True
+                    assert "weights" in result.metadata["method_metadata"]
 
     def test_scoring_method_frequency_boost(self, search_db):
         """
@@ -392,8 +392,10 @@ class TestReturnTypes:
 
             # Check for context indicators in metadata
             if hasattr(result, "metadata") and result.metadata:
-                # Context window may add surrounding chunks
-                assert "position" in result.metadata or "chunk_index" in result.metadata or True
+                # Context results are annotated with the context-window bookkeeping.
+                assert "_context_window" in result.metadata
+                assert "_context_start_index" in result.metadata
+                assert "_context_end_index" in result.metadata
 
     def test_return_type_enriched(self, search_db):
         """

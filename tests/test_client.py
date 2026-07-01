@@ -848,14 +848,15 @@ class TestRemoteVectorDBChunkOperations:
         )
         assert result == ["doc1", "doc2"]
 
-        # Verify the request payload
-        call_args = mock_httpx_client.post.call_args
-        if call_args:
-            assert call_args[0][0].endswith("/documents/chunks")
-            payload = call_args[1]["json"]
-            assert "chunks_by_document" in payload
-            # Check that content field is correctly mapped
-            assert payload["chunks_by_document"]["doc1"][0]["text"] == "Chunk 1"
+        # Verify the request payload (the client issues client.request(method, url, ...)).
+        call_args = mock_httpx_client.request.call_args
+        assert call_args is not None
+        assert call_args[0][0] == "POST"
+        assert call_args[0][1].endswith("/documents/chunks")
+        payload = call_args[1]["json"]
+        assert "chunks_by_document" in payload
+        # Chunk objects are serialized with their content under "text".
+        assert payload["chunks_by_document"]["doc1"][0]["text"] == "Chunk 1"
 
     def test_upsert_from_chunks_with_strings(self, mock_httpx_client):
         """Test upserting documents from string chunks."""
@@ -870,11 +871,11 @@ class TestRemoteVectorDBChunkOperations:
         result = db.upsert_from_chunks(chunks_with_strings)
         assert result == ["doc1"]
 
-        # Verify the chunks were passed as-is
-        call_args = mock_httpx_client.post.call_args
-        if call_args:
-            payload = call_args[1]["json"]
-            assert payload["chunks_by_document"]["doc1"] == ["String chunk 1", "String chunk 2"]
+        # Verify the string chunks were passed as-is
+        call_args = mock_httpx_client.request.call_args
+        assert call_args is not None
+        payload = call_args[1]["json"]
+        assert payload["chunks_by_document"]["doc1"] == ["String chunk 1", "String chunk 2"]
 
     def test_insert_from_chunks(self, mock_httpx_client):
         """Test inserting documents from chunks with conflict handling."""
@@ -900,12 +901,12 @@ class TestRemoteVectorDBChunkOperations:
         assert result == ["new_doc"]
 
         # Verify the request
-        call_args = mock_httpx_client.post.call_args
-        if call_args:
-            assert call_args[0][0].endswith("/documents/chunks/insert")
-            payload = call_args[1]["json"]
-            assert payload["errors"] == "raise"
-            assert payload["similarity_threshold"] == 0.9
+        call_args = mock_httpx_client.request.call_args
+        assert call_args is not None
+        assert call_args[0][1].endswith("/documents/chunks/insert")
+        payload = call_args[1]["json"]
+        assert payload["errors"] == "raise"
+        assert payload["similarity_threshold"] == 0.9
 
     def test_insert_from_chunks_ignore_errors(self, mock_httpx_client):
         """Test inserting chunks with ignore errors mode."""
@@ -923,9 +924,9 @@ class TestRemoteVectorDBChunkOperations:
         assert result == []
 
         # Verify errors parameter was sent
-        call_args = mock_httpx_client.post.call_args
-        if call_args:
-            assert call_args[1]["json"]["errors"] == "ignore"
+        call_args = mock_httpx_client.request.call_args
+        assert call_args is not None
+        assert call_args[1]["json"]["errors"] == "ignore"
 
 
 @pytest.mark.asyncio

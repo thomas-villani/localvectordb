@@ -538,3 +538,76 @@ class TestIntegration:
         manager.delete_backup(backup_id)
         final_backups = manager.list_backups()
         assert len(final_backups) == 0
+
+
+def _tamper_backup_member(backup_file, update_sidecar):
+    """Rewrite one non-manifest file inside a backup tar to corrupt its bytes.
+
+    Keeps the member set and manifest.json identical, so only the tampered file's
+    per-member checksum changes. Optionally refreshes the ``.sha256`` sidecar so the
+    whole-archive check passes and member-level verification is isolated.
+    """
+    import hashlib
+    import io
+    import tarfile
+
+    # Each entry is a mutable [TarInfo, bytes] so we can corrupt one in place.
+    members = []
+    with tarfile.open(backup_file, "r:*") as tar:
+        for m in tar.getmembers():
+            data = tar.extractfile(m).read() if m.isfile() else None
+            members.append([m, data])
+
+    tampered = None
+    for entry in members:
+        m, data = entry
+        if m.isfile() and m.name != "manifest.json" and tampered is None:
+            entry[1] = (data or b"") + b"TAMPERED-BYTES"
+            m.size = len(entry[1])
+            tampered = m.name
+
+    assert tampered is not None, "no non-manifest member found to tamper"
+
+    mode = "w:gz" if backup_file.suffix == ".gz" else "w"
+    with tarfile.open(backup_file, mode) as tar:
+        for m, data in members:
+            if m.isfile():
+                tar.addfile(m, io.BytesIO(data))
+            else:
+                tar.addfile(m)
+
+    if update_sidecar:
+        h = hashlib.sha256()
+        with open(backup_file, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        sidecar = backup_file.with_suffix(backup_file.suffix + ".sha256")
+        sidecar.write_text(f"{h.hexdigest()}  {backup_file.name}\n")
+    return tampered
+
+
+@pytest.mark.unit
+class TestBackupTamperDetection:
+    """In-archive tampering is detected by checksum verification."""
+
+    def test_intra_tar_tamper_fails_verification(self, backup_manager):
+        backup_id = backup_manager.create_backup(BackupType.FULL)
+        assert backup_manager.verify_backup(backup_id) is True
+
+        backup_file = backup_manager._find_backup_file(backup_id)
+        _tamper_backup_member(backup_file, update_sidecar=False)
+
+        # The whole-archive checksum (sidecar) no longer matches.
+        assert backup_manager.verify_backup(backup_id) is False
+
+    def test_member_checksum_isolates_tamper(self, backup_manager):
+        backup_id = backup_manager.create_backup(BackupType.FULL)
+        backup_file = backup_manager._find_backup_file(backup_id)
+
+        # Refresh the sidecar so archive- and manifest-level checks pass.
+        _tamper_backup_member(backup_file, update_sidecar=True)
+
+        # Skipping member checks, the backup looks valid (archive + manifest OK)...
+        assert backup_manager.verify_backup_streaming(backup_id, verify_archive_members=False) is True
+        # ...but per-member checksum verification catches the corrupted file.
+        assert backup_manager.verify_backup_streaming(backup_id, verify_archive_members=True) is False

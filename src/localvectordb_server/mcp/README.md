@@ -196,7 +196,6 @@ If not specified, all appropriate tools for the mode are enabled.
 - `update_document` - Update document content/metadata
 - `delete_document` - Delete a document
 - `update_metadata_schema` - Update database schema
-- `get_embeddings` - Generate embeddings
 
 ## CLI Commands
 

@@ -204,10 +204,14 @@ class TestMultiThreadedPipeline:
                 mode="upsert",
             )
 
-            # Verify embedding was called (for new chunk)
-            # The MockEmbeddings provider tracks calls internally
-            # We can't easily inspect what was embedded without modifying MockEmbeddings,
-            # but we can verify the pipeline ran correctly by checking other aspects
+            # Only the new chunk (index 2) is embedded and added to FAISS; the two
+            # unchanged chunks reuse their existing FAISS ids and are NOT re-embedded.
+            db._add_vectors_to_faiss_bulk.assert_called_once()
+            embedded_chunks = db._add_vectors_to_faiss_bulk.call_args.args[1]
+            assert [c.content for c in embedded_chunks] == ["new chunk content"]
+
+            # All existing chunks were reused, so none are marked for removal.
+            assert db._remove_old_chunks_batch.call_args.args[2] == []
 
     def test_chunk_removal_detection(self, mock_db_with_pipeline, existing_chunks_fixture):
         """Test that obsolete chunks are properly identified for removal."""
@@ -232,10 +236,6 @@ class TestMultiThreadedPipeline:
             patch.object(db.chunker, "chunk", return_value=mock_chunks),
             mock_database_operations(db),
         ):
-
-            # Note: With the new mocking approach, we can't easily capture chunk removals
-            # The test logic may need adjustment
-
             db._process_with_pipeline(
                 documents=[doc_text],
                 metadata_batch=[{}],
@@ -245,8 +245,12 @@ class TestMultiThreadedPipeline:
                 mode="upsert",
             )
 
-            # Should have identified chunk index 1 for removal (from existing_chunks_fixture)
-            # Note: Actual removal logic may vary, adjust assertion as needed
+            # The document shrank from 2 chunks to 1 and chunk 0's content changed, so
+            # both old chunks are cleared: index 1 is obsolete, index 0 is replaced.
+            db._remove_old_chunks_batch.assert_called_once()
+            remove_call = db._remove_old_chunks_batch.call_args
+            assert remove_call.args[2] == [0, 1]  # chunk_indices_to_remove
+            assert remove_call.args[3] == [100, 101]  # faiss_ids_to_remove
 
     def test_similarity_filtering(self, mock_db_with_pipeline):
         """Test that similar chunks are filtered when threshold is set."""

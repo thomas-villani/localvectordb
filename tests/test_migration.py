@@ -388,55 +388,36 @@ class TestMigrationEngine:
         # Apply first migration
         result = migration_engine.migrate(target_version="1.1.0")
 
-        # Debug: print the result to see what's happening
-        print(f"Migration result: {result}")
-
         assert result["success"] is True
+        assert "1.1.0" in result["applied_migrations"]
+        assert result.get("migration_errors", []) == []
 
-        # Check if migration was actually applied
-        if "applied_migrations" in result:
-            assert "1.1.0" in result["applied_migrations"]
-
-        if "migration_errors" in result:
-            assert len(result["migration_errors"]) == 0
-
-        # Check schema was updated
+        # Migration 1.1.0 adds the indexed ``user_id`` field to the schema.
         current_schema = migration_engine.database_schema.load_metadata_schema()
-        print(f"Current schema after migration: {current_schema}")
+        assert "user_id" in current_schema
 
-        # The test might be failing because the migration system is working differently
-        # Let's check if the fields were added
-        if "user_id" not in current_schema:
-            # Maybe the migration isn't being applied correctly - let's be more lenient
-            print("Migration may not have applied schema changes as expected")
-
-        # Check version was updated
+        # The recorded database version advances to the applied migration.
         version_manager = VersionManager(migration_engine.database_path)
-        current_version = version_manager.get_database_version()
-        print(f"Current version: {current_version}")
-        # assert str(current_version) == "1.1.0"
+        assert str(version_manager.get_database_version()) == "1.1.0"
 
     def test_migration_apply_multiple(self, migration_engine):
         """Test applying multiple migrations in sequence."""
         # Apply all migrations
         result = migration_engine.migrate()
 
-        print(f"Multiple migration result: {result}")
         assert result["success"] is True
+        assert result.get("migration_errors", []) == []
+        assert result["applied_migrations"] == ["1.1.0", "1.2.0"]
 
-        # Check final schema
+        # 1.2.0 renames user_id -> author_id and adds created_by.
         current_schema = migration_engine.database_schema.load_metadata_schema()
-        print(f"Final schema: {current_schema}")
+        assert "author_id" in current_schema
+        assert "created_by" in current_schema
+        assert "user_id" not in current_schema
 
-        # These assertions might need to be adjusted based on actual implementation
-        # For now, let's just verify the result structure
-        if "applied_migrations" in result:
-            print(f"Applied migrations: {result['applied_migrations']}")
-
-        # Check final version
+        # Final version reflects the last applied migration.
         version_manager = VersionManager(migration_engine.database_path)
-        current_version = version_manager.get_database_version()
-        print(f"Final version: {current_version}")
+        assert str(version_manager.get_database_version()) == "1.2.0"
 
     def test_migration_dry_run(self, migration_engine):
         """Test migration dry run."""

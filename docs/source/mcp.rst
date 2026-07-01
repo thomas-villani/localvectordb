@@ -21,13 +21,17 @@ Install LocalVectorDB with MCP support:
 
 .. code-block:: bash
 
-   pip install localvectordb[mcp]
+   # uv (recommended)
+   uv add "localvectordb[mcp]"
+
+   # ...or pip
+   pip install "localvectordb[mcp]"
 
 Or from source:
 
 .. code-block:: bash
 
-   pip install -e ".[mcp]"
+   uv sync --extra mcp   # or: pip install -e ".[mcp]"
 
 Recommended Usage Pattern
 ==========================

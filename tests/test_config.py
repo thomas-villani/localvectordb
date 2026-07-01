@@ -779,9 +779,9 @@ class TestConfigErrorHandling:
     def test_env_conversion_invalid_json(self):
         """Test environment variable conversion with invalid JSON."""
         with patch.dict(os.environ, {"LVDB_DATABASE_DEFAULT_METADATA_SCHEMA": "invalid json"}, clear=True):
-            # Should not raise error, but return empty dict for invalid JSON
-            _config = Config.from_env()
-            # The conversion should handle the error gracefully
+            # Invalid JSON must be handled gracefully, yielding an empty schema.
+            config = Config.from_env()
+            assert config.database.default_metadata_schema == {}
 
 
 @pytest.mark.unit
