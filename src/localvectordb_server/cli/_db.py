@@ -8,6 +8,7 @@ from localvectordb_server.cli._utils import (
     EXIT_CODE_ERROR,
     format_table,
     get_stdin_input,
+    load_file_for_ingest,
     print_db_stats,
 )
 
@@ -310,18 +311,28 @@ def search(
 @click.argument("files_or_text", nargs=-1)
 @click.option("--metadata", "-m", default=None, help="Metadata for the document in JSON format or path to .json file.")
 @click.option("--id", "-i", default=None, help='Set the id(s) for the document, separated by ",".')
+@click.option(
+    "--extract/--no-extract",
+    default=None,
+    help="Force (or disable) text extraction. Default: auto — binary/document "
+    "formats (PDF, DOCX, HTML, CSV, ...) are extracted to Markdown, plain text is read as-is.",
+)
 @click.pass_context
-def add_to_database(ctx, files_or_text, metadata, id):
+def add_to_database(ctx, files_or_text, metadata, id, extract):
     """
     Add document(s) to the database.
 
     Adds one or more documents to the database from files, globs, stdin, or direct text. Supports
     attaching metadata and specifying document IDs.
 
+    Rich file formats (PDF, DOCX, HTML, CSV, XLSX, ...) are automatically extracted to Markdown
+    via the installed extractors; plain text and source files are read directly.
+
     \b
     Examples:
         \b
         lvdb db mydb add file.txt
+        lvdb db mydb add report.pdf
         lvdb db mydb add "docs/*.md"
         cat file.txt | lvdb db mydb add -
         lvdb db mydb add file1.txt file2.txt --metadata '[{"author":"A"},{"author":"B"}]' --id "id1,id2"
@@ -344,6 +355,10 @@ def add_to_database(ctx, files_or_text, metadata, id):
         )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    # ``--extract/--no-extract`` is tri-state: None = auto (detect per file),
+    # True = always extract, False = never extract (raw text only).
+    force_extract = bool(extract)
+
     if len(files_or_text) == 1 and files_or_text[0] == "-":
         input_data = get_stdin_input(True, "No input provided to stdin")
         all_inputs.append(input_data)
@@ -354,42 +369,34 @@ def add_to_database(ctx, files_or_text, metadata, id):
 
             if os.path.isfile(file_or_text_input):
                 click.secho(f"Reading {file_or_text_input}...", fg="blue", err=True)
-                with open(file_or_text_input, "r", encoding="utf-8") as f:
-                    data = f.read()
-                all_inputs.append(data)
-                auto_metadata.append(
-                    {
-                        "filename": os.path.basename(file_or_text_input),
-                        "path": os.path.abspath(file_or_text_input),
-                        "ext": os.path.splitext(file_or_text_input)[1],
-                        "bytes": len(data.encode("utf-8")),
-                    }
-                )
+                result = load_file_for_ingest(file_or_text_input, force_extract=force_extract)
+                if result.text is None:
+                    click.secho(
+                        f"Error: could not read `{file_or_text_input}`: {result.error}",
+                        fg="bright_red",
+                        err=True,
+                    )
+                    raise click.exceptions.Exit(EXIT_CODE_ERROR)
+                all_inputs.append(result.text)
+                auto_metadata.append(result.metadata)
             elif os.path.isdir(os.path.dirname(file_or_text_input)):
                 glob_pattern = os.path.basename(file_or_text_input)
                 if any(c in glob_pattern for c in "*?[]"):
                     matching_files = glob.glob(file_or_text_input, recursive=True)
                     for file in matching_files:
+                        if not os.path.isfile(file):
+                            continue
                         click.echo(f"Reading {file}...", err=True)
-                        try:
-                            with open(file, "r", encoding="utf-8") as f:
-                                data = f.read()
-                        except UnicodeDecodeError:
+                        result = load_file_for_ingest(file, force_extract=force_extract)
+                        if result.text is None:
                             click.secho(
-                                f"Unicode Decoding error, file `{file}` is probably binary, skipping!",
+                                f"Skipping `{file}`: {result.error}",
                                 fg="bright_red",
                                 err=True,
                             )
                             continue
-                        all_inputs.append(data)
-                        auto_metadata.append(
-                            {
-                                "filename": os.path.basename(file),
-                                "path": os.path.abspath(file),
-                                "ext": os.path.splitext(file)[1],
-                                "bytes": len(data.encode("utf-8")),
-                            }
-                        )
+                        all_inputs.append(result.text)
+                        auto_metadata.append(result.metadata)
                 else:
                     click.secho(f"Error: invalid pattern: {file_or_text_input}", fg="bright_red", err=True)
             else:
@@ -440,10 +447,14 @@ def add_to_database(ctx, files_or_text, metadata, id):
             )
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    # When no explicit --metadata was given, fall back to the auto-collected
+    # per-document metadata (filename, path, source_format, extraction method).
+    final_metadata = metadata if metadata else auto_metadata
+
     try:
         click.secho(f"Adding {len(all_inputs)} document(s)...", fg="blue", err=True)
 
-        new_ids = db.upsert(documents=all_inputs, metadata=metadata, ids=id)
+        new_ids = db.upsert(documents=all_inputs, metadata=final_metadata, ids=id)
 
         click.echo(f"Successfully added {len(all_inputs)} document(s)!\nCreated ids:", err=True)
         click.echo(",".join(new_ids))

@@ -130,7 +130,7 @@ def cli(ctx, config, db_folder, verbose, quiet):
     config_path = find_config_file(config)
 
     if not config_path:
-        if ctx.invoked_subcommand not in ("config", "mcp", "tuning", "maintenance", "version"):
+        if ctx.invoked_subcommand not in ("config", "mcp", "tuning", "maintenance", "version", "chunk"):
             click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
             raise click.exceptions.Exit(1)
         cfg = config_path = api_key_path = db_folder = None
@@ -165,6 +165,7 @@ from localvectordb_server.cli._basic import (  # noqa: E402
     serve,
     version,
 )
+from localvectordb_server.cli._chunk import chunk_command  # noqa: E402
 from localvectordb_server.cli._config import config_group  # noqa: E402
 from localvectordb_server.cli._db import db_group  # noqa: E402
 from localvectordb_server.cli._mcp import mcp_commands  # noqa: E402
@@ -177,6 +178,7 @@ cli.add_command(list_databases)
 cli.add_command(delete_database)
 cli.add_command(rename_database)
 cli.add_command(version)
+cli.add_command(chunk_command)
 cli.add_command(db_group)
 cli.add_command(config_group)
 cli.add_command(auth)

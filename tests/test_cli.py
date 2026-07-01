@@ -903,6 +903,24 @@ class TestDbAdd:
         call_args = mock_db.upsert.call_args
         assert "Document content here" in call_args[1]["documents"]
 
+    def test_add_html_file_is_extracted(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        """Adding an HTML file should extract it to Markdown before upserting."""
+        html_file = tmp_path / "page.html"
+        html_file.write_bytes(b"<html><body><h1>Hi</h1><p>World</p></body></html>")
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["doc_html"]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", str(html_file)])
+        assert result.exit_code == 0
+        call_args = mock_db.upsert.call_args
+        # Content is Markdown, not raw HTML.
+        assert call_args[1]["documents"] == ["# Hi\n\nWorld"]
+        # Auto metadata records the extracted source format.
+        assert call_args[1]["metadata"][0]["source_format"] == "html"
+
     def test_add_no_input(self, runner, fake_config, config_file, tmp_db_folder):
         """Calling add with no arguments should produce an error."""
         mock_db = MagicMock()
