@@ -75,7 +75,10 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
                 yield {"event": "done", "data": json.dumps({"total_results": len(results)})}
 
         except Exception as e:
-            logger.error(f"Streaming error for {sanitize_log_value(db_name)}: {e}", exc_info=True)
+            logger.error(
+                f"Streaming error for {sanitize_log_value(db_name)}: {sanitize_log_value(e)}",
+                exc_info=True,
+            )
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
     return EventSourceResponse(event_generator())

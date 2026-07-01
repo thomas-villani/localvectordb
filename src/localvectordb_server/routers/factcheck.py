@@ -176,7 +176,9 @@ async def factcheck_multi_db(body: MultiFactCheckBody, db_manager=Depends(get_db
                     results_by_db[db_name] = _serialize_factcheck_result(result)
 
                 except Exception as e:
-                    logger.error(f"Fact-check error for database '{sanitize_log_value(db_name)}': {e}")
+                    logger.error(
+                        f"Fact-check error for database '{sanitize_log_value(db_name)}': {sanitize_log_value(e)}"
+                    )
                     results_by_db[db_name] = {"error": str(e)}
 
             return {
