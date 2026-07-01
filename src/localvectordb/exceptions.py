@@ -81,3 +81,16 @@ class CursorExhaustedError(CursorError):
     """Raised when attempting to fetch from an exhausted cursor."""
 
     pass
+
+
+# Reranking must score the fully materialized result set, which is incompatible
+# with the lazy, batch-at-a-time hydration of cursor/streaming queries. Rather
+# than silently ignore a configured reranker, the cursor/stream paths reject it.
+# Lives here (a leaf module) so the consumers in database._search and
+# query_builder can import it without a cursor <-> consumer import cycle.
+_RERANK_STREAMING_UNSUPPORTED = (
+    "Reranking is not supported with cursor/streaming queries because a reranker "
+    "must score the fully materialized result set, which is incompatible with lazy "
+    "cursor hydration. Use query()/query_async() (or QueryBuilder.execute()) for "
+    "reranked results."
+)

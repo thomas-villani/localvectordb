@@ -70,8 +70,9 @@ import numpy as np
 
 from localvectordb._filters import FILTER_OPERATORS
 from localvectordb.core import Document, DocumentScoringMethod, QueryResult
-from localvectordb.cursor import _RERANK_STREAMING_UNSUPPORTED, QueryCursor
+from localvectordb.cursor import QueryCursor
 from localvectordb.database.base import BaseVectorDB
+from localvectordb.exceptions import _RERANK_STREAMING_UNSUPPORTED
 from localvectordb.utils import parse_iso8601
 
 logger = logging.getLogger(__name__)
