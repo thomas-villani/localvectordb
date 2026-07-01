@@ -75,7 +75,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from sqlite3 import Connection
 from typing import Any, Dict, Generator, List, Optional
 
 import bcrypt
@@ -265,7 +264,7 @@ class KeyManager:
 
             conn.commit()
 
-    def _migrate_database(self, conn: Connection, from_version: int) -> None:
+    def _migrate_database(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Migrate database schema from one version to another"""
         logger.info(f"Migrating key database from version {from_version} to {self.SCHEMA_VERSION}")
 
@@ -326,7 +325,7 @@ class KeyManager:
                 raise
 
     @contextmanager
-    def _get_connection(self) -> Generator[Connection, Any, None]:
+    def _get_connection(self) -> Generator[sqlite3.Connection, Any, None]:
         """Get database connection with proper settings"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row

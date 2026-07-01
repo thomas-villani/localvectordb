@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import ValidationError
-from localvectordb_server._logcfg import DatabaseLogger
+from localvectordb_server._logcfg import DatabaseLogger, sanitize_log_value
 from localvectordb_server._serializers import serialize_query_result
 from localvectordb_server.routers._deps import get_db
 from localvectordb_server.routers._models import QueryBody
@@ -75,7 +75,7 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
                 yield {"event": "done", "data": json.dumps({"total_results": len(results)})}
 
         except Exception as e:
-            logger.error(f"Streaming error for {db_name}: {e}", exc_info=True)
+            logger.error(f"Streaming error for {sanitize_log_value(db_name)}: {e}", exc_info=True)
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
     return EventSourceResponse(event_generator())

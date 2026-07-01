@@ -9,7 +9,7 @@ from pydantic import Field
 
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
-from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
+from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context, sanitize_log_value
 from localvectordb_server.routers._deps import get_db, get_db_manager
 from localvectordb_server.routers._models import StrictModel
 
@@ -176,7 +176,7 @@ async def factcheck_multi_db(body: MultiFactCheckBody, db_manager=Depends(get_db
                     results_by_db[db_name] = _serialize_factcheck_result(result)
 
                 except Exception as e:
-                    logger.error(f"Fact-check error for database '{db_name}': {e}")
+                    logger.error(f"Fact-check error for database '{sanitize_log_value(db_name)}': {e}")
                     results_by_db[db_name] = {"error": str(e)}
 
             return {

@@ -36,6 +36,7 @@ def check_ollama_installation() -> Optional[str]:
         if result.returncode == 0:
             return result.stdout.strip()
     except FileNotFoundError:
+        # ollama binary not on PATH; reported via the raise below.
         pass
 
     raise OllamaNotFoundError(

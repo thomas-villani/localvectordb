@@ -787,6 +787,8 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                             error_msg = error_data["error"].get("message", str(error_data["error"]))
                             raise RuntimeError(f"OpenAI error: {error_msg}")
                     except (ValueError, KeyError, TypeError):
+                        # Error body was not the expected JSON shape; fall back
+                        # to raise_for_status() below for a generic HTTP error.
                         pass
                     response.raise_for_status()
 
@@ -805,6 +807,8 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                         error_msg = error_data["error"].get("message", str(error_data["error"]))
                         raise RuntimeError(f"OpenAI error: {error_msg}")
                 except (ValueError, KeyError, TypeError):
+                    # Error body was not the expected JSON shape; fall back
+                    # to raise_for_status() below for a generic HTTP error.
                     pass
                 response.raise_for_status()
 

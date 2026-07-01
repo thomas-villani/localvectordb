@@ -28,9 +28,9 @@ def health_check(response: Response):
             "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error(f"Health check failed: {e}", exc_info=True)
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "unhealthy", "error": str(e)}
+        return {"status": "unhealthy", "error": "Health check failed"}
 
 
 @router.get("/system/resources", dependencies=[Depends(require_read_permission)])

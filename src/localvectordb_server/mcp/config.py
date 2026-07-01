@@ -127,6 +127,7 @@ class MCPConfig:
             try:
                 config.db_defaults["chunk_size"] = int(chunk_size)
             except ValueError:
+                # Non-integer LVDB_MCP_CHUNK_SIZE; keep the default chunk size.
                 pass
 
         # Log level

@@ -136,9 +136,6 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
         # Apply tuning
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
         db.set_sqlite_tuning(profile, overrides, persist=not no_persist)
-
-        # Show updated config
-        _new_config = db.get_sqlite_tuning()
         db.close()
 
         click.echo(f"\nApplied SQLite tuning profile '{click.style(profile, fg='green')}' to '{database}'")

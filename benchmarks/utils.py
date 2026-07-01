@@ -99,5 +99,6 @@ def get_system_info() -> dict:
         info["total_ram_gb"] = round(mem.total / (1024**3), 1)
         info["cpu_count"] = psutil.cpu_count(logical=True)
     except ImportError:
+        # psutil is optional; omit memory/CPU info when it is unavailable.
         pass
     return info
