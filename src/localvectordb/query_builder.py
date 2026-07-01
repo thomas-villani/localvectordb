@@ -1307,6 +1307,7 @@ class QueryExecutor(_QueryExecutorBase):
         start_time = time.time()
 
         try:
+            execution_plan = None
             if self.builder._explain:
                 execution_plan = self._generate_execution_plan()
 
