@@ -30,6 +30,22 @@ request_start_time_var: contextvars.ContextVar[Optional[float]] = contextvars.Co
     "request_start_time", default=None
 )
 
+# Control characters (incl. CR/LF) let user-controlled values forge or split log
+# entries. Strip them before interpolating any request-derived value into a log line.
+_LOG_UNSAFE_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def sanitize_log_value(value: Any, max_length: int = 256) -> str:
+    """Neutralize a user-controlled value for safe logging (prevents log injection).
+
+    Removes control characters (newlines, carriage returns, etc.) so a crafted
+    value cannot inject or split log lines, and truncates overly long values.
+    """
+    text = _LOG_UNSAFE_CHARS.sub("", str(value))
+    if len(text) > max_length:
+        text = text[:max_length] + "…"
+    return text
+
 
 def configure_logging(config, log_file: Optional[str] = None, debug: bool = False) -> None:
     """Configure enhanced logging for the application.

@@ -3,7 +3,6 @@ Error handling framework for LocalVectorDB Server (FastAPI).
 """
 
 import logging
-import traceback
 from datetime import UTC, datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -141,9 +140,10 @@ def standardize_error_response(
             extra={"extra_fields": {"error_type": type(error).__name__, "error_message": str(error)}},
         )
 
-        details = {}
-        if debug:
-            details = {"error_type": type(error).__name__, "traceback": traceback.format_exc()}
+        # The full traceback is logged above (exc_info=True) but deliberately kept
+        # out of the HTTP response: exposing stack traces to clients leaks internal
+        # structure/paths. In debug mode we surface only the exception class name.
+        details = {"error_type": type(error).__name__} if debug else {}
 
         api_error = APIError(
             message=default_message, error_code=default_code, status_code=500, recoverable=False, details=details

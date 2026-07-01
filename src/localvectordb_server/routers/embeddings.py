@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
-from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
+from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context, sanitize_log_value
 from localvectordb_server.routers._deps import get_db
 from localvectordb_server.routers._models import StrictModel
 
@@ -151,7 +151,7 @@ async def get_embeddings(body: EmbeddingsBody):
             return {"embeddings": embeddings.tolist()}
 
         except Exception as e:
-            logger.error(f"Error getting embeddings with {provider}/{model}: {e}")
+            logger.error(f"Error getting embeddings with {provider}/{sanitize_log_value(model)}: {e}")
             raise APIError(
                 message=f"Failed to get embeddings: {str(e)}",
                 error_code="EMBEDDING_GENERATION_FAILED",
