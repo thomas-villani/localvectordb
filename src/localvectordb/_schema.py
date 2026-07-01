@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 import aiosqlite
 
 from localvectordb._pools import ReadWriteLock
+from localvectordb._sqlite_uri import is_sqlite_uri, normalize_db_path
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.versioning import DatabaseVersion, VersionManager
@@ -424,7 +425,7 @@ class DatabaseSchema:
     BASE_COLUMNS = ["id", "content", "content_hash", "created_at", "updated_at"]
 
     def __init__(self, db_path: Union[str, Path], read_write_lock: "ReadWriteLock"):
-        self.db_path = Path(db_path)
+        self.db_path = normalize_db_path(db_path)
         self.metadata_fields: Dict[str, MetadataField] = {}
         self._read_write_lock: ReadWriteLock = read_write_lock
         self._sync_executor = SyncDatabaseExecutor()
@@ -710,7 +711,9 @@ class DatabaseSchema:
         """Initialize database schema"""
         with self._read_write_lock.write_lock():
             if db_connection is None:
-                db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+                db_connection = sqlite3.connect(
+                    self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+                )
             with db_connection as conn:
                 self._core_initialize_sync(metadata_schema, conn)
                 conn.commit()
@@ -1216,7 +1219,9 @@ class DatabaseSchema:
     def load_metadata_schema(self, db_connection=None) -> Dict[str, MetadataField]:
         """Load metadata schema from database"""
         if db_connection is None:
-            db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+            db_connection = sqlite3.connect(
+                self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+            )
 
         # First ensure the schema is up to date
         self._ensure_enhanced_metadata_schema(db_connection)
@@ -1262,7 +1267,9 @@ class DatabaseSchema:
         """
         with self._read_write_lock.write_lock():
             if db_connection is None:
-                db_connection = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+                db_connection = sqlite3.connect(
+                    self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+                )
 
             changes: Dict[str, Any] = {
                 "added_fields": [],
@@ -1779,7 +1786,9 @@ class DatabaseSchema:
         owns_connection = db_connection is None
 
         if owns_connection:
-            db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+            db_connection = await aiosqlite.connect(
+                self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+            )
 
         try:
             await self._core_initialize_async(metadata_schema, db_connection)
@@ -1859,7 +1868,9 @@ class DatabaseSchema:
         owns_connection = db_connection is None
 
         if owns_connection:
-            db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+            db_connection = await aiosqlite.connect(
+                self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+            )
 
         conn = db_connection
         try:
@@ -1909,7 +1920,9 @@ class DatabaseSchema:
         owns_connection = db_connection is None
 
         if owns_connection:
-            db_connection = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+            db_connection = await aiosqlite.connect(
+                self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+            )
 
         assert db_connection is not None
 
