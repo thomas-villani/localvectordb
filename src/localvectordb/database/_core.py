@@ -30,6 +30,7 @@ import numpy as np
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
+from localvectordb._sqlite_retry import retry_on_locked
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.core import Chunk, MetadataField
 from localvectordb.database._faiss_utils import build_id_lookup
@@ -749,11 +750,17 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             return int(row["value"]) if row else 1
 
     def _save_next_doc_id(self) -> None:
-        with self.connection_pool.get_connection() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", ("next_doc_id", str(self._next_doc_id))
-            )
-            conn.commit()
+        # Idempotent single-statement write; retry on transient shared-cache locks
+        # so concurrent async upserts don't fail after their document already committed.
+        def _write() -> None:
+            with self.connection_pool.get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                    ("next_doc_id", str(self._next_doc_id)),
+                )
+                conn.commit()
+
+        retry_on_locked(_write)
 
     def _save_config(self):
         config = {

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 import aiosqlite
 import numpy as np
 
+from localvectordb._sqlite_retry import retry_on_locked_async
 from localvectordb.core import Chunk, ChunkPosition
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import (
@@ -2821,45 +2822,60 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 ]
                 chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
                 assert self.async_connection_pool is not None
-                async with self.async_connection_pool.get_connection_context() as conn:
-                    try:
-                        await conn.execute("BEGIN")
+                # FAISS is not transactional, so its vectors are added at most once
+                # across retries (faiss_added guard); the chunk rows keep the faiss_ids
+                # assigned on the first add, so re-running the SQL on a retry stays
+                # consistent with the index. On a locked db retry_on_locked_async
+                # retries the whole transaction with backoff + jitter.
+                faiss_added = False
 
-                        # Remove old chunks and metadata embeddings on upsert
-                        if mode == "upsert":
-                            await self._remove_old_chunks_batch_async(
-                                conn,
-                                chunk_data["doc_id"],
-                                chunk_data["chunk_indices_to_remove"],
-                                chunk_data["faiss_ids_to_remove"],
-                            )
-                            # Always remove metadata embeddings on upsert to prevent orphaned entries
-                            await self._remove_metadata_embeddings_async(conn, doc_id)
+                async def _write_document_txn() -> None:
+                    nonlocal faiss_added
+                    assert self.async_connection_pool is not None
+                    async with self.async_connection_pool.get_connection_context() as conn:
+                        try:
+                            # BEGIN IMMEDIATE takes the write lock up front so contention
+                            # surfaces before the (non-transactional) FAISS mutation.
+                            await conn.execute("BEGIN IMMEDIATE")
 
-                        await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
-                        if new_embeddings.size > 0:
-                            # Use asyncio.to_thread for FAISS operations in Python 3.9+
-                            # Falls back to run_in_executor for compatibility
-                            try:
-                                await asyncio.to_thread(
-                                    self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding
+                            # Remove old chunks and metadata embeddings on upsert
+                            if mode == "upsert":
+                                await self._remove_old_chunks_batch_async(
+                                    conn,
+                                    chunk_data["doc_id"],
+                                    chunk_data["chunk_indices_to_remove"],
+                                    chunk_data["faiss_ids_to_remove"],
                                 )
-                            except AttributeError:
-                                # Fallback for Python < 3.9
-                                loop = asyncio.get_event_loop()
-                                await loop.run_in_executor(
-                                    None, self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding
-                                )
-                        await self._insert_chunks_bulk_async(conn, chunks_data)
+                                # Always remove metadata embeddings on upsert to prevent orphaned entries
+                                await self._remove_metadata_embeddings_async(conn, doc_id)
 
-                        # Store metadata embeddings if present
-                        if field_embeddings:
-                            await self._store_metadata_embeddings_async(conn, doc_id, field_embeddings)
+                            await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
+                            if new_embeddings.size > 0 and not faiss_added:
+                                # Use asyncio.to_thread for FAISS operations in Python 3.9+
+                                # Falls back to run_in_executor for compatibility
+                                try:
+                                    await asyncio.to_thread(
+                                        self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding
+                                    )
+                                except AttributeError:
+                                    # Fallback for Python < 3.9
+                                    loop = asyncio.get_event_loop()
+                                    await loop.run_in_executor(
+                                        None, self._add_vectors_to_faiss_bulk, new_embeddings, chunks_needing_embedding
+                                    )
+                                faiss_added = True
+                            await self._insert_chunks_bulk_async(conn, chunks_data)
 
-                        await conn.commit()
-                    except Exception:
-                        await conn.rollback()
-                        raise
+                            # Store metadata embeddings if present
+                            if field_embeddings:
+                                await self._store_metadata_embeddings_async(conn, doc_id, field_embeddings)
+
+                            await conn.commit()
+                        except Exception:
+                            await conn.rollback()
+                            raise
+
+                await retry_on_locked_async(_write_document_txn)
             return doc_id
         except Exception as e:
             logger.error(f"Error processing document data for {doc_id}: {e}")

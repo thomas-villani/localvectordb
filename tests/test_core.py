@@ -395,7 +395,7 @@ class TestConnectionPool:
         with pool.get_connection() as conn:
             assert conn == mock_conn
 
-        mock_connect.assert_called_once_with(db_path, check_same_thread=False, detect_types=1)
+        mock_connect.assert_called_once_with(db_path, uri=False, check_same_thread=False, detect_types=1)
         mock_conn.execute.assert_called_with("SELECT 1")
         pool.close_all()
 

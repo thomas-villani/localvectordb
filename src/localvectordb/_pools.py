@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 import aiosqlite
 from aiosqlite import Connection
 
+from localvectordb._sqlite_uri import is_sqlite_uri, normalize_db_path
 from localvectordb.exceptions import ConnectionPoolError
 
 
@@ -44,7 +45,7 @@ class ConnectionPool:
     """Thread-safe connection pool for SQLite with proper context manager support"""
 
     def __init__(self, db_path: Union[str, Path], max_connections: int = 10, pragmas: Optional[Dict[str, Any]] = None):
-        self.db_path = Path(db_path)
+        self.db_path = normalize_db_path(db_path)
         self.max_connections = max_connections
         self._pool: List[sqlite3.Connection] = []
         self._lock = threading.RLock()
@@ -53,7 +54,12 @@ class ConnectionPool:
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new SQLite connection with proper settings"""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = sqlite3.connect(
+            self.db_path,
+            uri=is_sqlite_uri(self.db_path),
+            check_same_thread=False,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+        )
 
         # For in-memory shared cache databases, foreign keys can cause constraint issues
         # across connections due to transaction isolation
@@ -175,7 +181,7 @@ class AsyncConnectionPool:
         wait_timeout: float = 30.0,
         pragmas: Optional[Dict[str, Any]] = None,
     ):
-        self.db_path = Path(db_path)
+        self.db_path = normalize_db_path(db_path)
         self.max_connections = max_connections
         self.wait_timeout = wait_timeout
         self._pool: List[aiosqlite.Connection] = []
@@ -187,7 +193,9 @@ class AsyncConnectionPool:
     async def _create_connection(self) -> aiosqlite.Connection:
         """Create a new async SQLite connection with proper settings"""
         # Re-enable type detection with proper converters registered
-        conn = await aiosqlite.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = await aiosqlite.connect(
+            self.db_path, uri=is_sqlite_uri(self.db_path), detect_types=sqlite3.PARSE_DECLTYPES
+        )
 
         # For in-memory shared cache databases, foreign keys can cause constraint issues
         # across connections due to transaction isolation
