@@ -10,7 +10,7 @@ from pydantic import AliasChoices, Field
 from localvectordb.exceptions import DocumentNotFoundError
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
-from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
+from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context, sanitize_log_value
 from localvectordb_server._serializers import serialize_document
 from localvectordb_server.config import Config
 from localvectordb_server.routers._deps import get_config, get_db
@@ -378,7 +378,7 @@ async def delete_documents_batch(db_name: str, body: BatchDeleteBody, db=Depends
                 try:
                     deleted_count += db.delete(doc_id)
                 except Exception as e:  # noqa: BLE001 - per-id best effort
-                    logger.warning(f"Failed to delete document {doc_id}: {e}")
+                    logger.warning(f"Failed to delete document {sanitize_log_value(doc_id)}: {sanitize_log_value(e)}")
                     failed_ids.append(doc_id)
 
             db_logger.log_query(

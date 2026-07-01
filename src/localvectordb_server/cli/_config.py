@@ -744,6 +744,8 @@ def _save_config(config, output, format):
             },
             indent=2,
         )
+    else:
+        raise ValueError(f"Unsupported config format: {format!r} (expected 'toml' or 'json')")
 
     with open(output, "w", encoding="utf-8") as f:
         f.write(config_text)
