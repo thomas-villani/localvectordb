@@ -19,12 +19,12 @@ import numpy as np
 from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
 from localvectordb.core import ChunkPosition, DocumentScoringMethod, MetadataFieldType, QueryResult
 from localvectordb.cursor import (
-    _RERANK_STREAMING_UNSUPPORTED,
     CursorCandidate,
     CursorConfig,
     QueryCursor,
 )
 from localvectordb.database.base import LocalVectorDBBase
+from localvectordb.exceptions import _RERANK_STREAMING_UNSUPPORTED
 
 if TYPE_CHECKING:
     from faiss import Index
