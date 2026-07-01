@@ -1,6 +1,6 @@
 import json
 import os
-from typing import TYPE_CHECKING, Any, Optional, Union, get_type_hints
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union, get_type_hints
 
 import click
 
@@ -87,6 +87,103 @@ def get_stdin_input(input_required=True, err_msg=None):
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     return data_from_stdin
+
+
+def _detect_source_format(raw: bytes, filename: str) -> Optional[str]:
+    """Return all2md's detected format for ``raw``/``filename``, or None.
+
+    Returns the sentinel ``"plaintext"`` for text/code/undetectable input, a real
+    format name (``"pdf"``, ``"html"``, ...) for everything all2md recognizes, and
+    ``None`` when all2md is not installed (so callers fall back to plain reading).
+    """
+    try:
+        from all2md import registry
+    except Exception:
+        return None
+    try:
+        return str(registry.detect_format(raw, hint=filename))
+    except Exception:
+        # Detection failure is not fatal — treat as undetectable plain text.
+        return "plaintext"
+
+
+class IngestResult(NamedTuple):
+    """Outcome of turning a file into ingestible text.
+
+    Exactly one of ``text`` / ``error`` is populated. ``metadata`` accompanies a
+    successful read; ``error`` carries a human-readable reason on failure so the
+    caller can decide whether to skip (globs) or abort (single file).
+    """
+
+    text: Optional[str]
+    metadata: Optional[dict]
+    error: Optional[str]
+
+
+def load_file_for_ingest(path: str, *, force_extract: bool = False) -> IngestResult:
+    """Load a file as ingestible text, using extractors for rich formats.
+
+    Plain-text and source files are read directly as UTF-8 (fast, unchanged).
+    Files all2md recognizes as a real document format (PDF, DOCX, HTML, CSV, ...)
+    are routed through :class:`ExtractorRegistry` and converted to Markdown. A
+    binary file that slips past detection falls back to the extractor when a plain
+    UTF-8 read fails.
+
+    Parameters
+    ----------
+    path : str
+        Path to an existing file.
+    force_extract : bool
+        Always run the extractor, even for text/plaintext-detected files.
+    """
+    import mimetypes
+
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        return IngestResult(None, None, f"could not read file: {e}")
+
+    base_meta = {
+        "filename": os.path.basename(path),
+        "path": os.path.abspath(path),
+        "ext": os.path.splitext(path)[1],
+        "bytes": len(raw),
+    }
+    mimetype = mimetypes.guess_type(path)[0]
+
+    detected = _detect_source_format(raw, os.path.basename(path))
+    wants_extract = force_extract or (detected is not None and detected != "plaintext")
+
+    def _extract() -> IngestResult:
+        from localvectordb.extractors import ExtractorRegistry
+
+        result = ExtractorRegistry.extract_text(raw, os.path.basename(path), mimetype)
+        if result.success:
+            meta = dict(base_meta)
+            src_fmt = result.metadata.get("source_format") if result.metadata else None
+            if src_fmt:
+                meta["source_format"] = src_fmt
+            meta["extraction_method"] = result.method
+            return IngestResult(result.text, meta, None)
+        return IngestResult(None, None, result.error or "extraction failed")
+
+    if wants_extract:
+        extracted = _extract()
+        if extracted.text is not None:
+            return extracted
+        # Extraction failed — fall through to a plain read as a last resort.
+
+    try:
+        return IngestResult(raw.decode("utf-8"), dict(base_meta), None)
+    except UnicodeDecodeError:
+        # Undetected binary (e.g. an image): give the extractor a final chance.
+        if not wants_extract:
+            extracted = _extract()
+            if extracted.text is not None:
+                return extracted
+            return IngestResult(None, None, extracted.error)
+        return IngestResult(None, None, "file is binary and could not be extracted as text")
 
 
 def print_json_output(data: Any):

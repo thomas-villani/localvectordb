@@ -230,8 +230,28 @@ replace = "__version__ = \"{new_version}\""
 
 [[tool.bumpversion.files]]
 filename = "docs/source/conf.py"
-search = "release = '{current_version}"
-replace = "release = '{new_version}"
+search = 'release = "{current_version}"'
+replace = 'release = "{new_version}"'
+
+# Keep the MCP bundle (mcpb/) in version lock-step with the package: the
+# manifest's own version, the bundle pyproject's version, and its pin on the
+# published package.
+[[tool.bumpversion.files]]
+filename = "mcpb/manifest.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "mcpb/pyproject.toml"
+regex = true
+search = '(?m)^version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "mcpb/pyproject.toml"
+regex = true
+search = 'localvectordb\[mcp\]>={current_version}'
+replace = 'localvectordb[mcp]>={new_version}'
 
 
 [tool.ruff]

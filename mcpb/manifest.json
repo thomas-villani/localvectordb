@@ -1,0 +1,54 @@
+{
+  "manifest_version": "0.4",
+  "name": "localvectordb",
+  "display_name": "LocalVectorDB",
+  "version": "0.1.0",
+  "description": "Search and manage local SQLite + FAISS vector databases directly inside Claude.",
+  "long_description": "LocalVectorDB's built-in MCP server, packaged for one-click install. Exposes your local document-first vector databases (SQLite + FAISS with FTS5 keyword search) to Claude: list databases and inspect their schema, run vector / keyword / hybrid search, filter documents by metadata, fetch documents, and check existence. Starts in read-only mode by default; switch to read-write to also create databases, upsert / update / delete documents, and evolve metadata schemas. Point it at a folder of databases and Claude can retrieve and reason over your own indexed content.",
+  "author": {
+    "name": "Tom Villani, Ph.D.",
+    "url": "https://github.com/thomas-villani"
+  },
+  "homepage": "https://thomas-villani.github.io/localvectordb/",
+  "documentation": "https://thomas-villani.github.io/localvectordb/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomas-villani/localvectordb"
+  },
+  "license": "MIT",
+  "keywords": ["vector-database", "rag", "embeddings", "faiss", "sqlite", "search", "localvectordb"],
+  "user_config": {
+    "databases_root": {
+      "type": "directory",
+      "title": "Databases directory",
+      "description": "Folder containing your LocalVectorDB databases (each database is a subfolder). Databases are created here in read-write mode.",
+      "required": false,
+      "default": "${HOME}/localvectordb"
+    },
+    "mode": {
+      "type": "string",
+      "title": "Server mode",
+      "description": "Use 'read-only' to expose search/read tools only, or 'read-write' to also allow creating and modifying databases.",
+      "required": false,
+      "default": "read-only"
+    }
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "src/server.py"],
+      "env": {
+        "LVDB_MCP_MODE": "${user_config.mode}",
+        "LVDB_MCP_DATABASES_ROOT": "${user_config.databases_root}"
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": {
+      "python": ">=3.12"
+    }
+  }
+}
