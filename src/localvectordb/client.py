@@ -117,6 +117,7 @@ import json
 import logging
 import os
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
@@ -1092,26 +1093,14 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if extractor_kwargs:
             form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
 
-        # Prepare files for streaming upload
-        files = []
-        file_handles = []
-        result: Dict[str, Any] = {}
-        try:
-            for fp in resolved_paths:
-                file_handle = open(fp, "rb")
-                file_handles.append(file_handle)
-                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
-
-            # Make request with streaming files
+        # Prepare files for streaming upload; ExitStack closes every handle on exit.
+        with ExitStack() as stack:
+            files = [
+                ("files", (fp.name, stack.enter_context(open(fp, "rb")), "application/octet-stream"))
+                for fp in resolved_paths
+            ]
             response = self._make_request_with_retry("POST", url, data=form_data, files=files)
-            result = self._handle_response(response)
-        finally:
-            # Ensure all file handles are closed
-            for file_handle in file_handles:
-                try:
-                    file_handle.close()
-                except Exception:
-                    pass  # Ignore close errors
+            result: Dict[str, Any] = self._handle_response(response)
 
         doc_ids: List[str] = result.get("document_ids", [])
         return doc_ids
@@ -1200,26 +1189,14 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if extractor_kwargs:
             form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
 
-        # Prepare files for streaming upload
-        files = []
-        file_handles = []
-        result: Dict[str, Any] = {}
-        try:
-            for fp in resolved_paths:
-                file_handle = open(fp, "rb")
-                file_handles.append(file_handle)
-                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
-
-            # Make request with streaming files
+        # Prepare files for streaming upload; ExitStack closes every handle on exit.
+        with ExitStack() as stack:
+            files = [
+                ("files", (fp.name, stack.enter_context(open(fp, "rb")), "application/octet-stream"))
+                for fp in resolved_paths
+            ]
             response = self._make_request_with_retry("POST", url, data=form_data, files=files)
-            result = self._handle_response(response)
-        finally:
-            # Ensure all file handles are closed
-            for file_handle in file_handles:
-                try:
-                    file_handle.close()
-                except Exception:
-                    pass  # Ignore close errors
+            result: Dict[str, Any] = self._handle_response(response)
 
         doc_ids: List[str] = result.get("document_ids", [])
         return doc_ids
@@ -2500,31 +2477,17 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if extractor_kwargs:
             form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
 
-        # Prepare files for streaming upload
-        files = []
-        file_handles = []
-        result: Optional[Dict[str, Any]] = None
-        try:
-            for fp in resolved_paths:
-                file_handle = open(fp, "rb")
-                file_handles.append(file_handle)
-                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
-
-            # Make request with streaming files
+        # Prepare files for streaming upload; ExitStack closes every handle on exit.
+        with ExitStack() as stack:
+            files = [
+                ("files", (fp.name, stack.enter_context(open(fp, "rb")), "application/octet-stream"))
+                for fp in resolved_paths
+            ]
             response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
-            result = self._handle_response(response)
-        finally:
-            # Ensure all file handles are closed
-            for file_handle in file_handles:
-                try:
-                    file_handle.close()
-                except Exception:
-                    pass  # Ignore close errors
+            result: Dict[str, Any] = self._handle_response(response)
 
-        if result is not None:
-            doc_ids: List[str] = result.get("document_ids", [])
-            return doc_ids
-        return []
+        doc_ids: List[str] = result.get("document_ids", [])
+        return doc_ids
 
     async def insert_from_file_async(
         self,
@@ -2617,25 +2580,14 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if extractor_kwargs:
             form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
 
-        # Prepare files for streaming upload
-        files = []
-        file_handles = []
-        try:
-            for fp in resolved_paths:
-                file_handle = open(fp, "rb")
-                file_handles.append(file_handle)
-                files.append(("files", (fp.name, file_handle, "application/octet-stream")))
-
-            # Make request with streaming files
+        # Prepare files for streaming upload; ExitStack closes every handle on exit.
+        with ExitStack() as stack:
+            files = [
+                ("files", (fp.name, stack.enter_context(open(fp, "rb")), "application/octet-stream"))
+                for fp in resolved_paths
+            ]
             response = await self._make_request_with_retry_async("POST", url, data=form_data, files=files)
-            result = self._handle_response(response)
-        finally:
-            # Ensure all file handles are closed
-            for file_handle in file_handles:
-                try:
-                    file_handle.close()
-                except Exception:
-                    pass  # Ignore close errors
+            result: Dict[str, Any] = self._handle_response(response)
 
         doc_ids: List[str] = result.get("document_ids", [])
         return doc_ids

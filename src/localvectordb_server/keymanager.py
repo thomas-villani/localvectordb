@@ -241,7 +241,6 @@ class KeyManager:
             except Exception as e:
                 # Column might not exist yet if this is a migration
                 logger.debug(f"Could not create permission index: {e}")
-                pass
 
             # Create schema version table
             conn.execute("""
