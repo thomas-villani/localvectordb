@@ -151,7 +151,9 @@ async def get_embeddings(body: EmbeddingsBody):
             return {"embeddings": embeddings.tolist()}
 
         except Exception as e:
-            logger.error(f"Error getting embeddings with {provider}/{sanitize_log_value(model)}: {e}")
+            logger.error(
+                f"Error getting embeddings with {sanitize_log_value(provider)}/{sanitize_log_value(model)}: {e}"
+            )
             raise APIError(
                 message=f"Failed to get embeddings: {str(e)}",
                 error_code="EMBEDDING_GENERATION_FAILED",
