@@ -331,11 +331,17 @@ class TestAuthenticationFlow:
         assert response.status_code == 401
 
     def test_key_validation_updates_last_used(self, integration_client, valid_auth_headers, integration_app):
-        key_id = next(iter(integration_app.state.key_manager.list_keys())).id
-        _key_before = integration_app.state.key_manager.get_key(key_id)
+        # Use the key that valid_auth_headers actually authenticates with.
+        key_id = integration_app.state.key_manager._test_valid_key_id
+        before = integration_app.state.key_manager.get_key(key_id).last_used
 
         response = integration_client.get("/api/v1/databases", headers=valid_auth_headers)
         assert response.status_code == 200
+
+        after = integration_app.state.key_manager.get_key(key_id).last_used
+        assert after is not None, "last_used should be recorded after an authenticated request"
+        if before is not None:
+            assert after >= before
 
 
 @pytest.mark.integration
@@ -668,3 +674,229 @@ class TestCompleteWorkflow:
         new_auth_headers = {"Authorization": f"Bearer {new_key_record.plain_key}"}
         response = integration_client.get("/api/v1/databases", headers=new_auth_headers)
         assert response.status_code == 200
+
+
+@pytest.fixture(scope="function")
+def read_only_headers(integration_app):
+    """Auth headers for a READ_ONLY API key."""
+    from localvectordb_server.keymanager import PermissionLevel
+
+    km = integration_app.state.key_manager
+    ro_key = km.create_key(description="Read-only key", permission_level=PermissionLevel.READ_ONLY)
+    return {"Authorization": f"Bearer {ro_key.plain_key}"}
+
+
+@pytest.mark.integration
+@pytest.mark.client
+class TestPermissionEnforcement:
+    """A READ_ONLY key may read but must be rejected (403) on every write endpoint."""
+
+    def test_read_only_key_allows_reads(self, integration_client, read_only_headers):
+        response = integration_client.get("/api/v1/databases", headers=read_only_headers)
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize(
+        "method, path, json_body",
+        [
+            ("post", "/api/v1/databases", {"name": "perm_new_db"}),
+            ("post", "/api/v1/perm_db/documents", {"documents": ["hello"]}),
+            ("post", "/api/v1/perm_db/documents/insert", {"documents": ["hello"]}),
+            ("patch", "/api/v1/perm_db/documents/doc_1", {"content": "changed"}),
+            ("delete", "/api/v1/perm_db/documents/doc_1", None),
+            ("delete", "/api/v1/perm_db", None),
+        ],
+    )
+    def test_read_only_key_blocked_on_writes(self, integration_client, read_only_headers, method, path, json_body):
+        request = getattr(integration_client, method)
+        response = (
+            request(path, headers=read_only_headers, json=json_body)
+            if json_body is not None
+            else request(path, headers=read_only_headers)
+        )
+        assert response.status_code == 403, f"{method.upper()} {path} should require write permission"
+        body = response.json()
+        # Errors use the shared {"error": {...}} envelope, never Starlette's {"detail": ...}.
+        assert "error" in body and "detail" not in body
+
+    def test_read_write_key_allows_writes(self, integration_client, valid_auth_headers):
+        """Sanity check: the same write endpoint succeeds for a READ_WRITE key."""
+        response = integration_client.post("/api/v1/databases", headers=valid_auth_headers, json={"name": "perm_rw_db"})
+        assert response.status_code == 200
+
+
+@pytest.mark.integration
+@pytest.mark.client
+class TestAuthHeaderNegatives:
+    """Malformed/missing Authorization headers are rejected with 401."""
+
+    @pytest.mark.parametrize(
+        "header",
+        [
+            None,  # missing entirely
+            "",  # empty
+            "lvdb_sometoken",  # no scheme
+            "Basic lvdb_sometoken",  # wrong scheme
+            "Bearer",  # scheme with no token
+            "Bearer not_an_lvdb_token",  # token missing lvdb_ prefix
+            "Bearer lvdb_totally_invalid_key",  # well-formed prefix but not a real key
+        ],
+    )
+    def test_bad_auth_header_is_401(self, integration_client, header):
+        headers = {"Authorization": header} if header is not None else {}
+        response = integration_client.get("/api/v1/databases", headers=headers)
+        assert response.status_code == 401
+        assert "error" in response.json()
+
+
+@pytest.fixture(scope="function")
+def transport_patch(integration_app):
+    """Route RemoteVectorDB's real sync httpx layer through the ASGI app.
+
+    The TestClient is built from the client's own ``_get_headers()`` so the real
+    Authorization-header injection and URL/payload construction are exercised
+    end-to-end against a real FastAPI server (backed by the mock DB manager).
+    """
+    from localvectordb.client import RemoteVectorDB
+
+    def fake_ensure_sync_client(self):
+        if getattr(self, "_patched_client", None) is None:
+            self._patched_client = TestClient(
+                integration_app, base_url="http://testserver", headers=self._get_headers()
+            )
+        return self._patched_client
+
+    with patch.object(RemoteVectorDB, "_ensure_sync_client", fake_ensure_sync_client):
+        yield
+
+
+@pytest.mark.integration
+@pytest.mark.client
+class TestRemoteTransportRoundTrip:
+    """End-to-end RemoteVectorDB <-> FastAPI over a real (ASGI) transport."""
+
+    def test_create_upsert_query_get_delete_over_http(self, integration_app, transport_patch):
+        from localvectordb.client import RemoteVectorDB
+
+        key = integration_app.state.key_manager._test_valid_key
+        db = RemoteVectorDB(name="remote_rt", base_url="http://testserver", api_key=key)
+
+        ids = db.upsert(["hello world", "second document"])
+        assert isinstance(ids, list) and len(ids) == 2
+
+        results = db.query("hello", k=5)
+        assert isinstance(results, list)
+
+        doc = db.get(ids[0])
+        assert doc.id == ids[0]
+
+        deleted = db.delete(ids[0])
+        assert deleted >= 1
+
+    def test_bad_api_key_is_rejected_over_http(self, integration_app, transport_patch):
+        from localvectordb.client import RemoteVectorDB
+
+        # A bogus key must fail authentication at the server (401 -> PermissionError).
+        with pytest.raises(PermissionError):
+            RemoteVectorDB(
+                name="remote_rt",
+                base_url="http://testserver",
+                api_key="lvdb_totally_bogus_key",
+                create_if_not_exists=False,
+            )
+
+
+@pytest.mark.integration
+@pytest.mark.client
+class TestUncoveredRoutersAuth:
+    """Every previously-uncovered router endpoint is registered and auth-protected."""
+
+    @pytest.mark.parametrize(
+        "method, path",
+        [
+            ("get", "/api/v1/any_db/schema"),
+            ("post", "/api/v1/any_db/query/stream"),
+            ("post", "/api/v1/any_db/upload"),
+            ("post", "/api/v1/any_db/compare"),
+            ("post", "/api/v1/any_db/factcheck"),
+            ("get", "/api/v1/any_db/tuning"),
+        ],
+    )
+    def test_endpoint_requires_auth(self, integration_client, method, path):
+        response = getattr(integration_client, method)(path)
+        assert response.status_code == 401
+
+
+@pytest.mark.integration
+@pytest.mark.client
+class TestUncoveredRoutersHappyPath:
+    """Happy-path e2e coverage for routers that previously had zero tests."""
+
+    def _prepare_db(self, app, name):
+        app.state.db_manager.create_db(name)
+        return app.state.db_manager.get_db(name)
+
+    def test_get_schema_info(self, integration_app, integration_client, valid_auth_headers):
+        mock_db = self._prepare_db(integration_app, "schema_db")
+        mock_db.get_metadata_schema_info.return_value = {"fields": {}, "field_count": 0}
+        response = integration_client.get("/api/v1/schema_db/schema", headers=valid_auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["database"] == "schema_db"
+        assert body["status"] == "success"
+
+    def test_compare_documents(self, integration_app, integration_client, valid_auth_headers):
+        mock_db = self._prepare_db(integration_app, "cmp_db")
+        mock_db.compare_documents.return_value = 0.87
+        response = integration_client.post(
+            "/api/v1/cmp_db/compare",
+            json={"doc_id_1": "a", "doc_id_2": "b"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["similarity"] == 0.87
+
+    def test_get_tuning(self, integration_app, integration_client, valid_auth_headers):
+        mock_db = self._prepare_db(integration_app, "tune_db")
+        mock_db.get_sqlite_tuning.return_value = {"profile": "balanced", "pragmas": {}}
+        response = integration_client.get("/api/v1/tune_db/tuning", headers=valid_auth_headers)
+        assert response.status_code == 200
+        assert response.json()["tuning"]["profile"] == "balanced"
+
+    def test_upload_text_file(self, integration_app, integration_client, valid_auth_headers):
+        self._prepare_db(integration_app, "upload_db")
+        integration_app.state.config.server.file_upload_enabled = True
+        files = {"files": ("note.txt", b"hello world from an uploaded file", "text/plain")}
+        response = integration_client.post(
+            "/api/v1/upload_db/upload",
+            files=files,
+            data={"use_filename_as_id": "true"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["files_processed"] == 1
+        assert body["status"] in ("success", "partial")
+        assert body["document_ids"]  # a real id was assigned
+
+    def test_streaming_query_returns_sse(self, integration_app, integration_client, valid_auth_headers):
+        mock_db = self._prepare_db(integration_app, "stream_db")
+        # Remove the auto-created cursor/stream attributes so the router falls through
+        # to the plain db.query() path (the mock provides a real query()).
+        del mock_db.query_cursor_async
+        del mock_db.query_stream
+        integration_client.post(
+            "/api/v1/stream_db/documents", json={"documents": ["hello world"]}, headers=valid_auth_headers
+        )
+        with integration_client.stream(
+            "POST",
+            "/api/v1/stream_db/query/stream",
+            json={"query": "hello", "search_type": "vector", "k": 5},
+            headers=valid_auth_headers,
+        ) as response:
+            assert response.status_code == 200
+            body = "".join(response.iter_text())
+        assert "done" in body
+
+    def test_missing_db_returns_404(self, integration_client, valid_auth_headers):
+        response = integration_client.get("/api/v1/does_not_exist/schema", headers=valid_auth_headers)
+        assert response.status_code == 404

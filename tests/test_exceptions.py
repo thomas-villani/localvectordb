@@ -388,11 +388,25 @@ class TestExceptionUsagePractices:
 class TestExceptionDocumentation:
     """Test that exceptions have proper docstrings and are well-documented."""
 
-    def test_base_exception_has_docstring(self):
-        """Test that base exception class has docstring."""
-        # Note: In the actual implementation, you should add docstrings
-        # This test would verify they exist
-        assert BaseLocalVectorDBException.__doc__ is not None or True  # Placeholder
+    @staticmethod
+    def _custom_exceptions():
+        """Every exception class actually defined in localvectordb.exceptions."""
+        import inspect
+
+        import localvectordb.exceptions as exc_mod
+
+        return [
+            obj
+            for _, obj in inspect.getmembers(exc_mod, inspect.isclass)
+            if issubclass(obj, BaseLocalVectorDBException) and obj.__module__ == exc_mod.__name__
+        ]
+
+    def test_all_exceptions_have_docstrings(self):
+        """Every custom exception carries a non-empty docstring."""
+        excs = self._custom_exceptions()
+        assert excs, "no custom exceptions discovered"
+        missing = [e.__name__ for e in excs if not (e.__doc__ and e.__doc__.strip())]
+        assert not missing, f"exceptions missing docstrings: {missing}"
 
     def test_all_exceptions_defined(self):
         """Test that all expected exceptions are defined and importable."""
@@ -420,20 +434,9 @@ class TestExceptionDocumentation:
             assert issubclass(exc_class, Exception)
 
     def test_exception_naming_convention(self):
-        """Test that exceptions follow proper naming conventions."""
-        exception_names = [
-            "BaseLocalVectorDBException",
-            "DatabaseNotFoundError",
-            "DuplicateDocumentIDError",
-            "OllamaNotFoundError",
-            "EmbeddingError",
-            "ConfigurationError",
-        ]
-
-        for name in exception_names:
-            # Should end with 'Error' or 'Exception'
-            assert name.endswith("Error") or name.endswith("Exception")
-
-            # Should be PascalCase
-            assert name[0].isupper()
-            assert "_" not in name or name.startswith("Base")  # Allow underscore only in base class
+        """Every custom exception name is PascalCase and ends in Error/Exception."""
+        for exc_class in self._custom_exceptions():
+            name = exc_class.__name__
+            assert name.endswith("Error") or name.endswith("Exception"), name
+            assert name[0].isupper(), name
+            assert "_" not in name, name

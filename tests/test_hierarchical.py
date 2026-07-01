@@ -460,9 +460,9 @@ class TestHierarchicalIntegration:
 
         # Query sections and check metadata
         results = db.query("introduction", search_level="sections", k=5)
-        if results:
-            # word_count extractor should have run
-            assert "word_count" in results[0].metadata or True  # May be in section metadata
+        assert results, "expected at least one section result"
+        # The word_count section-metadata extractor should have populated metadata.
+        assert "word_count" in results[0].metadata
 
     def test_delete_cascades_sections(self, db_with_hierarchy):
         """Document delete removes sections and FAISS vectors."""

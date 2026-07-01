@@ -196,7 +196,6 @@ def tools():
         ("update_document", "Update document content/metadata"),
         ("delete_document", "Delete a document"),
         ("update_metadata_schema", "Update database schema"),
-        ("get_embeddings", "Generate embeddings"),
     ]
 
     click.echo("\nRead-Only Tools (available in both modes):")

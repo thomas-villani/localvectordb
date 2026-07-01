@@ -85,16 +85,17 @@ Installation
 .. code-block:: bash
 
    # Common document formats work with the base install
-   pip install localvectordb
+   # (uv recommended; swap `uv add` for `pip install` if you prefer pip)
+   uv add localvectordb
 
    # Extended / niche formats (latex, wiki, textile, archives, ...)
-   pip install "localvectordb[file-extraction]"
+   uv add "localvectordb[file-extraction]"
 
    # OCR for scanned/image-only PDFs (also requires the Tesseract system binary)
-   pip install "localvectordb[file-extraction-ocr]"
+   uv add "localvectordb[file-extraction-ocr]"
 
    # Everything
-   pip install "localvectordb[all]"
+   uv add "localvectordb[all]"
 
 .. note::
 

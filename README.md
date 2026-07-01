@@ -2,7 +2,13 @@
 
 A high-performance, document-first vector database with SQLite + FAISS backend, featuring intelligent chunking, unified search, and optional HTTP server.
 
+[![PyPI version](https://img.shields.io/pypi/v/localvectordb.svg)](https://pypi.org/project/localvectordb/)
+[![Python versions](https://img.shields.io/pypi/pyversions/localvectordb.svg)](https://pypi.org/project/localvectordb/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Tests](https://github.com/thomas-villani/localvectordb/actions/workflows/test.yml/badge.svg)](https://github.com/thomas-villani/localvectordb/actions/workflows/test.yml)
+[![Docs](https://github.com/thomas-villani/localvectordb/actions/workflows/docs.yml/badge.svg)](https://thomas-villani.github.io/localvectordb/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
 ## ✨ Features
 
@@ -43,14 +49,25 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 
 ### Installation
 
+LocalVectorDB is a standard PyPI package — install it with [uv](https://docs.astral.sh/uv/) (recommended) or pip.
+
 ```bash
-pip install localvectordb
+# Add to your project with uv (recommended)
+uv add localvectordb
 
 # For server features (optional)
-pip install localvectordb[server]
+uv add "localvectordb[server]"
 
 # For all file extraction formats (optional)
-pip install localvectordb[server,file-extraction]
+uv add "localvectordb[server,file-extraction]"
+```
+
+Prefer pip? Every command above has a pip equivalent, e.g. `pip install "localvectordb[server,file-extraction]"`.
+
+To run the CLI/server without adding it to a project, use uv's tool runner:
+
+```bash
+uvx --from "localvectordb[server]" lvdb serve
 ```
 
 ### Basic Usage

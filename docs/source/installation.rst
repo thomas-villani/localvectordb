@@ -10,12 +10,27 @@ Requirements
 
 Installation Options
 --------------------
+
+LocalVectorDB is published on PyPI and installs with either `uv
+<https://docs.astral.sh/uv/>`_ (recommended) or pip. Every ``pip install
+localvectordb[...]`` command below has a direct equivalent:
+
+- **uv (project):** ``uv add "localvectordb[...]"``
+- **uv (pip interface):** ``uv pip install "localvectordb[...]"``
+- **CLI without installing:** ``uvx --from "localvectordb[server]" lvdb serve``
+
+The examples use ``pip`` for brevity; substitute your preferred command.
+
 Basic Installation
 ^^^^^^^^^^^^^^^^^^
 For local vector database functionality:
 
 .. code-block:: bash
 
+   # uv (recommended)
+   uv add localvectordb
+
+   # ...or pip
    pip install localvectordb
 
 This includes:

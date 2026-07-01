@@ -333,10 +333,12 @@ class TestMCPManager:
         manager = MCPManager(config)
 
         mock_db = MagicMock()
-        with patch("localvectordb_server.mcp.server.VectorDB", return_value=mock_db):
+        with patch("localvectordb_server.mcp.server.VectorDB", return_value=mock_db) as mock_vectordb:
             db1 = _run(manager.get_database("testdb"))
             db2 = _run(manager.get_database("testdb"))
-            assert db1 is db2  # cached
+            assert db1 is db2
+            # Caching means the underlying VectorDB is constructed exactly once.
+            assert mock_vectordb.call_count == 1
 
     def test_get_database_not_found_raises(self):
         from localvectordb_server.mcp.server import MCPManager
