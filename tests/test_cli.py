@@ -1130,6 +1130,125 @@ class TestDbSearch:
         assert "Search error" in result.stderr
 
 
+@pytest.mark.unit
+class TestDbRelated:
+    """Tests for ``lvdb db <name> related`` (nearest-neighbour retrieval)."""
+
+    def _make_db_ctx(self, fake_config, config_file, tmp_db_folder, mock_db):
+        obj = {
+            "config": fake_config,
+            "config_path": config_file,
+            "api_key_db_path": os.path.join(tmp_db_folder, "api_keys.db"),
+            "db_folder": tmp_db_folder,
+            "db_name": "testdb",
+            "db": mock_db,
+        }
+
+        @click.pass_context
+        def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
+            ctx.ensure_object(dict)
+            ctx.obj = obj
+
+        @click.pass_context
+        def _patched_db_group_callback(ctx, name):
+            ctx.obj.update({"db_name": name, "db": mock_db})
+
+        from localvectordb_server.cli._db import db_group
+
+        return (
+            patch.object(cli, "callback", _patched_cli_callback),
+            patch.object(db_group, "callback", _patched_db_group_callback),
+        )
+
+    def _make_neighbor(self, doc_id="doc_2", content="Neighbour text", score=0.88):
+        r = MagicMock()
+        r.id = doc_id
+        r.content = content
+        r.score = score
+        r.type = "document"
+        r.metadata = {"author": "Test"}
+        return r
+
+    def test_related_basic(self, runner, fake_config, config_file, tmp_db_folder):
+        """related should list the neighbouring documents."""
+        mock_db = MagicMock()
+        mock_db.nearest_neighbors.return_value = [self._make_neighbor()]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1"])
+        assert result.exit_code == 0
+        assert "Neighbour text" in result.output
+        # The reference id is forwarded positionally.
+        assert mock_db.nearest_neighbors.call_args[0][0] == "doc_1"
+
+    def test_related_json_output(self, runner, fake_config, config_file, tmp_db_folder):
+        """related --json should emit a JSON list."""
+        mock_db = MagicMock()
+        mock_db.nearest_neighbors.return_value = [self._make_neighbor()]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1", "--json"])
+        assert result.exit_code == 0
+        json_start = result.output.index("[")
+        parsed = json.loads(result.output[json_start:])
+        assert parsed[0]["id"] == "doc_2"
+
+    def test_related_forwards_options(self, runner, fake_config, config_file, tmp_db_folder):
+        """--limit/--score-threshold/--metadata-filter should reach nearest_neighbors."""
+        mock_db = MagicMock()
+        mock_db.nearest_neighbors.return_value = [self._make_neighbor()]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(
+                cli,
+                [
+                    "db",
+                    "testdb",
+                    "related",
+                    "doc_1",
+                    "--limit",
+                    "3",
+                    "--score-threshold",
+                    "0.2",
+                    "--metadata-filter",
+                    '{"author": "Smith"}',
+                ],
+            )
+        assert result.exit_code == 0
+        call_kwargs = mock_db.nearest_neighbors.call_args[1]
+        assert call_kwargs["k"] == 3
+        assert call_kwargs["score_threshold"] == 0.2
+        assert call_kwargs["filters"] == {"author": "Smith"}
+
+    def test_related_no_results(self, runner, fake_config, config_file, tmp_db_folder):
+        """No neighbours should print a message rather than error."""
+        mock_db = MagicMock()
+        mock_db.nearest_neighbors.return_value = []
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1"])
+        assert result.exit_code == 0
+        assert "No related documents" in result.stderr
+
+    def test_related_document_not_found(self, runner, fake_config, config_file, tmp_db_folder):
+        """A missing reference document should exit with an error."""
+        from localvectordb.exceptions import DocumentNotFoundError
+
+        mock_db = MagicMock()
+        mock_db.name = "testdb"
+        mock_db.nearest_neighbors.side_effect = DocumentNotFoundError("missing")
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "related", "ghost"])
+        assert result.exit_code != 0
+        assert "was not found" in result.output
+
+
 # ============================================================================
 # Priority 2: lvdb serve
 # ============================================================================

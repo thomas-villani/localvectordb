@@ -1,18 +1,18 @@
 import glob
 import json
 import os
-from typing import Any, List, Optional, Tuple
+from typing import List
 
 import click
 
-from localvectordb.section_detection import SectionDetector
+from localvectordb.document_portions import get_document_portion
+from localvectordb.exceptions import DocumentNotFoundError
 from localvectordb_server.cli._utils import (
     EXIT_CODE_ERROR,
     error,
     format_table,
     get_stdin_input,
     load_file_for_ingest,
-    parse_range_spec,
     print_db_stats,
 )
 
@@ -157,6 +157,67 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
         click.echo(output_str)
 
 
+def _render_query_results(results, *, title, output_as_json, output, metadata, pretty):
+    """Render a list of ``QueryResult`` objects as text or JSON.
+
+    Shared by the ``search`` and ``related`` commands so their result output
+    stays consistent. ``title`` is only shown in ``--pretty`` text mode.
+    """
+    if output_as_json:
+        result_data = [
+            {
+                "id": result.id,
+                "type": result.type,
+                "content": result.content,
+                "score": result.score,
+                "metadata": result.metadata,
+            }
+            for result in results
+        ]
+        if not metadata:
+            for d in result_data:
+                d.pop("metadata", None)
+        return json.dumps(result_data, indent=2 if pretty else None)
+
+    output_str = ""
+    if pretty:
+        header = title + "\n" + ("=" * len(title)) + "\n"
+        if not output:
+            header = click.style(header, fg="magenta")
+        output_str += header
+
+    for i, result in enumerate(results, 1):
+        if pretty:
+            doc_header = f"\n{i}. Document: {result.id} (Score: {result.score:.4f})\n"
+            doc_header += ("-" * 40) + "\n"
+            if not output:
+                doc_header = click.style(doc_header, fg="cyan")
+            output_str += doc_header
+            if not output:
+                output_str += click.style(result.content, fg="bright_white") + "\n"
+            else:
+                output_str += result.content + "\n"
+        else:
+            output_str += f"Document: {result.id}\n"
+            output_str += result.content + "\n"
+
+        if metadata:
+            json_str = json.dumps(result.metadata, indent=2 if pretty else None)
+            if pretty and not output:
+                output_str += click.style("\n~~~~~\n\n", fg="yellow")
+                output_str += click.style("Metadata: ", fg="yellow")
+                json_str = click.style(json_str, fg="yellow")
+            else:
+                output_str += "\n~~~~~\n\n"
+                output_str += "Metadata: "
+            output_str += json_str + "\n"
+
+        if i < len(results):
+            output_str += click.style(f"\n{'-' * 40}\n\n", fg="cyan") if (pretty and not output) else "\n-----\n\n"
+
+    return output_str
+
+
 @db_group.command("search")
 @click.argument("query")
 @click.option("--limit", "-n", default=5, help="Maximum number of results")
@@ -278,63 +339,18 @@ def search(
         return
 
     # Format and display results
-    if not output_as_json:
-        output_str = ""
-        if pretty:
-            if len(query) > 100:
-                query = query[:100] + "..."
-            query = query.strip().replace("\n", " \\ ")
-            title = f"{search_type.title()} Search Results for `{query}`: {len(results)} Results"
-            header = title + "\n" + ("=" * len(title)) + "\n"
-            if not output:
-                header = click.style(header, fg="magenta")
-            output_str += header
-
-        for i, result in enumerate(results, 1):
-            if pretty:
-                doc_header = f"\n{i}. Document: {result.id} (Score: {result.score:.4f})\n"
-                doc_header += ("-" * 40) + "\n"
-                if not output:
-                    doc_header = click.style(doc_header, fg="cyan")
-                output_str += doc_header
-
-                if not output:
-                    output_str += click.style(result.content, fg="bright_white") + "\n"
-                else:
-                    output_str += result.content + "\n"
-            else:
-                output_str += f"Document: {result.id}\n"
-                output_str += result.content + "\n"
-
-            if metadata:
-                json_str = json.dumps(result.metadata, indent=2 if pretty else None)
-                if pretty and not output:
-                    output_str += click.style("\n~~~~~\n\n", fg="yellow")
-                    output_str += click.style("Metadata: ", fg="yellow")
-                    json_str = click.style(json_str, fg="yellow")
-                else:
-                    output_str += "\n~~~~~\n\n"
-                    output_str += "Metadata: "
-                output_str += json_str + "\n"
-
-            if i < len(results):
-                output_str += click.style(f"\n{'-' * 40}\n\n", fg="cyan") if (pretty and not output) else "\n-----\n\n"
-    else:
-        result_data = [
-            {
-                "id": result.id,
-                "type": result.type,
-                "content": result.content,
-                "score": result.score,
-                "metadata": result.metadata,
-            }
-            for result in results
-        ]
-
-        if not metadata:
-            for d in result_data:
-                d.pop("metadata", None)
-        output_str = json.dumps(result_data, indent=2 if pretty else None)
+    display_query = query.strip().replace("\n", " \\ ")
+    if len(display_query) > 100:
+        display_query = display_query[:100] + "..."
+    title = f"{search_type.title()} Search Results for `{display_query}`: {len(results)} Results"
+    output_str = _render_query_results(
+        results,
+        title=title,
+        output_as_json=output_as_json,
+        output=output,
+        metadata=metadata,
+        pretty=pretty,
+    )
 
     if output:
         with open(output, "w") as f:
@@ -501,57 +517,6 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
-def _parse_range_or_error(spec: str, flag: str, *, allow_single: bool = False) -> Tuple[Optional[int], Optional[int]]:
-    """Parse a range spec, converting a ValueError into a CLI error+exit."""
-    try:
-        return parse_range_spec(spec, allow_single=allow_single)
-    except ValueError as e:
-        error(f"Invalid {flag} value: {e}")
-
-
-def _slice_lines(content: str, start: Optional[int], end: Optional[int]) -> str:
-    """Return the 1-based, inclusive line range ``start:end`` of ``content``."""
-    lines = content.splitlines(keepends=True)
-    lo = 1 if start is None else max(start, 1)
-    hi = len(lines) if end is None else end
-    return "".join(lines[lo - 1 : hi])
-
-
-def _select_section(content: str, name: str) -> str:
-    """Return the body of the section whose heading matches ``name``.
-
-    Sections are detected on the fly from ``content`` (Markdown headers,
-    code-fence aware), so this works regardless of whether hierarchical
-    embeddings were enabled at ingest. Errors out (listing available headings)
-    when no heading matches.
-    """
-    boundaries = SectionDetector().detect_sections(content)
-    target = name.strip().lower()
-    for b in boundaries:
-        if b.heading is not None and b.heading.strip().lower() == target:
-            return content[b.start_pos : b.end_pos]
-
-    headings = [b.heading for b in boundaries if b.heading]
-    if headings:
-        available = ", ".join(repr(h) for h in headings)
-        error(f"Section {name!r} not found. Available sections: {available}. Use --outline to list them.")
-    error(f"Section {name!r} not found: document has no Markdown headings.")
-
-
-def _build_outline(content: str) -> List[dict]:
-    """Build a flat outline (one entry per detected section) from ``content``."""
-    return [
-        {
-            "index": b.index,
-            "heading": b.heading,
-            "level": b.heading_level,
-            "start_line": b.start_line,
-            "end_line": b.end_line,
-        }
-        for b in SectionDetector().detect_sections(content)
-    ]
-
-
 def _format_outline_text(items: List[dict]) -> str:
     """Render an outline as an indented tree keyed on heading level."""
     if not items:
@@ -655,61 +620,40 @@ def get_document(
         error(f"Only one of {', '.join(active_modes)} may be used at once")
 
     try:
-        doc = db.get(doc_id)
-        if doc is None:
+        try:
+            portion = get_document_portion(
+                db,
+                doc_id,
+                chunk=chunk_spec,
+                char_range=char_range,
+                line_range=line_range,
+                section=section_name,
+                outline=outline,
+            )
+        except DocumentNotFoundError:
             click.echo(f"Document {doc_id} was not found in '{db.name}'")
             return
+        except ValueError as e:
+            # Bad range, unknown section, empty/out-of-range chunk selection, ...
+            error(str(e))
 
-        content = doc.content
-        meta = doc.metadata
+        meta = portion.document.metadata
 
-        # Resolve the selection into printable text (+ a JSON-friendly payload).
-        title_suffix = ""
-        json_payload: Any = content
-        if chunk_spec is not None:
-            start, end = _parse_range_or_error(chunk_spec, "--chunk", allow_single=True)
-            all_chunks = db.get_chunks(doc_id)
-            if not all_chunks:
-                error(f"Document {doc_id} has no stored chunks")
-            max_index = all_chunks[-1].index
-            lo = 0 if start is None else start
-            hi = max_index if end is None else end
-            selected = [c for c in all_chunks if lo <= c.index <= hi]
-            if not selected:
-                error(f"No chunks in range {chunk_spec!r} (document has chunks 0..{max_index})")
-            title_suffix = f" (chunk {chunk_spec})"
-            content = "\n\n".join(c.content for c in selected)
-            json_payload = [
-                {"index": c.index, "content": c.content, "position": c.position.to_dict()} for c in selected
-            ]
-        elif char_range is not None:
-            start, end = _parse_range_or_error(char_range, "--range")
-            content = content[start:end]
-            title_suffix = f" (chars {char_range})"
-            json_payload = content
-        elif line_range is not None:
-            start, end = _parse_range_or_error(line_range, "--lines")
-            content = _slice_lines(content, start, end)
-            title_suffix = f" (lines {line_range})"
-            json_payload = content
-        elif section_name is not None:
-            content = _select_section(content, section_name)
-            title_suffix = f" (section {section_name!r})"
-            json_payload = content
-        elif outline:
-            outline_items = _build_outline(content)
-            content = _format_outline_text(outline_items)
-            title_suffix = " (outline)"
-            json_payload = outline_items
+        # Render the resolved portion into printable text.
+        title_suffix = f" ({portion.label})" if portion.label else ""
+        if portion.mode == "outline":
+            content = _format_outline_text(portion.outline or [])
+        else:
+            content = portion.text or ""
 
         if output_as_json:
             output_dict: dict = {"id": doc_id}
-            if chunk_spec is not None:
-                output_dict["chunks"] = json_payload
-            elif outline:
-                output_dict["outline"] = json_payload
+            if portion.mode == "chunk":
+                output_dict["chunks"] = portion.chunks
+            elif portion.mode == "outline":
+                output_dict["outline"] = portion.outline
             else:
-                output_dict["content"] = json_payload
+                output_dict["content"] = portion.text
             if metadata:
                 output_dict["metadata"] = meta
 
@@ -752,6 +696,79 @@ def get_document(
     except Exception as e:
         click.secho(f"Error retrieving document: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+
+
+@db_group.command("related")
+@click.argument("doc_id")
+@click.option("--limit", "-n", default=5, help="Maximum number of related documents")
+@click.option("--score-threshold", default=0.0, type=float, help="Minimum similarity score threshold")
+@click.option("--metadata-filter", help="Metadata filter in JSON format")
+@click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
+@click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
+@click.option("--metadata/--no-metadata", "-m", default=False, help="Include metadata in output")
+@click.option("--pretty", "-p", is_flag=True, default=False)
+@click.pass_context
+def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_as_json, output, metadata, pretty):
+    """
+    Find documents related to DOC_ID (nearest neighbours by embedding).
+
+    Returns the documents most similar to DOC_ID using document-level embeddings,
+    sorted by descending similarity. The reference document itself is excluded.
+    Supports metadata filtering, JSON output, pretty formatting, and writing to a
+    file.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb related doc_1
+        lvdb db mydb related doc_1 --limit 10 --json
+        lvdb db mydb related doc_1 --metadata-filter '{"author":"Smith"}' --metadata
+    """
+    filter_dict = None
+    if metadata_filter:
+        try:
+            filter_dict = json.loads(metadata_filter)
+        except json.JSONDecodeError as e:
+            click.secho("Error: Metadata filter must be valid JSON", fg="red", err=True)
+            raise click.Abort() from e
+
+    db = ctx.obj["db"]
+
+    click.secho(f"Finding documents related to `{doc_id}`...", fg="blue", err=True)
+
+    try:
+        results = db.nearest_neighbors(
+            doc_id,
+            k=limit,
+            score_threshold=score_threshold,
+            filters=filter_dict,
+        )
+    except DocumentNotFoundError:
+        error(f"Document '{doc_id}' was not found in '{db.name}'")
+    except Exception as e:
+        click.secho(f"Error finding related documents: {str(e)}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+
+    if not results:
+        click.secho("No related documents found.", fg="red", err=True)
+        return
+
+    title = f"Documents related to `{doc_id}`: {len(results)} Results"
+    output_str = _render_query_results(
+        results,
+        title=title,
+        output_as_json=output_as_json,
+        output=output,
+        metadata=metadata,
+        pretty=pretty,
+    )
+
+    if output:
+        with open(output, "w") as f:
+            f.write(output_str)
+        click.echo(f"Results saved to {output}", err=True)
+    else:
+        click.echo(output_str)
 
 
 @db_group.command("update")
