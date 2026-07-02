@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb.core import Document
+from localvectordb.core import Chunk, ChunkPosition, Document
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError
@@ -280,6 +280,76 @@ class CrudMixin(LocalVectorDBBase, ABC):
         id_to_doc = {doc.id: doc for doc in documents}
         ordered_documents = [id_to_doc[doc_id] for doc_id in requested_ids]
         return ordered_documents[0] if single_id else ordered_documents
+
+    def _construct_chunk_from_row(self, row) -> Chunk:
+        """Construct a Chunk (with full position) from a chunks-table row."""
+        position = ChunkPosition(
+            start=row["start_pos"],
+            end=row["end_pos"],
+            line=row["start_line"],
+            column=row["start_col"],
+            end_line=row["end_line"],
+            end_column=row["end_col"],
+        )
+        return Chunk(
+            content=row["content"],
+            position=position,
+            tokens=row["tokens"],
+            index=row["chunk_index"],
+            faiss_id=row["faiss_id"],
+            content_hash=row["content_hash"],
+        )
+
+    def get_chunks(self, document_id: str, indices: Optional[List[int]] = None) -> List[Chunk]:
+        """Retrieve the persisted chunks of a document, ordered by chunk index.
+
+        Returns the chunks exactly as they were stored at ingest time (content
+        plus full character/line position), unlike :meth:`get`, which only
+        returns the whole-document content.
+
+        Parameters
+        ----------
+        document_id : str
+            The document whose chunks to retrieve.
+        indices : list[int], optional
+            If given, only chunks whose ``chunk_index`` appears in this list are
+            returned; unknown indices are silently skipped. When ``None``
+            (default), every chunk of the document is returned.
+
+        Returns
+        -------
+        list[Chunk]
+            Chunks with full position information, ordered by ``chunk_index``.
+            Empty if the document has no chunks (or none match ``indices``).
+
+        Notes
+        -----
+        Synchronous only; the CLI ``get`` command is the sole consumer. Add an
+        async twin if a future async caller needs one.
+        """
+        sql = (
+            "SELECT chunk_index, content, content_hash, start_pos, end_pos, "
+            "start_line, start_col, end_line, end_col, tokens, faiss_id "
+            "FROM chunks WHERE document_id = ?"
+        )
+        params: List[Any] = [document_id]
+        if indices is not None:
+            if not indices:
+                return []
+            placeholders = ",".join(["?"] * len(indices))
+            sql += f" AND chunk_index IN ({placeholders})"
+            params.extend(indices)
+        sql += " ORDER BY chunk_index"
+
+        with self._read_write_lock.read_lock():
+            with self.connection_pool.get_connection() as conn:
+                cursor = self._sync_executor.execute(conn, sql, params)
+                try:
+                    rows = self._sync_executor.fetchall(cursor)
+                finally:
+                    cursor.close()
+
+        return [self._construct_chunk_from_row(row) for row in rows]
 
     def _core_exists_sync(self, conn, ids_list: List[str]) -> List[bool]:
         """Core logic for checking if documents exist (sync version)"""
