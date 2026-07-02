@@ -460,7 +460,7 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
                 if "error" in data:
                     raise RuntimeError(f"Server error: {data['error']['message']}")
 
-                embeddings = [item["embedding"] for item in data["data"]]
+                embeddings = data["embeddings"]
                 return embeddings
         else:
             # Use provided client
@@ -471,7 +471,7 @@ class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
             if "error" in data:
                 raise RuntimeError(f"Server error: {data['error']['message']}")
 
-            embeddings = [item["embedding"] for item in data["data"]]
+            embeddings = data["embeddings"]
             return embeddings
 
 
@@ -1095,7 +1095,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             form_data["similarity_threshold"] = str(similarity_threshold)
 
         if extractor_kwargs:
-            form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
+            raise ValueError(
+                "extractor_kwargs is not supported for remote databases; extraction "
+                "options are governed by the server configuration for uploaded files."
+            )
 
         # Prepare files for streaming upload; ExitStack closes every handle on exit.
         with ExitStack() as stack:
@@ -1191,7 +1194,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             form_data["similarity_threshold"] = str(similarity_threshold)
 
         if extractor_kwargs:
-            form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
+            raise ValueError(
+                "extractor_kwargs is not supported for remote databases; extraction "
+                "options are governed by the server configuration for uploaded files."
+            )
 
         # Prepare files for streaming upload; ExitStack closes every handle on exit.
         with ExitStack() as stack:
@@ -1979,11 +1985,18 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         - Changes are applied in a transaction and rolled back on error
         """
         # Handle different input formats
-        schema_data: Union[str, Dict[str, Any]]
+        schema_data: Dict[str, Any]
         if isinstance(new_schema, str):
-            # Send schema name to server
-            schema_data = new_schema
-        elif isinstance(new_schema, dict):
+            # Resolve a common-schema name to its field mapping client-side; the
+            # server /schema endpoint requires a metadata_schema object, not a name.
+            from localvectordb import get_common_metadata_schemas
+
+            common = get_common_metadata_schemas()
+            if new_schema not in common:
+                raise ValueError(f"Unknown common schema '{new_schema}'. Available: {', '.join(sorted(common))}")
+            new_schema = common[new_schema]
+
+        if isinstance(new_schema, dict):
             # Convert to server-compatible format
             schema_dict: Dict[str, Any] = {}
             for field_name, field_def in new_schema.items():
@@ -2483,7 +2496,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             form_data["similarity_threshold"] = str(similarity_threshold)
 
         if extractor_kwargs:
-            form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
+            raise ValueError(
+                "extractor_kwargs is not supported for remote databases; extraction "
+                "options are governed by the server configuration for uploaded files."
+            )
 
         # Prepare files for streaming upload; ExitStack closes every handle on exit.
         with ExitStack() as stack:
@@ -2586,7 +2602,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             form_data["similarity_threshold"] = str(similarity_threshold)
 
         if extractor_kwargs:
-            form_data["extractor_kwargs"] = json.dumps(extractor_kwargs)
+            raise ValueError(
+                "extractor_kwargs is not supported for remote databases; extraction "
+                "options are governed by the server configuration for uploaded files."
+            )
 
         # Prepare files for streaming upload; ExitStack closes every handle on exit.
         with ExitStack() as stack:
@@ -3208,11 +3227,18 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             changes = await db.update_metadata_schema_async('research_papers')
         """
         # Handle different input formats
-        schema_data: Union[str, Dict[str, Any]]
+        schema_data: Dict[str, Any]
         if isinstance(new_schema, str):
-            # Send schema name to server
-            schema_data = new_schema
-        elif isinstance(new_schema, dict):
+            # Resolve a common-schema name to its field mapping client-side; the
+            # server /schema endpoint requires a metadata_schema object, not a name.
+            from localvectordb import get_common_metadata_schemas
+
+            common = get_common_metadata_schemas()
+            if new_schema not in common:
+                raise ValueError(f"Unknown common schema '{new_schema}'. Available: {', '.join(sorted(common))}")
+            new_schema = common[new_schema]
+
+        if isinstance(new_schema, dict):
             # Convert to server-compatible format
             schema_dict: Dict[str, Any] = {}
             for field_name, field_def in new_schema.items():
@@ -3246,14 +3272,14 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         else:
             raise ValueError("new_schema must be a string (schema name) or dict")
 
-        url = self._build_url(f"/api/v1/{self.name}/update_schema")
+        url = self._build_url(f"/api/v1/{self.name}/schema")
         payload: Dict[str, Any] = {
-            "new_schema": schema_data,
+            "metadata_schema": schema_data,
             "drop_columns": drop_columns,
-            "column_mapping": column_mapping or {},
+            "column_mapping": column_mapping,
         }
 
-        response = await self._make_request_with_retry_async("POST", url, json=payload)
+        response = await self._make_request_with_retry_async("PUT", url, json=payload)
         result = self._handle_response(response)
 
         # Update local metadata schema cache
@@ -3309,7 +3335,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """Get current SQLite tuning configuration from remote server."""
         response = self._make_request_with_retry("GET", f"/api/v1/{self.name}/tuning")
-        return self._handle_response(response)
+        result = self._handle_response(response)
+        tuning: Dict[str, Any] = result.get("tuning", {})
+        return tuning
 
     def set_sqlite_tuning(self, profile: str, overrides: Optional[Dict[str, Any]] = None, persist: bool = True) -> None:
         """Apply SQLite tuning profile via remote server."""
@@ -3317,6 +3345,25 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         response = self._make_request_with_retry("PUT", f"/api/v1/{self.name}/tuning", json=payload)
         self._handle_response(response)
+
+    def auto_tune(
+        self, workload: Optional[Dict[str, Any]] = None, interactive: bool = False, apply: bool = False
+    ) -> Dict[str, Any]:
+        """Get auto-tuning recommendations from the remote server.
+
+        The recommendation is computed on the *server* (from the server's own
+        system resources), not the client machine. ``interactive`` is not
+        supported over HTTP -- pass an explicit ``workload`` dict instead.
+        """
+        if interactive:
+            raise ValueError(
+                "interactive=True is not supported for remote databases; " "pass an explicit `workload` dict instead."
+            )
+        payload = {"workload": workload, "apply": apply}
+        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/auto-tune", json=payload)
+        result = self._handle_response(response)
+        recommendation: Dict[str, Any] = result.get("recommendation", {})
+        return recommendation
 
     def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
         """Run SQLite WAL checkpoint via remote server."""
@@ -3344,8 +3391,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
     def analyze_system_resources(self) -> Dict[str, Any]:
         """Analyze remote server system resources."""
-        response = self._make_request_with_retry("GET", "/api/system/resources")
-        return self._handle_response(response)
+        response = self._make_request_with_retry("GET", "/api/v1/system/resources")
+        result = self._handle_response(response)
+        resources: Dict[str, Any] = result.get("system_resources", {})
+        return resources
 
     def checkpoint_if_wal_large(self, wal_mb_threshold: int = 128) -> bool:
         """Check if remote WAL is large and checkpoint if needed."""
