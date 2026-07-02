@@ -504,7 +504,7 @@ Update Document
 
 Update a document's content and/or metadata.
 
-**Endpoint**: ``PUT /api/v1/{db_name}/documents/{doc_id}``
+**Endpoint**: ``PATCH /api/v1/{db_name}/documents/{doc_id}``
 
 **Request Body**:
 
@@ -519,7 +519,7 @@ Update a document's content and/or metadata.
 
 .. code-block:: bash
 
-   curl -X PUT http://localhost:5000/api/v1/research_papers/documents/doc_1 \
+   curl -X PATCH http://localhost:5000/api/v1/research_papers/documents/doc_1 \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -531,7 +531,7 @@ Update a document's content and/or metadata.
 
 .. code-block:: python
 
-   response = requests.put(
+   response = requests.patch(
        "http://localhost:5000/api/v1/research_papers/documents/doc_1",
        headers={
            "Content-Type": "application/json",
@@ -669,10 +669,11 @@ List documents with pagination, filtering, or bulk-get by ID.
    docs = resp.json()["documents"]
    print(f"Retrieved {len(docs)} docs")
 
-   # Paginated listing
-   resp = requests.get(base, headers=headers, params={"page": 3, "limit": 25})
+   # Paginated listing (offset/limit)
+   resp = requests.get(base, headers=headers, params={"offset": 50, "limit": 25})
    data = resp.json()
-   print(f"Page {data['pagination']['current_page']} of {data['pagination']['total_pages']}")
+   page = data["pagination"]  # {"limit", "offset", "total", "has_more"}
+   print(f"Showing {len(data['documents'])} of {page['total']} (has_more={page['has_more']})")
 
    # Filter by metadata
    resp = requests.get(base, headers=headers, params={"author": "Alice", "limit": 5})
@@ -1409,7 +1410,7 @@ Advanced filtering using SQL-like queries.
 .. code-block:: json
 
    {
-     "where": {"journal": "Science", "year": {"$gte": 2020}},
+     "filters": {"journal": "Science", "year": {"$gte": 2020}},
      "order_by": "year DESC",
      "limit": 50,
      "offset": 0
@@ -1423,7 +1424,7 @@ Advanced filtering using SQL-like queries.
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
-       "where": {
+       "filters": {
          "journal": "Science",
          "year": {"$gte": 2020}
        },
@@ -1443,10 +1444,10 @@ Advanced filtering using SQL-like queries.
            "Authorization": "Bearer your_api_key"
        },
        json={
-           "where": {
-               "journal": {"in": ["Science", "Nature"]},
-               "year": {"between": [2020, 2024]},
-               "authors": {"contains": "Smith"}
+           "filters": {
+               "journal": {"$in": ["Science", "Nature"]},
+               "year": {"$gte": 2020, "$lte": 2024},
+               "authors": {"$contains": "Smith"}
            },
            "order_by": "year DESC, title ASC",
            "limit": 50
@@ -1454,20 +1455,6 @@ Advanced filtering using SQL-like queries.
    )
 
    filtered_docs = response.json()["documents"]
-
-   # Raw SQL filtering
-   response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/filter",
-       headers={
-           "Content-Type": "application/json",
-           "Authorization": "Bearer your_api_key"
-       },
-       json={
-           "sql": "journal = 'Science' AND year >= 2020",
-           "order_by": "year DESC",
-           "limit": 25
-       }
-   )
 
 Update Metadata Schema
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -1812,7 +1799,7 @@ Fact-Check Against One Database
      "similarity_threshold": 0.3,
      "min_grounding_score": 0.5,
      "search_type": "hybrid",
-     "top_k": 10
+     "k": 10
    }
 
 Only ``text`` is required. ``llm_provider`` defaults to ``anthropic``; ``llm_api_key`` may be
@@ -2188,7 +2175,7 @@ Perform maintenance operations on the database's SQLite backend.
 
 **SQLite Incremental Vacuum** (separate endpoint)
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/incremental_vacuum``
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/incremental-vacuum``
 
 .. code-block:: json
 
@@ -2200,7 +2187,7 @@ Perform maintenance operations on the database's SQLite backend.
 
 **Checkpoint If WAL Large**
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/checkpoint_if_large``
+**Endpoint**: ``POST /api/v1/<db_name>/maintenance/checkpoint-if-large``
 
 .. code-block:: json
 
@@ -2234,7 +2221,7 @@ Perform maintenance operations on the database's SQLite backend.
         -H "Authorization: Bearer your_api_key" \
         -H "Content-Type: application/json" \
         -d '{"pages": 2000}' \
-        http://localhost:5000/api/v1/mydatabase/maintenance/incremental_vacuum
+        http://localhost:5000/api/v1/mydatabase/maintenance/incremental-vacuum
 
 Tuning Endpoint Security
 ^^^^^^^^^^^^^^^^^^^^^^^^^

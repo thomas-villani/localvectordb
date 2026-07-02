@@ -108,15 +108,18 @@ Check Existence
 
 .. code-block:: typescript
 
-   const { exists } = await db.exists(["doc-1", "doc-2"]);
-   // exists: { "doc-1": true, "doc-2": false }
+   const { exists, ids } = await db.exists(["doc-1", "doc-2"]);
+   // exists: [true, false] — positional, aligned with ids (["doc-1", "doc-2"])
+   if (exists[0]) {
+     console.log(`${ids[0]} exists`);
+   }
 
 List Documents
 ~~~~~~~~~~~~~~
 
 .. code-block:: typescript
 
-   const page = await db.list({ page: 1, limit: 20 });
+   const page = await db.list({ offset: 0, limit: 20 });
    console.log(page.documents.length, page.pagination);
 
 Chunked Documents
@@ -325,7 +328,7 @@ Check a text claim against documents in the database:
    const result = await db.factCheck("The earth orbits the sun", {
      llm_provider: "anthropic",
      search_type: "hybrid",
-     top_k: 10,
+     k: 10,
    });
 
 QueryOptions Reference
