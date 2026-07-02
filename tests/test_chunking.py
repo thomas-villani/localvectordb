@@ -2,6 +2,8 @@
 Tests for localvectordb.chunking module.
 """
 
+import logging
+
 import pytest
 
 from localvectordb.chunking import (
@@ -828,6 +830,46 @@ class TestChunkerFactory:
         assert "tokens" in methods
         assert "words" in methods
         assert isinstance(methods, list)
+
+
+@pytest.mark.unit
+@pytest.mark.chunking
+class TestChunkerOverlapValidation:
+    """Validation and unit-confusion warnings for chunk_overlap in the factory."""
+
+    def test_negative_overlap_rejected(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            ChunkerFactory.create_chunker("sentences", max_tokens=100, overlap=-1)
+
+    def test_bool_overlap_rejected(self):
+        # bool is an int subclass but is not a valid overlap.
+        with pytest.raises(TypeError, match="non-negative"):
+            ChunkerFactory.create_chunker("sentences", max_tokens=100, overlap=True)
+
+    def test_tokens_overlap_at_or_above_size_rejected(self):
+        with pytest.raises(ValueError, match="less than chunk_size"):
+            ChunkerFactory.create_chunker("tokens", max_tokens=100, overlap=100)
+
+    def test_tokens_overlap_below_size_ok(self):
+        chunker = ChunkerFactory.create_chunker("tokens", max_tokens=100, overlap=99)
+        assert chunker.overlap == 99
+
+    def test_large_sentence_overlap_warns(self, caplog):
+        # 50 sentences of overlap in a ~500-token chunk is the classic foot-gun.
+        with caplog.at_level(logging.WARNING, logger="localvectordb.chunking"):
+            ChunkerFactory.create_chunker("sentences", max_tokens=500, overlap=50)
+        assert "chunk_overlap=50" in caplog.text
+        assert "sentences" in caplog.text
+
+    def test_small_sentence_overlap_no_warning(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="localvectordb.chunking"):
+            ChunkerFactory.create_chunker("sentences", max_tokens=500, overlap=2)
+        assert "is large for chunking_method" not in caplog.text
+
+    def test_sections_ignore_overlap_without_error(self):
+        # Sections force overlap to 0 and are not subject to the count heuristic.
+        chunker = ChunkerFactory.create_chunker("sections", max_tokens=500, overlap=99)
+        assert chunker.overlap == 0
 
 
 @pytest.mark.unit

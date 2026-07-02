@@ -284,6 +284,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     @property
     def chunk_overlap(self) -> int:
+        """Overlap between chunks, in the unit of ``chunking_method`` (not tokens
+        unless the method is ``"tokens"``)."""
         return self._chunk_overlap
 
     @property

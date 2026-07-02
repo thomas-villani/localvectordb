@@ -207,7 +207,8 @@ class BaseVectorDB(ABC):
     @property
     @abstractmethod
     def chunk_overlap(self) -> int:
-        """Return the chunk overlap."""
+        """Return the chunk overlap, in the unit of ``chunking_method`` (not tokens
+        unless the method is ``"tokens"``)."""
         pass
 
     @property

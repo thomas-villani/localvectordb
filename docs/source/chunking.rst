@@ -16,6 +16,19 @@ Overview
 Chunking Methods
 ----------------
 
+.. important::
+
+   ``chunk_size`` is always a **token** budget, but ``chunk_overlap`` is measured
+   in the **unit of the chosen method** — sentences for ``sentences``, words for
+   ``words``, lines for ``lines``/``code-blocks``, characters for ``characters``,
+   paragraphs for ``paragraphs``, and tokens *only* for ``tokens``. Setting an
+   overlap sized as if it were tokens (e.g. ``chunk_overlap=50`` with
+   ``chunking_method="sentences"``) is a common mistake: a 500-token chunk holds
+   far fewer than 50 sentences, so nearly every chunk is re-emitted and results
+   become highly redundant. Keep overlap small (typically 1-3). LocalVectorDB
+   raises if ``chunk_overlap >= chunk_size`` for ``chunking_method="tokens"``, and
+   logs a warning when the overlap looks implausibly large for the other methods.
+
 Sentences
 ~~~~~~~~~
 

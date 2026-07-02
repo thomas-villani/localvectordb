@@ -40,7 +40,7 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
         - embedding_config: Dict[str, Any] - Config for embedding provider
         - chunking_method: str - Method for chunking ("sentences", "tokens", etc.)
         - chunk_size: int - Maximum tokens per chunk
-        - chunk_overlap: int - Overlap between chunks
+        - chunk_overlap: int - Overlap in the method's own unit, not tokens (except "tokens"); keep small (1-3)
         - enable_gpu: bool - Whether to use GPU for FAISS
         - enable_fts: bool - Whether to enable full-text search
         - create_if_not_exists: bool - Whether to create if not exists
