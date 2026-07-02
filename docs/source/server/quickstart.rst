@@ -30,8 +30,12 @@ Basic API Usage
      -H "Content-Type: application/json" \
      -d '{
        "name": "my_database",
-       "embedding_model": "nomic-embed-text",
-       "chunk_size": 500
+       "embedding": {
+         "model": "nomic-embed-text"
+       },
+       "database": {
+         "chunk_size": 500
+       }
      }'
 
    # Add documents

@@ -47,10 +47,19 @@ Starting the Server
 - ``--disable-ollama-check, -x``: Skip Ollama availability check
 
 .. note::
-   ``--config, -c`` and ``--db-folder, -d`` are **global** options on the top-level ``lvdb``
-   group, not on ``serve``. They must be given **before** the subcommand, e.g.
-   ``lvdb --config production.toml serve``. (``-h`` is reserved for ``--help``; the host
+   ``--config, -c``, ``--db-folder, -d``, ``--verbose, -v`` and ``--quiet, -q`` are
+   **global** options on the top-level ``lvdb`` group, not on ``serve``. They must be
+   given **before** the subcommand, e.g. ``lvdb --config production.toml serve`` or
+   ``lvdb --verbose db mydb add file.txt``. (``-h`` is reserved for ``--help``; the host
    short flag is ``-H``.)
+
+**Global options** (given before the subcommand):
+
+- ``--config, -c``: Path to config file (env: ``LVDB_SERVER_CONFIG``)
+- ``--db-folder, -d``: Directory containing vector databases (env: ``LVDB_DATABASE_ROOT_DIR``)
+- ``--verbose, -v``: Enable verbose (DEBUG) logging
+- ``--quiet, -q``: Only log errors (suppress warnings/info)
+- ``--version, -V``: Print the installed ``localvectordb`` version
 
 Configuration Management
 ------------------------
@@ -2111,8 +2120,8 @@ Debug Mode
    # Run server in debug mode
    lvdb serve --debug --log-level DEBUG
 
-   # Test with verbose output
-   lvdb db test_database add test.txt --verbose
+   # Test with verbose output (--verbose is a global option, before the subcommand)
+   lvdb --verbose db test_database add test.txt
 
    # Check server logs
    tail -f server.log
@@ -2163,11 +2172,19 @@ List Backups
    # List backups for specific database
    lvdb backup list --database my_database
 
-   # List with detailed information
-   lvdb backup list --details
+   # Filter by backup type and limit the number shown
+   lvdb backup list --type full --limit 10
 
-   # List in JSON format
-   lvdb backup list --format json
+   # Scan a specific backup location, in JSON format
+   lvdb backup list --location /backups/localvectordb --json
+
+**Options**:
+
+- ``--database, -d``: Filter backups for a specific database
+- ``--type, -t``: Filter by backup type (full, incremental)
+- ``--limit, -n``: Limit the number of backups shown
+- ``--location, -l``: Backup storage location to scan (default ``./backups``)
+- ``--json``: Output in JSON format
 
 **Example Output**:
 
@@ -2187,39 +2204,43 @@ Restore Backups
 
 .. code-block:: bash
 
-   # Restore specific backup
+   # Restore a backup to its original location (partial backup IDs are accepted)
+   lvdb backup restore abc12345
+
+   # Restore into a specific directory
    lvdb backup restore backup_20241201_001 --to-location ./restored_database
 
-   # Restore latest backup for database
-   lvdb backup restore --database my_database --latest --to-location ./restored
+   # Overwrite existing files without confirmation
+   lvdb backup restore backup_20241201_001 --to-location ./restored --overwrite
 
-   # Restore with verification
-   lvdb backup restore backup_20241201_001 --to-location ./restored --verify
-
-   # Force restore (overwrite existing)
-   lvdb backup restore backup_20241201_001 --to-location ./restored --force
+   # Restore from a specific backup store, JSON output
+   lvdb backup restore abc12345 --location /backups/localvectordb --json
 
 **Options**:
 
-- ``--to-location, -l``: Directory where database should be restored
-- ``--database, -d``: Database name (when using --latest)
-- ``--latest``: Restore the most recent backup
-- ``--verify``: Verify backup integrity before restoration
-- ``--force, -f``: Overwrite existing database at restore location
+- ``--to-location, -t``: Directory to restore to (default: the backup's original location)
+- ``--overwrite``: Overwrite existing files without confirmation
+- ``--location, -l``: Backup storage location to read from (default ``./backups``)
+- ``--json``: Output the result in JSON format
+
+The ``BACKUP_ID`` argument accepts a partial ID; the first matching backup file is used.
+For incremental backups the full backup chain is located and applied automatically.
 
 Verify Backups
 ^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # Verify specific backup
-   lvdb backup verify backup_20241201_001
+   # Verify a specific backup (partial backup IDs are accepted)
+   lvdb backup verify abc12345
 
-   # Verify all backups for database
-   lvdb backup verify --database my_database
+   # Verify a backup in a specific store, JSON output
+   lvdb backup verify backup_20241201_001 --location /backups/localvectordb --json
 
-   # Verify and repair if possible
-   lvdb backup verify backup_20241201_001 --repair
+**Options**:
+
+- ``--location, -l``: Backup storage location to read from (default ``./backups``)
+- ``--json``: Output the result in JSON format
 
 **Example Output**:
 
@@ -2241,52 +2262,59 @@ Clean Up Backups
 
 .. code-block:: bash
 
-   # Clean up old backups (interactive)
-   lvdb backup cleanup --database my_database
+   # Clean up backups older than 30 days (the default), keeping at least 3 full backups
+   lvdb backup cleanup
 
-   # Keep only last 5 backups
-   lvdb backup cleanup --database my_database --keep 5
+   # Delete backups older than 7 days
+   lvdb backup cleanup --older-than 7
 
-   # Clean up backups older than 30 days
-   lvdb backup cleanup --database my_database --older-than 30
+   # Keep at least 5 full backups, previewing what would be deleted
+   lvdb backup cleanup --keep-full 5 --dry-run
 
-   # Clean up with confirmation
-   lvdb backup cleanup --database my_database --keep 3 --confirm
+   # Clean up a specific backup store, JSON output
+   lvdb backup cleanup --location /backups/localvectordb --json
 
 **Options**:
 
-- ``--database, -d``: Database name to clean up backups for
-- ``--keep, -k``: Number of most recent backups to keep
-- ``--older-than, -o``: Remove backups older than specified days
-- ``--confirm, -y``: Skip confirmation prompts
-- ``--dry-run, -n``: Show what would be removed without deleting
+- ``--older-than``: Delete backups older than N days (default ``30``)
+- ``--keep-full``: Minimum number of full backups to keep (default ``3``)
+- ``--location, -l``: Backup storage location (default ``./backups``)
+- ``--dry-run``: Show what would be deleted without actually deleting
+- ``--json``: Output the result in JSON format
+
+``cleanup`` operates on all backups in the store (it takes no database argument) while
+maintaining backup-chain integrity and keeping a minimum number of full backups.
 
 Point-in-Time Recovery
 ^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # Restore database to specific point in time
-   lvdb backup pitr "2024-12-01 14:30:00" --database my_database --to-location ./pitr_restored
+   # Restore database to a specific point in time (--to-location is required)
+   lvdb backup pitr "2024-12-01 14:30:00" --to-location ./pitr_restored
 
-   # Point-in-time recovery with timezone
-   lvdb backup pitr "2024-12-01 14:30:00 UTC" --database my_database --to-location ./restored
+   # ISO-8601 timestamp with a wider search tolerance, validating without restoring
+   lvdb backup pitr "2024-12-01T14:30:00Z" --to-location ./restored --tolerance 120 --dry-run
 
-   # List available recovery points
-   lvdb backup pitr --list --database my_database
+   # Read from a specific backup store, JSON output
+   lvdb backup pitr "2024-12-01 14:30:00" --to-location ./restored --location /backups/localvectordb --json
 
 **Options**:
 
-- ``--database, -d``: Database name for recovery
-- ``--to-location, -l``: Directory where database should be restored
-- ``--list``: Show available recovery points
-- ``--verify``: Verify backup chain before recovery
+- ``--to-location, -t``: Directory to restore to (**required**)
+- ``--tolerance``: Tolerance in minutes for finding a recovery point (default ``60``)
+- ``--location, -l``: Backup storage location (default ``./backups``)
+- ``--dry-run``: Validate recovery without actually restoring
+- ``--json``: Output the result in JSON format
+
+The ``TIMESTAMP`` argument accepts ``YYYY-MM-DD HH:MM:SS`` or ISO-8601 format. The database
+name is read from the backup store, so it is not passed on the command line.
 
 **Example PITR Session**:
 
 .. code-block:: console
 
-   $ lvdb backup pitr "2024-12-01 14:30:00" --database research_papers --to-location ./recovered
+   $ lvdb backup pitr "2024-12-01 14:30:00" --to-location ./recovered
 
    Point-in-Time Recovery
    ======================
@@ -2322,11 +2350,16 @@ Migration Status
    # Check migration status for database
    lvdb migrate status my_database
 
-   # Show detailed migration information
-   lvdb migrate status my_database --details
+   # Use a custom migrations directory
+   lvdb migrate status my_database --migrations-dir ./custom_migrations
 
    # JSON output for automation
-   lvdb migrate status my_database --format json
+   lvdb migrate status my_database --json
+
+**Options**:
+
+- ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
+- ``--json``: Output status in JSON format
 
 **Example Output**:
 
@@ -2354,28 +2387,29 @@ Apply Migrations
 
 .. code-block:: bash
 
-   # Apply all pending migrations
+   # Apply all pending migrations (a backup is created first by default)
    lvdb migrate apply my_database
 
-   # Apply migrations to specific version
+   # Apply migrations up to a specific version
    lvdb migrate apply my_database --to-version 1.2.0
 
-   # Apply with automatic backup
-   lvdb migrate apply my_database --backup
+   # Apply without creating a pre-migration backup
+   lvdb migrate apply my_database --no-backup
 
-   # Dry run to preview changes
-   lvdb migrate apply my_database --dry-run
+   # Dry run to preview changes without a backup
+   lvdb migrate apply my_database --dry-run --no-backup
 
-   # Force apply without confirmations
-   lvdb migrate apply my_database --force
+   # Store the pre-migration backup in a custom location
+   lvdb migrate apply my_database --backup-location /backups/premigration
 
 **Options**:
 
-- ``--to-version, -v``: Target version to migrate to
-- ``--backup, -b``: Create backup before applying migrations
-- ``--dry-run, -n``: Show what would be changed without applying
-- ``--force, -f``: Skip confirmation prompts
-- ``--rollback-on-error``: Automatically rollback on migration failure
+- ``--to-version, -v``: Target version to migrate to (default: latest)
+- ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
+- ``--backup/--no-backup``: Create a backup before migrating (default: enabled)
+- ``--backup-location, -b``: Backup storage location (default ``./backups``)
+- ``--dry-run``: Validate migrations without applying them
+- ``--json``: Output the result in JSON format
 
 **Example Migration Session**:
 
@@ -2414,96 +2448,313 @@ Rollback Migrations
 
 .. code-block:: bash
 
-   # Rollback to previous version
-   lvdb migrate rollback my_database
-
-   # Rollback to specific version
+   # Rollback to a specific version (both database name and target version are required)
    lvdb migrate rollback my_database 1.1.0
 
-   # Rollback with backup
-   lvdb migrate rollback my_database 1.1.0 --backup
+   # Rollback without creating a pre-rollback backup
+   lvdb migrate rollback my_database 1.0.0 --no-backup
 
-   # Force rollback without confirmation
-   lvdb migrate rollback my_database 1.1.0 --force
+   # Validate a rollback without applying it
+   lvdb migrate rollback my_database 1.1.0 --dry-run
 
 **Options**:
 
-- ``--backup, -b``: Create backup before rollback
-- ``--force, -f``: Skip confirmation prompts
-- ``--verify``: Verify database integrity after rollback
+- ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
+- ``--backup/--no-backup``: Create a backup before rolling back (default: enabled)
+- ``--backup-location, -b``: Backup storage location (default ``./backups``)
+- ``--dry-run``: Validate the rollback without applying it
+- ``--json``: Output the result in JSON format
+
+Both the ``DATABASE_NAME`` and ``TARGET_VERSION`` positional arguments are required.
 
 Create Migration Templates
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # Create new migration template
+   # Create a new migration template (the description is the positional argument)
    lvdb migrate create "add priority field" --version 1.3.0
 
-   # Create migration with description
-   lvdb migrate create "optimize search performance" --version 1.3.1 --description "Add database indices for faster queries"
+   # Create a schema-change template
+   lvdb migrate create "add user fields" --version 1.3.1 --template schema
 
-   # Create migration in specific directory
-   lvdb migrate create "schema update" --version 1.4.0 --output-dir ./migrations
+   # Create a data-transformation template in a specific directory
+   lvdb migrate create "migrate old data format" --version 1.4.0 --template data --migrations-dir ./migrations
+
+**Options**:
+
+- ``--version, -v``: Version number for the migration, e.g. ``1.2.0`` (**required**)
+- ``--migrations-dir, -m``: Directory to create the migration in (default ``./migrations``)
+- ``--template, -t``: Template type — ``basic`` (default), ``schema``, or ``data``
+- ``--json``: Output the result in JSON format
 
 **Example Generated Migration**:
 
+Migrations subclass :class:`~localvectordb.migration.Migration` and describe schema
+changes by returning a ``new_schema`` mapping from ``get_schema_changes()`` /
+``get_rollback_changes()`` (there are no ``up``/``down`` methods). The ``schema`` template
+produces:
+
 .. code-block:: python
 
-   """
-   Migration: Add priority field
-   Version: 1.3.0
-   Created: 2024-12-01 10:30:00
-   """
+   # Migration: add user fields
+   # Version: 1.3.1
+   # Created: 2024-12-01 10:30:00
 
-   from localvectordb.migration import Migration, MigrationStep
-   from localvectordb.core import MetadataField
+   from typing import Dict, Any
+   from localvectordb.migration import Migration
+   from localvectordb.core import MetadataField, MetadataFieldType
 
-   class AddPriorityFieldMigration(Migration):
-       version = "1.3.0"
-       description = "Add priority field"
-       
-       def up(self, db):
-           # Add priority field
-           priority_field = MetadataField(
-               name="priority",
-               field_type="integer",
-               indexed=True,
-               default_value=1
-           )
-           db.schema.add_field(priority_field)
-       
-       def down(self, db):
-           # Remove priority field
-           db.schema.remove_field("priority")
+
+   class Migration_1_3_1(Migration):
+       """
+       add user fields
+       """
+
+       version = "1.3.1"
+       description = "add user fields"
+       dependencies = []  # Add version dependencies here
+
+       def get_schema_changes(self) -> Dict[str, Any]:
+           """Get schema changes to apply in forward migration."""
+
+           # Define the new complete metadata schema after this migration
+           new_schema = {
+               'user_id': MetadataField(
+                   type=MetadataFieldType.TEXT,
+                   indexed=True,
+                   required=False,
+                   default_value=None,
+               ),
+               'priority': MetadataField(
+                   type=MetadataFieldType.INTEGER,
+                   indexed=True,
+                   required=False,
+                   default_value=0,
+               ),
+               # Add existing fields that should remain...
+           }
+
+           return {
+               'new_schema': new_schema,
+               'column_mapping': {},  # Optional: rename columns {'old_name': 'new_name'}
+               'drop_columns': False,  # Whether to drop unused columns
+           }
+
+       def get_rollback_changes(self) -> Dict[str, Any]:
+           """Get schema changes to apply for rollback."""
+
+           rollback_schema = {
+               # Define schema without the changes from this migration
+           }
+
+           return {
+               'new_schema': rollback_schema,
+               'column_mapping': {},
+               'drop_columns': False,
+           }
 
 List Migrations
 ^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   # List all available migrations
+   # List all discovered migration files
    lvdb migrate list
 
-   # List migrations for specific database
-   lvdb migrate list --database my_database
+   # Show each migration's dependencies, JSON output
+   lvdb migrate list --show-dependencies --json
 
-   # Show migration details
-   lvdb migrate list --details
+   # List migrations from a custom directory
+   lvdb migrate list --migrations-dir ./custom_migrations
+
+**Options**:
+
+- ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
+- ``--show-dependencies, -d``: Show migration dependencies
+- ``--json``: Output in JSON format
+
+``list`` scans the migrations directory itself, so it takes no database argument.
 
 **Example Output**:
 
 .. code-block:: console
 
-   Available Migrations
-   ====================
+   Available Migrations in migrations:
 
-   Version   Status      Database        Description                     Created
-   -------------------------------------------------------------------------------
-   1.1.1     APPLIED     research_papers Add citation_count field        2024-11-15
-   1.2.0     APPLIED     research_papers Add full-text search indices    2024-11-20
-   1.2.1     PENDING     research_papers Fix metadata indexing           2024-11-25
-   1.3.0     PENDING     -               Add priority field              2024-12-01
+   Version   Description                     File                        Dependencies
+   -------------------------------------------------------------------------------------
+   1.1.1     Add citation_count field        v1_1_1_add_citation.py      -
+   1.2.0     Add full-text search indices    v1_2_0_add_fts.py           1.1.1
+   1.3.0     Add priority field              v1_3_0_add_priority.py      1.2.0
+
+   Total: 3 migration(s)
+
+SQLite Performance Tuning
+-------------------------
+
+The ``lvdb tuning`` command group manages SQLite performance profiles and pragma
+settings for individual databases. Unlike most commands, ``tuning`` does not require a
+configuration file; point it at your databases with the global ``--db-folder, -d``
+option (given before the subcommand), e.g. ``lvdb --db-folder ./data tuning get mydb``.
+
+List Tuning Profiles
+^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # List available SQLite tuning profiles with descriptions
+   lvdb tuning list
+
+``list`` takes no arguments or options.
+
+Show Tuning Configuration
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Show the current tuning profile, overrides, and active pragmas for a database
+   lvdb --db-folder ./data tuning get my_database
+
+   # JSON output
+   lvdb --db-folder ./data tuning get my_database --format json
+
+**Options**:
+
+- ``--format, -f``: Output format (``table`` (default), ``json``)
+
+Apply a Tuning Profile
+^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Apply a named profile to a database
+   lvdb --db-folder ./data tuning set my_database read_optimized
+
+   # Apply a profile with pragma overrides (repeat --override per pragma)
+   lvdb --db-folder ./data tuning set my_database balanced \
+     --override cache_size=-64000 --override mmap_size=268435456
+
+   # Apply without persisting the settings to the database
+   lvdb --db-folder ./data tuning set my_database read_optimized --no-persist
+
+   # Preview what would be applied without changing anything
+   lvdb --db-folder ./data tuning set my_database read_optimized --dry-run
+
+**Options**:
+
+- ``--override, -o KEY=VALUE``: Pragma override (may be given multiple times)
+- ``--no-persist``: Do not persist the settings to the database
+- ``--dry-run``: Show what would be applied without applying it
+
+Set a Single Pragma
+^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Set a single pragma override, keeping the current profile
+   lvdb --db-folder ./data tuning set-pragma my_database cache_size -64000
+
+**Options**:
+
+- ``--no-persist``: Do not persist the setting to the database
+
+``set-pragma`` takes three positional arguments: ``DATABASE``, ``PRAGMA_KEY`` and
+``PRAGMA_VALUE``.
+
+Auto-Tuning Recommendations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Get a recommendation from an interactive workload interview
+   lvdb --db-folder ./data tuning auto my_database --interactive
+
+   # Get a recommendation from explicit workload parameters
+   lvdb --db-folder ./data tuning auto my_database \
+     --workload-type read_heavy --memory-constraint generous --durability normal
+
+   # Apply the recommended settings immediately, JSON output
+   lvdb --db-folder ./data tuning auto my_database --workload-type balanced --apply --format json
+
+**Options**:
+
+- ``--interactive, -i``: Run an interactive workload interview
+- ``--workload-type``: Workload type (``read_heavy``, ``write_heavy``, ``balanced``,
+  ``batch_ingest``, ``real_time``) — skips the interview
+- ``--memory-constraint``: Memory availability (``generous``, ``moderate``, ``limited``)
+- ``--durability``: Data durability importance (``critical``, ``high``, ``normal``, ``low``)
+- ``--apply``: Apply the recommended settings immediately
+- ``--format, -f``: Output format (``table`` (default), ``json``)
+
+Database Maintenance
+--------------------
+
+The ``lvdb maintenance`` command group runs SQLite maintenance operations on a database.
+Like ``tuning``, it does not require a configuration file; select the database directory
+with the global ``--db-folder, -d`` option before the subcommand.
+
+WAL Checkpoint
+^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Run a WAL checkpoint (default mode PASSIVE)
+   lvdb --db-folder ./data maintenance checkpoint my_database
+
+   # Run a TRUNCATE checkpoint
+   lvdb --db-folder ./data maintenance checkpoint my_database --mode TRUNCATE
+
+**Options**:
+
+- ``--mode, -m``: Checkpoint mode (``PASSIVE`` (default), ``FULL``, ``RESTART``, ``TRUNCATE``)
+
+Optimize
+^^^^^^^^
+
+.. code-block:: bash
+
+   # Run PRAGMA optimize on a database
+   lvdb --db-folder ./data maintenance optimize my_database
+
+``optimize`` takes only the ``DATABASE`` argument.
+
+Vacuum
+^^^^^^
+
+.. code-block:: bash
+
+   # Full VACUUM (prompts for confirmation; requires exclusive access)
+   lvdb --db-folder ./data maintenance vacuum my_database
+
+   # Skip the confirmation prompt
+   lvdb --db-folder ./data maintenance vacuum my_database --confirm
+
+   # Incremental vacuum, reclaiming a given number of pages
+   lvdb --db-folder ./data maintenance vacuum my_database --incremental --pages 5000
+
+**Options**:
+
+- ``--incremental, -i``: Run an incremental vacuum instead of a full VACUUM
+- ``--pages``: Pages to reclaim (incremental only; default ``2000``)
+- ``--confirm``: Skip the confirmation prompt (full VACUUM only)
+
+Analyze System Resources
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Analyze system RAM, CPU, and disk for tuning recommendations
+   lvdb maintenance analyze-system
+
+   # JSON output
+   lvdb maintenance analyze-system --format json
+
+**Options**:
+
+- ``--format, -f``: Output format (``table`` (default), ``json``)
+
+``analyze-system`` inspects the host machine and takes no database argument.
 
 MCP Server Integration
 ----------------------

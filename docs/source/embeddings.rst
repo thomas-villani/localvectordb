@@ -397,6 +397,8 @@ Custom Provider Example
 
 .. code-block:: python
 
+   from typing import List
+
    from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
    import numpy as np
 
@@ -771,6 +773,8 @@ Create a Python package with entry points.
 **my_embedding_provider/__init__.py**:
 
 .. code-block:: python
+
+   from typing import List
 
    from localvectordb.embeddings import EmbeddingProvider
    import numpy as np

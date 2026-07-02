@@ -97,7 +97,7 @@ Let's start by creating our vector database with a proper metadata schema for do
        embedding_model="nomic-embed-text",
        chunking_method="sentences",
        chunk_size=500,
-       chunk_overlap=50,
+       chunk_overlap=2,
        enable_fts=True  # Enable full-text search for keyword queries
    )
 

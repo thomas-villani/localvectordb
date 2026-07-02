@@ -23,9 +23,10 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 - **Unified API**: Single interface for vector, keyword, and hybrid search
 
 ### 🔍 **Advanced Search**
-- **Vector Search**: Semantic similarity using Ollama or OpenAI embeddings
+- **Vector Search**: Semantic similarity via pluggable embedding providers — Ollama, OpenAI, Google, Jina, HuggingFace (Inference API + local), and Sentence Transformers
 - **Keyword Search**: Full-text search with SQLite FTS5
 - **Hybrid Search**: Combined vector + keyword with configurable weighting
+- **Reranking**: Optional cross-encoder reranking via Jina, Sentence Transformers, or HuggingFace
 - **Metadata Filtering**: MongoDB-style queries on structured metadata
 - **Document Scoring**: 11 chunk-to-document aggregation strategies for tuning relevance
 
@@ -176,7 +177,7 @@ results = db.query("content", search_type="hybrid")
 lvdb serve
 
 # Production configuration
-lvdb serve --host 0.0.0.0 --port 5000 --config ./config.toml
+lvdb --config ./config.toml serve --host 0.0.0.0 --port 5000
 ```
 
 ### Configuration
@@ -522,7 +523,7 @@ response = requests.post(
 - `default_metadata_schema`: Schema for new databases
 
 ### Embedding Settings
-- `provider`: "ollama" or "openai"
+- `provider`: Embedding provider — one of `ollama`, `openai`, `google`, `jina`, `huggingface`, `huggingface_local`, or `sentence_transformers`
 - `model`: Model name (e.g., "nomic-embed-text")
 - `base_url`: Custom API endpoint
 - `api_key`: API key for providers requiring authentication
@@ -547,7 +548,7 @@ COPY config.toml /app/config.toml
 WORKDIR /app
 
 EXPOSE 5000
-CMD ["lvdb", "serve", "--config", "config.toml"]
+CMD ["lvdb", "--config", "config.toml", "serve"]
 ```
 
 ### Multi-Worker Setup
