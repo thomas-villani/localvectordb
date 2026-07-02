@@ -223,6 +223,29 @@ describe("DatabaseHandle", () => {
     expect(body.k).toBe(5);
   });
 
+  it("query() forwards context sizing options (context_unit/context_truncate)", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ results: [], search_type: "vector", return_type: "context", total_results: 0 }),
+    );
+
+    await db.query("test", {
+      search_type: "vector",
+      return_type: "context",
+      context_window: 500,
+      context_unit: "tokens",
+      context_truncate: true,
+    });
+
+    const body = JSON.parse(
+      vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string,
+    );
+    expect(body.return_type).toBe("context");
+    expect(body.context_window).toBe(500);
+    expect(body.context_unit).toBe("tokens");
+    expect(body.context_truncate).toBe(true);
+  });
+
   it("filter() sends filters + options", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(

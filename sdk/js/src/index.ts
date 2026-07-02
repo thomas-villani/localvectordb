@@ -39,6 +39,7 @@ export type {
   MetadataFieldType,
   SearchType,
   ReturnType,
+  ContextUnit,
   DocumentScoringMethod,
   QueryResultType,
   CheckpointMode,

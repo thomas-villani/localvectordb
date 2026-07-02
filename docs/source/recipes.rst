@@ -756,6 +756,12 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
            if (options.contextWindow !== undefined) {
                payload.context_window = options.contextWindow;
            }
+           if (options.contextUnit !== undefined) {
+               payload.context_unit = options.contextUnit;  // "tokens" | "words" | "characters"
+           }
+           if (options.contextTruncate !== undefined) {
+               payload.context_truncate = options.contextTruncate;
+           }
            if (options.semanticDedupThreshold !== undefined) {
                payload.semantic_dedup_threshold = options.semanticDedupThreshold;
            }
