@@ -1275,6 +1275,35 @@ class CodeBlockChunker(PositionTrackingChunker):
         return [chunk for chunk in chunks if chunk.content.strip()]
 
 
+# The unit `chunk_overlap` is measured in, per chunking method. IMPORTANT: only
+# "tokens" shares its unit with `chunk_size` (which is always a token budget) —
+# for every other method `overlap` is a count of that method's own unit, so an
+# overlap sized as if it were tokens is a classic foot-gun.
+_OVERLAP_UNIT_NAME: dict[str, str] = {
+    "sentences": "sentences",
+    "tokens": "tokens",
+    "words": "words",
+    "lines": "lines",
+    "characters": "characters",
+    "paragraphs": "paragraphs",
+    "code-blocks": "lines",
+    "sections": "sections",
+}
+
+# Rough average tokens-per-unit for the count-based methods, used ONLY for a
+# heuristic "overlap looks too large" warning (never for correctness). If a
+# configured overlap exceeds the number of units a chunk of the given token
+# budget can plausibly hold, chunks become highly redundant.
+_APPROX_TOKENS_PER_UNIT: dict[str, float] = {
+    "sentences": 18.0,
+    "words": 1.3,
+    "lines": 10.0,
+    "code-blocks": 10.0,
+    "paragraphs": 60.0,
+    "characters": 0.25,  # ~4 characters per token
+}
+
+
 class ChunkerFactory:
     """Factory for creating chunkers"""
 
@@ -1290,10 +1319,54 @@ class ChunkerFactory:
     }
 
     @classmethod
+    def _validate_overlap(cls, method: str, max_tokens: int, overlap: int) -> None:
+        """Validate ``chunk_overlap`` for ``method`` and warn on likely unit confusion.
+
+        ``chunk_overlap`` is a count in the method's own unit (see
+        :data:`_OVERLAP_UNIT_NAME`); only ``"tokens"`` shares its unit with
+        ``chunk_size``. Raises on a value that can never make forward progress, and
+        logs a warning when the overlap looks implausibly large for the chunk size
+        (the "overlap set as if it were tokens" foot-gun).
+        """
+        # For the token strategy, overlap and chunk_size are both token counts, so an
+        # overlap >= chunk_size can never advance and is unambiguously invalid.
+        if method == "tokens" and overlap >= max_tokens:
+            raise ValueError(
+                f"chunk_overlap ({overlap}) must be less than chunk_size ({max_tokens}) "
+                f"for chunking_method='tokens' (both are token counts)."
+            )
+
+        # For count-based strategies overlap is a count of the unit, not tokens. Warn
+        # when it exceeds the number of units a chunk of this size can plausibly hold.
+        approx = _APPROX_TOKENS_PER_UNIT.get(method)
+        if approx is not None:
+            est_units = max(1, int(max_tokens / approx))
+            if overlap > est_units:
+                unit = _OVERLAP_UNIT_NAME.get(method, "units")
+                logger.warning(
+                    "chunk_overlap=%d is large for chunking_method=%r: overlap is counted in "
+                    "%s (not tokens), and a ~%d-token chunk holds only ~%d %s, so chunks may be "
+                    "highly redundant. Consider a small overlap (e.g. 1-3).",
+                    overlap,
+                    method,
+                    unit,
+                    max_tokens,
+                    est_units,
+                    unit,
+                )
+
+    @classmethod
     def create_chunker(
         cls, method: Union[str, Type[PositionTrackingChunker]], max_tokens: int = 500, overlap: int = 0, **kwargs
     ) -> PositionTrackingChunker:
         """Create a chunker instance"""
+        # Overlap must be a non-negative integer for every method (including custom
+        # chunker classes). NB: bool is an int subclass, so reject it explicitly.
+        if isinstance(overlap, bool) or not isinstance(overlap, int):
+            raise TypeError(f"`chunk_overlap` must be a non-negative integer, found: {type(overlap)}")
+        if overlap < 0:
+            raise ValueError(f"`chunk_overlap` must be a non-negative integer, found: {overlap}")
+
         if isinstance(method, type) and hasattr(method, "chunk"):
             return method(max_tokens, overlap=overlap)
         elif not isinstance(method, str):
@@ -1308,6 +1381,9 @@ class ChunkerFactory:
             raise TypeError(f"`max_tokens` must be a positive integer, found: {type(max_tokens)}")
         if max_tokens <= 0:
             raise ValueError(f"`max_tokens` must be a positive integer, found: {max_tokens}")
+
+        cls._validate_overlap(method, max_tokens, overlap)
+
         chunker_class = cls.CHUNKERS[method]
 
         # Map overlap parameter names based on chunker type

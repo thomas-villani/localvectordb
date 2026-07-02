@@ -504,7 +504,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     chunk_size : int, optional
         Maximum tokens per chunk, by default 500
     chunk_overlap : int, optional
-        Number of tokens to overlap between chunks, by default 1
+        Overlap between consecutive chunks, by default 1. Measured in the unit of
+        ``chunking_method`` (sentences, words, lines, characters, paragraphs), NOT
+        tokens — only ``chunking_method="tokens"`` shares its unit with
+        ``chunk_size``. Keep it small (e.g. 1-3).
     enable_gpu : bool, optional
         Whether to use GPU for FAISS, by default False
     enable_fts : bool, optional
@@ -851,7 +854,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
     @property
     def chunk_overlap(self) -> int:
-        """Return the chunk overlap between chunks"""
+        """Return the chunk overlap, in the unit of ``chunking_method`` (not tokens
+        unless the method is ``"tokens"``)."""
         return self._chunk_overlap
 
     @property

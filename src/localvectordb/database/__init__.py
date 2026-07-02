@@ -40,7 +40,12 @@ class LocalVectorDB(
     chunk_size : int, optional
         Maximum tokens per chunk, by default 500
     chunk_overlap : int, optional
-        Overlap between chunks, by default 1
+        Overlap between consecutive chunks, by default 1. Measured in the unit of
+        ``chunking_method`` (sentences for "sentences", tokens for "tokens", words
+        for "words", lines for "lines"/"code-blocks", characters for "characters",
+        paragraphs for "paragraphs"), NOT tokens — only "tokens" shares its unit
+        with ``chunk_size``. Keep it small (e.g. 1-3); a value larger than the
+        number of units a chunk holds produces highly redundant chunks.
     enable_gpu : bool, optional
         Whether to use GPU for FAISS, by default False
     enable_fts : bool, optional
