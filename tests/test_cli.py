@@ -1080,6 +1080,44 @@ class TestDbSearch:
         assert call_kwargs["k"] == 3
         assert call_kwargs["search_type"] == "hybrid"
 
+    def test_search_level_forwarded(self, runner, fake_config, config_file, tmp_db_folder):
+        """--search-level and --return-type sections should be forwarded to db.query."""
+        mock_db = MagicMock()
+        section_result = self._make_search_result()
+        section_result.type = "section"
+        mock_db.query.return_value = [section_result]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(
+                cli,
+                [
+                    "db",
+                    "testdb",
+                    "search",
+                    "query",
+                    "--search-level",
+                    "sections",
+                    "--return-type",
+                    "sections",
+                ],
+            )
+        assert result.exit_code == 0
+        call_kwargs = mock_db.query.call_args[1]
+        assert call_kwargs["search_level"] == "sections"
+        assert call_kwargs["return_type"] == "sections"
+
+    def test_search_level_defaults_to_chunks(self, runner, fake_config, config_file, tmp_db_folder):
+        """search_level should default to 'chunks' when the flag is omitted."""
+        mock_db = MagicMock()
+        mock_db.query.return_value = [self._make_search_result()]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "search", "query"])
+        assert result.exit_code == 0
+        assert mock_db.query.call_args[1]["search_level"] == "chunks"
+
     def test_search_error(self, runner, fake_config, config_file, tmp_db_folder):
         """Search errors should be reported cleanly."""
         mock_db = MagicMock()

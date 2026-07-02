@@ -167,8 +167,15 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
     "--return-type",
     "-r",
     default="documents",
-    type=click.Choice(["documents", "chunks", "context", "enriched"]),
-    help="Whether to return documents, chunks, chunks-with-context, or enriched chunks",
+    type=click.Choice(["documents", "chunks", "context", "enriched", "sections"]),
+    help="Whether to return documents, chunks, chunks-with-context, enriched chunks, or sections",
+)
+@click.option(
+    "--search-level",
+    default="chunks",
+    type=click.Choice(["chunks", "sections", "documents"]),
+    help="Which index to search: chunks (default), sections, or documents "
+    "(sections/documents require a database created with hierarchical_embeddings=True)",
 )
 @click.option("--score-threshold", default=0.0, type=float, help="Minimum score threshold")
 @click.option("--vector-weight", default=0.7, type=float, help="Weight for vector search in hybrid mode")
@@ -202,6 +209,7 @@ def search(
     limit,
     search_type,
     return_type,
+    search_level,
     score_threshold,
     vector_weight,
     context_window,
@@ -248,6 +256,7 @@ def search(
             query=query,
             search_type=search_type,
             return_type=return_type,
+            search_level=search_level,
             k=limit,
             score_threshold=score_threshold,
             filters=filter_dict,

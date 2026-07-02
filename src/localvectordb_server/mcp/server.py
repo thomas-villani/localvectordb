@@ -308,7 +308,8 @@ async def query_database(
     database_name: str,
     query: str,
     search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-    return_type: Literal["documents", "chunks", "context", "enriched"] = "documents",
+    return_type: Literal["documents", "chunks", "context", "enriched", "sections"] = "documents",
+    search_level: Literal["chunks", "sections", "documents"] = "chunks",
     k: int = 10,
     score_threshold: float = 0.0,
     filters: Optional[Dict] = None,
@@ -326,7 +327,10 @@ async def query_database(
         database_name: Name of the database to search
         query: Search query text
         search_type: Type of search (vector, keyword, hybrid)
-        return_type: Return documents, chunks, context, or enriched
+        return_type: Return documents, chunks, context, enriched, or sections
+            ('sections' requires a database created with hierarchical_embeddings=True)
+        search_level: Which index to query — 'chunks' (default), 'sections', or 'documents'
+            ('sections'/'documents' require a database created with hierarchical_embeddings=True)
         k: Number of results to return
         score_threshold: Minimum score threshold
         filters: Metadata filters (MongoDB-style)
@@ -353,6 +357,7 @@ async def query_database(
                 query=query,
                 search_type=search_type,
                 return_type=return_type,
+                search_level=search_level,
                 k=k,
                 score_threshold=score_threshold,
                 filters=filters,
@@ -369,6 +374,7 @@ async def query_database(
                 query=query,
                 search_type=search_type,
                 return_type=return_type,
+                search_level=search_level,
                 k=k,
                 score_threshold=score_threshold,
                 filters=filters,
