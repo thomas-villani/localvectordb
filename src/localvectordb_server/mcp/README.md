@@ -182,8 +182,9 @@ If not specified, all appropriate tools for the mode are enabled.
 - `list_databases` - List all available databases
 - `get_database_info` - Get database statistics and configuration
 - `query_database` - Search using vector, keyword, or hybrid search
+- `find_related_documents` - Find documents related to a given document (nearest neighbours)
 - `filter_documents` - Filter documents by metadata
-- `get_document` - Retrieve a specific document
+- `get_document` - Retrieve a document by ID, or a portion of it (`chunk`/`char_range`/`line_range`/`section`/`outline`)
 - `check_documents_exist` - Check if documents exist
 - `get_metadata_schema` - Get database metadata schema
 - `get_system_info` - Get system information

@@ -40,6 +40,12 @@ excluding the reference itself:
 
 Results are ``QueryResult`` objects with ``type="document"``, sorted by score descending.
 
+.. note::
+
+   This capability is also available outside the Python API: the CLI exposes it as
+   ``lvdb db <name> related <doc_id>`` (see :doc:`cli`) and the MCP server as the
+   ``find_related_documents`` tool (see :doc:`mcp`).
+
 **With filtering and thresholds:**
 
 .. code-block:: python

@@ -267,8 +267,9 @@ Register it with Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
-The server exposes focused tools — `query_database`, `filter_documents`,
-`get_document`, `list_databases`, and (in read-write mode) `upsert_documents`,
+The server exposes focused tools — `query_database`, `find_related_documents`,
+`filter_documents`, `get_document` (whole document or a chunk/range/section
+portion), `list_databases`, and (in read-write mode) `upsert_documents`,
 `create_database`, and more. Tool sets are configurable per deployment. See the
 [MCP documentation](https://thomas-villani.github.io/localvectordb/mcp.html) for
 the full tool list, configuration, and security guidance.
@@ -428,8 +429,11 @@ cat content.txt | lvdb db mydb add -
 # Search documents
 lvdb db mydb search "query text" --search-type hybrid --limit 10
 
-# Get document
+# Get document (or a portion: --chunk / --range / --lines / --section / --outline)
 lvdb db mydb get doc_1 --json --metadata
+
+# Find documents related to an existing one (nearest neighbours)
+lvdb db mydb related doc_1 --limit 5
 
 # Interactive shell
 lvdb db mydb shell

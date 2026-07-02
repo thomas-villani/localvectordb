@@ -1,6 +1,6 @@
 ---
 name: semantic-search
-description: Build and query semantic search systems with LocalVectorDB. Use when the user wants to create a vector database, add documents, perform semantic/keyword/hybrid search, or filter by metadata. Covers document ingestion, chunking, embedding, and retrieval.
+description: Build and query semantic search systems with LocalVectorDB. Use when the user wants to create a vector database, add documents, perform semantic/keyword/hybrid search, filter by metadata, or retrieve whole documents and sub-document portions (chunk/character/line ranges, sections, outlines). Covers document ingestion, chunking, embedding, and retrieval. Available from the Python API, the `lvdb` CLI, and the MCP server.
 license: MIT
 compatibility: Requires Python 3.12+, faiss-cpu, and an embedding provider (Ollama, OpenAI, or mock for testing).
 metadata:
@@ -166,6 +166,47 @@ db.delete("doc_python")
 db.delete(["doc_ml", "doc_vectordb"])
 ```
 
+## Sub-Document Retrieval
+
+`db.get()` returns a whole document. To retrieve only *part* of a document — a chunk
+range, a character/line slice, a named Markdown section, or its outline — use
+`get_document_portion()`. This is the same logic the CLI `get` command and the MCP
+`get_document` tool use, so all three surfaces behave identically.
+
+```python
+from localvectordb.document_portions import get_document_portion
+
+# Stored chunk(s) by 0-based index or inclusive range "M:N"
+portion = get_document_portion(db, "doc_python", chunk="2:5")
+print(portion.text)                       # selected chunks joined with blank lines
+print(portion.chunks[0]["index"],
+      portion.chunks[0]["position"])       # each chunk: index / content / position
+
+# Character slice "M:N" (0-based, end-exclusive)
+portion = get_document_portion(db, "doc_python", char_range="0:200")
+
+# Line range "M:N" (1-based, inclusive)
+portion = get_document_portion(db, "doc_python", line_range="10:20")
+
+# Body of a Markdown section by heading (case-insensitive)
+portion = get_document_portion(db, "doc_python", section="Installation")
+
+# Section outline (headings, levels, start/end lines)
+portion = get_document_portion(db, "doc_python", outline=True)
+for item in portion.outline:
+    print(item["level"], item["heading"], item["start_line"])
+```
+
+The selection arguments are mutually exclusive; passing more than one raises
+`ValueError`. With no argument the whole document is returned. The result is a
+`DocumentPortion` with:
+
+- `document` - the full source `Document` (for `id`, `metadata`, timestamps)
+- `mode` - which selection ran: `"document"`, `"chunk"`, `"range"`, `"lines"`, `"section"`, `"outline"`
+- `text` - the portion as text (`None` for `outline`; use `outline` instead)
+- `chunks` - `[{index, content, position}]` for `chunk` mode (else `None`)
+- `outline` - the outline items for `outline` mode (else `None`)
+
 ## Factory Pattern (Local or Remote)
 
 ```python
@@ -231,6 +272,32 @@ For testing or ephemeral use:
 ```python
 db = LocalVectorDB(name=":memory:", embedding_provider="mock", embedding_model="test")
 ```
+
+## CLI and MCP Access
+
+The same search-and-retrieve flow is available without writing Python, which is
+useful when driving LocalVectorDB from a shell or an MCP-connected agent.
+
+**CLI** (`lvdb`):
+
+```bash
+# Search (vector / keyword / hybrid); return chunks-with-context if wanted
+lvdb db my_docs search "how do neural networks learn?" --search-type hybrid --limit 5
+lvdb db my_docs search "optimization" --return-type context --context-window 2
+
+# Whole document, or a portion (mutually exclusive selectors)
+lvdb db my_docs get doc_python --json --metadata
+lvdb db my_docs get doc_python --section "Installation"
+lvdb db my_docs get doc_python --range 0:200        # also --chunk, --lines, --outline
+
+# Documents related to an existing one (nearest neighbours)
+lvdb db my_docs related doc_python --limit 5
+```
+
+**MCP tools** (read-only): `query_database` (search), `get_document` (whole document
+or a `chunk`/`char_range`/`line_range`/`section`/`outline` portion), and
+`find_related_documents` (nearest neighbours). See the `document-comparison` skill for
+the similarity/comparison side of the API.
 
 ## Lifecycle
 

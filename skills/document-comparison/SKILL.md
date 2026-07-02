@@ -1,6 +1,6 @@
 ---
 name: document-comparison
-description: Compare documents, find similar documents, build similarity matrices, and visualize embedding spaces with LocalVectorDB. Use when the user wants to measure document similarity, find nearest neighbors, detect partial overlap between documents, cluster documents, or create embedding visualizations.
+description: Compare documents, find similar/related documents, build similarity matrices, and visualize embedding spaces with LocalVectorDB. Use when the user wants to measure document similarity, find nearest neighbors ("more like this"), detect partial overlap between documents, cluster documents, or create embedding visualizations. Nearest-neighbour search is also available via the `lvdb ... related` CLI command and the MCP `find_related_documents` tool.
 license: MIT
 compatibility: Requires Python 3.12+, localvectordb. Visualization features require scikit-learn and matplotlib (pip install localvectordb[visualization]).
 metadata:
@@ -75,6 +75,18 @@ results = db.nearest_neighbors(
 ### Result type
 
 `nearest_neighbors()` returns `List[QueryResult]` with `type="document"`, sorted by score descending. The reference document is excluded from results.
+
+### CLI and MCP
+
+The same "find related documents" capability is available without Python:
+
+```bash
+# CLI: documents most related to a reference document
+lvdb db my_docs related ml --limit 3 --score-threshold 0.5
+```
+
+From an MCP-connected agent, call the read-only `find_related_documents` tool
+(arguments: `database_name`, `document_id`, `k`, `score_threshold`, `filters`).
 
 ## Pairwise Similarity Matrix
 
