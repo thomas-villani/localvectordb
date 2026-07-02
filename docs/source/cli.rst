@@ -887,6 +887,48 @@ Get Documents
    # JSON output
    lvdb db my_database get doc_1 --json
 
+By default ``get`` returns the whole document. The following flags return a
+**part** of the document instead and are mutually exclusive (only one may be
+given per invocation). They compose with ``--json``, ``--pretty``,
+``--metadata`` and ``--output``.
+
+.. code-block:: bash
+
+   # A single chunk (0-based index) or an inclusive chunk range, as indexed
+   lvdb db my_database get doc_1 --chunk 3
+   lvdb db my_database get doc_1 --chunk 2:5
+
+   # A character slice (0-based, end-exclusive — like Python's content[M:N])
+   lvdb db my_database get doc_1 --range 0:200
+
+   # A line range (1-based, inclusive)
+   lvdb db my_database get doc_1 --lines 10:20
+
+   # A section by its Markdown heading (case-insensitive)
+   lvdb db my_database get doc_1 --section "Installation"
+
+   # The document's section outline (headings, levels, start lines)
+   lvdb db my_database get doc_1 --outline
+
+**Selection options**:
+
+- ``--chunk M[:N]``: Return the persisted chunk at 0-based index ``M`` (as it
+  was stored at ingest), or the inclusive range ``M:N``. Open-ended forms
+  ``M:``/``:N``/``:`` are accepted. In ``--json`` mode each chunk is emitted
+  with its ``index``, ``content`` and full ``position``.
+- ``--range M:N``: Return the character slice ``content[M:N]`` (0-based,
+  end-exclusive). Open-ended forms are accepted.
+- ``--lines M:N``: Return lines ``M`` through ``N`` (1-based, inclusive).
+  Open-ended forms are accepted.
+- ``--section NAME``: Return the body of the section whose Markdown heading
+  matches ``NAME`` (case-insensitive). Sections are detected on the fly from
+  the document content (code-fence aware), so this works regardless of whether
+  hierarchical embeddings were enabled at ingest. If no heading matches, the
+  available headings are listed.
+- ``--outline``: Print the document's section outline as an indented tree
+  (or a JSON list of ``{index, heading, level, start_line, end_line}`` with
+  ``--json``).
+
 Update Documents
 """"""""""""""""
 

@@ -1,14 +1,18 @@
 import glob
 import json
 import os
+from typing import Any, List, Optional, Tuple
 
 import click
 
+from localvectordb.section_detection import SectionDetector
 from localvectordb_server.cli._utils import (
     EXIT_CODE_ERROR,
+    error,
     format_table,
     get_stdin_input,
     load_file_for_ingest,
+    parse_range_spec,
     print_db_stats,
 )
 
@@ -497,27 +501,158 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
+def _parse_range_or_error(spec: str, flag: str, *, allow_single: bool = False) -> Tuple[Optional[int], Optional[int]]:
+    """Parse a range spec, converting a ValueError into a CLI error+exit."""
+    try:
+        return parse_range_spec(spec, allow_single=allow_single)
+    except ValueError as e:
+        error(f"Invalid {flag} value: {e}")
+
+
+def _slice_lines(content: str, start: Optional[int], end: Optional[int]) -> str:
+    """Return the 1-based, inclusive line range ``start:end`` of ``content``."""
+    lines = content.splitlines(keepends=True)
+    lo = 1 if start is None else max(start, 1)
+    hi = len(lines) if end is None else end
+    return "".join(lines[lo - 1 : hi])
+
+
+def _select_section(content: str, name: str) -> str:
+    """Return the body of the section whose heading matches ``name``.
+
+    Sections are detected on the fly from ``content`` (Markdown headers,
+    code-fence aware), so this works regardless of whether hierarchical
+    embeddings were enabled at ingest. Errors out (listing available headings)
+    when no heading matches.
+    """
+    boundaries = SectionDetector().detect_sections(content)
+    target = name.strip().lower()
+    for b in boundaries:
+        if b.heading is not None and b.heading.strip().lower() == target:
+            return content[b.start_pos : b.end_pos]
+
+    headings = [b.heading for b in boundaries if b.heading]
+    if headings:
+        available = ", ".join(repr(h) for h in headings)
+        error(f"Section {name!r} not found. Available sections: {available}. Use --outline to list them.")
+    error(f"Section {name!r} not found: document has no Markdown headings.")
+
+
+def _build_outline(content: str) -> List[dict]:
+    """Build a flat outline (one entry per detected section) from ``content``."""
+    return [
+        {
+            "index": b.index,
+            "heading": b.heading,
+            "level": b.heading_level,
+            "start_line": b.start_line,
+            "end_line": b.end_line,
+        }
+        for b in SectionDetector().detect_sections(content)
+    ]
+
+
+def _format_outline_text(items: List[dict]) -> str:
+    """Render an outline as an indented tree keyed on heading level."""
+    if not items:
+        return "(no sections detected)"
+    lines = []
+    for item in items:
+        heading = item["heading"]
+        if heading is None:
+            indent, label = "", "(preamble)"
+        else:
+            indent = "  " * (max(item["level"] or 1, 1) - 1)
+            label = heading
+        loc = f" (L{item['start_line']})" if item["start_line"] is not None else ""
+        lines.append(f"{indent}- {label}{loc}")
+    return "\n".join(lines)
+
+
 @db_group.command("get")
 @click.argument("doc_id")
 @click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
 @click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
 @click.option("--metadata/--no-metadata", "-m", default=False, help="Enable/Disable retrieving document metadata")
 @click.option("--pretty", "-p", is_flag=True, default=False, help="Output results with title and formatting")
+@click.option(
+    "--chunk",
+    "chunk_spec",
+    default=None,
+    help="Return chunk(s) by 0-based index or inclusive range 'M:N' (e.g. --chunk 3 or --chunk 2:5)",
+)
+@click.option(
+    "--range",
+    "char_range",
+    default=None,
+    help="Return a character slice 'M:N' (0-based, end-exclusive) of the document",
+)
+@click.option(
+    "--lines",
+    "line_range",
+    default=None,
+    help="Return a line range 'M:N' (1-based, inclusive) of the document",
+)
+@click.option(
+    "--section",
+    "section_name",
+    default=None,
+    help="Return the section whose Markdown heading matches NAME (case-insensitive)",
+)
+@click.option(
+    "--outline",
+    is_flag=True,
+    default=False,
+    help="Print the document's section outline (headings, levels, start lines)",
+)
 @click.pass_context
-def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
+def get_document(
+    ctx,
+    doc_id,
+    output_as_json,
+    output,
+    metadata,
+    pretty,
+    chunk_spec,
+    char_range,
+    line_range,
+    section_name,
+    outline,
+):
     """
-    Retrieve document DOC_ID from database
+    Retrieve document DOC_ID (or a part of it) from database
 
-    Fetches the content and (optionally) metadata of a document by its ID. Supports output as
-    JSON, pretty formatting, and writing to a file.
+    Fetches the content and (optionally) metadata of a document by its ID. By default the whole
+    document is returned; the selection flags below return a part of it instead and are mutually
+    exclusive. Supports output as JSON, pretty formatting, and writing to a file.
 
     \b
     Examples:
         \b
         lvdb db mydb get doc_1
         lvdb db mydb get doc_1 --json --metadata
+        lvdb db mydb get doc_1 --chunk 2:5
+        lvdb db mydb get doc_1 --range 0:200
+        lvdb db mydb get doc_1 --lines 10:20
+        lvdb db mydb get doc_1 --section "Installation"
+        lvdb db mydb get doc_1 --outline
     """
     db = ctx.obj["db"]
+
+    # At most one selection mode may be active (default: whole document).
+    active_modes = [
+        name
+        for name, val in (
+            ("--chunk", chunk_spec),
+            ("--range", char_range),
+            ("--lines", line_range),
+            ("--section", section_name),
+            ("--outline", outline),
+        )
+        if val
+    ]
+    if len(active_modes) > 1:
+        error(f"Only one of {', '.join(active_modes)} may be used at once")
 
     try:
         doc = db.get(doc_id)
@@ -528,16 +663,61 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
         content = doc.content
         meta = doc.metadata
 
+        # Resolve the selection into printable text (+ a JSON-friendly payload).
+        title_suffix = ""
+        json_payload: Any = content
+        if chunk_spec is not None:
+            start, end = _parse_range_or_error(chunk_spec, "--chunk", allow_single=True)
+            all_chunks = db.get_chunks(doc_id)
+            if not all_chunks:
+                error(f"Document {doc_id} has no stored chunks")
+            max_index = all_chunks[-1].index
+            lo = 0 if start is None else start
+            hi = max_index if end is None else end
+            selected = [c for c in all_chunks if lo <= c.index <= hi]
+            if not selected:
+                error(f"No chunks in range {chunk_spec!r} (document has chunks 0..{max_index})")
+            title_suffix = f" (chunk {chunk_spec})"
+            content = "\n\n".join(c.content for c in selected)
+            json_payload = [
+                {"index": c.index, "content": c.content, "position": c.position.to_dict()} for c in selected
+            ]
+        elif char_range is not None:
+            start, end = _parse_range_or_error(char_range, "--range")
+            content = content[start:end]
+            title_suffix = f" (chars {char_range})"
+            json_payload = content
+        elif line_range is not None:
+            start, end = _parse_range_or_error(line_range, "--lines")
+            content = _slice_lines(content, start, end)
+            title_suffix = f" (lines {line_range})"
+            json_payload = content
+        elif section_name is not None:
+            content = _select_section(content, section_name)
+            title_suffix = f" (section {section_name!r})"
+            json_payload = content
+        elif outline:
+            outline_items = _build_outline(content)
+            content = _format_outline_text(outline_items)
+            title_suffix = " (outline)"
+            json_payload = outline_items
+
         if output_as_json:
-            output_dict = {"id": doc_id, "content": content}
+            output_dict: dict = {"id": doc_id}
+            if chunk_spec is not None:
+                output_dict["chunks"] = json_payload
+            elif outline:
+                output_dict["outline"] = json_payload
+            else:
+                output_dict["content"] = json_payload
             if metadata:
                 output_dict["metadata"] = meta
 
-            output_str = json.dumps(output_dict)
+            output_str = json.dumps(output_dict, default=str)
         else:
             output_str = ""
             if pretty:
-                title = f"Document: {doc_id}"
+                title = f"Document: {doc_id}{title_suffix}"
                 if not output:
                     output_str += click.style(title + "\n", fg="cyan")
                     output_str += click.style("=" * len(title), fg="cyan") + "\n"
@@ -565,6 +745,10 @@ def get_document(ctx, doc_id, output_as_json, output, metadata, pretty):
         else:
             click.echo(output_str)
 
+    except click.exceptions.Exit:
+        # Deliberate exits from error() (bad range, missing section/chunks, ...)
+        # must not be reclassified by the generic handler below.
+        raise
     except Exception as e:
         click.secho(f"Error retrieving document: {str(e)}", fg="bright_red")
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e

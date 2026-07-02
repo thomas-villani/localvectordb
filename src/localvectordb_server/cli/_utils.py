@@ -1,6 +1,6 @@
 import json
 import os
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union, get_type_hints
+from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn, Optional, Tuple, Union, get_type_hints
 
 import click
 
@@ -23,10 +23,63 @@ DEFAULT_CONFIG_FILE = ".lvdb-config"
 # red-message-then-exit pattern with a meaningful exit code.
 
 
-def error(message: str, exit_code: int = EXIT_CODE_ERROR) -> None:
+def error(message: str, exit_code: int = EXIT_CODE_ERROR) -> NoReturn:
     """Print an error to stderr (red) and exit with ``exit_code``."""
     click.secho(message, fg="red", err=True)
     raise click.exceptions.Exit(exit_code)
+
+
+def parse_range_spec(spec: str, *, allow_single: bool = False) -> Tuple[Optional[int], Optional[int]]:
+    """Parse a ``"M:N"`` range specification into a ``(start, end)`` tuple.
+
+    Accepts ``"M:N"``, open-ended ``"M:"`` / ``":N"`` / ``":"`` (``None`` marks an
+    open end), and -- when ``allow_single`` is true -- a bare ``"M"`` meaning the
+    single value ``(M, M)``.
+
+    Parameters
+    ----------
+    spec : str
+        The range specification to parse.
+    allow_single : bool, keyword-only
+        When true, a bare integer (no ``":"``) parses to ``(M, M)``. When false,
+        a bare integer is rejected.
+
+    Returns
+    -------
+    tuple[int | None, int | None]
+        The ``(start, end)`` bounds; ``None`` marks an open end.
+
+    Raises
+    ------
+    ValueError
+        If ``spec`` is empty, contains a non-integer part, has more than one
+        ``":"``, or is a bare value while ``allow_single`` is false.
+    """
+    if spec is None or spec.strip() == "":
+        raise ValueError("range specification is empty")
+    raw = spec.strip()
+
+    def _to_int(part: str, label: str) -> Optional[int]:
+        part = part.strip()
+        if part == "":
+            return None
+        try:
+            return int(part)
+        except ValueError as e:
+            raise ValueError(f"{label} of range must be an integer, got {part!r}") from e
+
+    if ":" not in raw:
+        if not allow_single:
+            raise ValueError(f"expected a range 'M:N', got {raw!r}")
+        value = _to_int(raw, "value")
+        if value is None:  # pragma: no cover - guarded by the empty check above
+            raise ValueError("range specification is empty")
+        return value, value
+
+    parts = raw.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"range must contain a single ':', got {raw!r}")
+    return _to_int(parts[0], "start"), _to_int(parts[1], "end")
 
 
 def warn(message: str) -> None:
