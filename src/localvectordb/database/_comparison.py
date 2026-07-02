@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 
@@ -97,7 +97,10 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
             if doc_faiss_id is None:
                 raise ValueError(f"Document '{doc_id}' has no document-level embedding")
             with self._faiss_lock.read_lock():
-                embedding: np.ndarray = self.document_index.reconstruct(int(doc_faiss_id))
+                # faiss's type stub annotates reconstruct() as returning torch.Tensor,
+                # but at runtime it returns an np.ndarray; cast to keep mypy honest
+                # across environments where torch is / isn't installed.
+                embedding = cast(np.ndarray, self.document_index.reconstruct(int(doc_faiss_id)))
             return embedding
 
         # Non-hierarchical: average chunk embeddings
