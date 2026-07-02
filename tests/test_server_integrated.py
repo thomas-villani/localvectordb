@@ -80,6 +80,8 @@ class DatabaseManagerMock:
         filters=None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ):
         names = database_names or list(self._created_dbs)
         all_results = {}

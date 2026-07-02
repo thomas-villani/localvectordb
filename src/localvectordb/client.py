@@ -1523,6 +1523,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         vector_weight: float = 0.7,
         # NEW PARAMETERS:
         context_window: int = 2,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -1575,6 +1577,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "score_threshold": score_threshold,
             "vector_weight": vector_weight,
             "context_window": context_window,
+            "context_unit": context_unit,
+            "context_truncate": context_truncate,
             "document_scoring_method": document_scoring_method,
             "document_scoring_options": document_scoring_options,
         }
@@ -2931,6 +2935,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -2984,6 +2990,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "score_threshold": score_threshold,
             "vector_weight": vector_weight,
             "context_window": context_window,
+            "context_unit": context_unit,
+            "context_truncate": context_truncate,
             "semantic_dedup_threshold": semantic_dedup_threshold,
             "document_scoring_method": document_scoring_method,
             "document_scoring_options": document_scoring_options,
@@ -3361,6 +3369,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         vector_weight: float = 0.7,
         batch_size: int = 10,
         context_window: int = 2,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
         document_scoring_method: str = "frequency_boost",
         document_scoring_options: Optional[Dict[str, Any]] = None,
     ):
@@ -3398,6 +3408,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "vector_weight": vector_weight,
             "batch_size": batch_size,
             "context_window": context_window,
+            "context_unit": context_unit,
+            "context_truncate": context_truncate,
             "document_scoring_method": document_scoring_method,
             "document_scoring_options": document_scoring_options,
         }
@@ -3455,6 +3467,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         vector_weight: float = 0.7,
         batch_size: int = 10,
         context_window: int = 2,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
         document_scoring_method: str = "frequency_boost",
         document_scoring_options: Optional[Dict[str, Any]] = None,
     ):
@@ -3471,6 +3485,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "vector_weight": vector_weight,
             "batch_size": batch_size,
             "context_window": context_window,
+            "context_unit": context_unit,
+            "context_truncate": context_truncate,
             "document_scoring_method": document_scoring_method,
             "document_scoring_options": document_scoring_options,
         }

@@ -107,6 +107,8 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
     vector_weight = search_params.get("vector_weight", 0.7)
 
     context_window = search_params.get("context_window", 2)
+    context_unit = search_params.get("context_unit", "chunks")
+    context_truncate = search_params.get("context_truncate", False)
     semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
     document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
     document_scoring_options = search_params.get("document_scoring_options", None)
@@ -133,6 +135,8 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
             filters=filters,
             vector_weight=vector_weight,
             context_window=context_window,
+            context_unit=context_unit,
+            context_truncate=context_truncate,
             semantic_dedup_threshold=semantic_dedup_threshold,
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
@@ -554,6 +558,8 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
                 filters=body.filters,
                 vector_weight=body.vector_weight,
                 context_window=body.context_window,
+                context_unit=body.context_unit,
+                context_truncate=body.context_truncate,
             )
             for db_name, db_results in results.items():
                 results[db_name] = [serialize_query_result(result) for result in db_results]

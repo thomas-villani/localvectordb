@@ -308,12 +308,14 @@ async def query_database(
     database_name: str,
     query: str,
     search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-    return_type: Literal["documents", "chunks", "context"] = "documents",
+    return_type: Literal["documents", "chunks", "context", "enriched"] = "documents",
     k: int = 10,
     score_threshold: float = 0.0,
     filters: Optional[Dict] = None,
     vector_weight: float = 0.7,
     context_window: int = 2,
+    context_unit: Literal["chunks", "tokens", "words", "characters"] = "chunks",
+    context_truncate: bool = False,
     semantic_dedup_threshold: Optional[float] = None,
     document_scoring_method: str = "frequency_boost",
 ) -> Dict[str, Any]:
@@ -324,12 +326,17 @@ async def query_database(
         database_name: Name of the database to search
         query: Search query text
         search_type: Type of search (vector, keyword, hybrid)
-        return_type: Return documents, chunks, or context
+        return_type: Return documents, chunks, context, or enriched
         k: Number of results to return
         score_threshold: Minimum score threshold
         filters: Metadata filters (MongoDB-style)
         vector_weight: Weight for vector search in hybrid mode (0-1)
-        context_window: Window size for context return type
+        context_window: Size of the assembled context for return_type='context'/'enriched',
+            measured in context_unit (chunk count when 'chunks', otherwise a
+            token/word/character budget)
+        context_unit: Unit for context_window ('chunks', 'tokens', 'words', 'characters')
+        context_truncate: Hard-truncate the assembled context to exactly the budget
+            (only applies with a non-chunk context_unit)
         semantic_dedup_threshold: Threshold for semantic deduplication
         document_scoring_method: Method for scoring documents
 
@@ -351,6 +358,8 @@ async def query_database(
                 filters=filters,
                 vector_weight=vector_weight,
                 context_window=context_window,
+                context_unit=context_unit,
+                context_truncate=context_truncate,
                 semantic_dedup_threshold=semantic_dedup_threshold,
                 document_scoring_method=document_scoring_method,
             )
@@ -365,6 +374,8 @@ async def query_database(
                 filters=filters,
                 vector_weight=vector_weight,
                 context_window=context_window,
+                context_unit=context_unit,
+                context_truncate=context_truncate,
                 semantic_dedup_threshold=semantic_dedup_threshold,
                 document_scoring_method=document_scoring_method,
             )

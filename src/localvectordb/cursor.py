@@ -49,6 +49,8 @@ class CursorConfig:
     document_scoring_method: DocumentScoringMethod
     document_scoring_options: Optional[dict]
     total_k: int
+    context_unit: str = "chunks"
+    context_truncate: bool = False
 
 
 @dataclass
@@ -298,9 +300,13 @@ class QueryCursor:
 
         # Apply context/enrichment post-processing per-batch
         if self._config.return_type == "context":
-            results = self._db._add_context_window(results, self._config.context_window)
+            results = self._db._add_context_window(
+                results, self._config.context_window, self._config.context_unit, self._config.context_truncate
+            )
         elif self._config.return_type == "enriched":
-            results = self._db._enrich_with_intra_doc_context(results, self._config.context_window)
+            results = self._db._enrich_with_intra_doc_context(
+                results, self._config.context_window, self._config.context_unit, self._config.context_truncate
+            )
 
         if not results and self._position < len(self._candidates):
             # Filters removed everything in this batch; fetch more
@@ -403,16 +409,19 @@ class QueryCursor:
 
             results = [r for r in results if matches_metadata_filter(r.metadata, self._config.filters)]
 
+        cw = self._config.context_window
+        cu = self._config.context_unit
+        ct = self._config.context_truncate
         if self._config.return_type == "context":
             if hasattr(self._db, "_add_context_window_async"):
-                results = await self._db._add_context_window_async(results, self._config.context_window)
+                results = await self._db._add_context_window_async(results, cw, cu, ct)
             else:
-                results = self._db._add_context_window(results, self._config.context_window)
+                results = self._db._add_context_window(results, cw, cu, ct)
         elif self._config.return_type == "enriched":
             if hasattr(self._db, "_enrich_with_intra_doc_context_async"):
-                results = await self._db._enrich_with_intra_doc_context_async(results, self._config.context_window)
+                results = await self._db._enrich_with_intra_doc_context_async(results, cw, cu, ct)
             else:
-                results = self._db._enrich_with_intra_doc_context(results, self._config.context_window)
+                results = self._db._enrich_with_intra_doc_context(results, cw, cu, ct)
 
         if not results and self._position < len(self._candidates):
             return await self._fetch_chunk_batch_async(batch_size)

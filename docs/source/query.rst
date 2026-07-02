@@ -132,22 +132,64 @@ Returns matching chunks enhanced with surrounding chunks for better readability.
 
     # Get chunks with surrounding context
     results = db.query(
-        "deep learning", 
+        "deep learning",
         return_type="context",
         context_window=2  # Include 2 chunks before/after
     )
-    
+
     for result in results:
         print(f"Context: {result.id}")
         print(f"Original chunk: {result.metadata['_original_chunk_index']}")
         print(f"Context spans {result.metadata['_context_chunk_count']} chunks")
         print(f"Content: {result.content}")
 
+**Sizing context by tokens, words, or characters:**
+
+By default ``context_window`` counts *chunks*. Set ``context_unit`` to
+``"tokens"``, ``"words"``, or ``"characters"`` to instead treat ``context_window``
+as an approximate budget for the assembled context. Neighbouring chunks are added
+whole and greedily (the matched chunk is always kept) until the next one would
+exceed the budget, so the returned content never overshoots — unless a *single*
+chunk is already larger than the budget.
+
+.. code-block:: python
+
+    # "Give me roughly 500 tokens of context around each match"
+    results = db.query(
+        "deep learning",
+        return_type="context",
+        context_window=500,
+        context_unit="tokens",   # or "words" / "characters"
+    )
+
+Because whole chunks are kept, the result can fall short of the budget by up to
+one chunk. To guarantee a hard upper bound (for example when packing an LLM
+context window), set ``context_truncate=True`` — the assembled text is then cut to
+exactly the budget (tokens via ``tiktoken``; words/characters back off to a
+whitespace boundary). Truncated results are flagged with
+``metadata["_context_truncated"] = True`` and their end position becomes
+approximate.
+
+.. code-block:: python
+
+    results = db.query(
+        "deep learning",
+        return_type="context",
+        context_window=500,
+        context_unit="tokens",
+        context_truncate=True,   # never exceed 500 tokens, even for one big chunk
+    )
+
+The chosen unit is always recorded on each result as
+``metadata["_context_unit"]``.
+
 **When to use:**
 - Need readable context around matches
 - Preserving document flow and coherence
 - Creating human-readable excerpts
 - When individual chunks lack sufficient context
+- Packing a fixed token/character budget (e.g. an LLM prompt) — use
+  ``context_unit`` + ``context_truncate``
 
 ``return_type="enriched"``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -158,9 +200,17 @@ Returns matching chunks enhanced with surrounding chunks for better readability.
 
     # Get semantically enriched results
     results = db.query(
-        "machine learning", 
+        "machine learning",
         return_type="enriched",
         context_window=3  # Include up to 3 similar chunks
+    )
+
+    # ...or size the enrichment by a token/word/character budget instead:
+    results = db.query(
+        "machine learning",
+        return_type="enriched",
+        context_window=400,
+        context_unit="tokens",   # add the most-similar chunks that fit in ~400 tokens
     )
     
     for result in results:
@@ -201,7 +251,15 @@ Search Type Specific
 * ``vector_weight`` (float, default=0.7): Weight for vector vs keyword results (0.0-1.0)
 
 **Context and Enriched:**
-* ``context_window`` (int, default=2): Number of surrounding/similar chunks to include
+* ``context_window`` (int, default=2): Size of the assembled context, measured in
+  ``context_unit``. In the default ``"chunks"`` unit this is the number of
+  surrounding/similar chunks to include; with a budget unit it is an approximate
+  token/word/character budget.
+* ``context_unit`` (str, default="chunks"): One of ``"chunks"``, ``"tokens"``,
+  ``"words"``, ``"characters"``. Selects how ``context_window`` is interpreted.
+* ``context_truncate`` (bool, default=False): With a budget unit, hard-truncate the
+  assembled context to exactly the budget (otherwise whole chunks are kept and the
+  result may fall short of the budget).
 
 **Document Return Type:**
 * ``document_scoring_method`` (str, default="frequency_boost"): How to aggregate chunk scores
