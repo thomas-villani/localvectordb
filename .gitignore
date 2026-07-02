@@ -31,7 +31,8 @@ benchmarks/results/
 # Project notes / scratch (kept local, never published)
 etc/
 competitive-analysis.md
-todo-v2.md
+todo.md
+npm-publishing.md
 remote-layer-streaming.md
 claude-code-review-*.md
 .pytest_cache/
