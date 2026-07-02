@@ -405,6 +405,52 @@ class TestMCPManager:
         assert manager.databases == {}
 
 
+@pytest.mark.unit
+class TestConfigExampleSync:
+    """``lvdb mcp config-example`` output must stay in sync with ``MCPConfig`` defaults."""
+
+    def test_example_roundtrips_to_defaults(self, tmp_path):
+        import tomllib
+
+        from localvectordb_server.cli._mcp import _render_example_config
+
+        text = _render_example_config()
+
+        # It must be valid TOML...
+        tomllib.loads(text)
+
+        # ...and round-trip through MCPConfig.from_file back to the canonical
+        # defaults, so a change to MCPConfig can never silently drift from the
+        # emitted example the way a hardcoded literal did.
+        path = tmp_path / "mcp-config.toml"
+        path.write_text(text, encoding="utf-8")
+        loaded = MCPConfig.from_file(str(path))
+        defaults = MCPConfig()
+
+        assert loaded.db_defaults == defaults.db_defaults
+        assert loaded.remote_defaults == defaults.remote_defaults
+        assert loaded.mode == defaults.mode
+        assert loaded.log_level == defaults.log_level
+        assert loaded.max_concurrent_operations == defaults.max_concurrent_operations
+        assert loaded.operation_timeout == defaults.operation_timeout
+
+    def test_example_lists_all_tools(self):
+        from localvectordb_server.cli._mcp import _render_example_config
+
+        text = _render_example_config()
+        defaults = MCPConfig()
+        for tool in defaults.read_only_tools + defaults.write_tools:
+            assert f'"{tool}"' in text, f"config-example missing tool: {tool}"
+
+    def test_sentences_overlap_is_sane(self):
+        # Guards the specific bug this class was added for: overlap for the
+        # "sentences" method is counted in *sentences*, so it must stay small
+        # (a 500-token chunk holds far fewer than 50 sentences).
+        defaults = MCPConfig()
+        if defaults.db_defaults["chunking_method"] == "sentences":
+            assert defaults.db_defaults["chunk_overlap"] <= 5
+
+
 # ---------------------------------------------------------------------------
 # Tool function tests
 # ---------------------------------------------------------------------------

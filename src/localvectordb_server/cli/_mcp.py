@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
 
@@ -210,44 +211,56 @@ def tools():
         click.echo(f"    {description}")
 
 
-@mcp_commands.command()
-@click.option("--output", default="-", help="Output file (default: stdout)")
-def config_example(output):
-    """Generate example MCP configuration file"""
-    example_config = """# LocalVectorDB MCP Server Configuration
+def _toml_scalar(value) -> str:
+    """Render a Python scalar as its TOML literal (bools lowercased, strings quoted)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
+
+
+def _commented_tool_list(name: str, items: list) -> str:
+    """Render a commented-out TOML array (one item per line) for the example config."""
+    lines = [f"# {name} = ["]
+    lines += [f'#     "{item}",' for item in items[:-1]]
+    if items:
+        lines.append(f'#     "{items[-1]}"')
+    lines.append("# ]")
+    return "\n".join(lines)
+
+
+def _render_example_config(config: Optional[MCPConfig] = None) -> str:
+    """Render an example MCP config TOML from ``MCPConfig``'s canonical defaults.
+
+    Values are sourced from a live :class:`MCPConfig` rather than hardcoded, so the
+    ``lvdb mcp config-example`` output can never drift from the real defaults the way
+    a duplicated literal would. The ``[defaults]`` and ``[remote]`` tables are emitted
+    field-for-field from ``db_defaults`` / ``remote_defaults``, so new keys appear
+    automatically.
+    """
+    cfg = config or MCPConfig()
+
+    defaults_lines = "\n".join(f"{k} = {_toml_scalar(v)}" for k, v in cfg.db_defaults.items())
+    remote_lines = "\n".join(f"{k} = {_toml_scalar(v)}" for k, v in cfg.remote_defaults.items())
+
+    return f"""# LocalVectorDB MCP Server Configuration
 
 [mcp]
-mode = "read-only"  # or "read-write"
-log_level = "INFO"
-log_operations = true
-max_concurrent_operations = 10
-operation_timeout = 300
+mode = {_toml_scalar(cfg.mode)}  # or "read-write"
+log_level = {_toml_scalar(cfg.log_level)}
+log_operations = {_toml_scalar(cfg.log_operations)}
+max_concurrent_operations = {cfg.max_concurrent_operations}
+operation_timeout = {cfg.operation_timeout}
 
 # Optional: Customize which tools are available (defaults shown)
-# read_only_tools = [
-#     "list_databases",
-#     "get_database_info",
-#     "query_database",
-#     "find_related_documents",
-#     "filter_documents",
-#     "get_document",
-#     "check_documents_exist",
-#     "get_metadata_schema",
-#     "get_system_info"
-# ]
+{_commented_tool_list("read_only_tools", cfg.read_only_tools)}
 
-# write_tools = [
-#     "create_database",
-#     "delete_database",
-#     "upsert_documents",
-#     "update_document",
-#     "delete_document",
-#     "update_metadata_schema"
-# ]
+{_commented_tool_list("write_tools", cfg.write_tools)}
 
 [databases]
 # Root directory for local databases
-root = "./databases"
+root = {_toml_scalar(cfg.databases_root)}
 
 # Map specific database names to paths or URLs
 # [databases.map]
@@ -256,20 +269,19 @@ root = "./databases"
 
 [defaults]
 # Default parameters for database creation
-embedding_provider = "ollama"
-embedding_model = "nomic-embed-text"
-chunk_size = 500
-chunk_overlap = 50
-chunking_method = "sentences"
-enable_fts = true
-enable_gpu = false
+{defaults_lines}
 
 [remote]
 # Settings for remote database connections
-timeout = 30
-max_retries = 3
-retry_delay = 1.0
+{remote_lines}
 """
+
+
+@mcp_commands.command()
+@click.option("--output", default="-", help="Output file (default: stdout)")
+def config_example(output):
+    """Generate example MCP configuration file"""
+    example_config = _render_example_config()
 
     if output == "-":
         click.echo(example_config)

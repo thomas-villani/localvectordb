@@ -29,7 +29,9 @@ class MCPConfig:
             "embedding_provider": "ollama",
             "embedding_model": "nomic-embed-text",
             "chunk_size": 500,
-            "chunk_overlap": 50,
+            # Overlap is in *sentences* for the "sentences" method (not tokens),
+            # so keep it small — matches the core LocalVectorDB default.
+            "chunk_overlap": 1,
             "chunking_method": "sentences",
             "enable_fts": True,
             "enable_gpu": False,
