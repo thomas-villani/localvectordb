@@ -84,7 +84,7 @@ await db.delete("doc-id");        // single
 await db.delete(["id1", "id2"]);  // batch
 await db.count();
 await db.exists(["id1", "id2"]);
-await db.list({ page: 1, limit: 20 });
+await db.list({ offset: 0, limit: 20 });
 
 // Search
 await db.query("search text", { search_type: "hybrid", k: 10 });

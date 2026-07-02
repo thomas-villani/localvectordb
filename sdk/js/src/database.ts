@@ -134,7 +134,7 @@ export class DatabaseHandle {
     id: string,
     options: { content?: string; metadata?: Record<string, unknown> },
   ): Promise<UpdateResponse> {
-    return this.http.put<UpdateResponse>(
+    return this.http.patch<UpdateResponse>(
       `${this.prefix}/documents/${encodeURIComponent(id)}`,
       options,
     );
@@ -181,7 +181,8 @@ export class DatabaseHandle {
   /** List documents with optional pagination. */
   async list(options?: ListDocumentsOptions): Promise<ListDocumentsResponse> {
     const params = new URLSearchParams();
-    if (options?.page !== undefined) params.set("page", String(options.page));
+    if (options?.offset !== undefined)
+      params.set("offset", String(options.offset));
     if (options?.limit !== undefined)
       params.set("limit", String(options.limit));
     if (options?.ids !== undefined) params.set("ids", options.ids.join(","));
@@ -249,7 +250,7 @@ export class DatabaseHandle {
     options?: FilterOptions,
   ): Promise<FilterResponse> {
     return this.http.post<FilterResponse>(`${this.prefix}/filter`, {
-      where,
+      filters: where,
       ...options,
     });
   }
@@ -410,7 +411,7 @@ export class DatabaseHandle {
   /** Run an incremental VACUUM. */
   async incrementalVacuum(pages?: number): Promise<MaintenanceResponse> {
     return this.http.post<MaintenanceResponse>(
-      `${this.prefix}/maintenance/incremental_vacuum`,
+      `${this.prefix}/maintenance/incremental-vacuum`,
       pages !== undefined ? { pages } : {},
     );
   }
@@ -428,7 +429,7 @@ export class DatabaseHandle {
     thresholdMb?: number,
   ): Promise<MaintenanceResponse> {
     return this.http.post<MaintenanceResponse>(
-      `${this.prefix}/maintenance/checkpoint_if_large`,
+      `${this.prefix}/maintenance/checkpoint-if-large`,
       thresholdMb !== undefined ? { threshold_mb: thresholdMb } : {},
     );
   }

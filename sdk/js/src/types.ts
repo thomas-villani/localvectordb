@@ -152,7 +152,14 @@ export interface InsertOptions extends UpsertOptions {
   errors?: "raise" | "ignore";
 }
 
-export interface QueryOptions {
+/**
+ * Options common to every search surface.
+ *
+ * Note: `semantic_filters` lives on {@link QueryOptions} only. The server accepts
+ * it on `/query` and `/search` (global) but rejects it on the streaming and
+ * multi-column endpoints, whose request bodies forbid unknown fields.
+ */
+export interface BaseQueryOptions {
   search_type?: SearchType;
   return_type?: ReturnType;
   k?: number;
@@ -163,6 +170,9 @@ export interface QueryOptions {
   semantic_dedup_threshold?: number;
   document_scoring_method?: DocumentScoringMethod;
   document_scoring_options?: Record<string, unknown>;
+}
+
+export interface QueryOptions extends BaseQueryOptions {
   semantic_filters?: SemanticFilter[];
 }
 
@@ -173,11 +183,11 @@ export interface SemanticFilter {
   metric?: string;
 }
 
-export interface QueryMultiColumnOptions extends QueryOptions {
+export interface QueryMultiColumnOptions extends BaseQueryOptions {
   columns?: string[];
 }
 
-export interface StreamQueryOptions extends QueryOptions {
+export interface StreamQueryOptions extends BaseQueryOptions {
   batch_size?: number;
 }
 
@@ -188,7 +198,7 @@ export interface FilterOptions {
 }
 
 export interface ListDocumentsOptions {
-  page?: number;
+  offset?: number;
   limit?: number;
   ids?: string[];
 }
@@ -198,7 +208,11 @@ export interface CountOptions {
 }
 
 export interface UpsertChunksOptions {
-  metadata?: Record<string, unknown> | Record<string, unknown>[];
+  /**
+   * Metadata applied to the reconstructed documents, keyed by document id.
+   * The chunk endpoints take a single mapping (not a per-item array).
+   */
+  metadata?: Record<string, unknown>;
   batch_size?: number;
   similarity_threshold?: number;
 }
@@ -252,7 +266,8 @@ export interface FactCheckOptions {
   similarity_threshold?: number;
   min_grounding_score?: number;
   search_type?: SearchType;
-  top_k?: number;
+  /** Number of evidence documents to retrieve (sent as `k` on the wire). */
+  k?: number;
 }
 
 export interface GlobalSearchOptions extends QueryOptions {
@@ -287,7 +302,6 @@ export interface UploadOptions {
   errors?: "raise" | "ignore";
   similarity_threshold?: number;
   use_filename_as_id?: boolean;
-  extractor_kwargs?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,30 +345,25 @@ export interface SystemResourcesResponse {
 export interface UpsertResponse {
   message: string;
   ids: string[];
-  status: string;
 }
 
 export interface InsertResponse {
   message: string;
   ids: string[];
-  status: string;
 }
 
 export interface UpdateResponse {
   message: string;
-  status: string;
   updated: boolean;
 }
 
 export interface DeleteResponse {
   message: string;
-  status: string;
   deleted_count: number;
 }
 
 export interface BatchDeleteResponse {
   message: string;
-  status: string;
   deleted_count: number;
   failed_ids: string[];
 }
@@ -363,21 +372,30 @@ export interface CountResponse {
   count: number;
 }
 
+/**
+ * `exists` is a positional array aligned with `ids` (index i corresponds to
+ * `ids[i]`), not a keyed map.
+ */
 export interface ExistsResponse {
-  exists: Record<string, boolean>;
+  exists: boolean[];
   ids: string[];
+}
+
+export interface PageInfo {
+  limit: number;
+  offset: number;
+  total: number;
+  has_more: boolean;
 }
 
 export interface ListDocumentsResponse {
   documents: Document[];
-  pagination?: {
-    current_page: number;
-    total_pages: number;
-    page_size: number;
-    total_count: number;
-    has_previous: boolean;
-    has_next: boolean;
-  };
+  /** Present when listing (no explicit `ids`). */
+  pagination?: PageInfo;
+  /** Present when fetching specific `ids`. */
+  returned_ids?: string[];
+  /** Present when fetching specific `ids`. */
+  missing_ids?: string[];
 }
 
 export interface QueryResponse {
