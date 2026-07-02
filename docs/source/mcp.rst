@@ -287,7 +287,7 @@ Example ``mcp_config.toml``:
    embedding_provider = "ollama"
    embedding_model = "nomic-embed-text"
    chunk_size = 500
-   chunk_overlap = 50
+   chunk_overlap = 1
    chunking_method = "sentences"
    enable_fts = true
    enable_gpu = false
