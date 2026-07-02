@@ -1094,3 +1094,84 @@ class TestRemoteRerankerWiring:
     async def test_query_async_rejects_reranker_instance(self, mock_db):
         with pytest.raises(ValueError, match="reranker_config"):
             await mock_db.query_async("test query", reranker=object())
+
+
+class TestRemoteContractRegressions:
+    """Regression tests for RemoteVectorDB<->server HTTP-contract bugs found in the
+    pre-release audit. Each asserts the exact verb/path/payload/response handling so a
+    future contract drift fails in CI -- these endpoints are otherwise unexercised."""
+
+    @pytest.fixture
+    def mock_db(self, mock_httpx_client):
+        return RemoteVectorDB("test_db", api_key="test-key")
+
+    def test_analyze_system_resources_path_and_unwrap(self, mock_httpx_client, mock_db):
+        # Was GET /api/system/resources (missing /v1 -> 404) and returned the envelope.
+        mock_httpx_client.request.return_value.json.return_value = {
+            "system_resources": {"cpu_count": 8, "memory_gb": 16},
+            "status": "success",
+        }
+        result = mock_db.analyze_system_resources()
+        method, url = mock_httpx_client.request.call_args[0][:2]
+        assert method == "GET"
+        assert url.endswith("/api/v1/system/resources")
+        assert result == {"cpu_count": 8, "memory_gb": 16}
+
+    def test_get_sqlite_tuning_unwraps_tuning(self, mock_httpx_client, mock_db):
+        # Was returning the {database, tuning, status} envelope instead of the inner config.
+        mock_httpx_client.request.return_value.json.return_value = {
+            "database": "test_db",
+            "tuning": {"profile": "balanced", "overrides": {}, "pragmas": {}},
+            "status": "success",
+        }
+        result = mock_db.get_sqlite_tuning()
+        assert result == {"profile": "balanced", "overrides": {}, "pragmas": {}}
+        assert "database" not in result and "status" not in result
+
+    def test_auto_tune_calls_server_and_unwraps(self, mock_httpx_client, mock_db):
+        # Was inherited from TuningMixin -> profiled the CLIENT machine, never hit the server.
+        mock_httpx_client.request.return_value.json.return_value = {
+            "database": "test_db",
+            "recommendation": {"profile_name": "fast_ingest", "applied": False},
+            "status": "success",
+        }
+        result = mock_db.auto_tune(workload={"workload_type": "write_heavy"}, apply=False)
+        method, url = mock_httpx_client.request.call_args[0][:2]
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert method == "POST"
+        assert url.endswith("/api/v1/test_db/auto-tune")
+        assert payload == {"workload": {"workload_type": "write_heavy"}, "apply": False}
+        assert result == {"profile_name": "fast_ingest", "applied": False}
+
+    def test_auto_tune_interactive_rejected(self, mock_db):
+        with pytest.raises(ValueError, match="interactive"):
+            mock_db.auto_tune(interactive=True)
+
+    def test_update_metadata_schema_resolves_common_name(self, mock_httpx_client, mock_db):
+        # A common-schema NAME must be resolved to a field dict client-side; the server
+        # /schema endpoint types metadata_schema as an object and 422s on a bare string.
+        mock_httpx_client.request.return_value.json.return_value = {
+            "message": "ok",
+            "status": "success",
+            "changes": {},
+            "new_schema": {},
+        }
+        mock_db.update_metadata_schema("research_papers")
+        method, url = mock_httpx_client.request.call_args[0][:2]
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert method == "PUT"
+        assert url.endswith("/api/v1/test_db/schema")
+        assert isinstance(payload["metadata_schema"], dict) and payload["metadata_schema"]
+        assert all(isinstance(v, dict) and "type" in v for v in payload["metadata_schema"].values())
+
+    def test_update_metadata_schema_unknown_name_raises(self, mock_db):
+        with pytest.raises(ValueError, match="Unknown common schema"):
+            mock_db.update_metadata_schema("not_a_real_schema")
+
+    def test_upload_extractor_kwargs_rejected(self, tmp_path, mock_db):
+        # extractor_kwargs cannot cross HTTP (server governs extraction); must fail loudly
+        # rather than silently drop the user's options.
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello world")
+        with pytest.raises(ValueError, match="extractor_kwargs"):
+            mock_db.upsert_from_file(str(sample), extractor_kwargs={"foo": "bar"})
