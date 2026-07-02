@@ -65,9 +65,6 @@ export async function uploadFiles(
       options.use_filename_as_id ? "true" : "false",
     );
   }
-  if (options?.extractor_kwargs !== undefined) {
-    formData.append("extractor_kwargs", JSON.stringify(options.extractor_kwargs));
-  }
 
   const response = await httpClient.postRaw(
     `/api/v1/${encodeURIComponent(dbName)}/upload`,

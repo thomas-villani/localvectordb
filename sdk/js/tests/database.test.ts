@@ -121,17 +121,17 @@ describe("DatabaseHandle", () => {
   // Update
   // -----------------------------------------------------------------------
 
-  it("update() calls PUT /documents/{id}", async () => {
+  it("update() calls PATCH /documents/{id}", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
-      jsonResponse({ message: "updated", status: "success", updated: true }),
+      jsonResponse({ message: "updated", updated: true }),
     );
 
     await db.update("doc1", { content: "new content" });
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
     expect(url).toBe("http://localhost:5000/api/v1/testdb/documents/doc1");
-    expect(init?.method).toBe("PUT");
+    expect(init?.method).toBe("PATCH");
   });
 
   // -----------------------------------------------------------------------
@@ -179,23 +179,27 @@ describe("DatabaseHandle", () => {
   it("exists() calls POST /documents/exists", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
-      jsonResponse({ exists: { doc1: true, doc2: false }, ids: ["doc1", "doc2"] }),
+      jsonResponse({ exists: [true, false], ids: ["doc1", "doc2"] }),
     );
 
     const result = await db.exists(["doc1", "doc2"]);
-    expect(result.exists["doc1"]).toBe(true);
+    expect(result.exists[0]).toBe(true);
+    expect(result.exists[1]).toBe(false);
   });
 
   it("list() builds query params", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
-      jsonResponse({ documents: [], pagination: null }),
+      jsonResponse({
+        documents: [],
+        pagination: { limit: 10, offset: 20, total: 0, has_more: false },
+      }),
     );
 
-    await db.list({ page: 2, limit: 10 });
+    await db.list({ offset: 20, limit: 10 });
 
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toContain("page=2");
+    expect(url).toContain("offset=20");
     expect(url).toContain("limit=10");
   });
 
@@ -219,7 +223,7 @@ describe("DatabaseHandle", () => {
     expect(body.k).toBe(5);
   });
 
-  it("filter() sends where + options", async () => {
+  it("filter() sends filters + options", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
       jsonResponse({ documents: [], count: 0 }),
@@ -230,7 +234,8 @@ describe("DatabaseHandle", () => {
     const body = JSON.parse(
       vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string,
     );
-    expect(body.where).toEqual({ author: "Alice" });
+    expect(body.filters).toEqual({ author: "Alice" });
+    expect(body.where).toBeUndefined();
     expect(body.order_by).toBe("created_at DESC");
   });
 
@@ -297,12 +302,52 @@ describe("DatabaseHandle", () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(jsonResponse({ verdict: "supported" }));
 
-    await db.factCheck("The earth is round", { llm_provider: "anthropic" });
+    await db.factCheck("The earth is round", { llm_provider: "anthropic", k: 5 });
 
     const body = JSON.parse(
       vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string,
     );
     expect(body.text).toBe("The earth is round");
     expect(body.llm_provider).toBe("anthropic");
+    // Top-k is sent as `k` on the wire (server rejects `top_k`).
+    expect(body.k).toBe(5);
+    expect(body.top_k).toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // Maintenance (hyphenated server paths)
+  // -----------------------------------------------------------------------
+
+  it("incrementalVacuum() posts to /maintenance/incremental-vacuum", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ database: "testdb", message: "ok", status: "success" }),
+    );
+
+    await db.incrementalVacuum(500);
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/testdb/maintenance/incremental-vacuum",
+    );
+    expect(init?.method).toBe("POST");
+  });
+
+  it("checkpointIfWalLarge() posts to /maintenance/checkpoint-if-large", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ database: "testdb", message: "ok", status: "success" }),
+    );
+
+    await db.checkpointIfWalLarge(64);
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/testdb/maintenance/checkpoint-if-large",
+    );
+    expect(init?.method).toBe("POST");
+
+    const body = JSON.parse(init?.body as string);
+    expect(body.threshold_mb).toBe(64);
   });
 });

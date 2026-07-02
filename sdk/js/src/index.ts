@@ -32,6 +32,7 @@ export type {
   Chunk,
   Document,
   QueryResult,
+  PageInfo,
   MetadataFieldDefinition,
 
   // Type aliases
@@ -50,6 +51,7 @@ export type {
   CreateDatabaseOptions,
   UpsertOptions,
   InsertOptions,
+  BaseQueryOptions,
   QueryOptions,
   QueryMultiColumnOptions,
   StreamQueryOptions,
