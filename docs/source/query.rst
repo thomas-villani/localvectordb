@@ -184,6 +184,7 @@ The chosen unit is always recorded on each result as
 ``metadata["_context_unit"]``.
 
 **When to use:**
+
 - Need readable context around matches
 - Preserving document flow and coherence
 - Creating human-readable excerpts
@@ -232,6 +233,26 @@ The chosen unit is always recorded on each result as
 - Building AI/RAG applications
 - When topical coherence is important
 
+``return_type="sections"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Returns section-level results (one result per matching section, with
+``type="section"``). Requires a database created with
+``hierarchical_embeddings=True``. Pair it with ``search_level="sections"`` to
+match against the section index directly:
+
+.. code-block:: python
+
+    results = db.query(
+        "how do I rotate the API key?",
+        search_level="sections",
+    )
+    for r in results:
+        print(r.score, r.metadata["section_heading"])
+
+See :doc:`hierarchical` for the full three-level (document → section → chunk)
+retrieval model, section detection, and section metadata.
+
 Parameters and Options
 ----------------------
 
@@ -248,9 +269,11 @@ Search Type Specific
 ^^^^^^^^^^^^^^^^^^^^
 
 **Hybrid Search:**
+
 * ``vector_weight`` (float, default=0.7): Weight for vector vs keyword results (0.0-1.0)
 
 **Context and Enriched:**
+
 * ``context_window`` (int, default=2): Size of the assembled context, measured in
   ``context_unit``. In the default ``"chunks"`` unit this is the number of
   surrounding/similar chunks to include; with a budget unit it is an approximate
@@ -262,10 +285,18 @@ Search Type Specific
   result may fall short of the budget).
 
 **Document Return Type:**
+
 * ``document_scoring_method`` (str, default="frequency_boost"): How to aggregate chunk scores
 * ``document_scoring_options`` (dict, optional): Parameters for scoring methods
 
+**Hierarchical Search:**
+
+* ``search_level`` (str, default="chunks"): Which FAISS index to query — ``"chunks"``,
+  ``"sections"``, or ``"documents"``. The ``"sections"`` and ``"documents"`` levels
+  require ``hierarchical_embeddings=True``. See :doc:`hierarchical`.
+
 **Advanced Options:**
+
 * ``semantic_dedup_threshold`` (float, optional): Remove semantically similar results
 
 Practical Examples

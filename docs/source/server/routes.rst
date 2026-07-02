@@ -1160,11 +1160,21 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 
 - ``query``: Search text (required)
 - ``search_type``: "vector", "keyword", or "hybrid" (default: "vector")
-- ``return_type``: "documents" or "chunks" (default: "documents")
+- ``return_type``: "documents", "chunks", "context", "enriched", or "sections"
+  (default: "documents"). ``"sections"`` requires a database created with
+  ``hierarchical_embeddings=True``.
+- ``search_level``: Which FAISS index to query — "chunks" (default), "sections",
+  or "documents". The "sections"/"documents" levels require
+  ``hierarchical_embeddings=True`` (see :doc:`../hierarchical`).
 - ``k``: Maximum results to return (default: 10)
 - ``score_threshold``: Minimum score (0-1, higher=better)
 - ``filters``: Metadata filter conditions
 - ``vector_weight``: Weight for vector search in hybrid mode (0-1)
+- ``context_window`` / ``context_unit`` / ``context_truncate``: Context sizing for
+  ``return_type`` "context"/"enriched" (see :doc:`../query`)
+- ``semantic_dedup_threshold``: Drop near-duplicate results (0-1)
+- ``document_scoring_method`` / ``document_scoring_options``: Chunk-to-document score
+  aggregation (see :doc:`../document-scoring`)
 
 **curl Example**:
 

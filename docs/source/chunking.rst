@@ -405,7 +405,9 @@ Key behaviors:
 Chunks are mapped to their containing section by position with
 :meth:`SectionDetector.assign_chunks_to_sections`. Hierarchical (section-level)
 embeddings are an opt-in database feature; when enabled, section centroids are
-indexed alongside chunk vectors so queries can search at the section level.
+indexed alongside chunk vectors so queries can search at the section level. See
+:doc:`hierarchical` for enabling section- and document-level indices, section
+metadata extractors, and querying across levels.
 
 Chunking Strategies by Content Type
 -----------------------------------

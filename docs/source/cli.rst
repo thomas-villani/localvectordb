@@ -759,7 +759,7 @@ Create Database
    lvdb create research_db \
      --embedding-model nomic-embed-text \
      --chunk-size 600 \
-     --chunking-method paragraphs \
+     --chunking-method sections \
      --metadata-schema research_papers
 
    # With specific provider
@@ -772,7 +772,7 @@ Create Database
 - ``--embedding-model``: Embedding model to use
 - ``--embedding-provider``: Provider (ollama, openai)
 - ``--chunk-size``: Maximum tokens per chunk
-- ``--chunking-method``: Method (sentences, paragraphs, tokens, etc.)
+- ``--chunking-method``: Chunking strategy. One of ``sentences``, ``tokens``, ``characters``, ``words``, ``lines``, ``sections``
 - ``--chunk-overlap``: Overlap between chunks
 - ``--metadata-schema``: Predefined schema (documents, research_papers, etc.)
 
@@ -786,6 +786,20 @@ Delete Database
 
    # Force delete without confirmation
    lvdb delete old_database --confirm
+
+Rename Database
+^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   # Rename a database
+   lvdb rename old_database new_database
+
+``rename OLD NEW`` moves the database's on-disk files rather than rewriting anything
+internally: the SQLite database (``old.sqlite`` and its ``-wal``/``-shm`` companions),
+the FAISS index (``old.faiss``), and any hierarchical sidecar indexes
+(``old_sections.faiss``, ``old_documents.faiss``) are renamed to the new prefix.
+The command aborts if ``OLD`` does not exist or if a database named ``NEW`` already exists.
 
 Database-Specific Operations
 ----------------------------
@@ -932,6 +946,13 @@ Search Operations
    # Return chunks instead of documents
    lvdb db my_database search "optimization" --return-type chunks
 
+   # Return matching chunks with surrounding context (2 neighbouring chunks each side)
+   lvdb db my_database search "optimization" --return-type context --context-window 2
+
+   # Size the context by a token budget instead of a chunk count, hard-truncating to fit
+   lvdb db my_database search "optimization" \
+     --return-type enriched --context-unit tokens --context-window 400 --context-truncate
+
    # Search with metadata filter
    lvdb db my_database search "research" --metadata-filter '{"journal": "Science"}'
 
@@ -946,6 +967,46 @@ Search Operations
 
    # JSON output
    lvdb db my_database search "algorithms" --json --metadata
+
+**Options**:
+
+- ``--limit, -n``: Maximum number of results (default: 5)
+- ``--search-type, -t``: Search method (``vector``, ``keyword``, ``hybrid``) - defaults to ``vector``
+- ``--return-type, -r``: What to return (``documents``, ``chunks``, ``context``, ``enriched``, ``sections``) - defaults to ``documents``
+- ``--search-level``: Which index to search (``chunks``, ``sections``, ``documents``) - defaults to ``chunks``
+- ``--score-threshold``: Minimum score threshold (default: 0.0)
+- ``--vector-weight``: Weight for the vector component in hybrid search (default: 0.7)
+- ``--context-window``: Context size for ``--return-type context``/``enriched``, measured in ``--context-unit`` (default: 2)
+- ``--context-unit``: Unit for ``--context-window`` (``chunks``, ``tokens``, ``words``, ``characters``) - defaults to ``chunks``
+- ``--context-truncate``: Hard-truncate assembled context to exactly the budget (non-chunk ``--context-unit`` only)
+- ``--metadata-filter``: Metadata filter in JSON format
+- ``--metadata/--no-metadata, -m``: Include metadata in output
+- ``--pretty, -p``: Human-readable, titled output
+- ``--json, -j``: JSON output
+- ``--output, -o``: Write results to a file instead of stdout
+
+**Context Results**:
+
+Use ``--return-type context`` or ``--return-type enriched`` to return matching chunks
+together with their neighbouring chunks. ``--context-window`` sets how much context to
+include, interpreted according to ``--context-unit``: a count of neighbouring chunks
+(the default), or a ``tokens``/``words``/``characters`` budget. When a token/word/character
+budget is used, ``--context-truncate`` trims the assembled context to exactly that budget.
+
+**Hierarchical Search**:
+
+.. code-block:: bash
+
+   # Search the section-level index and return whole sections
+   lvdb db my_database search "training loop" --search-level sections --return-type sections
+
+   # Search the document-level index
+   lvdb db my_database search "training loop" --search-level documents
+
+The ``--search-level sections``/``documents`` options and the ``sections`` value for
+``--return-type`` require a database created with ``hierarchical_embeddings=True``. On a
+standard (chunk-only) database, only ``--search-level chunks`` is available. See
+:doc:`hierarchical` for details on hierarchical embeddings.
 
 **Example Search Output**:
 
@@ -1759,6 +1820,67 @@ Shell vs CLI Command Comparison
 This enhanced interactive shell provides a powerful environment for both day-to-day database operations and complex
 schema evolution tasks, making it easy to iterate, test, and deploy changes safely.
 
+
+Standalone Chunking
+-------------------
+
+``lvdb chunk`` runs LocalVectorDB's position-aware chunkers on their own — no database,
+embedding provider, or configuration required. It reads text from files, globs, direct
+arguments, or ``-`` (stdin), chunks each input, and writes one JSON object per chunk
+(JSONL) to stdout or ``--output``. This is handy for inspecting how a document will be
+split before ingesting it, or for feeding chunks to another tool.
+
+.. code-block:: bash
+
+   # Chunk a Markdown file to stdout (JSONL)
+   lvdb chunk notes.md
+
+   # Chunk a PDF (extracted to Markdown first), 300 tokens per chunk
+   lvdb chunk report.pdf --method sentences --max-tokens 300
+
+   # Chunk every Markdown file matching a glob into a file
+   lvdb chunk "docs/*.md" --method paragraphs -O chunks.jsonl
+
+   # Chunk text from stdin with word chunks and a 20-token overlap
+   echo "some long text..." | lvdb chunk - --method words --overlap 20
+
+Rich file formats (PDF, DOCX, HTML, ...) are extracted to Markdown first, exactly as
+``lvdb db <name> add`` does. Use ``--extract``/``--no-extract`` to force or disable
+extraction (the default is auto-detection per file).
+
+**Options**:
+
+- ``--method, -M``: Chunking strategy. One of ``sentences``, ``tokens``, ``words``, ``lines``, ``characters``, ``paragraphs``, ``sections``, ``code-blocks`` (default: ``sentences``)
+- ``--max-tokens, --chunk-size, -s``: Maximum tokens per chunk (default: 500)
+- ``--overlap, -o``: Token overlap between consecutive chunks; ignored by some strategies (default: 0)
+- ``--output, -O``: Write JSONL to this file instead of stdout
+- ``--extract/--no-extract``: Force or disable text extraction for file inputs (default: auto)
+
+**Output Format**:
+
+Each output line is a JSON object with ``content``, ``index`` (position within its source),
+``tokens``, and ``position`` (a dict with ``start``, ``end``, ``line``, ``column``,
+``end_line``, ``end_column``). When more than one input is chunked, each record also
+includes a ``source`` key naming its file. A summary of how many chunks were written is
+printed to stderr, so it does not pollute the JSONL on stdout.
+
+.. code-block:: console
+
+   $ echo "First sentence. Second sentence." | lvdb chunk - --method sentences
+   {"content": "First sentence.", "index": 0, "tokens": 2, "position": {"start": 0, "end": 15, "line": 1, "column": 0, "end_line": 1, "end_column": 15}}
+   {"content": "Second sentence.", "index": 1, "tokens": 2, "position": {"start": 16, "end": 32, "line": 1, "column": 16, "end_line": 1, "end_column": 32}}
+   Wrote 2 chunk(s) from 1 input(s)
+
+Version
+-------
+
+.. code-block:: bash
+
+   # Print the installed localvectordb version
+   lvdb version
+
+   # The top-level --version / -V flag prints the same value
+   lvdb --version
 
 Advanced Usage Examples
 -----------------------

@@ -10,6 +10,11 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
+> **Beyond basic RAG.** LocalVectorDB pairs a zero-infrastructure SQLite + FAISS core with capabilities most vector stores don't have:
+> - 🧬 **Hierarchical retrieval** — search a three-level *document → section → chunk* hierarchy, so you can match a whole section (not just a stray sentence) in long, structured documents.
+> - ✅ **Reverse-RAG fact-checking** — ground LLM-generated text against your corpus, flagging unsupported or contradicted claims with citations.
+> - 📊 **Document comparison & visualization** — synteny ribbons and chord diagrams that show how two documents (or a document's own chunks) relate.
+
 ## ✨ Features
 
 ### 🗃️ **Document-First Architecture**
@@ -21,7 +26,24 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 - **Vector Search**: Semantic similarity using Ollama or OpenAI embeddings
 - **Keyword Search**: Full-text search with SQLite FTS5
 - **Hybrid Search**: Combined vector + keyword with configurable weighting
-- **Metadata Filtering**: SQL-like queries on structured metadata
+- **Metadata Filtering**: MongoDB-style queries on structured metadata
+- **Document Scoring**: 11 chunk-to-document aggregation strategies for tuning relevance
+
+### 🧬 **Hierarchical Retrieval**
+- **Three-Level Hierarchy**: Index and search at *document*, *section*, and *chunk* granularity
+- **Automatic Section Detection**: Sections derived from document structure (Markdown headings by default, custom patterns supported)
+- **No Extra Embedding Cost**: Section/document vectors are centroids of existing chunk embeddings
+- **Section Metadata**: Pluggable extractors (heading path, keywords, word/char counts, or your own)
+
+### ✅ **Reverse-RAG Fact-Checking**
+- **Grounding Verification**: Check LLM-generated text against your databases claim-by-claim
+- **Citations & Contradictions**: Each claim scored, cited to a source excerpt, and flagged if contradicted
+- **Multi-Provider LLMs**: Works with Anthropic, OpenAI, or Gemini clients (auto-detected)
+
+### 📊 **Document Comparison & Visualization**
+- **Similarity & Neighbors**: Compare documents, find nearest neighbors, build similarity matrices
+- **Embedding Maps**: t-SNE / PCA projections with clustering
+- **Synteny & Chord Diagrams**: Visualize chunk-level alignment between documents or within one
 
 ### 🌐 **Flexible Deployment**
 - **Local Database**: Direct SQLite + FAISS for maximum performance
@@ -325,22 +347,24 @@ exist_flags = db.exists(["doc_1", "doc_2"])
 deleted_count = db.delete(["doc_1", "doc_2"])
 ```
 
-#### `filter(where=None, sql=None, order_by=None, limit=None)`
-SQL-like filtering on metadata.
+#### `filter(where=None, order_by=None, limit=None, offset=0)`
+MongoDB-style filtering on metadata.
 
 ```python
 # Simple filters
 docs = db.filter(where={"author": "Jane Doe", "status": "published"})
 
-# Complex queries
+# Complex queries with operators
 docs = db.filter(
-    where={"created_date": {">=": "2024-01-01"}},
+    where={"created_date": {"$gte": "2024-01-01"}},
     order_by="created_date DESC",
     limit=10
 )
 
-# Raw SQL
-docs = db.filter(sql="author LIKE '%Smith%' AND rating > 4.0")
+# Logical operators and pattern matching
+docs = db.filter(
+    where={"$and": [{"author": {"$like": "%Smith%"}}, {"rating": {"$gt": 4.0}}]}
+)
 ```
 
 ### HTTP API Endpoints
@@ -352,7 +376,7 @@ docs = db.filter(sql="author LIKE '%Smith%' AND rating > 4.0")
 | `GET` | `/api/v1/{db}/info` | Database info |
 | `POST` | `/api/v1/{db}/documents` | Upsert documents |
 | `GET` | `/api/v1/{db}/documents/{id}` | Get document |
-| `PUT` | `/api/v1/{db}/documents/{id}` | Update document |
+| `PATCH` | `/api/v1/{db}/documents/{id}` | Update document |
 | `DELETE` | `/api/v1/{db}/documents/{id}` | Delete document |
 | `POST` | `/api/v1/{db}/query` | Search documents |
 | `POST` | `/api/v1/{db}/query/stream` | Stream results (SSE) |
@@ -600,6 +624,39 @@ for file_path in glob.glob("**/*.py", recursive=True):
 
 # Search for specific functions
 results = db.query("async def", search_type="keyword")
+```
+
+### Hierarchical (Section-Level) Retrieval
+
+```python
+from localvectordb import VectorDB
+
+# Enable the document → section → chunk hierarchy
+db = VectorDB("manuals", "./data", hierarchical_embeddings=True)
+db.upsert([open("user_guide.md").read()], ids=["guide"])
+
+# Match the most relevant *section* instead of a single chunk
+results = db.query("how do I reset my password?", search_level="sections")
+for r in results:
+    print(r.metadata["section_heading"], f"{r.score:.3f}")
+```
+
+### Reverse-RAG Fact-Checking
+
+```python
+import anthropic
+from localvectordb import VectorDB, FactChecker
+
+db = VectorDB("kb", "./data")
+db.upsert(["The Eiffel Tower is 330 metres tall and located in Paris."])
+
+# Ground an LLM claim against the corpus (provider auto-detected from the client)
+checker = FactChecker(db, llm=anthropic.Anthropic())
+result = checker.check("The Eiffel Tower is 300 metres tall and stands in Berlin.")
+
+print(f"Overall grounding score: {result.overall_score:.2f}")
+for claim in result.claims:
+    print(claim.claim, "->", claim.polarity.value, f"(grounded={claim.grounded})")
 ```
 
 ## 🤝 Contributing
