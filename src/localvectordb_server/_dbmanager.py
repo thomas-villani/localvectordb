@@ -946,6 +946,8 @@ class DatabaseManager:
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> Dict[str, Union[List, str]]:
         """Search across multiple databases with enhanced error handling"""
 
@@ -977,6 +979,8 @@ class DatabaseManager:
                     filters=filters,
                     vector_weight=vector_weight,
                     context_window=context_window,
+                    context_unit=context_unit,
+                    context_truncate=context_truncate,
                 )
 
                 results[db_name] = db_results

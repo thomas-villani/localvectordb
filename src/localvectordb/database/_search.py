@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from abc import ABC
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple
@@ -33,6 +34,87 @@ if TYPE_CHECKING:
     from localvectordb.section_detection import SectionDetector
 
 logger = logging.getLogger(__name__)
+
+# Units in which a context/enriched budget may be expressed. ``"chunks"`` is the
+# historical behaviour (``context_window`` counts whole chunks); the others treat
+# ``context_window`` as an approximate budget on the assembled context content.
+ContextUnit = Literal["chunks", "tokens", "words", "characters"]
+CONTEXT_UNITS: Tuple[str, ...] = ("chunks", "tokens", "words", "characters")
+
+# Separator inserted between adjacent chunks when assembling context/enriched text.
+_CONTEXT_SEPARATOR = "\n\n---\n\n"
+
+_token_encoder: Any = None
+
+
+def _get_token_encoder() -> Any:
+    """Lazily build (and cache) the tiktoken encoder used for token budgets.
+
+    Chunks store their token count at ingest time, so this is only needed as a
+    fallback (a chunk with a missing/zero count) and for hard token truncation.
+    """
+    global _token_encoder
+    if _token_encoder is None:
+        import tiktoken
+
+        _token_encoder = tiktoken.get_encoding("cl100k_base")
+    return _token_encoder
+
+
+def _validate_context_unit(context_unit: str) -> None:
+    """Validate a ``context_unit`` value, raising ValueError on an unknown unit."""
+    if context_unit not in CONTEXT_UNITS:
+        raise ValueError(f"Invalid context_unit {context_unit!r}; must be one of {CONTEXT_UNITS}")
+
+
+def _measure_text(content: str, tokens: Optional[int], unit: str) -> int:
+    """Measure ``content`` in ``unit`` (``tokens``/``words``/``characters``).
+
+    For ``tokens`` the pre-computed per-chunk ``tokens`` count is preferred; if it
+    is missing or zero the text is tokenised on the fly.
+    """
+    if unit == "tokens":
+        if tokens:
+            return int(tokens)
+        if not content:
+            return 0
+        return len(_get_token_encoder().encode(content))
+    if unit == "words":
+        return len(content.split())
+    # characters
+    return len(content)
+
+
+def _truncate_text_to_budget(text: str, budget: int, unit: str) -> str:
+    """Hard-truncate ``text`` to at most ``budget`` units, never exceeding it.
+
+    Truncation keeps the leading portion of the assembled context (the matched
+    chunk sits at/near the front). Word/character cuts back off to a whitespace
+    boundary to avoid slicing mid-word; token cuts are exact via tiktoken.
+    """
+    if budget <= 0:
+        return ""
+    if unit == "tokens":
+        encoder = _get_token_encoder()
+        token_ids = encoder.encode(text)
+        if len(token_ids) <= budget:
+            return text
+        return str(encoder.decode(token_ids[:budget]))
+    if unit == "words":
+        matches = list(re.finditer(r"\S+", text))
+        if len(matches) <= budget:
+            return text
+        return text[: matches[budget - 1].end()]
+    # characters
+    if len(text) <= budget:
+        return text
+    cut = text[:budget]
+    # Back off to the last whitespace so we do not end mid-word, unless the
+    # single leading token already fills the whole budget.
+    last_ws = max(cut.rfind(" "), cut.rfind("\n"), cut.rfind("\t"))
+    if last_ws > 0:
+        cut = cut[:last_ws]
+    return cut.rstrip()
 
 
 class SearchMixin(LocalVectorDBBase, ABC):
@@ -140,6 +222,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: ContextUnit = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -167,8 +251,23 @@ class SearchMixin(LocalVectorDBBase, ABC):
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
         context_window : int
-            Number of chunks before and after to include when return_type='context'
-            Number of similar chunks to enrich when return_type='enriched'
+            Size of the context to assemble for return_type='context'/'enriched'.
+            Interpreted in the units given by ``context_unit``. When
+            ``context_unit='chunks'`` (default): number of chunks before and after to
+            include (context) or number of similar chunks to enrich. When
+            ``context_unit`` is 'tokens'/'words'/'characters': an approximate budget
+            for the assembled context content.
+        context_unit : Literal['chunks', 'tokens', 'words', 'characters']
+            Unit in which ``context_window`` is measured, by default 'chunks'.
+            With a non-chunk unit, neighbouring/similar chunks are added whole,
+            greedily, until the next one would exceed the budget (the matched chunk
+            is always kept). Only applies to return_type='context'/'enriched'.
+        context_truncate : bool
+            When True and ``context_unit`` is a token/word/character budget, the
+            assembled context is hard-truncated to exactly the budget (cutting the
+            final chunk if needed). By default False (whole chunks only). This is the
+            only way to guarantee the result never exceeds the budget when a single
+            chunk is larger than it.
         semantic_dedup_threshold : Optional[float]
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
         document_scoring_method : DocumentScoringMethod
@@ -222,6 +321,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         List[QueryResult]
             Search results with normalized scores
         """
+        _validate_context_unit(context_unit)
         with self._read_write_lock.read_lock():
             # Hierarchical search levels
             if search_level in ("sections", "documents") and self._hierarchical_embeddings:
@@ -247,6 +347,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     semantic_dedup_threshold,
                     document_scoring_method,
                     document_scoring_options,
+                    context_unit,
+                    context_truncate,
                 )
             elif search_type == "keyword":
                 results = self._keyword_search(
@@ -259,6 +361,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     semantic_dedup_threshold,
                     document_scoring_method,
                     document_scoring_options,
+                    context_unit,
+                    context_truncate,
                 )
             elif search_type == "hybrid":
                 results = self._hybrid_search(
@@ -272,6 +376,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     semantic_dedup_threshold,
                     document_scoring_method,
                     document_scoring_options,
+                    context_unit,
+                    context_truncate,
                 )
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
@@ -451,6 +557,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: ContextUnit = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -488,6 +596,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         if reranker is not None or reranker_config:
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
+        _validate_context_unit(context_unit)
 
         with self._read_write_lock.read_lock():
             effective_return_type = return_type if return_type != "sections" else "chunks"
@@ -540,6 +649,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             filters=filters,
             vector_weight=vector_weight,
             context_window=context_window,
+            context_unit=context_unit,
+            context_truncate=context_truncate,
             semantic_dedup_threshold=semantic_dedup_threshold,
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
@@ -566,6 +677,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: ContextUnit = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -581,6 +694,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         if reranker is not None or reranker_config:
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
+        _validate_context_unit(context_unit)
 
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
@@ -660,6 +774,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             filters=filters,
             vector_weight=vector_weight,
             context_window=context_window,
+            context_unit=context_unit,
+            context_truncate=context_truncate,
             semantic_dedup_threshold=semantic_dedup_threshold,
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
@@ -748,6 +864,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: ContextUnit = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -771,6 +889,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             filters=filters,
             vector_weight=vector_weight,
             context_window=context_window,
+            context_unit=context_unit,
+            context_truncate=context_truncate,
             semantic_dedup_threshold=semantic_dedup_threshold,
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
@@ -791,6 +911,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: ContextUnit = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -814,6 +936,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             filters=filters,
             vector_weight=vector_weight,
             context_window=context_window,
+            context_unit=context_unit,
+            context_truncate=context_truncate,
             semantic_dedup_threshold=semantic_dedup_threshold,
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
@@ -837,6 +961,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         query_embeddings = self.embedding_provider.embed_sync([query])
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
@@ -900,11 +1026,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
             chunk_results.sort(key=lambda x: x.score, reverse=True)
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
         if return_type == "context":
-            final_results = self._add_context_window(chunk_results, context_window)
+            final_results = self._add_context_window(chunk_results, context_window, context_unit, context_truncate)
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == "enriched":
-            final_results = self._enrich_with_intra_doc_context(chunk_results, context_window)
+            final_results = self._enrich_with_intra_doc_context(
+                chunk_results, context_window, context_unit, context_truncate
+            )
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == "documents":
@@ -965,6 +1093,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.warning("FTS not available, returning empty results")
@@ -1039,11 +1169,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
             chunk_results.sort(key=lambda x: x.score, reverse=True)
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
         if return_type == "context":
-            final_results = self._add_context_window(chunk_results, context_window)
+            final_results = self._add_context_window(chunk_results, context_window, context_unit, context_truncate)
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == "enriched":
-            final_results = self._enrich_with_intra_doc_context(chunk_results, context_window)
+            final_results = self._enrich_with_intra_doc_context(
+                chunk_results, context_window, context_unit, context_truncate
+            )
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == "documents":
@@ -1070,6 +1202,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.info("FTS not available, falling back to vector search")
@@ -1083,6 +1217,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 semantic_dedup_threshold,
                 document_scoring_method,
                 document_scoring_options,
+                context_unit,
+                context_truncate,
             )
         search_k = min(k * 4, 100)
         vector_results = self._vector_search(query, "chunks", search_k, 0.0, filters, 0, None)
@@ -1098,11 +1234,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
             combined_results = self._apply_semantic_deduplication(combined_results, semantic_dedup_threshold)
         combined_results = [r for r in combined_results if r.score >= score_threshold]
         if return_type == "context":
-            final_results = self._add_context_window(combined_results, context_window)
+            final_results = self._add_context_window(combined_results, context_window, context_unit, context_truncate)
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == "enriched":
-            final_results = self._enrich_with_intra_doc_context(combined_results, context_window)
+            final_results = self._enrich_with_intra_doc_context(
+                combined_results, context_window, context_unit, context_truncate
+            )
             final_results.sort(key=lambda x: x.score, reverse=True)
             return final_results[:k]
         elif return_type == "documents":
@@ -1502,9 +1640,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ---------------------
     # Context and enrichment
     # ---------------------
-    def _add_context_window(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+    def _add_context_window(
+        self,
+        results: List[QueryResult],
+        context_window: int,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
+    ) -> List[QueryResult]:
         if context_window <= 0 or not results:
             return results
+        if context_unit != "chunks":
+            return self._add_context_window_budget(results, context_window, context_unit, context_truncate)
         context_results: List[QueryResult] = []
         doc_chunk_requests = defaultdict(list)
         for result in results:
@@ -1585,12 +1731,335 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         position=context_position,
                     )
                     context_result.metadata["_context_window"] = context_window
+                    context_result.metadata["_context_unit"] = "chunks"
                     context_result.metadata["_original_chunk_index"] = chunk_index
                     context_result.metadata["_context_chunk_count"] = len(context_chunks)
                     context_result.metadata["_context_start_index"] = start_context
                     context_result.metadata["_context_end_index"] = end_context
                     context_results.append(context_result)
         return context_results
+
+    # -------------------------------------------------------------------------
+    # Budget-based context/enrichment (context_unit in tokens/words/characters)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _select_context_indices_by_budget(
+        chunks_by_index: Dict[int, Any], center: int, budget: int, unit: str
+    ) -> List[int]:
+        """Greedily grow a contiguous window around ``center`` within ``budget``.
+
+        The matched (center) chunk is always included, even if it alone exceeds
+        the budget. Expansion is symmetric: on each pass we try to add the next
+        chunk on each side, stopping a side once its next chunk would overflow the
+        budget or the document runs out. Returns the selected indices sorted.
+        """
+        if center not in chunks_by_index:
+            return []
+        center_row = chunks_by_index[center]
+        # The assembled context joins chunks with a separator, which also counts
+        # against the budget; each added chunk contributes its own size plus one
+        # separator so the final assembled text stays within the budget.
+        sep_size = _measure_text(_CONTEXT_SEPARATOR, None, unit)
+        used = _measure_text(center_row["content"], center_row["tokens"], unit)
+        selected = [center]
+        lo, hi = center - 1, center + 1
+        lo_open = hi_open = True
+        while lo_open or hi_open:
+            if lo_open:
+                row = chunks_by_index.get(lo)
+                if row is None:
+                    lo_open = False
+                else:
+                    size = _measure_text(row["content"], row["tokens"], unit) + sep_size
+                    if used + size <= budget:
+                        selected.append(lo)
+                        used += size
+                        lo -= 1
+                    else:
+                        lo_open = False
+            if hi_open:
+                row = chunks_by_index.get(hi)
+                if row is None:
+                    hi_open = False
+                else:
+                    size = _measure_text(row["content"], row["tokens"], unit) + sep_size
+                    if used + size <= budget:
+                        selected.append(hi)
+                        used += size
+                        hi += 1
+                    else:
+                        hi_open = False
+        return sorted(selected)
+
+    @staticmethod
+    def _merge_chunk_positions(ordered_rows: List[Any]) -> Tuple[int, int, int, int, int, int]:
+        """Merge chunk row positions into a single (start, end, line, col, end_line, end_col)."""
+        min_start_pos = float("inf")
+        max_end_pos = 0
+        min_start_line = float("inf")
+        min_start_col = float("inf")
+        max_end_line = 0
+        max_end_col = 0
+        for row in ordered_rows:
+            min_start_pos = min(min_start_pos, row["start_pos"])
+            max_end_pos = max(max_end_pos, row["end_pos"])
+            min_start_line = min(min_start_line, row["start_line"])
+            max_end_line = max(max_end_line, row["end_line"])
+            if row["start_line"] == min_start_line:
+                min_start_col = min(min_start_col, row["start_col"])
+            if row["end_line"] == max_end_line:
+                max_end_col = max(max_end_col, row["end_col"])
+        return (
+            int(min_start_pos),
+            int(max_end_pos),
+            int(min_start_line),
+            int(min_start_col),
+            int(max_end_line),
+            int(max_end_col),
+        )
+
+    @classmethod
+    def _build_budget_context_result(
+        cls,
+        doc_id: Optional[str],
+        center_idx: int,
+        base_result: QueryResult,
+        ordered_rows: List[Any],
+        context_window: int,
+        context_unit: str,
+        context_truncate: bool,
+    ) -> QueryResult:
+        combined_text = _CONTEXT_SEPARATOR.join(row["content"] for row in ordered_rows)
+        start_pos, end_pos, start_line, start_col, end_line, end_col = cls._merge_chunk_positions(ordered_rows)
+        truncated = False
+        if context_truncate:
+            new_text = _truncate_text_to_budget(combined_text, context_window, context_unit)
+            if len(new_text) < len(combined_text):
+                truncated = True
+                combined_text = new_text
+                # Content was cut; the character end is now approximate.
+                end_pos = start_pos + len(combined_text)
+        context_result = QueryResult(
+            id=f"{doc_id}:context:{center_idx}",
+            score=base_result.score,
+            type="context",
+            content=combined_text,
+            metadata=base_result.metadata.copy(),
+            document_id=doc_id,
+            position=ChunkPosition(
+                start=start_pos, end=end_pos, line=start_line, column=start_col, end_line=end_line, end_column=end_col
+            ),
+        )
+        context_result.metadata["_context_window"] = context_window
+        context_result.metadata["_context_unit"] = context_unit
+        context_result.metadata["_original_chunk_index"] = center_idx
+        context_result.metadata["_context_chunk_count"] = len(ordered_rows)
+        context_result.metadata["_context_start_index"] = ordered_rows[0]["chunk_index"]
+        context_result.metadata["_context_end_index"] = ordered_rows[-1]["chunk_index"]
+        if truncated:
+            context_result.metadata["_context_truncated"] = True
+        return context_result
+
+    @classmethod
+    def _build_budget_enriched_result(
+        cls,
+        doc_id: Optional[str],
+        ordered_rows: List[Any],
+        best_score: float,
+        combined_metadata: Dict[str, Any],
+        chunk_similarities: List[float],
+        matched_indices: List[int],
+        sorted_indices: List[int],
+        context_window: int,
+        context_unit: str,
+        context_truncate: bool,
+    ) -> QueryResult:
+        combined_text = _CONTEXT_SEPARATOR.join(row["content"] for row in ordered_rows)
+        start_pos, end_pos, start_line, start_col, end_line, end_col = cls._merge_chunk_positions(ordered_rows)
+        truncated = False
+        if context_truncate:
+            new_text = _truncate_text_to_budget(combined_text, context_window, context_unit)
+            if len(new_text) < len(combined_text):
+                truncated = True
+                combined_text = new_text
+                end_pos = start_pos + len(combined_text)
+        enriched_result = QueryResult(
+            id=f"{doc_id}:enriched",
+            score=best_score,
+            type="enriched",
+            content=combined_text,
+            metadata=dict(combined_metadata),
+            document_id=doc_id,
+            position=ChunkPosition(
+                start=start_pos, end=end_pos, line=start_line, column=start_col, end_line=end_line, end_column=end_col
+            ),
+        )
+        enriched_result.metadata["_enriched_chunk_count"] = len(ordered_rows)
+        enriched_result.metadata["_matched_chunk_indices"] = matched_indices
+        enriched_result.metadata["_all_chunk_indices"] = sorted_indices
+        enriched_result.metadata["_similarity_scores"] = chunk_similarities
+        enriched_result.metadata["_enrichment_method"] = "budget"
+        enriched_result.metadata["_context_unit"] = context_unit
+        if truncated:
+            enriched_result.metadata["_context_truncated"] = True
+        return enriched_result
+
+    def _fetch_document_chunks_sync(self, conn: Any, doc_id: Optional[str]) -> Dict[int, Any]:
+        cursor = conn.execute(
+            """
+            SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col, tokens
+            FROM chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index
+            """,
+            [doc_id],
+        )
+        return {row["chunk_index"]: row for row in cursor.fetchall()}
+
+    def _rank_intra_doc_similarities(
+        self, doc_chunks: Dict[int, Any], matched_indices: List[int]
+    ) -> Tuple[List[int], Dict[int, float], List[Tuple[int, float]]]:
+        """Rank a document's chunks by similarity to the matched chunk(s).
+
+        Returns ``(present_matched, base_scores, candidates)`` where ``base_scores``
+        maps each present matched chunk to 1.0 and ``candidates`` is the remaining
+        chunks as ``(index, best_similarity)`` sorted by similarity descending.
+        """
+        present_matched = [i for i in matched_indices if i in doc_chunks]
+        base_scores: Dict[int, float] = {i: 1.0 for i in present_matched}
+        if not present_matched:
+            return present_matched, base_scores, []
+        faiss_ids = [row["faiss_id"] for row in doc_chunks.values()]
+        embeddings = self._reconstruct_embeddings_batch(faiss_ids)
+        emb_by_faiss = {fid: emb for fid, emb in zip(faiss_ids, embeddings, strict=False)}
+        best_sim: Dict[int, float] = {}
+        for m in present_matched:
+            target = emb_by_faiss[doc_chunks[m]["faiss_id"]]
+            target_norm = float(np.linalg.norm(target))
+            for idx, row in doc_chunks.items():
+                if idx in base_scores:
+                    continue
+                other = emb_by_faiss[row["faiss_id"]]
+                denom = target_norm * float(np.linalg.norm(other))
+                sim = float(np.dot(target, other) / denom) if denom else 0.0
+                if idx not in best_sim or sim > best_sim[idx]:
+                    best_sim[idx] = sim
+        candidates = sorted(best_sim.items(), key=lambda kv: kv[1], reverse=True)
+        return present_matched, base_scores, candidates
+
+    @staticmethod
+    def _select_enriched_indices_by_budget(
+        doc_chunks: Dict[int, Any],
+        present_matched: List[int],
+        base_scores: Dict[int, float],
+        candidates: List[Tuple[int, float]],
+        budget: int,
+        unit: str,
+    ) -> Tuple[List[int], Dict[int, float]]:
+        """Select matched chunks plus the most-similar others that fit the budget.
+
+        Matched chunks are always kept; remaining chunks are added in descending
+        similarity order while they fit (non-adjacent inclusion is allowed, so we
+        keep scanning smaller candidates rather than stopping at the first overflow).
+        """
+        selected = set(present_matched)
+        similarity_scores: Dict[int, float] = dict(base_scores)
+        sep_size = _measure_text(_CONTEXT_SEPARATOR, None, unit)
+        used = sum(_measure_text(doc_chunks[i]["content"], doc_chunks[i]["tokens"], unit) for i in present_matched)
+        used += max(0, len(present_matched) - 1) * sep_size
+        for idx, sim in candidates:
+            size = _measure_text(doc_chunks[idx]["content"], doc_chunks[idx]["tokens"], unit) + sep_size
+            if used + size <= budget:
+                selected.add(idx)
+                similarity_scores[idx] = sim
+                used += size
+        return sorted(selected), similarity_scores
+
+    def _add_context_window_budget(
+        self, results: List[QueryResult], context_window: int, context_unit: str, context_truncate: bool
+    ) -> List[QueryResult]:
+        context_results: List[QueryResult] = []
+        doc_chunk_requests = defaultdict(list)
+        for result in results:
+            if result.type != "chunk":
+                context_results.append(result)
+                continue
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunk_requests[result.document_id].append((chunk_index, result))
+        with self.connection_pool.get_connection() as conn:
+            for doc_id, chunk_requests in doc_chunk_requests.items():
+                chunks_by_index = self._fetch_document_chunks_sync(conn, doc_id)
+                for chunk_index, result in chunk_requests:
+                    selected = self._select_context_indices_by_budget(
+                        chunks_by_index, chunk_index, context_window, context_unit
+                    )
+                    if not selected:
+                        context_results.append(result)
+                        continue
+                    ordered_rows = [chunks_by_index[i] for i in selected]
+                    context_results.append(
+                        self._build_budget_context_result(
+                            doc_id, chunk_index, result, ordered_rows, context_window, context_unit, context_truncate
+                        )
+                    )
+        return context_results
+
+    def _enrich_with_intra_doc_context_budget(
+        self, results: List[QueryResult], context_window: int, context_unit: str, context_truncate: bool
+    ) -> List[QueryResult]:
+        enriched_results: List[QueryResult] = []
+        doc_chunks_to_enrich = defaultdict(list)
+        with self.connection_pool.get_connection() as conn:
+            for result in results:
+                if result.type != "chunk":
+                    enriched_results.append(result)
+                    continue
+                chunk_index = self._extract_chunk_index_from_id(result.id)
+                doc_chunks_to_enrich[result.document_id].append((chunk_index, result))
+            for doc_id, chunk_requests in doc_chunks_to_enrich.items():
+                cursor = conn.execute(
+                    """
+                    SELECT chunk_index, content, start_pos, end_pos, start_line, start_col,
+                           end_line, end_col, tokens, faiss_id
+                    FROM chunks
+                    WHERE document_id = ? AND faiss_id IS NOT NULL
+                    ORDER BY chunk_index
+                    """,
+                    [doc_id],
+                )
+                doc_chunks = {row["chunk_index"]: row for row in cursor.fetchall()}
+                matched_indices = [ci for ci, _ in chunk_requests]
+                matched_results = [r for _, r in chunk_requests]
+                present_matched, base_scores, candidates = self._rank_intra_doc_similarities(
+                    doc_chunks, matched_indices
+                )
+                if not present_matched:
+                    enriched_results.extend(matched_results)
+                    continue
+                sorted_indices, similarity_scores = self._select_enriched_indices_by_budget(
+                    doc_chunks, present_matched, base_scores, candidates, context_window, context_unit
+                )
+                ordered_rows = [doc_chunks[i] for i in sorted_indices]
+                chunk_similarities = [similarity_scores[i] for i in sorted_indices]
+                best_score = max(r.score for r in matched_results)
+                combined_metadata: Dict[str, Any] = {}
+                for r in matched_results:
+                    combined_metadata.update(r.metadata)
+                enriched_results.append(
+                    self._build_budget_enriched_result(
+                        doc_id,
+                        ordered_rows,
+                        best_score,
+                        combined_metadata,
+                        chunk_similarities,
+                        matched_indices,
+                        sorted_indices,
+                        context_window,
+                        context_unit,
+                        context_truncate,
+                    )
+                )
+        return enriched_results
 
     @staticmethod
     def _merge_overlapping_ranges(ranges_needed: List[Tuple[int, int, int, Any]]) -> List[Tuple[int, int, int, Any]]:
@@ -1608,9 +2077,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         merged.append((current_start, current_end, first_chunk, first_result))
         return merged
 
-    def _enrich_with_intra_doc_context(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+    def _enrich_with_intra_doc_context(
+        self,
+        results: List[QueryResult],
+        context_window: int,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
+    ) -> List[QueryResult]:
         if context_window <= 0 or not results:
             return results
+        if context_unit != "chunks":
+            return self._enrich_with_intra_doc_context_budget(results, context_window, context_unit, context_truncate)
         enriched_results: List[QueryResult] = []
         doc_chunks_to_enrich = defaultdict(list)
         with self.connection_pool.get_connection() as conn:
@@ -1660,6 +2137,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         enriched_result.metadata["_original_chunk_index"] = chunk_index
                         enriched_result.metadata["_similarity_scores"] = [1.0]
                         enriched_result.metadata["_enrichment_method"] = "single_chunk"
+                        enriched_result.metadata["_context_unit"] = "chunks"
                         enriched_results.append(enriched_result)
                     continue
                 doc_embeddings = self._reconstruct_embeddings_batch(doc_faiss_ids)
@@ -1740,6 +2218,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     enriched_result.metadata["_all_chunk_indices"] = sorted_chunk_indices
                     enriched_result.metadata["_similarity_scores"] = chunk_similarities
                     enriched_result.metadata["_enrichment_method"] = "intra_document_similarity"
+                    enriched_result.metadata["_context_unit"] = "chunks"
                     enriched_results.append(enriched_result)
         return enriched_results
 
@@ -2134,6 +2613,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.7,
         context_window: int = 2,
+        context_unit: ContextUnit = "chunks",
+        context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
@@ -2162,7 +2643,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
         vector_weight : float
             Weight for vector search in hybrid mode (0-1), by default 0.7
         context_window : int
-            Number of chunks before and after to include when return_type='context', by default 2
+            Size of the assembled context for return_type='context'/'enriched',
+            measured in ``context_unit`` (chunks before/after or similar-chunk count
+            when 'chunks'; an approximate token/word/character budget otherwise),
+            by default 2
+        context_unit : Literal['chunks', 'tokens', 'words', 'characters']
+            Unit in which ``context_window`` is measured, by default 'chunks'.
+        context_truncate : bool
+            Hard-truncate the assembled context to exactly the token/word/character
+            budget (only applies with a non-chunk ``context_unit``), by default False.
         semantic_dedup_threshold : Optional[float]
             Similarity threshold for semantic deduplication (0-1, higher=more similar), by default None
         document_scoring_method : DocumentScoringMethod
@@ -2178,6 +2667,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         List[QueryResult]
             Search results with normalized scores
         """
+        _validate_context_unit(context_unit)
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
 
@@ -2196,6 +2686,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     filters=filters,
                     vector_weight=vector_weight,
                     context_window=context_window,
+                    context_unit=context_unit,
+                    context_truncate=context_truncate,
                     semantic_dedup_threshold=semantic_dedup_threshold,
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options,
@@ -2218,6 +2710,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             semantic_dedup_threshold,
             document_scoring_method,
             document_scoring_options,
+            context_unit,
+            context_truncate,
         )
 
         # Apply reranking if configured
@@ -2250,6 +2744,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         effective_return_type: Literal["documents", "chunks", "context", "enriched"] = (
             "chunks" if return_type == "sections" else return_type
@@ -2266,6 +2762,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 semantic_dedup_threshold,
                 document_scoring_method,
                 document_scoring_options,
+                context_unit,
+                context_truncate,
             )
         elif search_type == "keyword":
             results = await self._keyword_search_async(
@@ -2278,6 +2776,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 semantic_dedup_threshold,
                 document_scoring_method,
                 document_scoring_options,
+                context_unit,
+                context_truncate,
             )
         elif search_type == "hybrid":
             assert query_embedding is not None
@@ -2293,6 +2793,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 semantic_dedup_threshold,
                 document_scoring_method,
                 document_scoring_options,
+                context_unit,
+                context_truncate,
             )
         else:
             raise ValueError(f"Unknown search type: {search_type}")
@@ -2309,6 +2811,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
 
         loop = asyncio.get_event_loop()
@@ -2351,7 +2855,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if semantic_dedup_threshold is not None:
             query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
         final_results = await self._process_search_results_async(
-            query_results, return_type, document_scoring_method, document_scoring_options, context_window
+            query_results,
+            return_type,
+            document_scoring_method,
+            document_scoring_options,
+            context_window,
+            context_unit,
+            context_truncate,
         )
         return final_results[:k]
 
@@ -2366,6 +2876,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         if not self.fts_enabled:
             logger.warning("FTS not enabled, returning empty results")
@@ -2432,7 +2944,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if semantic_dedup_threshold is not None:
             query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
         final_results = await self._process_search_results_async(
-            query_results, return_type, document_scoring_method, document_scoring_options, context_window
+            query_results,
+            return_type,
+            document_scoring_method,
+            document_scoring_options,
+            context_window,
+            context_unit,
+            context_truncate,
         )
         return final_results[:k]
 
@@ -2449,6 +2967,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         semantic_dedup_threshold: Optional[float],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         if not self.fts_enabled:
             return await self._vector_search_with_embedding_async(
@@ -2460,6 +2980,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 context_window,
                 semantic_dedup_threshold,
                 document_scoring_method,
+                document_scoring_options,
+                context_unit,
+                context_truncate,
             )
         search_k = min(k * 4, 100)
         vector_task = asyncio.create_task(
@@ -2483,7 +3006,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if score_threshold > 0.0:
             combined_results = [r for r in combined_results if r.score >= score_threshold]
         final_results = await self._process_search_results_async(
-            combined_results, return_type, document_scoring_method, document_scoring_options, context_window
+            combined_results,
+            return_type,
+            document_scoring_method,
+            document_scoring_options,
+            context_window,
+            context_unit,
+            context_truncate,
         )
         return final_results[:k]
 
@@ -2629,6 +3158,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_method: DocumentScoringMethod,
         document_scoring_options: Optional[dict],
         context_window: int,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         if return_type == "chunks":
             return results
@@ -2637,9 +3168,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results, document_scoring_method, document_scoring_options or {}
             )
         elif return_type == "enriched":
-            return await self._enrich_with_intra_doc_context_async(results, context_window)
+            return await self._enrich_with_intra_doc_context_async(
+                results, context_window, context_unit, context_truncate
+            )
         else:
-            return await self._add_context_window_async(results, context_window)
+            return await self._add_context_window_async(results, context_window, context_unit, context_truncate)
 
     async def _apply_semantic_deduplication_async(
         self, results: List[QueryResult], threshold: float, max_candidates: int = 1000
@@ -2746,9 +3279,115 @@ class SearchMixin(LocalVectorDBBase, ABC):
             None, self._compute_document_scores, method, method_options, doc_groups, doc_content_map, doc_metadata_batch
         )
 
-    async def _add_context_window_async(self, results: List[QueryResult], context_window: int) -> List[QueryResult]:
+    async def _fetch_document_chunks_async(
+        self, conn: Any, doc_id: Optional[str], with_faiss: bool = False
+    ) -> Dict[int, Any]:
+        faiss_col = ", faiss_id" if with_faiss else ""
+        faiss_filter = " AND faiss_id IS NOT NULL" if with_faiss else ""
+        cursor = await conn.execute(
+            f"""
+            SELECT chunk_index, content, start_pos, end_pos, start_line, start_col, end_line, end_col, tokens{faiss_col}
+            FROM chunks
+            WHERE document_id = ?{faiss_filter}
+            ORDER BY chunk_index
+            """,
+            [doc_id],
+        )
+        chunks_by_index: Dict[int, Any] = {}
+        async for row in cursor:
+            chunks_by_index[row["chunk_index"]] = row
+        return chunks_by_index
+
+    async def _add_context_window_budget_async(
+        self, results: List[QueryResult], context_window: int, context_unit: str, context_truncate: bool
+    ) -> List[QueryResult]:
+        context_results: List[QueryResult] = []
+        doc_chunk_requests = defaultdict(list)
+        for result in results:
+            if result.type != "chunk":
+                context_results.append(result)
+                continue
+            chunk_index = self._extract_chunk_index_from_id(result.id)
+            doc_chunk_requests[result.document_id].append((chunk_index, result))
+        assert self.async_connection_pool is not None
+        async with self.async_connection_pool.get_connection_context() as conn:
+            for doc_id, chunk_requests in doc_chunk_requests.items():
+                chunks_by_index = await self._fetch_document_chunks_async(conn, doc_id)
+                for chunk_index, result in chunk_requests:
+                    selected = self._select_context_indices_by_budget(
+                        chunks_by_index, chunk_index, context_window, context_unit
+                    )
+                    if not selected:
+                        context_results.append(result)
+                        continue
+                    ordered_rows = [chunks_by_index[i] for i in selected]
+                    context_results.append(
+                        self._build_budget_context_result(
+                            doc_id, chunk_index, result, ordered_rows, context_window, context_unit, context_truncate
+                        )
+                    )
+        return context_results
+
+    async def _enrich_with_intra_doc_context_budget_async(
+        self, results: List[QueryResult], context_window: int, context_unit: str, context_truncate: bool
+    ) -> List[QueryResult]:
+        enriched_results: List[QueryResult] = []
+        doc_chunks_to_enrich = defaultdict(list)
+        loop = asyncio.get_event_loop()
+        assert self.async_connection_pool is not None
+        async with self.async_connection_pool.get_connection_context() as conn:
+            for result in results:
+                if result.type != "chunk":
+                    enriched_results.append(result)
+                    continue
+                chunk_index = self._extract_chunk_index_from_id(result.id)
+                doc_chunks_to_enrich[result.document_id].append((chunk_index, result))
+            for doc_id, chunk_requests in doc_chunks_to_enrich.items():
+                doc_chunks = await self._fetch_document_chunks_async(conn, doc_id, with_faiss=True)
+                matched_indices = [ci for ci, _ in chunk_requests]
+                matched_results = [r for _, r in chunk_requests]
+                present_matched, base_scores, candidates = await loop.run_in_executor(
+                    None, self._rank_intra_doc_similarities, doc_chunks, matched_indices
+                )
+                if not present_matched:
+                    enriched_results.extend(matched_results)
+                    continue
+                sorted_indices, similarity_scores = self._select_enriched_indices_by_budget(
+                    doc_chunks, present_matched, base_scores, candidates, context_window, context_unit
+                )
+                ordered_rows = [doc_chunks[i] for i in sorted_indices]
+                chunk_similarities = [similarity_scores[i] for i in sorted_indices]
+                best_score = max(r.score for r in matched_results)
+                combined_metadata: Dict[str, Any] = {}
+                for r in matched_results:
+                    combined_metadata.update(r.metadata)
+                enriched_results.append(
+                    self._build_budget_enriched_result(
+                        doc_id,
+                        ordered_rows,
+                        best_score,
+                        combined_metadata,
+                        chunk_similarities,
+                        matched_indices,
+                        sorted_indices,
+                        context_window,
+                        context_unit,
+                        context_truncate,
+                    )
+                )
+        return enriched_results
+
+    async def _add_context_window_async(
+        self,
+        results: List[QueryResult],
+        context_window: int,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
+    ) -> List[QueryResult]:
         if context_window <= 0 or not results:
             return results
+        if context_unit != "chunks":
+            return await self._add_context_window_budget_async(results, context_window, context_unit, context_truncate)
         context_results: List[QueryResult] = []
         doc_chunk_requests = defaultdict(list)
         for result in results:
@@ -2834,6 +3473,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     context_result.metadata.update(
                         {
                             "_context_window": context_window,
+                            "_context_unit": "chunks",
                             "_original_chunk_index": chunk_index,
                             "_context_chunk_count": len(context_chunks),
                             "_context_start_index": start_context,
@@ -2844,10 +3484,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
         return context_results
 
     async def _enrich_with_intra_doc_context_async(
-        self, results: List[QueryResult], context_window: int
+        self,
+        results: List[QueryResult],
+        context_window: int,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
     ) -> List[QueryResult]:
         if context_window <= 0 or not results:
             return results
+        if context_unit != "chunks":
+            return await self._enrich_with_intra_doc_context_budget_async(
+                results, context_window, context_unit, context_truncate
+            )
         enriched_results: List[QueryResult] = []
         doc_chunks_to_enrich = defaultdict(list)
         assert self.async_connection_pool is not None
@@ -2899,6 +3547,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         enriched_result.metadata["_original_chunk_index"] = chunk_index
                         enriched_result.metadata["_similarity_scores"] = [1.0]
                         enriched_result.metadata["_enrichment_method"] = "single_chunk"
+                        enriched_result.metadata["_context_unit"] = "chunks"
                         enriched_results.append(enriched_result)
                     continue
                 loop = asyncio.get_event_loop()
@@ -2992,6 +3641,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     enriched_result.metadata["_all_chunk_indices"] = sorted_chunk_indices
                     enriched_result.metadata["_similarity_scores"] = chunk_similarities
                     enriched_result.metadata["_enrichment_method"] = "intra_document_similarity"
+                    enriched_result.metadata["_context_unit"] = "chunks"
                     enriched_results.append(enriched_result)
         return enriched_results
 

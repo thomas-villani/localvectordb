@@ -167,11 +167,29 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
     "--return-type",
     "-r",
     default="documents",
-    type=click.Choice(["documents", "chunks"]),
-    help="Whether to return documents or chunks",
+    type=click.Choice(["documents", "chunks", "context", "enriched"]),
+    help="Whether to return documents, chunks, chunks-with-context, or enriched chunks",
 )
 @click.option("--score-threshold", default=0.0, type=float, help="Minimum score threshold")
 @click.option("--vector-weight", default=0.7, type=float, help="Weight for vector search in hybrid mode")
+@click.option(
+    "--context-window",
+    default=2,
+    type=int,
+    help="Context size for --return-type context/enriched, measured in --context-unit",
+)
+@click.option(
+    "--context-unit",
+    default="chunks",
+    type=click.Choice(["chunks", "tokens", "words", "characters"]),
+    help="Unit for --context-window: chunk count (default) or a token/word/character budget",
+)
+@click.option(
+    "--context-truncate",
+    is_flag=True,
+    default=False,
+    help="Hard-truncate assembled context to exactly the budget (non-chunk --context-unit only)",
+)
 @click.option("--metadata-filter", help="Metadata filter in JSON format")
 @click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
 @click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
@@ -186,6 +204,9 @@ def search(
     return_type,
     score_threshold,
     vector_weight,
+    context_window,
+    context_unit,
+    context_truncate,
     metadata_filter,
     output_as_json,
     output,
@@ -231,6 +252,9 @@ def search(
             score_threshold=score_threshold,
             filters=filter_dict,
             vector_weight=vector_weight,
+            context_window=context_window,
+            context_unit=context_unit,
+            context_truncate=context_truncate,
         )
     except Exception as e:
         click.secho(f"Search error: {str(e)}", fg="bright_red", err=True)

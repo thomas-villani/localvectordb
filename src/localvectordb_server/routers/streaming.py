@@ -46,6 +46,8 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
         filters=body.filters,
         vector_weight=body.vector_weight,
         context_window=body.context_window,
+        context_unit=body.context_unit,
+        context_truncate=body.context_truncate,
         document_scoring_method=body.document_scoring_method,
         document_scoring_options=body.document_scoring_options,
     )
