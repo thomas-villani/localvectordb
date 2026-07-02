@@ -53,6 +53,7 @@ class MCPConfig:
             "list_databases",
             "get_database_info",
             "query_database",
+            "find_related_documents",
             "filter_documents",
             "get_document",
             "check_documents_exist",

@@ -250,6 +250,7 @@ class TestToolRegistry:
             "list_databases",
             "get_database_info",
             "query_database",
+            "find_related_documents",
             "filter_documents",
             "get_document",
             "check_documents_exist",
@@ -640,6 +641,129 @@ class TestGetDocumentTool:
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(get_document("testdb", "doc1"))
         assert result["id"] == "doc1"
+
+
+@pytest.mark.unit
+class TestGetDocumentPortions:
+    """Sub-document retrieval via the ``get_document`` tool's portion args."""
+
+    MARKDOWN = "# Introduction\nalpha beta gamma.\n\n## Installation\ninstall me now.\n"
+
+    def _db_with_doc(self, content):
+        doc = _make_document(doc_id="doc1", content=content)
+        mock_db = MagicMock()
+        mock_db.get.return_value = doc
+        return mock_db
+
+    def test_section(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = self._db_with_doc(self.MARKDOWN)
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1", section="Installation"))
+        assert result["mode"] == "section"
+        assert "install me now" in result["content"]
+
+    def test_outline(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = self._db_with_doc(self.MARKDOWN)
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1", outline=True))
+        assert result["mode"] == "outline"
+        headings = [item["heading"] for item in result["outline"]]
+        assert "Installation" in headings
+
+    def test_char_range(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = self._db_with_doc(self.MARKDOWN)
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1", char_range="0:14"))
+        assert result["mode"] == "range"
+        assert result["content"] == "# Introduction"
+
+    def test_chunk(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = self._db_with_doc(self.MARKDOWN)
+        position = SimpleNamespace(to_dict=lambda: {"start": 0, "end": 10})
+        chunk = SimpleNamespace(index=0, content="chunk zero", position=position)
+        mock_db.get_chunks.return_value = [chunk]
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1", chunk="0"))
+        assert result["mode"] == "chunk"
+        assert result["chunks"][0]["index"] == 0
+        assert result["chunks"][0]["content"] == "chunk zero"
+
+    def test_bad_range_is_value_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = self._db_with_doc(self.MARKDOWN)
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1", char_range="not-a-range"))
+        assert result["error_type"] == "ValueError"
+
+    def test_mutually_exclusive_modes(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import get_document
+
+        mock_db = self._db_with_doc(self.MARKDOWN)
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(get_document("testdb", "doc1", char_range="0:5", line_range="1:1"))
+        assert "error" in result
+
+
+@pytest.mark.unit
+class TestFindRelatedDocumentsTool:
+    def test_returns_neighbors(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import find_related_documents
+
+        mock_db = MagicMock()
+        del mock_db.nearest_neighbors_async
+        mock_db.nearest_neighbors.return_value = [_make_query_result(result_id="n1", score=0.9)]
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(find_related_documents("testdb", "doc1"))
+        assert result["document_id"] == "doc1"
+        assert result["results"][0]["id"] == "n1"
+        assert result["total_results"] == 1
+
+    def test_forwards_options(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import find_related_documents
+
+        mock_db = MagicMock()
+        del mock_db.nearest_neighbors_async
+        mock_db.nearest_neighbors.return_value = []
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        _run(find_related_documents("testdb", "doc1", k=3, score_threshold=0.5, filters={"a": 1}))
+        call = mock_db.nearest_neighbors.call_args
+        assert call[0][0] == "doc1"
+        assert call[1]["k"] == 3
+        assert call[1]["score_threshold"] == 0.5
+        assert call[1]["filters"] == {"a": 1}
+
+    def test_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import find_related_documents
+
+        mock_db = MagicMock()
+        mock_db.nearest_neighbors_async = AsyncMock(return_value=[_make_query_result(result_id="n2")])
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(find_related_documents("testdb", "doc1"))
+        assert result["results"][0]["id"] == "n2"
+
+    def test_document_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import find_related_documents
+
+        mock_db = MagicMock()
+        del mock_db.nearest_neighbors_async
+        mock_db.nearest_neighbors.side_effect = DocumentNotFoundError("missing")
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(find_related_documents("testdb", "missing"))
+        assert result["error_code"] == "DOCUMENT_NOT_FOUND"
 
 
 @pytest.mark.unit

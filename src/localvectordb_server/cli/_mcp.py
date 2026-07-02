@@ -182,8 +182,9 @@ def tools():
         ("list_databases", "List all available databases"),
         ("get_database_info", "Get database statistics and configuration"),
         ("query_database", "Search using vector, keyword, or hybrid search"),
+        ("find_related_documents", "Find documents related to a given document (nearest neighbours)"),
         ("filter_documents", "Filter documents by metadata"),
-        ("get_document", "Retrieve a specific document"),
+        ("get_document", "Retrieve a document by ID, or a portion of it"),
         ("check_documents_exist", "Check if documents exist"),
         ("get_metadata_schema", "Get database metadata schema"),
         ("get_system_info", "Get system information"),
@@ -227,6 +228,7 @@ operation_timeout = 300
 #     "list_databases",
 #     "get_database_info",
 #     "query_database",
+#     "find_related_documents",
 #     "filter_documents",
 #     "get_document",
 #     "check_documents_exist",
@@ -257,8 +259,8 @@ root = "./databases"
 embedding_provider = "ollama"
 embedding_model = "nomic-embed-text"
 chunk_size = 500
-chunk_overlap = 1
-chunking_method = "lines"
+chunk_overlap = 50
+chunking_method = "sentences"
 enable_fts = true
 enable_gpu = false
 

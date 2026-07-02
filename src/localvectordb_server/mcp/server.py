@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from fastmcp import FastMCP
 
 from localvectordb import VectorDB
+from localvectordb.document_portions import get_document_portion
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import (
     DatabaseNotFoundError,
@@ -421,6 +422,68 @@ async def query_database(
         return {"error": str(e), "error_type": type(e).__name__}
 
 
+@register_tool("find_related_documents", read_only=True)
+async def find_related_documents(
+    database_name: str,
+    document_id: str,
+    k: int = 5,
+    score_threshold: float = 0.0,
+    filters: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """
+    Find documents related to a given document (nearest neighbours by embedding)
+
+    Returns the documents most similar to document_id using document-level
+    embeddings, sorted by descending similarity. The reference document itself is
+    excluded.
+
+    Args:
+        database_name: Name of the database
+        document_id: Reference document to find neighbours for
+        k: Maximum number of related documents to return
+        score_threshold: Minimum similarity score to include
+        filters: Metadata filters (MongoDB-style) applied to candidate documents
+
+    Returns:
+        Related documents with similarity scores and metadata
+    """
+    try:
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
+
+        if hasattr(db, "nearest_neighbors_async"):
+            results = await db.nearest_neighbors_async(
+                document_id, k=k, score_threshold=score_threshold, filters=filters
+            )
+        else:
+            results = db.nearest_neighbors(document_id, k=k, score_threshold=score_threshold, filters=filters)
+
+        serialized_results = [
+            {
+                "id": result.id,
+                "score": float(result.score),
+                "type": result.type,
+                "content": result.content,
+                "metadata": result.metadata,
+            }
+            for result in results
+        ]
+
+        return {
+            "results": serialized_results,
+            "document_id": document_id,
+            "total_results": len(serialized_results),
+        }
+
+    except DocumentNotFoundError:
+        return {"error": f"Document '{document_id}' not found", "error_code": "DOCUMENT_NOT_FOUND"}
+    except DatabaseNotFoundError as e:
+        return {"error": str(e), "error_code": "DATABASE_NOT_FOUND"}
+    except Exception as e:
+        logger.error(f"Error finding related documents: {e}")
+        return {"error": str(e), "error_type": type(e).__name__}
+
+
 @register_tool("filter_documents", read_only=True)
 async def filter_documents(
     database_name: str, filters: Dict[str, Any], limit: int = 100, offset: int = 0
@@ -468,38 +531,90 @@ async def filter_documents(
 
 
 @register_tool("get_document", read_only=True)
-async def get_document(database_name: str, document_id: str) -> Dict[str, Any]:
+async def get_document(
+    database_name: str,
+    document_id: str,
+    chunk: Optional[str] = None,
+    char_range: Optional[str] = None,
+    line_range: Optional[str] = None,
+    section: Optional[str] = None,
+    outline: bool = False,
+) -> Dict[str, Any]:
     """
-    Retrieve a specific document by ID
+    Retrieve a document, or a selected portion of it, by ID
+
+    By default the whole document is returned. The selection arguments below
+    return a part of it instead and are mutually exclusive (pass at most one).
 
     Args:
         database_name: Name of the database
         document_id: ID of the document
+        chunk: Return stored chunk(s) by 0-based index or inclusive range 'M:N'
+            (e.g. '3' or '2:5'). Adds a 'chunks' list (index/content/position).
+        char_range: Return a character slice 'M:N' (0-based, end-exclusive)
+        line_range: Return a line range 'M:N' (1-based, inclusive)
+        section: Return the section whose Markdown heading matches this name
+            (case-insensitive)
+        outline: Return the document's section outline (headings, levels, lines)
+            as an 'outline' list instead of content
 
     Returns:
-        Document content and metadata
+        Document metadata plus the requested content/chunks/outline. The 'mode'
+        field reports which selection produced the result.
     """
     try:
         manager = _get_manager()
         db = await manager.get_database(database_name)
 
-        # Get document
-        if hasattr(db, "get_async"):
-            doc = await db.get_async(document_id)
+        portion_requested = bool(chunk or char_range or line_range or section or outline)
+
+        if portion_requested:
+            try:
+                portion = get_document_portion(
+                    db,
+                    document_id,
+                    chunk=chunk,
+                    char_range=char_range,
+                    line_range=line_range,
+                    section=section,
+                    outline=outline,
+                )
+            except DocumentNotFoundError:
+                return {"error": f"Document '{document_id}' not found", "error_code": "DOCUMENT_NOT_FOUND"}
+            except ValueError as e:
+                # Bad range, unknown section, empty/out-of-range chunk selection, ...
+                return {"error": str(e), "error_type": "ValueError"}
+            doc = portion.document
+            mode = portion.mode
         else:
-            doc = db.get(document_id)
+            # Whole-document fast path — prefer async (matters for remote DBs).
+            portion = None
+            if hasattr(db, "get_async"):
+                doc = await db.get_async(document_id)
+            else:
+                doc = db.get(document_id)
+            if doc is None:
+                return {"error": f"Document '{document_id}' not found", "error_code": "DOCUMENT_NOT_FOUND"}
+            mode = "document"
 
-        if doc is None:
-            return {"error": f"Document '{document_id}' not found", "error_code": "DOCUMENT_NOT_FOUND"}
-
-        return {
+        response: Dict[str, Any] = {
             "id": doc.id,
-            "content": doc.content,
             "metadata": doc.metadata,
             "created_at": doc.created_at.isoformat() if doc.created_at else None,
             "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             "content_hash": doc.content_hash if hasattr(doc, "content_hash") else None,
+            "mode": mode,
         }
+        if portion is not None:
+            if portion.mode == "chunk":
+                response["chunks"] = portion.chunks
+            elif portion.mode == "outline":
+                response["outline"] = portion.outline
+            else:
+                response["content"] = portion.text
+        else:
+            response["content"] = doc.content
+        return response
 
     except Exception as e:
         logger.error(f"Error getting document: {e}")
