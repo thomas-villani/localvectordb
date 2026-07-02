@@ -524,6 +524,32 @@ class TestQueryDatabaseTool:
         assert result["search_type"] == "vector"
         assert result["total_results"] == 1
 
+    def test_query_search_level_forwarded(self, mcp_manager_fixture):
+        """search_level should be forwarded to the database query."""
+        from localvectordb_server.mcp.server import query_database
+
+        mock_result = _make_query_result()
+        mock_db = MagicMock()
+        mock_db.query.return_value = [mock_result]
+        del mock_db.query_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        _run(query_database("testdb", "query", search_level="sections", return_type="sections"))
+        call_kwargs = mock_db.query.call_args[1]
+        assert call_kwargs["search_level"] == "sections"
+        assert call_kwargs["return_type"] == "sections"
+
+    def test_query_search_level_async_forwarded(self, mcp_manager_fixture):
+        """search_level should be forwarded on the async query path."""
+        from localvectordb_server.mcp.server import query_database
+
+        mock_db = MagicMock()
+        mock_db.query_async = AsyncMock(return_value=[_make_query_result()])
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        _run(query_database("testdb", "query", search_level="documents"))
+        assert mock_db.query_async.call_args[1]["search_level"] == "documents"
+
     def test_query_database_not_found(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import query_database
 
