@@ -12,6 +12,8 @@ export type MetadataFieldType =
 
 export type SearchType = "vector" | "keyword" | "hybrid";
 
+export type ContextUnit = "chunks" | "tokens" | "words" | "characters";
+
 export type ReturnType =
   | "documents"
   | "chunks"
@@ -166,7 +168,26 @@ export interface BaseQueryOptions {
   score_threshold?: number;
   filters?: Record<string, unknown>;
   vector_weight?: number;
+  /**
+   * Size of the assembled context for `return_type` `"context"`/`"enriched"`,
+   * measured in {@link BaseQueryOptions.context_unit}. In the default `"chunks"`
+   * unit this is the number of surrounding/similar chunks; with a token/word/
+   * character unit it is an approximate budget for the assembled content.
+   */
   context_window?: number;
+  /**
+   * Unit in which `context_window` is measured. Defaults to `"chunks"`. With a
+   * non-chunk unit, whole neighbouring/similar chunks are added greedily until
+   * the next would exceed the budget (the matched chunk is always kept).
+   */
+  context_unit?: ContextUnit;
+  /**
+   * When `true` and `context_unit` is a token/word/character budget, hard-truncate
+   * the assembled context to exactly the budget. Defaults to `false` (whole chunks
+   * only). The only way to guarantee the budget is never exceeded when a single
+   * chunk is larger than it.
+   */
+  context_truncate?: boolean;
   semantic_dedup_threshold?: number;
   document_scoring_method?: DocumentScoringMethod;
   document_scoring_options?: Record<string, unknown>;

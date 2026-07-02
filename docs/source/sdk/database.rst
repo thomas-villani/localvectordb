@@ -366,7 +366,19 @@ QueryOptions Reference
    * - ``context_window``
      - ``number``
      - ``2``
-     - Surrounding chunks to include in context mode
+     - Size of the assembled context for ``"context"``/``"enriched"``, measured in
+       ``context_unit`` (chunk count, or a token/word/character budget)
+   * - ``context_unit``
+     - ``"chunks" | "tokens" | "words" | "characters"``
+     - ``"chunks"``
+     - How ``context_window`` is interpreted. Non-chunk units treat it as an
+       approximate budget; whole chunks are added greedily until the next would
+       exceed it (the matched chunk is always kept)
+   * - ``context_truncate``
+     - ``boolean``
+     - ``false``
+     - With a budget unit, hard-truncate the assembled context to exactly the
+       budget (otherwise it may fall short by up to one chunk)
    * - ``document_scoring_method``
      - ``DocumentScoringMethod``
      - ``"frequency_boost"``
