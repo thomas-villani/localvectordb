@@ -110,7 +110,7 @@ This approach provides:
 *Document Retrieval:*
 .. code-block:: toml
 
-   read_only_tools = ["query_database", "get_document"]
+   read_only_tools = ["query_database", "get_document", "find_related_documents"]
 
 *Data Explorer:*
 .. code-block:: toml
@@ -254,8 +254,9 @@ Example ``mcp_config.toml``:
    # Optional: Customize which tools are available
    read_only_tools = [
        "list_databases",
-       "get_database_info", 
+       "get_database_info",
        "query_database",
+       "find_related_documents",
        "filter_documents",
        "get_document",
        "check_documents_exist",
@@ -286,8 +287,8 @@ Example ``mcp_config.toml``:
    embedding_provider = "ollama"
    embedding_model = "nomic-embed-text"
    chunk_size = 500
-   chunk_overlap = 1
-   chunking_method = "lines"
+   chunk_overlap = 50
+   chunking_method = "sentences"
    enable_fts = true
    enable_gpu = false
 
@@ -330,11 +331,33 @@ Available in both read-only and read-write modes:
    * ``semantic_dedup_threshold``: Drop near-duplicate results
    * ``document_scoring_method``: Chunk-to-document score aggregation
 
+**find_related_documents**
+   Find the documents most similar to a given document ("more like this"), using
+   document-level embeddings. Ranks other documents by similarity to the reference
+   and excludes the reference itself:
+
+   * ``document_id``: Reference document to find neighbours for
+   * ``k``: Maximum number of related documents to return
+   * ``score_threshold``: Minimum similarity score to include
+   * ``filters``: MongoDB-style metadata filters applied to candidate documents
+
 **filter_documents**
    Filter documents by metadata using MongoDB-style query syntax with limit and offset support.
 
 **get_document**
-   Retrieve a specific document by ID, including content, metadata, and timestamps.
+   Retrieve a document by ID, or a selected portion of it. By default the whole
+   document (content, metadata, timestamps) is returned. The following optional,
+   mutually exclusive arguments return a part of the document instead — the ``mode``
+   field in the response reports which selection was applied:
+
+   * ``chunk``: Return stored chunk(s) by 0-based index or inclusive range ``"M:N"``
+     (adds a ``chunks`` list with index/content/position)
+   * ``char_range``: Return a character slice ``"M:N"`` (0-based, end-exclusive)
+   * ``line_range``: Return a line range ``"M:N"`` (1-based, inclusive)
+   * ``section``: Return the section whose Markdown heading matches this name
+     (case-insensitive)
+   * ``outline``: Return the document's section outline (headings, levels, start
+     lines) as an ``outline`` list instead of content
 
 **check_documents_exist**
    Check if multiple documents exist in the database, returning existence mapping.

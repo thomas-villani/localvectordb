@@ -1078,6 +1078,48 @@ standard (chunk-only) database, only ``--search-level chunks`` is available. See
    The application of machine learning techniques to real-world problems requires
    careful consideration of data quality, model selection, and evaluation metrics...
 
+Related Documents
+^^^^^^^^^^^^^^^^^
+
+Find the documents most similar to an existing one ("more like this"). Unlike
+``search``, which matches against query *text*, ``related`` ranks other documents by
+their similarity to a reference document's own embedding, excluding the reference
+itself.
+
+.. code-block:: bash
+
+   # Documents most related to doc_1
+   lvdb db my_database related doc_1
+
+   # Limit the number of neighbours
+   lvdb db my_database related doc_1 --limit 10
+
+   # Only return sufficiently similar documents
+   lvdb db my_database related doc_1 --score-threshold 0.6
+
+   # Restrict candidates with a metadata filter
+   lvdb db my_database related doc_1 --metadata-filter '{"category": "research"}'
+
+   # Pretty, JSON, or file output (same conventions as search)
+   lvdb db my_database related doc_1 --pretty --metadata
+   lvdb db my_database related doc_1 --json
+   lvdb db my_database related doc_1 --output related.txt
+
+**Options**:
+
+- ``--limit, -n``: Maximum number of related documents (default: 5)
+- ``--score-threshold``: Minimum similarity score to include (default: 0.0)
+- ``--metadata-filter``: Metadata filter (JSON) applied to candidate documents
+- ``--metadata/--no-metadata, -m``: Include metadata in output
+- ``--pretty, -p``: Human-readable, titled output
+- ``--json, -j``: JSON output
+- ``--output, -o``: Write results to a file instead of stdout
+
+Results are returned as ``QueryResult`` objects (``type="document"``) sorted by
+descending similarity, using the same output formatting as ``search``. This command
+wraps the :meth:`~localvectordb.LocalVectorDB.nearest_neighbors` API; see
+:doc:`comparison` for the underlying document-similarity model.
+
 Schema Management
 ^^^^^^^^^^^^^^^^^
 
@@ -2501,23 +2543,28 @@ Start MCP Server
 
 **MCP Configuration File Example**:
 
+Server-level settings (including the read-only/read-write ``mode``) live under
+``[mcp]``. Databases are configured under ``[databases]`` with a ``root`` directory
+and an optional ``[databases.map]`` table mapping database names to specific local
+paths or remote URLs. Run ``lvdb mcp config-example`` to print a fully-commented
+template. See :doc:`mcp` for the complete configuration reference.
+
 .. code-block:: toml
 
    # mcp-config.toml
-   mode = "read-write"
+   [mcp]
+   mode = "read-write"   # or "read-only" (read-only is a whole-server setting)
    log_level = "INFO"
-   
+
    [databases]
-   # Local databases
+   # Root directory searched for local databases
+   root = "/data/databases"
+
+   # Optional: map specific names to local paths or remote URLs
+   [databases.map]
    research = "/data/research_papers"
    documentation = "/data/docs"
-   
-   # Remote databases
    shared_knowledge = "http://knowledge-server:5000/shared"
-   
-   [security]
-   read_only_databases = ["shared_knowledge"]
-   require_auth = true
 
 **Claude Desktop Integration**:
 
@@ -2539,13 +2586,27 @@ To use with Claude Desktop, add this to your Claude Desktop configuration:
 
 **Available MCP Tools**:
 
-When running as an MCP server, LocalVectorDB provides these tools to AI assistants:
+When running as an MCP server, LocalVectorDB provides these tools to AI assistants.
+Read-only tools are available in every mode; write tools require ``--mode read-write``.
+See :doc:`mcp` for the full parameter reference.
 
-- ``search_database``: Search documents in a database
-- ``get_document``: Retrieve specific document by ID
-- ``list_documents``: List document IDs in a database  
-- ``add_document``: Add new document (read-write mode only)
-- ``update_document``: Update existing document (read-write mode only)
-- ``delete_document``: Remove document (read-write mode only)
-- ``get_database_info``: Get database statistics and configuration
+Read-only tools:
+
 - ``list_databases``: List available databases
+- ``get_database_info``: Get database statistics and configuration
+- ``query_database``: Search with vector, keyword, or hybrid search
+- ``find_related_documents``: Find documents related to a given document (nearest neighbours)
+- ``filter_documents``: Filter documents by metadata (with limit/offset)
+- ``get_document``: Retrieve a document by ID, or a portion of it (chunk/range/lines/section/outline)
+- ``check_documents_exist``: Check whether documents exist
+- ``get_metadata_schema``: Get a database's metadata schema
+- ``get_system_info``: Get version, configuration, and enabled tools
+
+Write tools (read-write mode only):
+
+- ``create_database``: Create a new database
+- ``delete_database``: Delete a database and its data
+- ``upsert_documents``: Insert or update documents
+- ``update_document``: Update a document's content and/or metadata
+- ``delete_document``: Delete a document by ID
+- ``update_metadata_schema``: Add or modify metadata schema fields
