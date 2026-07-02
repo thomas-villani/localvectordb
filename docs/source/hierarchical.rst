@@ -50,7 +50,7 @@ Pass ``hierarchical_embeddings=True`` when constructing the database:
        section_metadata_extractors=["heading_path", "word_count", "keywords"],
    )
 
-   db.upsert_document("guide.md", open("guide.md").read())
+   db.upsert(open("guide.md").read(), ids="guide.md")
 
 Constructor parameters:
 

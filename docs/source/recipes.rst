@@ -1065,7 +1065,8 @@ Automatically group documents into topic clusters and print the groups.
 
    def cluster_documents(db):
        """Cluster all documents and return groups."""
-       embeddings, doc_ids = db._get_document_embeddings_batch(None)
+       matrix = db.pairwise_similarity_matrix()
+       embeddings, doc_ids = matrix.embeddings, matrix.doc_ids
        k = find_optimal_clusters(embeddings)
        clusters = cluster_embeddings(embeddings, n_clusters=k)
 
@@ -1095,14 +1096,14 @@ Detect what changed between two versions of a document using chunk-level compari
        if result.unmatched_chunks_2:
            new_doc = db.get(new_id)
            print("\nNew content in updated version:")
-           for chunk in new_doc.chunks or []:
+           for chunk in db.chunker.chunk(new_doc.content):
                if chunk.index in result.unmatched_chunks_2:
                    print(f"  + {chunk.content[:120]}...")
 
        if result.unmatched_chunks_1:
            old_doc = db.get(old_id)
            print("\nRemoved from old version:")
-           for chunk in old_doc.chunks or []:
+           for chunk in db.chunker.chunk(old_doc.content):
                if chunk.index in result.unmatched_chunks_1:
                    print(f"  - {chunk.content[:120]}...")
 

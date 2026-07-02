@@ -479,23 +479,24 @@ Metadata Operations
     from localvectordb.core import MetadataField, MetadataFieldType
 
     # Add new metadata fields
+    new_schema = {
+        'new_field': MetadataField(
+            type=MetadataFieldType.TEXT,
+            indexed=True
+        ),
+        'score': MetadataField(
+            type=MetadataFieldType.REAL,
+            indexed=True,
+            default_value=0.0
+        )
+    }
     db.update_metadata_schema(
-        updates={
-            'new_field': MetadataField(
-                type=MetadataFieldType.TEXT,
-                indexed=True
-            ),
-            'score': MetadataField(
-                type=MetadataFieldType.REAL,
-                indexed=True,
-                default_value=0.0
-            )
-        },
-        recreate_index=True  # Rebuild indexes
+        new_schema,
+        drop_columns=False  # Keep columns removed from the schema (safe default)
     )
 
     # Async variant
-    await db.update_metadata_schema_async(updates, recreate_index)
+    await db.update_metadata_schema_async(new_schema, drop_columns=False)
 
 **Get Schema Information**::
 
@@ -503,8 +504,10 @@ Metadata Operations
     schema_info = db.get_metadata_schema_info()
     # Returns: {
     #     "fields": {...},
+    #     "field_count": 5,
     #     "indexed_fields": [...],
-    #     "total_documents": 1000
+    #     "required_fields": [...],
+    #     "field_types": {...}
     # }
 
     # Async variant

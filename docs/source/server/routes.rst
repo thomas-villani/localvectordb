@@ -59,7 +59,7 @@ Route Permissions
 * ``POST /api/v1/<db_name>/documents/chunks`` - Upsert from pre-chunked data
 * ``POST /api/v1/<db_name>/documents/chunks/insert`` - Insert from pre-chunked data
 * ``POST /api/v1/<db_name>/documents/delete`` - Batch-delete documents by ID
-* ``PUT /api/v1/<db_name>/documents/<doc_id>`` - Update document
+* ``PATCH /api/v1/<db_name>/documents/<doc_id>`` - Update document
 * ``DELETE /api/v1/<db_name>/documents/<doc_id>`` - Delete document
 * ``POST /api/v1/<db_name>/upload`` - Upload files
 * ``PUT /api/v1/<db_name>/schema`` - Update metadata schema
@@ -134,8 +134,12 @@ Create a new vector database with optional configuration.
          "authors": {"type": "json"},
          "journal": {"type": "text", "indexed": true}
        },
-       "embedding_model": "nomic-embed-text",
-       "chunk_size": 600
+       "embedding": {
+         "model": "nomic-embed-text"
+       },
+       "database": {
+         "chunk_size": 600
+       }
      }'
 
 **Python Example**:
@@ -398,8 +402,7 @@ Insert or update documents in the database.
 
    {
      "message": "Successfully processed 2 documents",
-     "ids": ["doc_1", "doc_2"],
-     "status": "success"
+     "ids": ["doc_1", "doc_2"]
    }
 
 Insert Documents
@@ -614,7 +617,8 @@ Check if documents exist by their IDs.
 List Documents
 ^^^^^^^^^^^^^^
 
-List documents with pagination, filtering, or bulk-get by ID.
+List documents with pagination, or bulk-get by ID. To filter by metadata, use
+``POST /api/v1/{db_name}/filter`` instead (this ``GET`` endpoint does not filter).
 
 **Endpoint**: ``GET /api/v1/{db_name}/documents``
 
@@ -625,19 +629,16 @@ List documents with pagination, filtering, or bulk-get by ID.
   If **ids** is provided:
 
   - Only the listed IDs are returned.
-  - Pagination (``page``/``limit``) and metadata filters are **ignored**.
+  - Pagination (``limit``/``offset``) is **ignored**.
   - The response is ``200 OK`` with the shape ``{"documents": [...], "returned_ids": [...],
     "missing_ids": [...]}``. Any IDs that do not exist are reported in ``missing_ids`` rather
     than producing a ``404``.
 
-- ``page``
-  Page number (default: 1). Used **only** when **ids** is *not* provided.
-
 - ``limit``
-  Items per page (default: 100, max: 1000). Used **only** when **ids** is *not* provided.
+  Maximum number of documents to return (default: 100, max: 1000). Used **only** when **ids** is *not* provided.
 
-- ``{field_name}``
-  Any metadata field may be passed to filter (e.g. ``author=Alice``). Used **only** when **ids** is *not* provided.
+- ``offset``
+  Number of documents to skip before returning results (default: 0). Used **only** when **ids** is *not* provided.
 
 **curl Examples**:
 
@@ -649,11 +650,7 @@ List documents with pagination, filtering, or bulk-get by ID.
 
    # 2) Paginate through all docs (no ids)
    curl -H "Authorization: Bearer your_api_key" \
-        "http://localhost:5000/api/v1/research_papers/documents?page=2&limit=50"
-
-   # 3) Filter by metadata field
-   curl -H "Authorization: Bearer your_api_key" \
-        "http://localhost:5000/api/v1/research_papers/documents?journal=Science&limit=10"
+        "http://localhost:5000/api/v1/research_papers/documents?offset=50&limit=50"
 
 **Python Examples**:
 
@@ -674,10 +671,6 @@ List documents with pagination, filtering, or bulk-get by ID.
    data = resp.json()
    page = data["pagination"]  # {"limit", "offset", "total", "has_more"}
    print(f"Showing {len(data['documents'])} of {page['total']} (has_more={page['has_more']})")
-
-   # Filter by metadata
-   resp = requests.get(base, headers=headers, params={"author": "Alice", "limit": 5})
-   print(resp.json()["documents"])
 
 Count Documents
 ^^^^^^^^^^^^^^^
@@ -739,7 +732,7 @@ objects with a ``content``/``text`` field).
      "similarity_threshold": 0.95
    }
 
-**Response**: ``{"message": "...", "ids": ["doc_1"], "status": "success"}``
+**Response**: ``{"message": "...", "ids": ["doc_1"]}``
 
 
 File Upload Operations
@@ -822,9 +815,11 @@ Upload one or more files to a database with automatic text extraction.
 - ``files``: File(s) to upload (required, supports multiple files)
 - ``metadata``: JSON string with base metadata to apply to all files (optional)
 - ``ids``: JSON array or comma-separated string of document IDs (optional)
-- ``use_filename_as_id``: Boolean to use filename as document ID (optional, ignored if ``ids`` provided)
-- ``extract_text``: Boolean to enable text extraction (default: true)
-- ``batch_size``: Batch size for processing (default: 100, max: 1000)
+- ``use_filename_as_id``: Boolean to use filename as document ID (optional, default: ``false``, ignored if ``ids`` provided)
+- ``mode``: Write mode, either ``"upsert"`` or ``"insert"`` (optional, default: ``"upsert"``)
+- ``errors``: Conflict handling for ``insert`` mode, either ``"raise"`` or ``"ignore"`` (optional, default: ``"raise"``)
+- ``similarity_threshold``: Skip a file when it is at least this similar to an existing document (optional)
+- ``batch_size``: Batch size for processing (optional)
 
 .. note::
    Only metadata fields that exist in the database's metadata schema will be stored. Extraction metadata and file
@@ -841,7 +836,7 @@ Upload one or more files to a database with automatic text extraction.
      -F "files=@presentation.pptx" \
      -F "metadata={\"category\":\"research\",\"project\":\"AI\"}" \
      -F "ids=[\"research_doc_1\", \"presentation_slides\"]" \
-     -F "extract_text=true" \
+     -F "mode=upsert" \
      -F "batch_size=50"
 
    # Upload single file using filename as ID
@@ -867,7 +862,7 @@ Upload one or more files to a database with automatic text extraction.
    data = {
        'metadata': '{"category":"research","project":"AI"}',
        'ids': '["research_doc_1", "presentation_slides"]',
-       'extract_text': 'true',
+       'mode': 'upsert',
        'batch_size': '50'
    }
 
@@ -1159,7 +1154,7 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 **Parameters**:
 
 - ``query``: Search text (required)
-- ``search_type``: "vector", "keyword", or "hybrid" (default: "vector")
+- ``search_type``: "vector", "keyword", or "hybrid" (default: "hybrid")
 - ``return_type``: "documents", "chunks", "context", "enriched", or "sections"
   (default: "documents"). ``"sections"`` requires a database created with
   ``hierarchical_embeddings=True``.

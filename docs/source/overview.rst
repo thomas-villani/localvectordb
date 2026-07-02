@@ -271,7 +271,7 @@ Remote databases provide the same API as local databases but communicate over HT
        name="my_database",
        base_path="http://localhost:5000",
        api_key="your_api_key",
-       timeout=60.0,                       # Request timeout
+       request_timeout=60.0,               # Request timeout
        max_retries=3                       # Handle network issues
    )
    
@@ -293,7 +293,7 @@ For production deployments, configure authentication, rate limiting, and monitor
        api_key=os.getenv("LVDB_API_KEY"),  # Use environment variable
        
        # Connection settings
-       timeout=120.0,                      # 2 minute timeout
+       request_timeout=120.0,              # 2 minute timeout
        max_retries=5,                      # Retry failed requests
        retry_delay=1.0,                    # Base delay between retries
        

@@ -673,8 +673,7 @@ Optimizing Performance
        db.query_builder()
        .search("common term")  # Potentially matches many documents
        .filter(is_public=True)
-       .batch_size(200)  # Process in batches of 200 to reduce memory usage
-       .execute()
+       .execute(batch_size=200)  # Process in batches of 200 to reduce memory usage
    )
 
    # Remove semantically similar results to reduce redundancy and increase diversity of returned documents
@@ -796,7 +795,7 @@ Combined Features
        .filter(year=2024)  # Only from 2024
        .filter("citations", gte_=10)  # With at least 10 citations
        .semantic_filter("abstract", "supervised learning", threshold=0.8)  # Using supervised learning approaches
-       .return_type("documents")  # Return full documents
+       .documents()  # Return full documents
        .order_by("publish_date", "desc")  # Most recent first
        .limit(20)  # Top 20 results only
        .execute()
