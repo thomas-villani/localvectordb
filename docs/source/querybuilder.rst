@@ -89,6 +89,14 @@ Search Operations
        .execute()
    )
 
+   # Search within a specific metadata field (case-insensitive "contains" for
+   # string values, exact match otherwise) rather than the document content
+   results = (
+       db.query_builder()
+       .search_field("title", "transformer")  # title ILIKE '%transformer%'
+       .execute()
+   )
+
 
 Combining Search with Filters
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -162,6 +170,26 @@ and you want only papers about NLP using unsupervised techniques:
        .execute()
    )
 
+``semantic_filter`` also accepts a ``metric`` argument selecting how similarity is
+measured. Pass a :class:`~localvectordb.query_builder.SimilarityMetric` value —
+``COSINE`` (default), ``EUCLIDEAN``, ``DOT_PRODUCT``, or ``MANHATTAN``:
+
+.. code-block:: python
+
+   from localvectordb.query_builder import SimilarityMetric
+
+   results = (
+       db.query_builder()
+       .search("natural language processing")
+       .semantic_filter(
+           field="methodology",
+           concept="unsupervised learning",
+           threshold=0.75,
+           metric=SimilarityMetric.DOT_PRODUCT,
+       )
+       .execute()
+   )
+
 Return Type Customization
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -171,7 +199,7 @@ Return Type Customization
    results = (
        db.query_builder()
        .search("specific technical detail")
-       .return_type("chunks")  # Return individual text chunks that match
+       .chunks()  # Return individual text chunks that match
        .execute()
    )
 
@@ -188,6 +216,28 @@ Return Type Customization
        db.query_builder()
        .search("machine learning")
        .documents(scoring_method="weighted_average")  # Use weighted average of chunk scores
+       .execute()
+   )
+
+Hierarchical Search
+^^^^^^^^^^^^^^^^^^^
+
+When the database was created with ``hierarchical_embeddings=True``, two extra
+builder methods select the retrieval granularity (see :doc:`hierarchical`):
+
+* ``.search_level(level)`` — which FAISS index to query: ``"chunks"`` (default),
+  ``"sections"``, or ``"documents"``.
+* ``.sections()`` — return section-level results (``type="section"``).
+
+.. code-block:: python
+
+   # Find the most relevant sections, not individual chunks
+   results = (
+       db.query_builder()
+       .search("network timeout errors")
+       .search_level("sections")
+       .filter("product", "gateway")
+       .limit(5)
        .execute()
    )
 
@@ -257,6 +307,36 @@ Grouping and Aggregation
        .group_by("category")  # Group by category
        .avg_by("priority", "avg_priority")  # Calculate average priority for each category
        .having("avg_priority", "gt", 3)  # Only include categories with average priority > 3
+       .execute()
+   )
+
+The full set of aggregation helpers mirrors SQL: ``count_by``, ``sum_by``,
+``avg_by``, ``min_by``, and ``max_by``. Each takes a field and an optional
+alias (defaulting to e.g. ``sum_<field>``):
+
+.. code-block:: python
+
+   # Total and lowest word_count per category
+   results = (
+       db.query_builder()
+       .group_by("category")
+       .sum_by("word_count", "total_words")   # SUM(word_count)
+       .min_by("word_count", "shortest")      # MIN(word_count)
+       .execute()
+   )
+
+For HAVING on a count aggregation, ``having_count(operator, value, alias="count")``
+is a shorthand for ``having(alias, operator, value)``. HAVING clauses support only
+the comparison operators ``eq``, ``ne``, ``gt``, ``gte``, ``lt``, and ``lte``:
+
+.. code-block:: python
+
+   # Only keep categories with more than 5 documents
+   results = (
+       db.query_builder()
+       .group_by("category")
+       .count_by("*", "count")
+       .having_count("gt", 5)
        .execute()
    )
 
@@ -350,6 +430,57 @@ Cross-encoder reranking can also be applied directly via the ``query()`` method:
 
    reranker = create_reranker("sentence_transformers")
    results = db.query("machine learning", reranker=reranker)
+
+Reranker Provider Options
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The built-in providers accept a few construction options (passed either through
+``reranker_config`` or as keyword arguments to ``create_reranker``):
+
+- All rerankers accept ``timeout`` (seconds, default 90) and ``max_retries``
+  (default 3).
+- ``sentence_transformers`` accepts ``device`` (e.g. ``"cpu"``, ``"cuda"``,
+  ``"mps"``) to select where the local cross-encoder runs.
+- ``huggingface`` accepts ``base_url`` to target a self-hosted Text-Embeddings-
+  Inference / custom endpoint instead of the hosted Inference API.
+
+.. code-block:: python
+
+   from localvectordb.reranking import create_reranker, list_rerankers
+
+   print(list_rerankers())   # ['jina', 'sentence_transformers', 'huggingface', 'mock', ...]
+
+   reranker = create_reranker(
+       "sentence_transformers",
+       model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+       device="cuda",
+   )
+
+Custom Rerankers
+~~~~~~~~~~~~~~~~~
+
+Rerankers use the same plugin architecture as embedding providers. Subclass
+:class:`~localvectordb.reranking.Reranker`, then either register it in-process
+or expose it as an entry point:
+
+.. code-block:: python
+
+   from localvectordb.reranking import Reranker, RerankerRegistry
+
+   class MyReranker(Reranker):
+       ...
+
+   # In-process registration
+   RerankerRegistry.register("my_reranker", MyReranker)
+   reranker = create_reranker("my_reranker")
+
+To make a reranker discoverable across installs, add an entry point under the
+``localvectordb.reranker_providers`` group in your ``pyproject.toml``:
+
+.. code-block:: toml
+
+   [project.entry-points."localvectordb.reranker_providers"]
+   my_reranker = "my_package.rerankers:MyReranker"
 
 Advanced Reranking Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -120,6 +120,34 @@ How to interpret the result:
 The ``chunk_threshold`` parameter controls the minimum similarity for a chunk pair to count
 as "matched".
 
+Chunk Similarity Matrix
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Where ``compare_documents_detailed()`` reduces each chunk to its single best match,
+``chunk_similarity_matrix()`` returns the *full* chunk-level pairwise similarity matrix.
+This is the raw data behind the synteny and chord diagrams below, and is useful when you
+want to inspect every chunk pair yourself.
+
+.. code-block:: python
+
+   # Cross-document: chunks of doc_a (rows) vs chunks of doc_b (columns)
+   cm = db.chunk_similarity_matrix("doc_a", "doc_b")
+
+   print(cm.matrix.shape)         # (C1, C2)
+   print(cm.chunk_indices_1)      # chunk indices for the rows
+   print(cm.chunk_indices_2)      # chunk indices for the columns
+
+When *doc_id_2* is omitted it defaults to *doc_id_1*, producing the (symmetric)
+self-similarity matrix of a single document -- the input a chord diagram expects:
+
+.. code-block:: python
+
+   # Self-similarity within one document
+   cm = db.chunk_similarity_matrix("doc_a")
+   print(cm.doc_id_1 == cm.doc_id_2)   # True
+
+Both documents must have chunk embeddings; a ``ValueError`` is raised otherwise.
+
 Data Classes
 ^^^^^^^^^^^^
 
@@ -127,11 +155,14 @@ Data Classes
 
    from localvectordb.core import (
        ChunkAlignment,
+       ChunkSimilarityMatrix,
        DocumentComparisonResult,
        DocumentSimilarityMatrix,
    )
 
 - ``ChunkAlignment`` -- ``chunk_index_1``, ``chunk_index_2``, ``similarity``
+- ``ChunkSimilarityMatrix`` -- ``matrix`` (shape ``(C1, C2)``), ``doc_id_1``, ``doc_id_2``,
+  ``chunk_indices_1``, ``chunk_indices_2``
 - ``DocumentComparisonResult`` -- ``doc_id_1``, ``doc_id_2``, ``overall_similarity``,
   ``chunk_alignments``, ``matched_ratio_1``, ``matched_ratio_2``,
   ``unmatched_chunks_1``, ``unmatched_chunks_2``
@@ -159,7 +190,7 @@ Visualization requires optional dependencies:
 Convenience Methods
 ^^^^^^^^^^^^^^^^^^^
 
-The database object provides two high-level methods that handle embedding extraction,
+The database object provides several high-level methods that handle embedding extraction,
 projection, and plotting in a single call.
 
 **Embedding map:**
@@ -192,6 +223,51 @@ to the queries.
        queries=["web development", "neural networks"],
        method="pca",
    )
+
+**Synteny ribbon diagram:**
+
+Compare two documents chunk-by-chunk as a synteny plot: each document is drawn as a track
+of chunk segments, and ribbons connect similar chunks between them. This makes reordered,
+inserted, or shared passages easy to spot at a glance.
+
+.. code-block:: python
+
+   # Ribbons drawn only for chunk pairs at or above the similarity threshold
+   fig = db.visualize_synteny(
+       "doc_a",
+       "doc_b",
+       similarity_threshold=0.7,
+       orientation="horizontal",   # or "vertical"
+       chunk_labels=True,           # annotate each segment with its chunk index
+   )
+   fig.savefig("synteny.png")
+
+   # Interactive plotly version
+   fig = db.visualize_synteny("doc_a", "doc_b", interactive=True)
+   fig.show()
+
+**Chord diagram:**
+
+Visualise a single document's *internal* structure as a Circos-style chord diagram. Chunks
+are placed around a circle and chords link chunks that are similar to one another, revealing
+repetition and long-range self-reference within the document.
+
+.. code-block:: python
+
+   fig = db.visualize_chord(
+       "doc_a",
+       similarity_threshold=0.7,
+       min_chunk_distance=3,   # ignore chords between chunks fewer than 3 apart
+       chunk_labels=True,
+   )
+   fig.savefig("chord.png")
+
+   # Interactive plotly version
+   fig = db.visualize_chord("doc_a", interactive=True)
+   fig.show()
+
+The ``min_chunk_distance`` parameter suppresses chords between neighbouring chunks (which are
+almost always similar), keeping the plot focused on meaningful long-range connections.
 
 Standalone Visualization API
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

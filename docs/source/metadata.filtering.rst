@@ -62,6 +62,38 @@ When defining metadata fields, you can specify several attributes:
      - False
      - Enable full-text search with FTS5 (TEXT only)
 
+Predefined Schema Templates
+---------------------------
+
+Instead of hand-writing a schema, you can start from one of several built-in
+templates via :func:`~localvectordb.get_common_metadata_schemas`. Pass the
+template name directly as the ``metadata_schema`` argument when creating a
+database:
+
+.. code-block:: python
+
+   from localvectordb import VectorDB
+
+   # Use the built-in "research_papers" schema (title, authors, abstract,
+   # publication_date, journal, doi, keywords, citation_count)
+   db = VectorDB("papers", "./storage", metadata_schema="research_papers")
+
+The available templates are ``files``, ``documents``, ``research_papers``,
+``code_repository``, and ``customer_support``. You can also inspect or extend a
+template programmatically:
+
+.. code-block:: python
+
+   from localvectordb import get_common_metadata_schemas
+   from localvectordb.core import MetadataField, MetadataFieldType
+
+   schema = dict(get_common_metadata_schemas("documents"))   # a copy to extend
+   schema["language"] = MetadataField(type=MetadataFieldType.TEXT, indexed=True)
+   db = VectorDB("docs", "./storage", metadata_schema=schema)
+
+Calling ``get_common_metadata_schemas()`` with no argument returns a dict of all
+templates; an unknown name raises ``KeyError``.
+
 Supported Operators
 -------------------
 

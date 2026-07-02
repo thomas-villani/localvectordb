@@ -307,7 +307,44 @@ Server Settings
    * - ``cache_settings``
      - dict or null
      - ``null``
-     - Additional configuration for the cache backend (e.g. Redis cache config settings). Set as a TOML table under ``[server.cache_settings]``. See https://cachelib.readthedocs.io/en/stable/
+     - Additional configuration for the cache backend (e.g. Redis cache config settings). Set as a TOML table under ``[server.cache_settings]``. See https://cachelib.readthedocs.io/en/stable/ **Deprecated** in favour of the typed backend keys below.
+   * - ``redis_host`` / ``redis_port`` / ``redis_db``
+     - str / int / int
+     - ``"localhost"`` / ``6379`` / ``0``
+     - Redis connection settings (used when ``cache_type = "RedisCache"``).
+   * - ``redis_password``
+     - str or null
+     - ``null``
+     - Redis password, if required.
+   * - ``redis_url``
+     - str or null
+     - ``null``
+     - Full Redis URL; when set, overrides the individual ``redis_*`` settings.
+   * - ``redis_socket_timeout`` / ``redis_socket_connect_timeout``
+     - float or null
+     - ``null``
+     - Redis socket read / connect timeouts in seconds.
+   * - ``filesystem_cache_dir``
+     - str or null
+     - ``null``
+     - Directory for ``FileSystemCache`` entries.
+   * - ``filesystem_cache_threshold``
+     - int
+     - ``500``
+     - Maximum number of items ``FileSystemCache`` keeps before pruning.
+   * - ``memcached_servers``
+     - list of str
+     - ``["127.0.0.1:11211"]``
+     - Memcached server addresses (used when ``cache_type = "MemcachedCache"``).
+   * - ``memcached_username`` / ``memcached_password``
+     - str or null
+     - ``null``
+     - Memcached SASL credentials, if required.
+   * - ``use_single_cache``
+     - bool
+     - ``false``
+     - Reuse the general cache for the multi-worker database registry instead of
+       configuring a separate ``db_registry`` backend.
    * - ``proxy_enabled``
      - bool
      - ``false``
@@ -376,6 +413,45 @@ Server Settings
      - int
      - ``86400``
      - Maximum time (in seconds) for browsers to cache CORS preflight responses.
+   * - ``security_headers_enabled``
+     - bool
+     - ``true``
+     - Master switch for the security-header / CSP middleware. When ``false``, none
+       of the headers below are applied.
+   * - ``force_https``
+     - bool
+     - ``false``
+     - Redirect HTTP requests to HTTPS and mark cookies secure.
+   * - ``strict_transport_security``
+     - bool
+     - ``true``
+     - Send the ``Strict-Transport-Security`` (HSTS) header.
+   * - ``strict_transport_security_max_age``
+     - int
+     - ``31536000``
+     - ``max-age`` (seconds) for the HSTS header.
+   * - ``content_security_policy``
+     - dict
+     - see below
+     - Content-Security-Policy directives as a mapping of directive to source
+       expression (default allows ``'self'`` plus inline scripts/styles). Set as a
+       TOML table under ``[server.security.content_security_policy]``.
+   * - ``content_type_nosniff``
+     - bool
+     - ``true``
+     - Send ``X-Content-Type-Options: nosniff``.
+   * - ``x_frame_options``
+     - str
+     - ``"DENY"``
+     - Value for the ``X-Frame-Options`` header.
+   * - ``x_xss_protection``
+     - bool
+     - ``true``
+     - Send the legacy ``X-XSS-Protection`` header.
+   * - ``referrer_policy``
+     - str
+     - ``"strict-origin-when-cross-origin"``
+     - Value for the ``Referrer-Policy`` header.
 
 Extraction Settings
 -------------------

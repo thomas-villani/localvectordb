@@ -473,6 +473,21 @@ Use embedding providers directly without a database:
    import asyncio
    embeddings = await provider.embed_batch(texts)
 
+The async ``embed_batch`` accepts a ``progress_callback`` that is invoked as
+``(completed, total)`` after each batch — useful for progress bars on large
+embedding jobs:
+
+.. code-block:: python
+
+   def on_progress(completed, total):
+       print(f"{completed}/{total} texts embedded")
+
+   embeddings = await provider.embed_batch(texts, progress_callback=on_progress)
+
+The module-level helpers :func:`~localvectordb.embeddings.embed_texts` (async)
+and :func:`~localvectordb.embeddings.embed_texts_sync` (synchronous) create a
+provider and embed in one call, without instantiating a database.
+
 Provider Comparison
 -------------------
 
@@ -603,6 +618,8 @@ plus provider-specific options.
 | Google AI            | ``requested_dimensions``      | Output size (128-3072)                                   |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | Google AI            | ``normalize``                 | L2-normalize output vectors (bool)                       |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``base_url``                  | Override the Generative Language API base URL            |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | SentenceTransformers | ``device``                    | Inference device (cpu/cuda/mps/auto)                     |
 +----------------------+-------------------------------+----------------------------------------------------------+

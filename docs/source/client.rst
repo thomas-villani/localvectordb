@@ -419,6 +419,19 @@ Search and Query Operations
     # Async variants
     results = await db.query_async(query, **kwargs)
 
+    # Hierarchical search (server database created with hierarchical_embeddings=True)
+    results = db.query(
+        query="how do I rotate the API key?",
+        search_level="sections",   # "chunks" (default), "sections", or "documents"
+    )
+    # ...or section-grouped results from the chunk index:
+    results = db.query(query="billing", return_type="sections")
+
+``RemoteVectorDB.query`` accepts the same ``search_level`` and
+``return_type="sections"`` options as the local database; see
+:doc:`hierarchical`. The options are forwarded to the server, which must host a
+database created with ``hierarchical_embeddings=True``.
+
 **Multi-Column Search**::
 
     # Search the main content plus embedding-enabled metadata columns.

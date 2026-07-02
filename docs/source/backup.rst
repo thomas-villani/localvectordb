@@ -164,6 +164,45 @@ Incremental backups only store changes since the last backup:
     )
     print(f"Created incremental backup {backup_id} (parent {full_id})")
 
+Restoring an Incremental Chain
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``BackupManager.restore_backup()`` restores a single archive. Restoring an
+*incremental* backup, however, requires replaying the full chain (the root full
+backup plus every incremental up to the target). That dedicated restore path
+lives on :class:`IncrementalBackupManager`, which wraps a ``BackupManager``:
+
+.. code-block:: python
+
+    from localvectordb.backup import (
+        BackupManager,
+        BackupConfig,
+        IncrementalBackupManager,
+    )
+
+    config = BackupConfig(backup_location="./backups")
+    backup_manager = BackupManager("./my_database.db", config=config)
+
+    # IncrementalBackupManager takes the BackupManager it should operate on.
+    incremental_manager = IncrementalBackupManager(backup_manager)
+
+    # restore_incremental_backup_chain() rebuilds the chain from the target
+    # backup back to its root full backup, restores the full backup, then
+    # applies each incremental in order. ``target_backup_id`` may be a full or
+    # an incremental backup id. Returns the restore directory as a Path.
+    restore_path = incremental_manager.restore_incremental_backup_chain(
+        target_backup_id=backup_id,
+        restore_location="./restored_db",
+    )
+    print(f"Restored incremental chain to: {restore_path}")
+
+.. note::
+
+   Incremental backups are *created* with
+   ``BackupManager.create_backup(BackupType.INCREMENTAL, parent_backup_id=...)``
+   (shown above); ``IncrementalBackupManager`` is only needed on the restore
+   side, and internally by point-in-time recovery to replay chains.
+
 Configuration
 -------------
 
@@ -278,28 +317,104 @@ Using PITR
 
 .. code-block:: python
 
-    from localvectordb.backup import BackupManager, BackupConfig
+    from localvectordb.backup import (
+        BackupManager,
+        BackupConfig,
+        IncrementalBackupManager,
+        PointInTimeRecoveryManager,
+    )
     from datetime import datetime, timedelta
 
     # Create backup configuration
     config = BackupConfig(backup_location="./backups")
 
-    # Use BackupManager for PITR operations
+    # PITR is driven by PointInTimeRecoveryManager, not BackupManager.
+    # Build the manager stack: a BackupManager, an IncrementalBackupManager
+    # (needed to replay incremental chains), then the PITR manager itself.
     backup_manager = BackupManager(
         database_path="./mydatabase.db",
-        config=config
+        config=config,
     )
+    incremental_manager = IncrementalBackupManager(backup_manager)
+    pitr_manager = PointInTimeRecoveryManager(backup_manager, incremental_manager)
 
     # Restore to a specific time using PITR. Returns a dict describing the
     # recovery operation (status, the recovery point used, and details).
     target_time = datetime.now() - timedelta(hours=2)
-    result = backup_manager.restore_to_point_in_time(
-        target_timestamp=target_time,
+    result = pitr_manager.restore_to_point_in_time(
+        target_time,
         restore_location="./restored_db",
         tolerance_minutes=60,
     )
 
-    print(f"Recovery succeeded: {result['success']}")
+    if result["success"]:
+        print(f"Restored to {result['restore_location']}")
+        print(f"Recovery point: {result['recovery_point']['backup_id']}")
+    else:
+        print(f"Recovery failed: {result['error']}")
+
+Inspecting the Recovery Timeline
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``PointInTimeRecoveryManager`` also exposes read-only helpers for inspecting the
+available recovery points before committing to a restore. All of them operate on
+the same manager instance constructed above.
+
+.. code-block:: python
+
+    # List every recovery point (full + incremental) in chronological order.
+    # Each entry is a dict with timestamp, backup_id, backup_type,
+    # parent_backup_id, database_version, and size_bytes.
+    timeline = pitr_manager.get_recovery_timeline()
+    for point in timeline:
+        print(f"{point['timestamp']}  {point['backup_type']:<11}  {point['backup_id']}")
+
+    # Find the best recovery point at or before a target time. Returns the
+    # recovery-point dict, or None if nothing falls within tolerance_minutes.
+    target_time = datetime.now() - timedelta(hours=2)
+    point = pitr_manager.find_recovery_point(target_time, tolerance_minutes=60)
+    if point is None:
+        print("No recovery point within tolerance")
+
+    # Validate the timeline for broken chains and gaps. Returns a dict with
+    # 'valid', 'issues', 'warnings', backup counts, and 'recovery_window'.
+    report = pitr_manager.validate_recovery_timeline()
+    if not report["valid"]:
+        for issue in report["issues"]:
+            print(f"Timeline issue: {issue}")
+
+    # Get human-oriented recovery options for a target time. Returns a dict
+    # with 'feasible', 'recovery_window', a list of 'recommendations'
+    # (closest-before / closest-after backups), and a 'timeline_summary'.
+    recs = pitr_manager.get_recovery_recommendations(target_time)
+    for option in recs["recommendations"]:
+        print(f"{option['option']}: {option['backup_id']} ({option['data_loss']})")
+
+Pruning the Timeline
+^^^^^^^^^^^^^^^^^^^^
+
+``cleanup_recovery_timeline()`` deletes old backups while preserving the
+integrity of the recovery chain, keeping the most recent full backups (and any
+incrementals that still depend on them) regardless of age.
+
+.. code-block:: python
+
+    # Preview what would be removed without deleting anything (dry_run=True).
+    # If max_age_days is omitted, the configured retention_days is used.
+    plan = pitr_manager.cleanup_recovery_timeline(
+        max_age_days=30,
+        keep_full_backups=3,
+        dry_run=True,
+    )
+    print(f"Would delete {plan['backups_to_delete']} of {plan['total_backups']} backups")
+
+    # Perform the cleanup for real. Returns a dict including 'deleted_count'
+    # and any 'deletion_errors'.
+    result = pitr_manager.cleanup_recovery_timeline(
+        max_age_days=30,
+        keep_full_backups=3,
+    )
+    print(f"Deleted {result['deleted_count']} backups")
 
 PITR Limitations
 ^^^^^^^^^^^^^^^^
@@ -633,6 +748,26 @@ the result first:
 
     # Delete a specific backup (returns True on success)
     backup_manager.delete_backup(backup_id)
+
+Inspecting a Single Backup
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``get_backup_info()`` fetches the metadata for one backup by id, returning a
+``BackupMetadata`` object (or ``None`` if no backup with that id exists). This is
+a convenient alternative to scanning the full ``list_backups()`` result:
+
+.. code-block:: python
+
+    # Fetch a single backup's metadata by id (None if not found).
+    info = backup_manager.get_backup_info(backup_id)
+    if info is None:
+        print(f"No backup found with id {backup_id}")
+    else:
+        print(f"Type:       {info.backup_type.value}")
+        print(f"Created:    {info.created_at}")
+        print(f"Size:       {info.size_bytes} bytes")
+        print(f"Parent:     {info.parent_backup_id}")
+        print(f"DB version: {info.database_version}")
 
 Backup Format
 -------------
@@ -1021,24 +1156,84 @@ BackupManager
         def delete_backup(self, backup_id: str) -> bool:
             """Delete a specific backup."""
 
-Point-in-Time Recovery Methods
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        def get_backup_info(self,
+                            backup_id: str) -> Optional[BackupMetadata]:
+            """Return one backup's metadata by id, or None if not found."""
 
-Point-in-time recovery functionality is provided by the BackupManager class:
+IncrementalBackupManager
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Incremental backups are *created* through
+``BackupManager.create_backup(BackupType.INCREMENTAL, parent_backup_id=...)``.
+``IncrementalBackupManager`` wraps a ``BackupManager`` and provides the
+chain-aware restore path (and is used internally by PITR):
 
 .. code-block:: python
 
-    # PITR method on BackupManager
-    def restore_to_point_in_time(self, target_timestamp: datetime,
-                                 restore_location: Union[str, Path],
-                                 tolerance_minutes: int = 60,
-                                 dry_run: bool = False) -> Dict[str, Any]:
-        """Restore the database to a specific point in time.
+    class IncrementalBackupManager:
+        """Chain-aware incremental backup create/restore."""
 
-        Returns a dict describing the recovery operation (including a
-        ``success`` flag and the recovery point used). Pass ``dry_run=True``
-        to validate without restoring.
-        """
+        def __init__(self, backup_manager: BackupManager):
+            """Wrap a BackupManager instance."""
+
+        def create_incremental_backup(self, parent_backup_id: str,
+                                      backup_id: Optional[str] = None) -> str:
+            """Create an incremental backup against a parent; returns its id."""
+
+        def restore_incremental_backup_chain(self, target_backup_id: str,
+                                             restore_location: Union[str, Path]
+                                             ) -> Path:
+            """Restore the full+incremental chain up to target_backup_id.
+
+            Returns the restore directory as a Path.
+            """
+
+PointInTimeRecoveryManager
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Point-in-time recovery is provided by ``PointInTimeRecoveryManager`` (not by
+``BackupManager``). It is constructed from a ``BackupManager`` and an
+``IncrementalBackupManager``:
+
+.. code-block:: python
+
+    class PointInTimeRecoveryManager:
+        """Restore a database to any point within the backup window."""
+
+        def __init__(self, backup_manager: BackupManager,
+                     incremental_manager: IncrementalBackupManager):
+            """Build the PITR manager from the backup + incremental managers."""
+
+        def restore_to_point_in_time(self, target_timestamp: datetime,
+                                     restore_location: Union[str, Path],
+                                     tolerance_minutes: int = 60,
+                                     dry_run: bool = False) -> Dict[str, Any]:
+            """Restore the database to a specific point in time.
+
+            Returns a dict describing the recovery operation (including a
+            ``success`` flag and the recovery point used). Pass ``dry_run=True``
+            to validate without restoring.
+            """
+
+        def get_recovery_timeline(self) -> List[Dict[str, Any]]:
+            """List all recovery points in chronological order."""
+
+        def find_recovery_point(self, target_timestamp: datetime,
+                                tolerance_minutes: int = 60
+                                ) -> Optional[Dict[str, Any]]:
+            """Find the best recovery point at or before target_timestamp."""
+
+        def validate_recovery_timeline(self) -> Dict[str, Any]:
+            """Check the timeline for broken chains and gaps."""
+
+        def cleanup_recovery_timeline(self, max_age_days: Optional[int] = None,
+                                      keep_full_backups: int = 3,
+                                      dry_run: bool = False) -> Dict[str, Any]:
+            """Prune old backups while preserving chain integrity."""
+
+        def get_recovery_recommendations(self, target_timestamp: datetime
+                                         ) -> Dict[str, Any]:
+            """Suggest recovery options (closest-before / closest-after)."""
 
 See Also
 --------

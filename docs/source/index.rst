@@ -34,6 +34,7 @@ scale to distributed deployments without changing your code.
    streaming
    embeddings
    chunking
+   hierarchical
    metadata.filtering
    querybuilder
    document-scoring
@@ -46,6 +47,7 @@ scale to distributed deployments without changing your code.
    mcp
    backup
    migrations
+   factcheck
    skills
    recipes
    tutorials/index

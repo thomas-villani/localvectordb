@@ -315,13 +315,20 @@ Available in both read-only and read-write modes:
 
 **query_database**
    Search using vector, keyword, or hybrid search with configurable parameters:
-   
+
    * ``search_type``: "vector", "keyword", or "hybrid"
-   * ``return_type``: "documents", "chunks", or "context"
+   * ``return_type``: "documents", "chunks", "context", "enriched", or "sections"
+     ("sections" requires a database created with ``hierarchical_embeddings=True``)
+   * ``search_level``: which index to query — "chunks" (default), "sections", or
+     "documents" ("sections"/"documents" require ``hierarchical_embeddings=True``)
    * ``k``: Number of results to return
    * ``score_threshold``: Minimum score threshold
    * ``filters``: MongoDB-style metadata filters
    * ``vector_weight``: Weight for vector search in hybrid mode
+   * ``context_window`` / ``context_unit`` / ``context_truncate``: Context sizing for
+     ``return_type`` "context"/"enriched"
+   * ``semantic_dedup_threshold``: Drop near-duplicate results
+   * ``document_scoring_method``: Chunk-to-document score aggregation
 
 **filter_documents**
    Filter documents by metadata using MongoDB-style query syntax with limit and offset support.
