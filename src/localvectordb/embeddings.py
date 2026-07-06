@@ -434,8 +434,9 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     model : str
         The OpenAI model to use for embeddding
     base_url : str
-        The base url for the ollama server (default for Ollama install is http://localhost:11434)
-        Alternatively, you can set the `OLLAMA_URL` environment variable.
+        The base url for the ollama server (default http://127.0.0.1:11434, matching
+        Ollama's default bind address). Alternatively, you can set the `OLLAMA_URL`
+        environment variable.
     timeout : int, default = 90
         Timeout in seconds for the http request
     max_retries : int, default = 3
@@ -468,8 +469,11 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             max_concurrent_requests=max_concurrent_requests,
             base_url=base_url,
         )
-        effective_base_url = base_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
-        self.base_url = (effective_base_url or "http://localhost:11434").rstrip("/")
+        # 127.0.0.1 rather than localhost: Ollama binds IPv4 only by default,
+        # and on Windows "localhost" tries ::1 first, stalling ~2.5s per
+        # connection before falling back.
+        effective_base_url = base_url or os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        self.base_url = (effective_base_url or "http://127.0.0.1:11434").rstrip("/")
         self.requested_dimensions = requested_dimensions
         self.normalize = normalize
         self._validated = False
