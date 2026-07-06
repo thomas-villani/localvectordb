@@ -135,9 +135,19 @@ def cli(ctx, config, db_folder, verbose, quiet):
             raise click.exceptions.Exit(1)
         cfg = config_path = api_key_path = db_folder = None
     else:
+        from localvectordb.exceptions import ConfigurationError
         from localvectordb_server.config import load_config
 
-        cfg = load_config(config_path)
+        try:
+            cfg = load_config(config_path)
+        except (ConfigurationError, ValueError, TypeError, OSError) as e:
+            # Invalid TOML/JSON, failed validation, unreadable file, ... —
+            # show a friendly message instead of a raw traceback.
+            from localvectordb_server.cli._utils import EXIT_CODE_CONFIGURATION_ERROR
+
+            click.secho(f"Error loading configuration from {config_path}: {e}", fg="bright_red", err=True)
+            click.secho("Fix the file or regenerate it with 'lvdb config init'.", fg="bright_red", err=True)
+            raise click.exceptions.Exit(EXIT_CODE_CONFIGURATION_ERROR) from e
         api_key_path = cfg.server.security.key_database_path or os.path.join(cfg.database.root_dir, "api_keys.db")
 
         if not db_folder:
