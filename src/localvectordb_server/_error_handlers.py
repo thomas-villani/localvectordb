@@ -343,10 +343,15 @@ def validate_database_creation_params(data: Dict[str, Any]) -> Dict[str, Any]:
     if "embedding" in data:
         validate_field_type(data, "embedding", dict)
         emb_config = data["embedding"]
-        if "provider" in emb_config and emb_config["provider"] not in ["ollama", "openai"]:
-            raise ValidationError(
-                "embedding provider must be 'ollama' or 'openai'",
-                field="embedding.provider",
-                value=emb_config["provider"],
-            )
+        if "provider" in emb_config:
+            from localvectordb.embeddings import EmbeddingRegistry
+
+            available = EmbeddingRegistry.list()
+            provider = emb_config["provider"]
+            if not isinstance(provider, str) or provider.lower() not in available:
+                raise ValidationError(
+                    f"embedding provider must be one of: {', '.join(sorted(available))}",
+                    field="embedding.provider",
+                    value=provider,
+                )
     return data

@@ -63,7 +63,7 @@ class BaseSettings(ABC):
 class EmbeddingSettings(BaseSettings):
     """Settings for embedding providers."""
 
-    provider: str = "ollama"  # ollama, openai
+    provider: str = "ollama"  # any provider registered in localvectordb.embeddings.EmbeddingRegistry
     model: str = "nomic-embed-text"
     base_url: Optional[str] = None  # Provider-specific base URL
     api_key: Optional[str] = None  # API key for providers that need it
@@ -75,8 +75,13 @@ class EmbeddingSettings(BaseSettings):
     config: Dict[str, Any] = field(default_factory=dict)
 
     def validate(self):
-        if not isinstance(self.provider, str) or self.provider.lower() not in ("ollama", "openai"):
-            raise ConfigurationError("provider must be 'ollama' or 'openai'")
+        # Deferred import: keeps config importable without triggering embedding
+        # provider plugin discovery until validation actually runs.
+        from localvectordb.embeddings import EmbeddingRegistry
+
+        available = EmbeddingRegistry.list()
+        if not isinstance(self.provider, str) or self.provider.lower() not in available:
+            raise ConfigurationError(f"provider must be one of: {', '.join(sorted(available))} (got {self.provider!r})")
 
         if not isinstance(self.model, str) or not self.model:
             raise ConfigurationError("model must be a non-empty string")

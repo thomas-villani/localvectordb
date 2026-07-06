@@ -34,8 +34,9 @@ class CreateDatabaseBody(StrictModel):
     # _create_database still posts a legacy flat payload (embedding_provider,
     # chunk_size, ...) that this endpoint has always ignored in favor of server
     # defaults. Forbidding extras would 400 every remote create. Honoring that
-    # config end-to-end (and relaxing the ollama|openai provider whitelist, M13)
-    # is tracked as a follow-up; until then we preserve the lenient behavior.
+    # config end-to-end is tracked as a follow-up; until then we preserve the
+    # lenient behavior. (The provider whitelist itself now defers to
+    # EmbeddingRegistry — see _error_handlers.validate_database_creation_params.)
     model_config = ConfigDict(extra="ignore")
 
     name: str = Field(..., min_length=1)

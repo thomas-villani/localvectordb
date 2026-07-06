@@ -192,7 +192,13 @@ def list_databases(ctx, details):
 @click.command("create")
 @click.argument("name")
 @click.option("--embedding-model", default=None, type=str, help="Embedding model to use")
-@click.option("--embedding-provider", default=None, type=click.Choice(["ollama", "openai"]), help="Embedding provider")
+@click.option(
+    "--embedding-provider",
+    default=None,
+    type=str,
+    help="Embedding provider (any provider registered with localvectordb, e.g. ollama, openai, "
+    "google, jina, sentence_transformers, huggingface, huggingface_local)",
+)
 @click.option("--chunk-size", default=None, type=int, help="Max tokens per chunk")
 @click.option(
     "--chunking-method",
@@ -250,6 +256,18 @@ def create_vector_database(
     chunk_size = chunk_size or 500
     chunking_method = chunking_method or "sentences"
     chunk_overlap = chunk_overlap or 1
+
+    from localvectordb.embeddings import EmbeddingRegistry
+
+    available_providers = EmbeddingRegistry.list()
+    if embedding_provider.lower() not in available_providers:
+        click.secho(
+            f"Unknown embedding provider '{embedding_provider}'. "
+            f"Available: {', '.join(sorted(available_providers))}",
+            fg="bright_red",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
     # Prepare metadata schema
     schema_dict = None

@@ -90,8 +90,18 @@ class TestEmbeddingSettings:
         """Test validation with invalid provider."""
         settings = EmbeddingSettings(provider="invalid")
 
-        with pytest.raises(ConfigurationError, match="provider must be 'ollama' or 'openai'"):
+        with pytest.raises(ConfigurationError, match="provider must be one of"):
             settings.validate()
+
+    def test_validation_accepts_all_registered_providers(self):
+        """Every provider registered with EmbeddingRegistry must pass validation."""
+        from localvectordb.embeddings import EmbeddingRegistry
+
+        for provider in EmbeddingRegistry.list():
+            if provider == "openai":
+                continue  # requires api_key / OPENAI_API_KEY; covered elsewhere
+            settings = EmbeddingSettings(provider=provider)
+            assert settings.validate() is True
 
     def test_validation_empty_model(self):
         """Test validation with empty model."""
