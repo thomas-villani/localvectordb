@@ -255,6 +255,41 @@ class TestCreateDatabase:
 
     @patch("localvectordb_server._dbmanager.DatabaseManager._sync_registry_from_filesystem")
     @patch("localvectordb.database.LocalVectorDB")
+    def test_create_db_omits_unset_api_key_and_base_url(self, MockLocalVectorDB, _mock_sync, mock_app, tmp_db_dir):
+        """Regression: unset (None) api_key/base_url were forwarded into
+        embedding_config, and providers that don't accept those kwargs
+        (e.g. OllamaEmbeddings has no api_key) failed database creation with
+        an unexpected-keyword-argument TypeError."""
+        mock_db = _make_mock_db("newdb")
+        MockLocalVectorDB.return_value = mock_db
+
+        mgr = DatabaseManager(mock_app)
+        try:
+            mgr.create_db("newdb", None, DatabaseSettings(), EmbeddingSettings())
+            embedding_config = MockLocalVectorDB.call_args.kwargs["embedding_config"]
+            assert "api_key" not in embedding_config
+            assert "base_url" not in embedding_config
+        finally:
+            mgr.close_all()
+
+    @patch("localvectordb_server._dbmanager.DatabaseManager._sync_registry_from_filesystem")
+    @patch("localvectordb.database.LocalVectorDB")
+    def test_create_db_forwards_set_api_key_and_base_url(self, MockLocalVectorDB, _mock_sync, mock_app, tmp_db_dir):
+        mock_db = _make_mock_db("newdb")
+        MockLocalVectorDB.return_value = mock_db
+
+        mgr = DatabaseManager(mock_app)
+        try:
+            emb = EmbeddingSettings(api_key="secret", base_url="http://emb:9999")
+            mgr.create_db("newdb", None, DatabaseSettings(), emb)
+            embedding_config = MockLocalVectorDB.call_args.kwargs["embedding_config"]
+            assert embedding_config["api_key"] == "secret"
+            assert embedding_config["base_url"] == "http://emb:9999"
+        finally:
+            mgr.close_all()
+
+    @patch("localvectordb_server._dbmanager.DatabaseManager._sync_registry_from_filesystem")
+    @patch("localvectordb.database.LocalVectorDB")
     def test_create_db_duplicate_raises(self, MockLocalVectorDB, _mock_sync, mock_app):
         mock_db = _make_mock_db("dup")
         MockLocalVectorDB.return_value = mock_db

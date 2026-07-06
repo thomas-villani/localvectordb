@@ -670,11 +670,13 @@ class DatabaseManager:
                     )
 
                     # Some of the config parameters need to be included in the `embedding_config` kwarg.
+                    # base_url/api_key are only forwarded when actually set: not every
+                    # provider accepts them (e.g. OllamaEmbeddings has no api_key,
+                    # SentenceTransformerEmbeddings has neither) and an unexpected
+                    # keyword argument would fail database creation.
                     embedding_config_dict = dict(
                         timeout=embedding_config.timeout,
                         max_retries=embedding_config.max_retries,
-                        base_url=embedding_config.base_url,
-                        api_key=embedding_config.api_key,
                         **embedding_config.config,
                     )
                     if embedding_config.base_url:

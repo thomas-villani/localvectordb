@@ -410,7 +410,7 @@ async def count_documents(db_name: str, body: Optional[FilterBody] = None, db=De
         filters = body.filters if body else None
         try:
             db_logger.log_query("count_documents", database_name=db_name, has_filters=filters is not None)
-            count = db.count(where=filters)
+            count = db.count(filters=filters)
             db_logger.log_query("count_documents_success", database_name=db_name, result_count=count)
             return {"count": count}
         except Exception as e:
@@ -461,7 +461,7 @@ def list_documents(
                 )
 
             documents = db.filter(where=None, limit=limit, offset=offset)
-            total = db.count(where=None)
+            total = db.count(filters=None)
             return DocumentListResponse(
                 documents=[DocumentResponse(**serialize_document(doc)) for doc in documents],
                 pagination=PageInfo(limit=limit, offset=offset, total=total, has_more=offset + len(documents) < total),
