@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 from abc import ABC
@@ -17,7 +18,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb.core import Chunk, ChunkPosition, Document
+from localvectordb.core import Chunk, ChunkPosition, Document, MetadataFieldType
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError
@@ -135,6 +136,15 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
         for key, value in row_items:
             if key not in base_columns:
+                # JSON metadata columns are declared TEXT in SQLite, so the
+                # registered "json" converter never fires; deserialize here so
+                # documents round-trip lists/dicts (search does the same).
+                field_def = self.metadata_schema.get(key)
+                if isinstance(value, str) and field_def is not None and field_def.type == MetadataFieldType.JSON:
+                    try:
+                        value = json.loads(value)
+                    except (ValueError, TypeError):
+                        pass  # malformed stored value: return raw string
                 metadata[key] = value
 
         return Document(

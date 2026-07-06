@@ -88,3 +88,28 @@ class TestFalsyValueValidation:
             metadata=[{"title": "", "count": 0, "score": 0.0, "active": False, "tags": []}],
         )
         assert len(ids) == 1
+
+
+@pytest.mark.database
+class TestJsonMetadataRoundTrip:
+    """Regression: JSON fields came back from get()/filter() as their raw
+    serialized string (JSON columns are declared TEXT, so the sqlite converter
+    never fires), which also made update() with partial metadata fail its
+    re-validation of the merged existing metadata."""
+
+    def test_get_returns_deserialized_json_field(self, typed_db):
+        typed_db.upsert(["doc"], metadata=[{"tags": ["python", "tutorial"]}], ids=["d1"])
+        doc = typed_db.get("d1")
+        assert doc.metadata["tags"] == ["python", "tutorial"]
+
+    def test_filter_returns_deserialized_json_field(self, typed_db):
+        typed_db.upsert(["doc"], metadata=[{"tags": {"a": 1}, "count": 5}], ids=["d1"])
+        docs = typed_db.filter(where={"count": 5})
+        assert docs[0].metadata["tags"] == {"a": 1}
+
+    def test_partial_metadata_update_with_json_field_present(self, typed_db):
+        typed_db.upsert(["doc"], metadata=[{"tags": ["x"], "count": 1}], ids=["d1"])
+        assert typed_db.update("d1", metadata={"count": 2}) is True
+        doc = typed_db.get("d1")
+        assert doc.metadata["count"] == 2
+        assert doc.metadata["tags"] == ["x"]  # untouched and still a list
