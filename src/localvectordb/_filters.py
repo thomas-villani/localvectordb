@@ -284,21 +284,24 @@ class FilterQueryBuilder:
             raise DatabaseError(f"JSON operations only supported on JSON fields, {field} is {field_type}")
 
         if json_op == "$contains":
-            # Check if JSON array contains value
+            # Check if JSON array contains value. Placeholders are positional
+            # ("?"), so the value must be bound once per occurrence in the SQL.
             json_value = json.dumps(value)
-            param_placeholder = self._add_param(json_value)
+            placeholder_1 = self._add_param(json_value)
+            placeholder_2 = self._add_param(json_value)
             # Use JSON_EXTRACT or fallback to string search
             return (
-                f"(json_extract({field}, '$') LIKE '%' || {param_placeholder} "
-                f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')"
+                f"(json_extract({field}, '$') LIKE '%' || {placeholder_1} "
+                f"|| '%' OR {field} LIKE '%' || {placeholder_2} || '%')"
             )
         elif json_op == "$not_contains":
             # Check if JSON array does not contain value
             json_value = json.dumps(value)
-            param_placeholder = self._add_param(json_value)
+            placeholder_1 = self._add_param(json_value)
+            placeholder_2 = self._add_param(json_value)
             return (
-                f"NOT (json_extract({field}, '$') LIKE '%' || {param_placeholder} "
-                f"|| '%' OR {field} LIKE '%' || {param_placeholder} || '%')"
+                f"NOT (json_extract({field}, '$') LIKE '%' || {placeholder_1} "
+                f"|| '%' OR {field} LIKE '%' || {placeholder_2} || '%')"
             )
         else:
             raise DatabaseError(f"Unsupported JSON operation: {json_op}")

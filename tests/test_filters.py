@@ -130,6 +130,40 @@ class TestNoInjectionAgainstRealSqlite:
         conn.close()
 
 
+class TestJsonContainsAgainstRealSqlite:
+    """Regression: $contains/$not_contains on JSON fields reused one bound
+    parameter for two SQL placeholders, so executing the clause raised
+    sqlite3.ProgrammingError (binding count mismatch)."""
+
+    def _db(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE docs (id INTEGER PRIMARY KEY, author TEXT, rating REAL, tags TEXT)")
+        conn.execute("INSERT INTO docs (author, rating, tags) VALUES ('Jane', 4.5, '[\"python\", \"tutorial\"]')")
+        conn.execute("INSERT INTO docs (author, rating, tags) VALUES ('Bob', 3.0, '[\"golang\"]')")
+        conn.commit()
+        return conn
+
+    def test_contains_binds_one_param_per_placeholder(self):
+        builder = FilterQueryBuilder(_schema())
+        clause, params = builder.build_where_clause({"tags": {"$contains": "python"}})
+        assert clause.count("?") == len(params)
+
+        conn = self._db()
+        rows = conn.execute(f"SELECT author FROM docs WHERE {clause}", params).fetchall()
+        assert [r[0] for r in rows] == ["Jane"]
+        conn.close()
+
+    def test_not_contains_binds_one_param_per_placeholder(self):
+        builder = FilterQueryBuilder(_schema())
+        clause, params = builder.build_where_clause({"tags": {"$not_contains": "python"}})
+        assert clause.count("?") == len(params)
+
+        conn = self._db()
+        rows = conn.execute(f"SELECT author FROM docs WHERE {clause}", params).fetchall()
+        assert [r[0] for r in rows] == ["Bob"]
+        conn.close()
+
+
 class TestFTSSanitization:
     def test_multi_term_becomes_and_of_quoted_terms(self):
         assert FTSQuerySanitization.sanitize_fts_query("hello world") == '"hello" AND "world"'
