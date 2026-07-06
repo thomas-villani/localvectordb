@@ -121,7 +121,7 @@ class TestOllamaEmbeddings:
         """Test creating Ollama embedding provider."""
         provider = OllamaEmbeddings("nomic-embed-text")
         assert provider.model == "nomic-embed-text"
-        assert provider.base_url == "http://localhost:11434"
+        assert provider.base_url == "http://127.0.0.1:11434"
         assert provider.provider_name == "ollama"
         assert provider.max_batch_size == 64
 
@@ -194,7 +194,7 @@ class TestOllamaEmbeddings:
         np.testing.assert_array_equal(embeddings[1], np.asarray([0.4, 0.5, 0.6], dtype=np.float32))
 
         mock_client.post.assert_called_once_with(
-            "http://localhost:11434/api/embed",
+            "http://127.0.0.1:11434/api/embed",
             json={"model": "test-model", "input": texts, "truncate": True},
             timeout=300.0,
         )

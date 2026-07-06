@@ -49,7 +49,7 @@ Configuration:
        embedding_provider="ollama",
        embedding_model="nomic-embed-text",
        embedding_config={
-           "base_url": "http://localhost:11434"  # Default Ollama URL
+           "base_url": "http://127.0.0.1:11434"  # Default Ollama URL
        }
    )
 
@@ -589,7 +589,7 @@ plus provider-specific options.
 | Provider             | Parameter                     | Description                                              |
 +======================+===============================+==========================================================+
 | Ollama               | ``base_url``                  | Ollama server URL (default: ``$OLLAMA_URL`` or           |
-|                      |                               | ``http://localhost:11434``)                              |
+|                      |                               | ``http://127.0.0.1:11434``)                              |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | Ollama               | ``requested_dimensions``      | Truncate output to N dims (Matryoshka/MRL)               |
 +----------------------+-------------------------------+----------------------------------------------------------+
