@@ -870,11 +870,17 @@ Add Documents
 
 .. note::
 
-   ``add`` reads files as UTF-8 **text** — it does not run extraction. Use it for
-   text, Markdown, and source files. To ingest PDF/DOCX/PPTX/XLSX and other
-   binary formats (extracted to Markdown), upload them through the server
-   ``/upload`` endpoint or use ``db.upsert_from_file(...)`` in the Python API.
-   See :doc:`/file-extraction`.
+   Rich document formats (PDF, DOCX, HTML, CSV, XLSX, ...) are automatically
+   extracted to Markdown; plain text, Markdown, and source files are read
+   directly as UTF-8. Use ``--extract``/``--no-extract`` to force or disable
+   extraction. See :doc:`/file-extraction`.
+
+.. note::
+
+   Unless ``--id`` is given, documents added from files use the filename
+   without extension as their id (matching ``db.upsert_from_file(...)``), so
+   adding the same file again updates the existing document. Text and stdin
+   input gets an auto-generated id.
 
 Get Documents
 """""""""""""

@@ -83,3 +83,24 @@ providers (the mocked test suite could not catch these):
   connection on Windows
 - README/docs metadata-filter examples used unsupported operator spellings
   (`contains`, `>=`) instead of `$contains`/`$gte`
+
+Pre-release consistency fixes:
+
+- `query(filters=...)`, `query_multi_column(filters=...)`, and
+  `nearest_neighbors(filters=...)` silently returned no matches for filter
+  fields not in the metadata schema or unsupported operators; they now raise
+  `MetadataFilterError` (a `DatabaseError`/`ValueError` subclass) up front,
+  matching `filter(where=...)` behavior
+- Invalid filter specs over HTTP returned 500 `DATABASE_ERROR`; they now
+  return 400 `INVALID_FILTER` (a client error), the Python client raises
+  `MetadataFilterError` for it, and clients no longer waste retries on them
+- `upsert()` silently dropped metadata fields not in the metadata schema; it
+  now logs a warning naming the dropped fields
+- `lvdb db <name> <cmd> --help` required the database (and DB folder) to
+  exist; the database is now opened lazily on first use so help always works
+- A malformed or invalid config file crashed the CLI with a raw traceback; it
+  now prints a friendly error and exits with the configuration-error code (2)
+- `lvdb db <name> add <file>` assigned generated `doc_N` ids while the
+  library's `upsert_from_file()` used the filename stem; the CLI now also
+  defaults file inputs to the filename stem (repeated stems in one batch fall
+  back to generated ids)

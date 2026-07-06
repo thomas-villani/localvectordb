@@ -2274,6 +2274,8 @@ unexpected errors are wrapped in an ``error`` object:
 
 **Common Error Codes**:
 
+- ``INVALID_FILTER`` (400): Invalid metadata filter or order_by spec (unknown
+  field, unsupported operator)
 - ``DATABASE_NOT_FOUND`` (404): Database doesn't exist
 - ``DOCUMENT_NOT_FOUND`` (404): Document ID doesn't exist
 - ``DUPLICATE_DOCUMENT_ID`` (409): Document ID already exists

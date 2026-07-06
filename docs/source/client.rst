@@ -683,7 +683,7 @@ Here's how to migrate existing LocalVectorDB code to RemoteVectorDB:
 
     # Operations
     db.upsert(["Product A", "Product B"], metadata=[...])
-    results = db.query("electronics", filters={"price": {"<": 1000}})
+    results = db.query("electronics", filters={"price": {"$lt": 1000}})
 
 **Migrated to Remote (Option 1: Direct)**::
 
@@ -703,7 +703,7 @@ Here's how to migrate existing LocalVectorDB code to RemoteVectorDB:
 
     # Exact same operations work!
     db.upsert(["Product A", "Product B"], metadata=[...])
-    results = db.query("electronics", filters={"price": {"<": 1000}})
+    results = db.query("electronics", filters={"price": {"$lt": 1000}})
 
 **Migrated to Remote (Option 2: Using Factory)**::
 
@@ -727,7 +727,7 @@ Here's how to migrate existing LocalVectorDB code to RemoteVectorDB:
 
     # Same operations for both local and remote!
     db.upsert(["Product A", "Product B"], metadata=[...])
-    results = db.query("electronics", filters={"price": {"<": 1000}})
+    results = db.query("electronics", filters={"price": {"$lt": 1000}})
 
 RAG Application Example
 ~~~~~~~~~~~~~~~~~~~~~~~

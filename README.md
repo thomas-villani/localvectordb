@@ -334,6 +334,10 @@ results = db.query(
 results = db.query("exact phrase", search_type="keyword")
 ```
 
+> **Note:** Filter fields (and metadata keys on upsert) must be declared in the
+> database's `metadata_schema`. Filtering on an undeclared field raises
+> `DatabaseError`; undeclared metadata keys are dropped on upsert with a warning.
+
 #### `get(ids)` / `delete(ids)` / `exists(ids)`
 Document management.
 

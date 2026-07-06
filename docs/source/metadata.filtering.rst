@@ -13,10 +13,10 @@ SQL queries to prevent injection attacks.
 
    **Metadata fields must be declared in the database's** ``metadata_schema`` **to be stored and
    queryable.** Each declared field becomes a real column on the ``documents`` table. Any key you pass
-   in a document's metadata that is **not** part of the schema is silently dropped on insert (it is not
-   stored, and you cannot filter on it). Likewise, filtering on a field that is not in the schema raises
-   an error. Declare every field you intend to store, filter, or sort on when you create the database
-   (or add it later with ``update_metadata_schema()``).
+   in a document's metadata that is **not** part of the schema is dropped on insert with a logged
+   warning (it is not stored, and you cannot filter on it). Likewise, filtering on a field that is not
+   in the schema raises an error. Declare every field you intend to store, filter, or sort on when you
+   create the database (or add it later with ``update_metadata_schema()``).
 
 
 Key Features
