@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from localvectordb.core import MetadataField, MetadataFieldType
-from localvectordb.exceptions import DatabaseError
+from localvectordb.exceptions import DatabaseError, MetadataFilterError
 
 # Pattern for valid SQL identifiers (alphanumeric and underscores, starting with letter or underscore)
 _SAFE_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -571,6 +571,63 @@ class FilterQueryBuilder:
             return f"({' AND '.join(conditions)})"
         else:
             return "1=1"  # No conditions
+
+
+def validate_filter_spec(filter_spec: Dict[str, Any], metadata_schema: Dict[str, MetadataField]) -> None:
+    """Validate a metadata filter specification against the database schema.
+
+    Ensures that in-memory filtering (``matches_metadata_filter``) rejects the
+    same inputs the SQL path (``FilterQueryBuilder``) rejects, instead of
+    silently matching nothing: unknown field names and unsupported operators
+    raise ``MetadataFilterError`` up front.
+
+    Dot-notation fields (e.g. ``"author.name"``) are validated on their first
+    segment only, since nested access into JSON metadata is supported by the
+    in-memory matcher.
+
+    Parameters
+    ----------
+    filter_spec : Dict[str, Any]
+        Filter specification (same format accepted by ``filter(where=...)``
+        and ``query(filters=...)``)
+    metadata_schema : Dict[str, MetadataField]
+        The database metadata schema to validate field names against
+
+    Raises
+    ------
+    MetadataFilterError
+        If a field is not in the schema or an operator is not supported.
+        Subclasses ``DatabaseError`` and ``ValueError``; the HTTP server maps
+        it to a 400 client error.
+    """
+    if not filter_spec:
+        return
+
+    if not isinstance(filter_spec, dict):
+        raise MetadataFilterError(f"Filter specification must be a dict, got {type(filter_spec).__name__}")
+
+    for key, value in filter_spec.items():
+        if key == "$and" or key == "$or":
+            if not isinstance(value, list):
+                raise MetadataFilterError(f"{key} operator requires a list of conditions")
+            for cond in value:
+                validate_filter_spec(cond, metadata_schema)
+        elif key == "$not":
+            if not isinstance(value, dict):
+                raise MetadataFilterError("$not operator requires a condition object")
+            validate_filter_spec(value, metadata_schema)
+        elif key.startswith("$"):
+            raise MetadataFilterError(f"Unsupported operator: {key}")
+        else:
+            # Field condition: validate the field name (first dot segment)
+            root = key.split(".", 1)[0]
+            if root.lower() not in FilterQueryBuilder.RESERVED_COLUMNS and root not in metadata_schema:
+                raise MetadataFilterError(f"Field '{root}' not found in metadata schema")
+            # Operator-style condition: validate operator names
+            if isinstance(value, dict):
+                for op in value:
+                    if op not in FILTER_OPERATORS:
+                        raise MetadataFilterError(f"Unsupported operator: {op}")
 
 
 # Legacy compatibility functions

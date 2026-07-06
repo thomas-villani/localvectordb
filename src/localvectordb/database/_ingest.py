@@ -398,7 +398,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the metadata
+            schema are stored; fields not in the schema are dropped with a
+            logged warning.
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -600,7 +602,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the metadata
+            schema are stored; fields not in the schema are dropped with a
+            logged warning.
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -1826,7 +1830,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the metadata
+            schema are stored; fields not in the schema are dropped with a
+            logged warning.
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -2077,7 +2083,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the metadata
+            schema are stored; fields not in the schema are dropped with a
+            logged warning.
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int

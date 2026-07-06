@@ -80,6 +80,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             return np.arange(start_id, self.index.ntotal, dtype=np.int64)  # Fall back to range
 
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
+        unknown_fields: set = set()
         for metadata in metadata_batch:
             for field_name, value in metadata.items():
                 if field_name in self.metadata_schema:
@@ -92,12 +93,20 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                         raise ValueError(
                             f"Metadata field '{field_name}' is type {field_def.type.name}. Found: {type(value)}"
                         )
+                else:
+                    unknown_fields.add(field_name)
             for field_name, field_def in self.metadata_schema.items():
                 if field_def.required and field_name not in metadata:
                     if field_def.default_value is not None:
                         metadata[field_name] = field_def.default_value
                     else:
                         raise ValueError(f"Required metadata field '{field_name}' is missing")
+        if unknown_fields:
+            logger.warning(
+                "Metadata field(s) %s are not in the metadata schema and will not be stored. "
+                "Add them with update_metadata_schema() to persist these values.",
+                sorted(unknown_fields),
+            )
 
     def get_metadata_schema_info(self) -> Dict[str, Any]:
         """

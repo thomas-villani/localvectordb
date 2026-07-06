@@ -856,6 +856,12 @@ class TestLocalVectorDBQuery:
 
     def test_query_with_filters(self, mock_db):
         """Test query with metadata filters."""
+        from localvectordb.core import MetadataField, MetadataFieldType
+
+        mock_db._metadata_schema = {
+            "author": MetadataField(type=MetadataFieldType.TEXT),
+            "category": MetadataField(type=MetadataFieldType.TEXT),
+        }
         filters = {"author": "Test Author", "category": "test"}
 
         with patch.object(mock_db, "_vector_search") as mock_vector_search:
@@ -866,6 +872,13 @@ class TestLocalVectorDBQuery:
             # Check filters were passed
             args = mock_vector_search.call_args[0]
             assert args[4] == filters  # filters parameter
+
+    def test_query_with_unknown_filter_field_raises(self, mock_db):
+        """Filters on fields not in the metadata schema raise, matching filter(where=...)."""
+        from localvectordb.exceptions import DatabaseError
+
+        with pytest.raises(DatabaseError, match="not found in metadata schema"):
+            mock_db.query("test", filters={"author": "Test Author"})
 
     def test_query_return_chunks(self, mock_db):
         """Test query returning chunks instead of documents."""

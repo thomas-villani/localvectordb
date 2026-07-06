@@ -200,14 +200,19 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
         score_threshold : float
             Minimum similarity score to include.
         filters : dict, optional
-            Metadata filter dict applied to candidates.
+            Metadata filter dict applied to candidates. Filter fields must be
+            declared in the metadata schema; unknown fields or unsupported
+            operators raise ``DatabaseError``.
 
         Returns
         -------
         List[QueryResult]
             Sorted by score descending; the reference document is excluded.
         """
-        from localvectordb._filters import matches_metadata_filter
+        from localvectordb._filters import matches_metadata_filter, validate_filter_spec
+
+        if filters:
+            validate_filter_spec(filters, self.metadata_schema)
 
         ref_emb = self._get_document_embedding(doc_id)
 
