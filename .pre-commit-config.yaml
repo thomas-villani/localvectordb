@@ -17,6 +17,9 @@ repos:
       - id: bandit
         args: [-c, pyproject.toml]
         additional_dependencies: ["bandit[toml]"]
+        # Match the project's bandit scope (pyproject targets = ["src"], CI runs
+        # `bandit -r src/`): dev-only scripts legitimately use subprocess etc.
+        files: ^src/
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.17.1
