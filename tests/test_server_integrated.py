@@ -469,6 +469,36 @@ class TestErrorHandlingIntegration:
         )
         assert response.status_code == 400
 
+    def test_invalid_filter_flow(self, integration_client, integration_app, valid_auth_headers):
+        """MetadataFilterError raised by the database layer (bad filter specs:
+        unknown fields, unsupported operators) maps to 400 INVALID_FILTER, not 500."""
+        from unittest.mock import AsyncMock
+
+        from localvectordb.exceptions import MetadataFilterError
+
+        integration_app.state.db_manager.create_db("filter_error_db")
+        db = integration_app.state.db_manager.databases["filter_error_db"]
+        err = MetadataFilterError("Field 'no_such_field' not found in metadata schema")
+        db.query = Mock(side_effect=err)
+        db.query_async = AsyncMock(side_effect=err)
+        db.filter = Mock(side_effect=err)
+
+        # Query endpoint
+        query_data = {"query": "anything", "search_type": "keyword", "filters": {"no_such_field": "x"}}
+        response = integration_client.post("/api/v1/filter_error_db/query", json=query_data, headers=valid_auth_headers)
+        assert response.status_code == 400
+        error = response.json()["error"]
+        assert error["code"] == "INVALID_FILTER"
+        assert "no_such_field" in error["message"]
+        assert error["recoverable"] is True
+
+        # Filter endpoint
+        response = integration_client.post(
+            "/api/v1/filter_error_db/filter", json={"filters": {"no_such_field": "x"}}, headers=valid_auth_headers
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "INVALID_FILTER"
+
     def test_unauthenticated_access_to_protected_endpoints(self, integration_client):
         protected_endpoints = [
             ("/api/v1/databases", "GET"),

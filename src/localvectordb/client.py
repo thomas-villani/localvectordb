@@ -144,6 +144,7 @@ from localvectordb.exceptions import (
     DocumentNotFoundError,
     DuplicateDocumentIDError,
     EmbeddingError,
+    MetadataFilterError,
 )
 from localvectordb.sqlite_tuning import SqliteProfile
 
@@ -729,6 +730,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "duplicate_document_id": DuplicateDocumentIDError,
             "embedding_error": EmbeddingError,
             "document_not_found": DocumentNotFoundError,
+            "invalid_filter": MetadataFilterError,
         }
 
         # Raise the appropriate exception if we recognize the type
@@ -892,7 +894,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the database's
+            metadata schema are stored; other fields are dropped (the server
+            logs a warning).
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -949,7 +953,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the database's
+            metadata schema are stored; other fields are dropped (the server
+            logs a warning).
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -1557,7 +1563,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         score_threshold : float
             Minimum score threshold (0-1, higher=better)
         filters : Optional[Dict[str, Any]]
-            Metadata filters
+            Metadata filters. Filter fields must be declared in the database's
+            metadata schema; unknown fields or unsupported operators are
+            rejected by the server with an error.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
         context_window : int
@@ -2315,7 +2323,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the database's
+            metadata schema are stored; other fields are dropped (the server
+            logs a warning).
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -2373,7 +2383,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents : Union[str, List[str]]
             Document text(s) to add
         metadata : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
-            Metadata for documents
+            Metadata for documents. Only fields declared in the database's
+            metadata schema are stored; other fields are dropped (the server
+            logs a warning).
         ids : Optional[Union[str, List[str]]]
             Document IDs (auto-generated if not provided)
         batch_size : int
@@ -2982,7 +2994,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         score_threshold : float
             Minimum score threshold (0-1, higher=better)
         filters : Optional[Dict[str, Any]]
-            Metadata filters
+            Metadata filters. Filter fields must be declared in the database's
+            metadata schema; unknown fields or unsupported operators are
+            rejected by the server with an error.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
         context_window : int

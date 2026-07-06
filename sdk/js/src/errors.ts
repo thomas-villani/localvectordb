@@ -231,6 +231,8 @@ const CODE_TO_CLASS: Record<
   ) => LocalVectorDBError
 > = {
   VALIDATION_ERROR: ValidationError,
+  // Bad filter specs (unknown fields, unsupported operators) are 400s.
+  INVALID_FILTER: ValidationError,
   DATABASE_NOT_FOUND: DatabaseNotFoundError,
   DOCUMENT_NOT_FOUND: DocumentNotFoundError,
   DUPLICATE_DOCUMENT_ID: DuplicateDocumentError,
