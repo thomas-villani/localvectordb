@@ -15,9 +15,10 @@ from localvectordb._filters import (
     FilterQueryBuilder,
     FTSQuerySanitization,
     _validate_and_quote_identifier,
+    validate_filter_spec,
 )
 from localvectordb.core import MetadataField, MetadataFieldType
-from localvectordb.exceptions import DatabaseError
+from localvectordb.exceptions import DatabaseError, MetadataFilterError
 
 
 def _schema():
@@ -92,6 +93,61 @@ class TestFilterQueryBuilder:
         for bad in ["rating; DROP TABLE documents", "evil_field ASC", "rating SIDEWAYS"]:
             with pytest.raises(DatabaseError):
                 builder.build_order_by_clause(bad)
+
+
+class TestValidateFilterSpec:
+    """validate_filter_spec keeps the in-memory filter path (query(filters=...))
+    consistent with the SQL path (filter(where=...)): unknown fields and
+    operators raise instead of silently matching nothing."""
+
+    def test_valid_specs_pass(self):
+        schema = _schema()
+        validate_filter_spec({}, schema)
+        validate_filter_spec({"author": "Jane"}, schema)
+        validate_filter_spec({"rating": {"$gte": 3, "$lte": 5}}, schema)
+        validate_filter_spec({"tags": {"$contains": "python"}}, schema)
+        validate_filter_spec(
+            {"$and": [{"author": "A"}, {"$or": [{"rating": {"$gt": 1}}, {"$not": {"author": "B"}}]}]},
+            schema,
+        )
+
+    def test_reserved_columns_allowed(self):
+        validate_filter_spec({"id": "doc_1", "created_at": {"$exists": True}}, _schema())
+
+    def test_dot_notation_validates_first_segment(self):
+        validate_filter_spec({"tags.nested": "x"}, _schema())
+        with pytest.raises(DatabaseError, match="not found in metadata schema"):
+            validate_filter_spec({"unknown.nested": "x"}, _schema())
+
+    def test_unknown_field_raises(self):
+        with pytest.raises(DatabaseError, match="'nonexistent' not found in metadata schema"):
+            validate_filter_spec({"nonexistent": "x"}, _schema())
+
+    def test_raises_metadata_filter_error_specifically(self):
+        """The specific type matters: MetadataFilterError is also a ValueError and
+        maps to HTTP 400 (INVALID_FILTER) on the server, unlike a bare DatabaseError."""
+        with pytest.raises(MetadataFilterError):
+            validate_filter_spec({"nonexistent": "x"}, _schema())
+        with pytest.raises(MetadataFilterError):
+            validate_filter_spec({"rating": {"$between": [1, 5]}}, _schema())
+
+    def test_unknown_field_inside_logical_operator_raises(self):
+        with pytest.raises(DatabaseError, match="not found in metadata schema"):
+            validate_filter_spec({"$and": [{"author": "A"}, {"nonexistent": 1}]}, _schema())
+        with pytest.raises(DatabaseError, match="not found in metadata schema"):
+            validate_filter_spec({"$not": {"nonexistent": 1}}, _schema())
+
+    def test_unknown_operator_raises(self):
+        with pytest.raises(DatabaseError, match="Unsupported operator"):
+            validate_filter_spec({"rating": {"$between": [1, 5]}}, _schema())
+        with pytest.raises(DatabaseError, match="Unsupported operator"):
+            validate_filter_spec({"$xor": [{"author": "A"}]}, _schema())
+
+    def test_malformed_logical_operators_raise(self):
+        with pytest.raises(DatabaseError):
+            validate_filter_spec({"$and": {"author": "A"}}, _schema())  # must be a list
+        with pytest.raises(DatabaseError):
+            validate_filter_spec({"$not": [{"author": "A"}]}, _schema())  # must be a dict
 
 
 class TestNoInjectionAgainstRealSqlite:

@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Lite
 
 import numpy as np
 
-from localvectordb._filters import FilterQueryBuilder, FTSQuerySanitization, matches_metadata_filter
+from localvectordb._filters import (
+    FilterQueryBuilder,
+    FTSQuerySanitization,
+    matches_metadata_filter,
+    validate_filter_spec,
+)
 from localvectordb.core import ChunkPosition, DocumentScoringMethod, MetadataFieldType, QueryResult
 from localvectordb.cursor import (
     CursorCandidate,
@@ -247,7 +252,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold : float
             Minimum score threshold (0-1, higher=better)
         filters : Optional[Dict[str, Any]]
-            Metadata filters
+            Metadata filters. Filter fields must be declared in the metadata
+            schema (or be reserved columns like ``id``/``created_at``);
+            unknown fields or unsupported operators raise ``DatabaseError``.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
         context_window : int
@@ -322,6 +329,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with normalized scores
         """
         _validate_context_unit(context_unit)
+        if filters:
+            validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
             # Hierarchical search levels
             if search_level in ("sections", "documents") and self._hierarchical_embeddings:
@@ -2446,7 +2455,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold : float
             Minimum score threshold (0-1, higher=better)
         filters : Optional[Dict[str, Any]]
-            Metadata filters to apply
+            Metadata filters to apply. Filter fields must be declared in the
+            metadata schema; unknown fields or unsupported operators raise
+            ``DatabaseError``.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
         document_scoring_method : DocumentScoringMethod
@@ -2460,6 +2471,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with column attribution
         """
 
+        if filters:
+            validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
             embedding_enabled_fields = self._get_embedding_enabled_fields()
             if columns is None:
@@ -2639,7 +2652,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold : float
             Minimum score threshold (0-1, higher=better), by default 0.0
         filters : Optional[Dict[str, Any]]
-            Metadata filters to apply, by default None
+            Metadata filters to apply, by default None. Filter fields must be
+            declared in the metadata schema; unknown fields or unsupported
+            operators raise ``DatabaseError``.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1), by default 0.7
         context_window : int
@@ -2668,6 +2683,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with normalized scores
         """
         _validate_context_unit(context_unit)
+        if filters:
+            validate_filter_spec(filters, self.metadata_schema)
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
 
@@ -3767,7 +3784,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold : float
             Minimum score threshold (0-1, higher=better)
         filters : Optional[Dict[str, Any]]
-            Metadata filters to apply
+            Metadata filters to apply. Filter fields must be declared in the
+            metadata schema; unknown fields or unsupported operators raise
+            ``DatabaseError``.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
         document_scoring_method : DocumentScoringMethod

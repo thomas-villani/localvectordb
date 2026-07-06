@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import pytest_asyncio
 
+from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database import LocalVectorDB
-from localvectordb.exceptions import DocumentNotFoundError
+from localvectordb.exceptions import DatabaseError, DocumentNotFoundError
 
 
 def create_mock_async_connection():
@@ -270,7 +271,11 @@ class TestAsyncQuery:
         """Create a database with data for query testing."""
         # Create database with MockEmbeddings
         db = LocalVectorDB(
-            name="test_query", base_path=temp_dir, embedding_provider="mock", embedding_model="test-model"
+            name="test_query",
+            base_path=temp_dir,
+            embedding_provider="mock",
+            embedding_model="test-model",
+            metadata_schema={"category": MetadataField(type=MetadataFieldType.TEXT, indexed=True)},
         )
 
         # Insert test documents with varied content for different search types
@@ -342,6 +347,14 @@ class TestAsyncQuery:
         result = await db.query_async("AI", search_type="vector", filters=filters)
 
         assert result is not None
+
+    async def test_query_async_unknown_filter_field_raises(self, mock_db_for_query):
+        """Filtering on a field that is not in the metadata schema should raise,
+        matching filter(where=...) behavior, instead of silently returning []."""
+        db = mock_db_for_query
+
+        with pytest.raises(DatabaseError, match="not found in metadata schema"):
+            await db.query_async("AI", search_type="vector", filters={"no_such_field": "x"})
 
 
 @pytest.mark.asyncio
