@@ -2,7 +2,7 @@ from datetime import datetime
 
 import click
 
-from localvectordb_server.cli._utils import format_table, print_db_stats
+from localvectordb_server.cli._utils import format_table, get_ctx_db, print_db_stats
 
 
 @click.command("shell")
@@ -20,7 +20,7 @@ def shell(ctx):
     import shlex
     from pathlib import Path
 
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     def parse_command(command_line):
         """Parse command line into command and arguments"""

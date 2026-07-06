@@ -11,9 +11,11 @@ from localvectordb_server.cli._utils import (
     EXIT_CODE_ERROR,
     error,
     format_table,
+    get_ctx_db,
     get_stdin_input,
     load_file_for_ingest,
     print_db_stats,
+    warn,
 )
 
 
@@ -36,27 +38,9 @@ def db_group(ctx, name):
         lvdb db mydb shell
 
     """
-    db_folder = ctx.obj["db_folder"]
-
-    if not db_folder or not os.path.exists(db_folder):
-        click.secho(
-            f"DB_FOLDER {'not specified and not found in configuration' if not db_folder else 'does not exist'}.",
-            fg="bright_red",
-            err=True,
-        )
-        raise click.exceptions.Exit(EXIT_CODE_ERROR)
-
-    from localvectordb.exceptions import DatabaseNotFoundError
-
-    try:
-        from localvectordb.database import LocalVectorDB
-
-        db = LocalVectorDB(name=name, base_path=db_folder, create_if_not_exists=False)
-    except DatabaseNotFoundError as e:
-        click.secho(f"Database '{name}' was not found in {os.path.abspath(db_folder)}!", fg="bright_red", err=True)
-        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
-
-    ctx.obj.update({"db_name": name, "db": db})
+    # The database is opened lazily by get_ctx_db() on first use, so that
+    # subcommand --help works without the database (or DB folder) existing.
+    ctx.obj.update({"db_name": name, "db": None})
 
 
 @db_group.command("info")
@@ -73,7 +57,7 @@ def show_db_info(ctx):
         \b
         lvdb db mydb info
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     try:
         stats = db.get_stats()
@@ -114,7 +98,7 @@ def show_db_stats(ctx):
         \b
         lvdb db mydb stats
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
     print_db_stats(db)
 
 
@@ -137,7 +121,7 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
         lvdb db mydb list
         lvdb db mydb list --limit 10 --offset 20 --json
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     # Get all documents and apply pagination
     all_docs = db.filter(limit=limit, offset=offset)
@@ -308,7 +292,7 @@ def search(
             click.secho("Error: Metadata filter must be valid JSON", fg="red", err=True)
             raise click.Abort() from e
 
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     # Read from stdin
     if query == "-":
@@ -381,6 +365,10 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
     Rich file formats (PDF, DOCX, HTML, CSV, XLSX, ...) are automatically extracted to Markdown
     via the installed extractors; plain text and source files are read directly.
 
+    Unless --id is given, documents added from files use the filename without extension as their
+    id (adding the same file again updates the existing document); text and stdin input gets an
+    auto-generated id.
+
     \b
     Examples:
         \b
@@ -390,10 +378,13 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
         cat file.txt | lvdb db mydb add -
         lvdb db mydb add file1.txt file2.txt --metadata '[{"author":"A"},{"author":"B"}]' --id "id1,id2"
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     all_inputs = []
     auto_metadata = []
+    # Default doc id per input: filename stem for file inputs (same rule as the
+    # library's upsert_from_file), None (auto-generated) for text/stdin.
+    auto_ids: List = []
 
     if len(files_or_text) == 0:
         click.secho(
@@ -416,6 +407,7 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
         input_data = get_stdin_input(True, "No input provided to stdin")
         all_inputs.append(input_data)
         auto_metadata.append({"source": "stdin"})
+        auto_ids.append(None)
     else:
         for file_or_text_input in files_or_text:
             file_or_text_input = file_or_text_input.strip("'").strip('"')
@@ -432,6 +424,7 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
                     raise click.exceptions.Exit(EXIT_CODE_ERROR)
                 all_inputs.append(result.text)
                 auto_metadata.append(result.metadata)
+                auto_ids.append(os.path.splitext(os.path.basename(file_or_text_input))[0])
             elif os.path.isdir(os.path.dirname(file_or_text_input)):
                 glob_pattern = os.path.basename(file_or_text_input)
                 if any(c in glob_pattern for c in "*?[]"):
@@ -450,11 +443,13 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
                             continue
                         all_inputs.append(result.text)
                         auto_metadata.append(result.metadata)
+                        auto_ids.append(os.path.splitext(os.path.basename(file))[0])
                 else:
                     click.secho(f"Error: invalid pattern: {file_or_text_input}", fg="bright_red", err=True)
             else:
                 all_inputs.append(file_or_text_input)
                 auto_metadata.append({"source": "cli"})
+                auto_ids.append(None)
 
     # Handle metadata
     if metadata:
@@ -502,7 +497,24 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
 
     # When no explicit --metadata was given, fall back to the auto-collected
     # per-document metadata (filename, path, source_format, extraction method).
+    # Fields the schema can't store are dropped by upsert, which warns about them.
     final_metadata = metadata if metadata else auto_metadata
+
+    # When no explicit --id was given, file inputs default to their filename
+    # stem (matching upsert_from_file); text/stdin inputs get generated ids.
+    # A stem that repeats in this batch falls back to a generated id so a glob
+    # with duplicate basenames doesn't silently overwrite documents mid-batch.
+    if id is None:
+        seen_ids: set = set()
+        final_ids = []
+        for auto_id in auto_ids:
+            if auto_id is not None and auto_id in seen_ids:
+                warn(f"Duplicate document id '{auto_id}' in this batch; using a generated id instead")
+                auto_id = None
+            if auto_id is not None:
+                seen_ids.add(auto_id)
+            final_ids.append(auto_id)
+        id = final_ids
 
     try:
         click.secho(f"Adding {len(all_inputs)} document(s)...", fg="blue", err=True)
@@ -602,7 +614,7 @@ def get_document(
         lvdb db mydb get doc_1 --section "Installation"
         lvdb db mydb get doc_1 --outline
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     # At most one selection mode may be active (default: whole document).
     active_modes = [
@@ -732,7 +744,7 @@ def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_as_json
             click.secho("Error: Metadata filter must be valid JSON", fg="red", err=True)
             raise click.Abort() from e
 
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     click.secho(f"Finding documents related to `{doc_id}`...", fg="blue", err=True)
 
@@ -789,7 +801,7 @@ def update_document(ctx, doc_id, file_or_text, metadata):
         lvdb db mydb update doc_1 new_content.txt
         echo "new content" | lvdb db mydb update doc_1 -
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     if file_or_text == "-":
         file_or_text = get_stdin_input(True, "Error: No data found in stdin")
@@ -837,7 +849,7 @@ def delete_document(ctx, doc_id):
         lvdb db mydb delete doc_1
 
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     try:
         if not db.exists(doc_id):
@@ -894,7 +906,7 @@ def show_schema(ctx, format, output):
         lvdb db mydb schema show --format json
         lvdb db mydb schema show --format table --output schema.json
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     try:
         schema_info = db.get_metadata_schema_info()
@@ -1034,7 +1046,7 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
         # Shorthand schema with string input
         lvdb db mydb schema update --schema '{"title": "text", "author": "text"}' --mapping '{"old_author": "author"}'
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     # Validate input combinations
     if not schema:
@@ -1227,7 +1239,7 @@ def export_schema(ctx, output, format, include_data):
         lvdb db mydb schema export --output schema.toml --format toml
         lvdb db mydb schema export --output schema_with_samples.json --include-data
     """
-    db = ctx.obj["db"]
+    db = get_ctx_db(ctx)
 
     try:
         schema_info = db.get_metadata_schema_info()

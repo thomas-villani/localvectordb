@@ -1429,3 +1429,152 @@ class TestCLIHelpMessages:
         assert "create-key" in result.output
         assert "list-keys" in result.output
         assert "revoke-key" in result.output
+
+
+# ============================================================================
+# Consistency fixes: subcommand --help without a DB, config errors, add ids
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestDbSubcommandHelpWithoutDb:
+    """`lvdb db <name> <cmd> --help` must print help without requiring the
+    database (or even the DB folder) to exist."""
+
+    def test_search_help_with_missing_db(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["db", "no_such_db", "search", "--help"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+        assert "--search-type" in result.output
+
+    def test_nested_schema_update_help_with_missing_db(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["db", "no_such_db", "schema", "update", "--help"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
+    def test_short_help_flag_with_missing_db(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["db", "no_such_db", "add", "-h"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
+    def test_missing_db_still_errors_without_help(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["db", "no_such_db", "info"])
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+
+@pytest.mark.unit
+class TestConfigLoadErrors:
+    """A broken config file should produce a friendly error, not a traceback."""
+
+    def test_invalid_toml_reports_friendly_error(self, runner, tmp_path):
+        bad = tmp_path / ".lvdb-config.toml"
+        bad.write_text("[database\nroot_dir = broken", encoding="utf-8")
+        result = runner.invoke(cli, ["--config", str(bad), "list"])
+        assert result.exit_code == 2
+        assert "Error loading configuration" in result.output
+        assert "Traceback" not in result.output
+
+    def test_invalid_config_values_report_friendly_error(self, runner, tmp_path):
+        bad = tmp_path / ".lvdb-config.toml"
+        bad.write_text('[server]\nport = -5\n[database]\nroot_dir = "dbs"\n', encoding="utf-8")
+        result = runner.invoke(cli, ["--config", str(bad), "list"])
+        assert result.exit_code == 2
+        assert "Error loading configuration" in result.output
+        assert "Traceback" not in result.output
+
+
+@pytest.mark.unit
+class TestDbAddDefaultIds:
+    """CLI `add <file>` derives ids from filename stems, matching the library's
+    upsert_from_file; text/stdin inputs keep auto-generated ids."""
+
+    def _make_db_ctx(self, fake_config, config_file, tmp_db_folder, mock_db):
+        api_key_path = os.path.join(tmp_db_folder, "api_keys.db")
+        obj = {
+            "config": fake_config,
+            "config_path": config_file,
+            "api_key_db_path": api_key_path,
+            "db_folder": tmp_db_folder,
+            "db_name": "testdb",
+            "db": mock_db,
+        }
+
+        @click.pass_context
+        def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
+            ctx.ensure_object(dict)
+            ctx.obj = obj
+
+        @click.pass_context
+        def _patched_db_group_callback(ctx, name):
+            ctx.obj.update({"db_name": name, "db": mock_db})
+
+        from localvectordb_server.cli._db import db_group
+
+        return (
+            patch.object(cli, "callback", _patched_cli_callback),
+            patch.object(db_group, "callback", _patched_db_group_callback),
+        )
+
+    def test_add_file_uses_filename_stem_as_id(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        test_file = tmp_path / "my_report.txt"
+        test_file.write_text("Report content", encoding="utf-8")
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["my_report"]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", str(test_file)])
+        assert result.exit_code == 0
+        assert mock_db.upsert.call_args[1]["ids"] == ["my_report"]
+
+    def test_add_text_keeps_generated_id(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["doc_1"]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", "just some text"])
+        assert result.exit_code == 0
+        assert mock_db.upsert.call_args[1]["ids"] == [None]
+
+    def test_add_explicit_id_wins_over_stem(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        test_file = tmp_path / "my_report.txt"
+        test_file.write_text("Report content", encoding="utf-8")
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["custom"]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", str(test_file), "--id", "custom"])
+        assert result.exit_code == 0
+        assert mock_db.upsert.call_args[1]["ids"] == ["custom"]
+
+    def test_add_duplicate_stems_fall_back_to_generated_ids(
+        self, runner, fake_config, config_file, tmp_db_folder, tmp_path
+    ):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        (tmp_path / "a" / "readme.txt").write_text("A", encoding="utf-8")
+        (tmp_path / "b" / "readme.txt").write_text("B", encoding="utf-8")
+
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["readme", "doc_2"]
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(
+                cli,
+                ["db", "testdb", "add", str(tmp_path / "a" / "readme.txt"), str(tmp_path / "b" / "readme.txt")],
+            )
+        assert result.exit_code == 0
+        ids = mock_db.upsert.call_args[1]["ids"]
+        assert ids[0] == "readme"
+        assert ids[1] is None  # duplicate stem falls back to a generated id
+        assert "Duplicate document id" in result.output

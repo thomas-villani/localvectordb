@@ -79,6 +79,42 @@ def find_config_file(config_path: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def get_ctx_db(ctx: "click.Context") -> LocalVectorDB:
+    """Open the database for the current ``lvdb db NAME`` invocation, lazily.
+
+    The ``db`` group callback only records the database name; the database is
+    opened here on first use so that ``lvdb db NAME <cmd> --help`` (and shell
+    completion) work without the database — or even the DB folder — existing.
+    If ``ctx.obj["db"]`` is already populated (e.g. by tests), it is returned
+    as-is.
+    """
+    db: Optional[LocalVectorDB] = ctx.obj.get("db")
+    if db is not None:
+        return db
+
+    name = ctx.obj["db_name"]
+    db_folder = ctx.obj.get("db_folder")
+
+    if not db_folder or not os.path.exists(db_folder):
+        click.secho(
+            f"DB_FOLDER {'not specified and not found in configuration' if not db_folder else 'does not exist'}.",
+            fg="bright_red",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    from localvectordb.exceptions import DatabaseNotFoundError
+
+    try:
+        db = LocalVectorDB(name=name, base_path=db_folder, create_if_not_exists=False)
+    except DatabaseNotFoundError as e:
+        click.secho(f"Database '{name}' was not found in {os.path.abspath(db_folder)}!", fg="bright_red", err=True)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+
+    ctx.obj["db"] = db
+    return db
+
+
 def get_stdin_input(input_required=True, err_msg=None):
     err_msg = err_msg or "Error: No input data in stdin!"
 
