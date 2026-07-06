@@ -301,7 +301,7 @@ Document Operations
     total = db.count()
 
     # Count with filters
-    count = db.count(filters={"author": "Alice", "year": {">=": 2023}})
+    count = db.count(filters={"author": "Alice", "year": {"$gte": 2023}})
 
     # Async variant
     count = await db.count_async(filters)
@@ -398,7 +398,7 @@ Search and Query Operations
         query="machine learning algorithms",
         search_type="vector",
         k=10,
-        filters={"year": {">=": 2020}}
+        filters={"year": {"$gte": 2020}}
     )
 
     # Keyword search (FTS)
@@ -866,7 +866,7 @@ Process documents with metadata extraction::
                 query=query,
                 search_type="hybrid",
                 filters={
-                    "processed_at": {">=": cutoff_date}
+                    "processed_at": {"$gte": cutoff_date}
                 },
                 k=20
             )

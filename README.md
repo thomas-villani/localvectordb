@@ -147,7 +147,7 @@ db.upsert(
 # Search with metadata filters
 results = db.query(
     "programming tutorial",
-    filters={'author': 'Jane Doe', 'tags': {'contains': 'python'}}
+    filters={'author': 'Jane Doe', 'tags': {'$contains': 'python'}}
 )
 ```
 
@@ -599,7 +599,7 @@ db.upsert(
 # Search by topic and filter by date
 results = db.query(
     "transformer architecture",
-    filters={"publication_date": {">=": "2017-01-01"}},
+    filters={"publication_date": {"$gte": "2017-01-01"}},
     search_type="hybrid"
 )
 ```
