@@ -47,6 +47,7 @@ export type CheckpointMode = "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE";
 
 export type ErrorCode =
   | "VALIDATION_ERROR"
+  | "INVALID_FILTER"
   | "DATABASE_NOT_FOUND"
   | "DOCUMENT_NOT_FOUND"
   | "DUPLICATE_DOCUMENT_ID"

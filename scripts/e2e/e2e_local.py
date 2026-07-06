@@ -88,7 +88,7 @@ def main() -> int:
     from localvectordb import VectorDB
     from localvectordb.backup import BackupConfig, BackupManager, BackupType
     from localvectordb.core import MetadataField, MetadataFieldType
-    from localvectordb.exceptions import DocumentNotFoundError, DuplicateDocumentIDError
+    from localvectordb.exceptions import DocumentNotFoundError, DuplicateDocumentIDError, MetadataFilterError
 
     c = Checker(f"e2e_local ({provider}/{model})")
 
@@ -158,6 +158,11 @@ def main() -> int:
             docs = db.filter(where={"tags": {"$contains": "french"}})
             c.check("filter JSON $contains", [d.id for d in docs] == ["cooking"], f"got {[d.id for d in docs]}")
             c.check("count with filters", db.count(filters={"topic": "space"}) == 1)
+            try:
+                db.query("anything", k=1, filters={"not_a_real_field": "x"})
+                c.check("query rejects unknown filter field", False, "no error raised")
+            except MetadataFilterError:
+                c.check("query rejects unknown filter field", True)
 
             c.section("query builder")
             results = db.query_builder().hybrid("neural networks and embeddings").filter(topic="ai").limit(3).execute()

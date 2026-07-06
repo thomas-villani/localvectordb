@@ -13,6 +13,7 @@ from localvectordb.exceptions import (
     DatabaseNotFoundError,
     DuplicateDocumentIDError,
     EmbeddingError,
+    MetadataFilterError,
     OllamaNotFoundError,
 )
 from localvectordb_server._logcfg import request_id_var
@@ -100,6 +101,10 @@ def standardize_error_response(
         api_error = APIError(message=str(error), error_code="DATABASE_NOT_FOUND", status_code=404, recoverable=True)
     elif isinstance(error, DuplicateDocumentIDError):
         api_error = APIError(message=str(error), error_code="DUPLICATE_DOCUMENT_ID", status_code=409, recoverable=True)
+    elif isinstance(error, MetadataFilterError):
+        # Bad filter/order_by specs (unknown fields, unsupported operators, ...)
+        # are client errors, not server faults.
+        api_error = APIError(message=str(error), error_code="INVALID_FILTER", status_code=400, recoverable=True)
     elif isinstance(error, EmbeddingError):
         api_error = APIError(
             message=f"Embedding service error: {str(error)}",

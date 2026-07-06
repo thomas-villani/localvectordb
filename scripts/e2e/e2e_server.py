@@ -103,6 +103,7 @@ def main() -> int:
 
     from localvectordb import VectorDB
     from localvectordb.core import MetadataField, MetadataFieldType
+    from localvectordb.exceptions import MetadataFilterError
 
     c = Checker(f"e2e_server ({provider}/{model})")
 
@@ -183,6 +184,12 @@ key_database_path = '{(workdir / "api_keys.db").as_posix()}'
             r = db.query("brewing strong coffee under pressure", search_type="hybrid", k=3, filters={"topic": "coffee"})
             c.check("remote hybrid + filter", bool(r) and {x.id for x in r} == {"espresso"}, f"got {[x.id for x in r]}")
 
+            try:
+                db.query("anything", k=1, filters={"not_a_real_field": "x"})
+                c.check("remote query rejects unknown filter field", False, "no error raised")
+            except MetadataFilterError:
+                c.check("remote query rejects unknown filter field", True)
+
             docs = db.filter(where={"topic": {"$in": ["geology", "sailing"]}})
             c.check(
                 "remote filter $in", {d.id for d in docs} == {"volcano", "sailing"}, f"got {sorted(d.id for d in docs)}"
@@ -205,6 +212,19 @@ key_database_path = '{(workdir / "api_keys.db").as_posix()}'
 
             c.section("raw REST: listing + multipart upload")
             headers = {"Authorization": f"Bearer {rw_key}"}
+
+            r = httpx.post(
+                f"{base_url}/api/v1/{DB_NAME}/query",
+                headers=headers,
+                json={"query": "x", "search_type": "keyword", "filters": {"not_a_real_field": 1}},
+                timeout=30,
+            )
+            c.check(
+                "REST bad filter -> 400 INVALID_FILTER",
+                r.status_code == 400 and r.json().get("error", {}).get("code") == "INVALID_FILTER",
+                f"got {r.status_code}: {r.text[:200]}",
+            )
+
             r = httpx.get(f"{base_url}/api/v1/databases", headers=headers, timeout=10)
             names = [
                 d["name"] if isinstance(d, dict) else d
