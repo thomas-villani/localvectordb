@@ -8,7 +8,7 @@ database operations, and multi-component interactions.
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import numpy as np
 import pytest
@@ -129,6 +129,11 @@ class DatabaseManagerMock:
         db.embedding_provider.embed_sync = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
         db.embedding_provider.embed_documents = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
         db.embedding_provider.embed_query = Mock(return_value=np.array([0.1, 0.2, 0.3]))
+
+        async def mock_embed_batch(texts, batch_size=None):
+            return np.array([[0.1, 0.2, 0.3] for _ in texts])
+
+        db.embedding_provider.embed_batch = mock_embed_batch
         db.embedding_dimension = 384
         db.chunking_method = "sentences"
         db.chunk_size = 500
@@ -200,12 +205,14 @@ class DatabaseManagerMock:
                 results.append(result)
             return results
 
-        def mock_filter(**kwargs):
+        # Signatures deliberately mirror the real LocalVectorDB methods so a
+        # router calling with a wrong keyword (e.g. count(where=...)) fails
+        # here the same way it fails in production.
+        def mock_filter(where=None, order_by=None, limit=None, offset=0):
             from localvectordb.core import Document
 
             results = []
-            limit = kwargs.get("limit", 100) or 100
-            offset = kwargs.get("offset", 0) or 0
+            limit = limit or 100
             docs = list(db._documents.items())[offset : offset + limit]
             for doc_id, doc_data in docs:
                 doc = Document(
@@ -214,7 +221,7 @@ class DatabaseManagerMock:
                 results.append(doc)
             return results
 
-        def mock_count(**kwargs):
+        def mock_count(filters=None):
             return len(db._documents)
 
         def mock_update(doc_id, content=None, metadata=None):
@@ -226,12 +233,17 @@ class DatabaseManagerMock:
                 return True
             return False
 
+        # Server search endpoints call the async query API.
+        async def mock_query_async(query, **kwargs):
+            return mock_query(query, **kwargs)
+
         db.upsert = mock_upsert
         db.insert = mock_upsert
         db.get = mock_get
         db.exists = mock_exists
         db.delete = mock_delete
         db.query = mock_query
+        db.query_async = mock_query_async
         db.filter = mock_filter
         db.count = mock_count
         db.update = mock_update
@@ -529,7 +541,7 @@ class TestEmbeddingIntegration:
     def test_generic_embedding_endpoint(self, integration_client, valid_auth_headers):
         with patch("localvectordb.embeddings.EmbeddingRegistry.create_provider") as mock_create:
             mock_provider = Mock()
-            mock_provider.embed_sync.return_value = np.array([[0.1, 0.2, 0.3]])
+            mock_provider.embed_batch = AsyncMock(return_value=np.array([[0.1, 0.2, 0.3]]))
             mock_create.return_value = mock_provider
 
             embed_data = {"texts": ["test text"], "provider": "mock", "model": "test-model"}
@@ -791,8 +803,15 @@ class TestRemoteTransportRoundTrip:
         doc = db.get(ids[0])
         assert doc.id == ids[0]
 
+        # Regression: the count endpoint called db.count(where=...) and 500'd.
+        assert db.count() == 2
+
+        listed = db.filter(where=None, limit=10)
+        assert {d.id for d in listed} == set(ids)
+
         deleted = db.delete(ids[0])
         assert deleted >= 1
+        assert db.count() == 1
 
     def test_bad_api_key_is_rejected_over_http(self, integration_app, transport_patch):
         from localvectordb.client import RemoteVectorDB
