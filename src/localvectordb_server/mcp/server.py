@@ -334,7 +334,9 @@ async def query_database(
             ('sections'/'documents' require a database created with hierarchical_embeddings=True)
         k: Number of results to return
         score_threshold: Minimum score threshold
-        filters: Metadata filters (MongoDB-style)
+        filters: Metadata filters (MongoDB-style). Filter fields must exist in the
+            database's metadata schema; unknown fields or operators are rejected
+            with an error
         vector_weight: Weight for vector search in hybrid mode (0-1)
         context_window: Size of the assembled context for return_type='context'/'enriched',
             measured in context_unit (chunk count when 'chunks', otherwise a
@@ -442,7 +444,9 @@ async def find_related_documents(
         document_id: Reference document to find neighbours for
         k: Maximum number of related documents to return
         score_threshold: Minimum similarity score to include
-        filters: Metadata filters (MongoDB-style) applied to candidate documents
+        filters: Metadata filters (MongoDB-style) applied to candidate documents.
+            Filter fields must exist in the database's metadata schema; unknown
+            fields or operators are rejected with an error
 
     Returns:
         Related documents with similarity scores and metadata

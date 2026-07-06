@@ -263,7 +263,12 @@ All query methods support these parameters:
 
 * ``k`` (int, default=10): Maximum number of results to return
 * ``score_threshold`` (float, default=0.0): Minimum similarity score (0-1, higher=better)
-* ``filters`` (dict, optional): Metadata filters to apply
+* ``filters`` (dict, optional): Metadata filters to apply. Filter fields must be
+  declared in the database's ``metadata_schema`` (reserved columns like ``id`` and
+  ``created_at`` are also allowed); filtering on an undeclared field or using an
+  unsupported operator raises ``MetadataFilterError`` (a ``DatabaseError`` and
+  ``ValueError`` subclass; HTTP 400 ``INVALID_FILTER`` over the server API).
+  See :doc:`metadata.filtering`.
 
 Search Type Specific
 ^^^^^^^^^^^^^^^^^^^^

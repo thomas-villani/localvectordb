@@ -151,7 +151,7 @@ Want a slightly more sophisticated bot? Here's an enhanced version:
    class FAQBot:
        def __init__(self, faq_data):
            # IMPORTANT: metadata fields are only stored if they are declared in the
-           # metadata_schema. Anything not in the schema is silently dropped, so we
+           # metadata_schema. Anything not in the schema is dropped (with a warning), so we
            # declare ``faq_id`` and ``category`` here to make them persist and filterable.
            metadata_schema = {
                "faq_id": MetadataField(type=MetadataFieldType.INTEGER, indexed=True),

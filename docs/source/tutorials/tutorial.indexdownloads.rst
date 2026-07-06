@@ -29,7 +29,7 @@ Create ``index_downloads.py``:
    from pathlib import Path
 
    # Create database. NOTE: metadata is only stored for fields declared in the
-   # metadata_schema -- anything else is silently dropped. We declare "filename"
+   # metadata_schema -- anything else is dropped with a warning. We declare "filename"
    # and "file_path" so they actually persist and appear in search results.
    metadata_schema = {
        "filename": MetadataField(type=MetadataFieldType.TEXT, indexed=True, required=True),
