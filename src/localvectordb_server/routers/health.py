@@ -24,7 +24,9 @@ def health_check(response: Response):
         return {
             "status": "healthy",
             "version": get_system_version(),
-            "ollama_available": check_ollama_service(),
+            # Single short-timeout attempt: /health is polled by load balancers
+            # and must stay fast even when Ollama is down or slow.
+            "ollama_available": check_ollama_service(timeout=2.0, retries=1),
             "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
