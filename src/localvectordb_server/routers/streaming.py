@@ -55,9 +55,11 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
     async def event_generator() -> AsyncIterator[dict]:
         try:
             if hasattr(db, "query_cursor_async"):
-                cursor = db.query_cursor_async(batch_size=body.batch_size, **common)
+                # query_cursor_async is a coroutine returning a QueryCursor, which
+                # is iterated via its stream_individual_async() async generator.
+                cursor = await db.query_cursor_async(batch_size=body.batch_size, **common)
                 count = 0
-                async for result in cursor:
+                async for result in cursor.stream_individual_async():
                     yield {"event": "result", "data": json.dumps(serialize_query_result(result))}
                     count += 1
                 yield {"event": "done", "data": json.dumps({"total_results": count})}

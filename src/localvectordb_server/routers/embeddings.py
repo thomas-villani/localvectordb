@@ -94,7 +94,7 @@ async def get_embeddings_for_db(db_name: str, body: DbEmbeddingsBody, db=Depends
                         details={"missing_fields": ["texts"]},
                     )
                 texts = [body.texts] if isinstance(body.texts, str) else body.texts
-                embeddings = db.embedding_provider.embed_sync(texts).tolist()
+                embeddings = (await db.embedding_provider.embed_batch(texts)).tolist()
 
             return {
                 "embeddings": embeddings,
@@ -146,7 +146,7 @@ async def get_embeddings(body: EmbeddingsBody):
 
         try:
             embedding_provider = EmbeddingRegistry.create_provider(provider, model)
-            embeddings = embedding_provider.embed_sync(texts)
+            embeddings = await embedding_provider.embed_batch(texts)
 
             return {"embeddings": embeddings.tolist()}
 

@@ -80,7 +80,7 @@ class GlobalSearchBody(SearchBody):
     databases: Optional[List[str]] = None
 
 
-def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str, Any]:
+async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str, Any]:
     """Unified search handler for all search types with semantic filtering.
 
     Parameters
@@ -125,7 +125,9 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
             query_length=len(query_text),
         )
 
-        results = db.query(
+        # Async twin required: the sync query() path calls embed_sync(), which
+        # refuses to run on the event loop thread.
+        results = await db.query_async(
             query=query_text,
             search_type=search_type,
             return_type=return_type,
@@ -175,8 +177,8 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
                 if field_contents:
                     # Generate embeddings using database's embedding provider
                     embedding_provider = db.embedding_provider
-                    concept_embedding = embedding_provider.embed_sync([concept])[0]
-                    field_embeddings = embedding_provider.embed_sync(field_contents)
+                    concept_embedding = (await embedding_provider.embed_batch([concept]))[0]
+                    field_embeddings = await embedding_provider.embed_batch(field_contents)
 
                     # Apply similarity filtering based on metric
                     import numpy as np
@@ -252,7 +254,7 @@ def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str,
 async def query_documents(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Unified query interface for all search types."""
     with request_context("query_documents"):
-        return search_handler(db, db_name, body.model_dump())
+        return await search_handler(db, db_name, body.model_dump())
 
 
 @router.post("/{db_name}/search/vector", dependencies=[Depends(require_read_permission)])
@@ -262,7 +264,7 @@ async def vector_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     with request_context("vector_search"):
         params = body.model_dump()
         params["search_type"] = "vector"
-        return search_handler(db, db_name, params)
+        return await search_handler(db, db_name, params)
 
 
 @router.post("/{db_name}/search/keyword", dependencies=[Depends(require_read_permission)])
@@ -272,7 +274,7 @@ async def keyword_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     with request_context("keyword_search"):
         params = body.model_dump()
         params["search_type"] = "keyword"
-        return search_handler(db, db_name, params)
+        return await search_handler(db, db_name, params)
 
 
 @router.post("/{db_name}/search/hybrid", dependencies=[Depends(require_read_permission)])
@@ -282,7 +284,7 @@ async def hybrid_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     with request_context("hybrid_search"):
         params = body.model_dump()
         params["search_type"] = "hybrid"
-        return search_handler(db, db_name, params)
+        return await search_handler(db, db_name, params)
 
 
 @router.post("/{db_name}/query_builder", dependencies=[Depends(require_read_permission)])
@@ -342,8 +344,11 @@ async def query_builder_execute(db_name: str, body: QueryBuilderStateBody, db=De
             for agg in body.aggregations:
                 builder = builder.aggregate(agg["field"], agg["function"], agg.get("alias"))
 
-            # Execute the query
-            results = builder.execute()
+            # Execute the query (async twin: sync execute() embeds on the event loop).
+            # Non-streaming execute_async returns a list; flatten defensively so the
+            # Union[List, Iterator[List]] return type stays narrow for serialization.
+            raw_results = await builder.execute_async()
+            results = raw_results if isinstance(raw_results, list) else [r for batch in raw_results for r in batch]
 
             # Serialize results
             serialized_results = [serialize_query_result(result) for result in results]
@@ -373,7 +378,7 @@ async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get
                 columns_count=len(body.columns) if body.columns else None,
             )
 
-            results = db.query_multi_column(
+            results = await db.query_multi_column_async(
                 query=body.query,
                 columns=body.columns,
                 search_type=body.search_type,
@@ -548,7 +553,12 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
     """
     with request_context("global_search"):
         try:
-            results = db_manager.search_databases(
+            # search_databases is sync and embeds the query per database; run it
+            # in the threadpool so embed_sync() is off the event loop thread.
+            from starlette.concurrency import run_in_threadpool
+
+            results = await run_in_threadpool(
+                db_manager.search_databases,
                 query=body.query,
                 database_names=body.databases,
                 search_type=body.search_type,
