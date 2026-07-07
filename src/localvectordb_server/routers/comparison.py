@@ -43,6 +43,8 @@ class CompareDetailedBody(StrictModel):
 class NearestNeighborsBody(StrictModel):
     doc_id: str
     k: int = 5
+    score_threshold: float = 0.0
+    filters: Optional[Dict[str, Any]] = None
 
 
 class SimilarityMatrixBody(StrictModel):
@@ -63,16 +65,22 @@ class CompareResponse(StrictModel):
     status: str
 
 
+class ChunkAlignmentModel(StrictModel):
+    chunk_index_1: int
+    chunk_index_2: int
+    similarity: float
+
+
 class CompareDetailedResponse(StrictModel):
     doc_id_1: str
     doc_id_2: str
     overall_similarity: float
-    chunk_similarities: List[Any]
+    chunk_alignments: List[ChunkAlignmentModel]
+    matched_ratio_1: float
+    matched_ratio_2: float
+    unmatched_chunks_1: List[int]
+    unmatched_chunks_2: List[int]
     status: str
-    # Optional fields, emitted only when the result object provides them.
-    common_themes: Optional[Any] = None
-    unique_to_doc1: Optional[Any] = None
-    unique_to_doc2: Optional[Any] = None
 
 
 class NearestNeighborsResponse(StrictModel):
@@ -84,11 +92,10 @@ class NearestNeighborsResponse(StrictModel):
 
 
 class SimilarityMatrixResponse(StrictModel):
-    doc_ids: Optional[List[str]] = None
+    doc_ids: List[str]
+    matrix: List[List[float]]
+    embeddings: List[List[float]]
     status: str
-    # Optional fields, emitted only when the matrix object provides them.
-    matrix: Optional[Any] = None
-    similarity_pairs: Optional[Any] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -144,24 +151,7 @@ async def compare_documents_detailed(db_name: str, body: CompareDetailedBody, db
 
         try:
             result = db.compare_documents_detailed(body.doc_id_1, body.doc_id_2, chunk_threshold=body.chunk_threshold)
-
-            # Serialize the DocumentComparisonResult, preserving conditional keys.
-            fields: Dict[str, Any] = {
-                "doc_id_1": body.doc_id_1,
-                "doc_id_2": body.doc_id_2,
-                "overall_similarity": result.overall_similarity,
-                "chunk_similarities": result.chunk_similarities if hasattr(result, "chunk_similarities") else [],
-                "status": "success",
-            }
-
-            if hasattr(result, "common_themes"):
-                fields["common_themes"] = result.common_themes
-            if hasattr(result, "unique_to_doc1"):
-                fields["unique_to_doc1"] = result.unique_to_doc1
-            if hasattr(result, "unique_to_doc2"):
-                fields["unique_to_doc2"] = result.unique_to_doc2
-
-            return CompareDetailedResponse(**fields)
+            return CompareDetailedResponse(**result.to_dict(), status="success")
 
         except Exception as e:
             db_logger.log_error("compare_documents_detailed", e, database_name=db_name)
@@ -185,7 +175,12 @@ async def nearest_neighbors(db_name: str, body: NearestNeighborsBody, db=Depends
             )
 
         try:
-            results = db.nearest_neighbors(body.doc_id, k=body.k)
+            results = db.nearest_neighbors(
+                body.doc_id,
+                k=body.k,
+                score_threshold=body.score_threshold,
+                filters=body.filters,
+            )
             serialized = [serialize_query_result(r) for r in results]
             return {
                 "doc_id": body.doc_id,
@@ -202,7 +197,6 @@ async def nearest_neighbors(db_name: str, body: NearestNeighborsBody, db=Depends
 @router.post(
     "/{db_name}/similarity-matrix",
     response_model=SimilarityMatrixResponse,
-    response_model_exclude_unset=True,
     dependencies=[Depends(require_read_permission)],
 )
 @log_performance("pairwise_similarity_matrix")
@@ -220,21 +214,7 @@ async def pairwise_similarity_matrix(db_name: str, body: Optional[SimilarityMatr
 
         try:
             matrix = db.pairwise_similarity_matrix(doc_ids=doc_ids)
-
-            # Serialize the DocumentSimilarityMatrix, preserving conditional keys.
-            fields: Dict[str, Any] = {
-                "doc_ids": matrix.doc_ids if hasattr(matrix, "doc_ids") else doc_ids,
-                "status": "success",
-            }
-
-            if hasattr(matrix, "matrix"):
-                # Convert numpy array to list if needed
-                mat = matrix.matrix
-                fields["matrix"] = mat.tolist() if hasattr(mat, "tolist") else mat
-            if hasattr(matrix, "similarity_pairs"):
-                fields["similarity_pairs"] = matrix.similarity_pairs
-
-            return SimilarityMatrixResponse(**fields)
+            return SimilarityMatrixResponse(**matrix.to_dict(), status="success")
 
         except Exception as e:
             db_logger.log_error("pairwise_similarity_matrix", e, database_name=db_name)
