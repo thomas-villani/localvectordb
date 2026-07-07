@@ -1901,7 +1901,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         List[QueryResult]
             The query results
         """
-        url = self._build_url(f"/api/v1/{self.name}/query_builder")
+        url = self._build_url(f"/api/v1/{self.name}/query-builder")
         response = self._make_request_with_retry("POST", url, json=query_state)
         result = self._handle_response(response)
 
@@ -1923,7 +1923,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         List[QueryResult]
             The query results
         """
-        url = self._build_url(f"/api/v1/{self.name}/query_builder")
+        url = self._build_url(f"/api/v1/{self.name}/query-builder")
         response = await self._make_request_with_retry_async("POST", url, json=query_state)
         result = self._handle_response(response)
 

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends
 from pydantic import Field
 
+from localvectordb.exceptions import BaseLocalVectorDBException
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context, sanitize_log_value
@@ -181,7 +182,10 @@ async def factcheck_multi_db(body: MultiFactCheckBody, db_manager=Depends(get_db
                         sanitize_log_value(db_name),
                         exc_info=e,
                     )
-                    results_by_db[db_name] = {"error": str(e)}
+                    # Don't leak internal exception text (paths, tracebacks) to
+                    # the client; the full error is logged above.
+                    safe_message = str(e) if isinstance(e, BaseLocalVectorDBException) else "Fact-check failed"
+                    results_by_db[db_name] = {"error": safe_message}
 
             return {
                 "results": results_by_db,

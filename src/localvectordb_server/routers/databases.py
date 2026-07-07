@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends
 from pydantic import ConfigDict, Field
 
+from localvectordb.exceptions import DatabaseNotFoundError
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import (
     APIError,
@@ -253,11 +254,11 @@ def delete_database(db_name: str, db_manager=Depends(get_db_manager)):
     """Delete a database."""
     with request_context("delete_database"):
         success = db_manager.delete_database(db_name)
+        if not success:
+            # A delete against a nonexistent database is a 404 so clients can
+            # distinguish "deleted" from "was never there" programmatically.
+            raise DatabaseNotFoundError(f"Database '{db_name}' not found")
         return {
-            "message": (
-                f"Successfully deleted database '{db_name}'"
-                if success
-                else f"Database '{db_name}' not found. No action taken."
-            ),
+            "message": f"Successfully deleted database '{db_name}'",
             "status": "success",
         }

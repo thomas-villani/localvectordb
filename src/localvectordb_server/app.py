@@ -32,7 +32,7 @@ from localvectordb_server.keymanager import KeyManager
 from localvectordb_server.utils.hostmatch import validate_host_against_patterns
 
 try:
-    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi import Limiter
     from slowapi.errors import RateLimitExceeded
     from slowapi.util import get_remote_address
 
@@ -66,6 +66,28 @@ def _error_response(status_code: int, message: str, error_code: str) -> JSONResp
     """
     api_error = APIError(message=message, error_code=error_code, status_code=status_code, recoverable=status_code < 500)
     return JSONResponse(status_code=status_code, content=api_error.to_dict())
+
+
+def _rate_limit_envelope_handler(request: "Request", exc: Exception) -> JSONResponse:
+    """Rate-limit (429) handler that emits the standard ``{"error": {...}}`` envelope.
+
+    Replaces slowapi's stock handler, whose ``{"error": "<string>"}`` body breaks
+    the object envelope every other error response uses. Rate-limit headers
+    (Retry-After, X-RateLimit-*) are still injected via the limiter.
+    """
+    api_error = APIError(
+        message=f"Rate limit exceeded: {exc.detail}",  # type: ignore[attr-defined]
+        error_code="RATE_LIMIT_EXCEEDED",
+        status_code=429,
+        recoverable=True,
+    )
+    response = JSONResponse(status_code=429, content=api_error.to_dict())
+    limiter = getattr(request.app.state, "limiter", None)
+    view_rate_limit = getattr(request.state, "view_rate_limit", None)
+    if limiter is not None and view_rate_limit is not None:
+        # slowapi attaches the current window's headers (Retry-After, etc.).
+        response = limiter._inject_headers(response, view_rate_limit)
+    return response
 
 
 def register_exception_handlers(app: FastAPI, *, debug: bool = False) -> None:
@@ -328,9 +350,11 @@ def create_app(
 
         limiter = Limiter(key_func=get_remote_address, default_limits=[_config.server.rate_limit])
         app.state.limiter = limiter
-        # slowapi's handler is typed for its own RateLimitExceeded rather than the
-        # broad Exception signature Starlette expects; the runtime contract is correct.
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+        # Use our own handler rather than slowapi's stock one: the stock handler
+        # returns {"error": "<string>"}, which breaks the {"error": {...}} object
+        # envelope every other response uses (and crashes clients that read
+        # error["code"]). We still inject slowapi's rate-limit headers.
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_envelope_handler)
         logger.info(f"Rate limiting enabled: {_config.server.rate_limit}")
 
     # --- Exception handlers (shared with tests via register_exception_handlers) ---
