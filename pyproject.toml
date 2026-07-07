@@ -36,6 +36,10 @@ dependencies = [
     "faiss-cpu>=1.14.2",
     "httpx>=0.28.1",
     "numpy>=2.4.6",
+    # Used by the core auto-tuner (localvectordb.sqlite_tuning) for RAM/CPU
+    # detection; must be a base dependency or `import localvectordb` fails on
+    # installs without the [server] extra.
+    "psutil>=5.9.0",
     "tiktoken>=0.13.0",
 ]
 
@@ -64,7 +68,7 @@ mock = "localvectordb.reranking:MockReranker"
 all2md = "localvectordb.extractors.all2md_extractor:All2MdExtractor"
 
 [project.scripts]
-lvdb = "localvectordb_server.cli:cli"
+lvdb = "localvectordb_server._cli_entry:main"
 
 [project.urls]
 Homepage = "https://github.com/thomas-villani/localvectordb"
@@ -105,12 +109,15 @@ exclude = [
 server = [
     "bcrypt>=5.0.0",
     "cachelib>=0.14.0",
+    # The CLI imports click directly; declare it rather than relying on the
+    # transitive pin from uvicorn[standard]. 8.2+ required (ctx.args behavior
+    # the lazy-DB-open logic in the CLI depends on).
+    "click>=8.2",
     "fastapi>=0.136.3",
     "uvicorn[standard]>=0.49.0",
     "python-multipart>=0.0.32",
     "sse-starlette>=3.4.4",
     "slowapi>=0.1.9",
-    "psutil>=7.2.2",
     "tomli-w>=1.2.0",
 ]
 
@@ -154,7 +161,6 @@ visualization-interactive = [
 ]
 benchmark = [
     "h5py>=3.0.0",
-    "psutil>=5.9.0",
 ]
 all = [
     "localvectordb[server]",
