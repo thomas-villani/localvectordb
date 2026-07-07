@@ -287,7 +287,7 @@ async def hybrid_search(db_name: str, body: SearchBody, db=Depends(get_db)):
         return await search_handler(db, db_name, params)
 
 
-@router.post("/{db_name}/query_builder", dependencies=[Depends(require_read_permission)])
+@router.post("/{db_name}/query-builder", dependencies=[Depends(require_read_permission)])
 @log_performance("query_builder")
 async def query_builder_execute(db_name: str, body: QueryBuilderStateBody, db=Depends(get_db)):
     """Execute a QueryBuilder query with full state from client.

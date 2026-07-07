@@ -298,7 +298,9 @@ class SecuritySettings(BaseSettings):
     # CORS settings
     cors_enabled: bool = True
     cors_allowed_origins: Union[str, List[str]] = "*"
-    cors_allowed_methods: List[str] = field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+    cors_allowed_methods: List[str] = field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
     cors_allowed_headers: List[str] = field(default_factory=lambda: ["Content-Type", "Authorization"])
     cors_max_age: int = 86400  # 24 hours
 

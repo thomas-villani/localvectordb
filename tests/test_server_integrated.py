@@ -5,6 +5,7 @@ These tests verify end-to-end functionality including authentication,
 database operations, and multi-component interactions.
 """
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -101,8 +102,11 @@ class DatabaseManagerMock:
         return [np.array([0.1, 0.2, 0.3]).tolist() for _ in query_texts]
 
     def delete_database(self, name: str) -> bool:
-        if name in self._created_dbs:
-            self._created_dbs.remove(name)
+        # Mirror the real manager: return False for a database that was never
+        # created so the router can map it to a 404.
+        if name not in self._created_dbs:
+            return False
+        self._created_dbs.remove(name)
         db_file = self.base_path / f"{name}.sqlite"
         if os.path.exists(db_file):
             os.remove(db_file)
@@ -951,3 +955,53 @@ class TestUncoveredRoutersHappyPath:
     def test_missing_db_returns_404(self, integration_client, valid_auth_headers):
         response = integration_client.get("/api/v1/does_not_exist/schema", headers=valid_auth_headers)
         assert response.status_code == 404
+
+
+@pytest.mark.integration
+@pytest.mark.client
+class TestHTTPContractRegressions:
+    """Regression tests for the v0.1.0 HTTP contract hardening."""
+
+    def test_delete_nonexistent_database_returns_404(self, integration_client, valid_auth_headers):
+        response = integration_client.delete("/api/v1/never_created_db", headers=valid_auth_headers)
+        assert response.status_code == 404
+        body = response.json()
+        # Standard error envelope, not a 200 "no action taken".
+        assert body["error"]["code"] == "DATABASE_NOT_FOUND"
+
+    def test_reserved_database_name_rejected(self, integration_client, valid_auth_headers):
+        response = integration_client.post(
+            "/api/v1/databases",
+            json={"name": "databases", "embedding_provider": "mock", "embedding_model": "test-model"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_query_builder_path_is_hyphenated(self, integration_app):
+        # The public path is /query-builder; the old underscore path must be gone.
+        paths = {r.path for r in integration_app.routes}
+        assert "/api/v1/{db_name}/query-builder" in paths
+        assert "/api/v1/{db_name}/query_builder" not in paths
+
+
+class TestRateLimitEnvelope:
+    """The custom 429 handler must emit the standard object envelope."""
+
+    def test_rate_limit_handler_uses_error_envelope(self):
+        from unittest.mock import MagicMock
+
+        from localvectordb_server.app import _rate_limit_envelope_handler
+
+        request = MagicMock()
+        request.app.state.limiter = None  # skip header injection
+        request.state.view_rate_limit = None
+        exc = MagicMock()
+        exc.detail = "5 per 1 minute"
+
+        response = _rate_limit_envelope_handler(request, exc)
+        assert response.status_code == 429
+        payload = json.loads(bytes(response.body).decode())
+        # error must be an OBJECT with a code, not a bare string (the slowapi default).
+        assert isinstance(payload["error"], dict)
+        assert payload["error"]["code"] == "RATE_LIMIT_EXCEEDED"

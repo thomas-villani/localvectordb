@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from pydantic import Field
 from sse_starlette.sse import EventSourceResponse
 
+from localvectordb.exceptions import BaseLocalVectorDBException
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, sanitize_log_value
@@ -87,6 +88,14 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
                 },
                 exc_info=True,
             )
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            # Only surface messages from our own (user-facing) exception types;
+            # for anything else send a generic message so internal details
+            # (SQLite paths, tracebacks) do not leak to the client. The real
+            # error is logged above.
+            if isinstance(e, BaseLocalVectorDBException):
+                safe_message = str(e)
+            else:
+                safe_message = "Internal error during streaming query"
+            yield {"event": "error", "data": json.dumps({"error": safe_message})}
 
     return EventSourceResponse(event_generator())
