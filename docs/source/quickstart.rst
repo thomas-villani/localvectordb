@@ -41,6 +41,14 @@ Quick Installation
 5-Minute Example
 ----------------
 
+.. note::
+
+   This example uses the default embedding provider, **Ollama**, which must be
+   running locally with the model pulled (``ollama pull nomic-embed-text``). To
+   use a different backend, pass ``embedding_provider=`` (e.g. ``"openai"``,
+   ``"sentence_transformers"``) with the matching ``embedding_model``. See
+   :doc:`embeddings` for all providers.
+
 .. code-block:: python
 
     from localvectordb import VectorDB

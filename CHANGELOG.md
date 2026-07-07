@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple chunking strategies: sentences, tokens, words, paragraphs, sections, code blocks
 - SQL-like query builder for metadata filtering
 - FastAPI HTTP server with multi-database management
-- API key authentication with permission levels (read-only, read-write, admin)
+- API key authentication with permission levels (read-only, read-write)
 - Rate limiting, CORS, and security headers middleware
 - SSE streaming for query results
 - File upload with text extraction via [all2md](https://all2md.readthedocs.io/):
@@ -57,7 +57,7 @@ Issues found during pre-release end-to-end qualification with real embedding
 providers (the mocked test suite could not catch these):
 
 - Server search endpoints (`/query`, `/search/*`, `/query-multi-column`,
-  `/query_builder`, global `/search`) called sync query/embedding paths on the
+  `/query-builder`, global `/search`) called sync query/embedding paths on the
   event loop, so vector and hybrid search failed with every real embedding
   provider; they now use the async query APIs
 - SSE streaming endpoint (`/query/stream`) did not await `query_cursor_async`
@@ -104,3 +104,38 @@ Pre-release consistency fixes:
   library's `upsert_from_file()` used the filename stem; the CLI now also
   defaults file inputs to the filename stem (repeated stems in one batch fall
   back to generated ids)
+
+Final pre-release contract hardening (packaging, API, HTTP, and CLI surfaces
+frozen for v0.1.0):
+
+- **Packaging**: a base `pip install localvectordb` crashed on import because
+  `sqlite_tuning` imported `psutil`, which was only declared in the `[server]`
+  and `[benchmark]` extras; `psutil` is now a core dependency. `click` is
+  declared explicitly in `[server]`. Importing `localvectordb_server` (and the
+  `lvdb` console script) without the `[server]` extra now raises a clear error
+  naming the extra instead of a bare `ModuleNotFoundError`.
+- **Factory**: `VectorDB(name, "http://...", timeout=...)` raised `TypeError`
+  because the remote client's parameter is `request_timeout`; the factory now
+  documents and forwards the real remote parameter names.
+- **Remote comparison parity**: `RemoteVectorDB.compare_documents_detailed()`
+  and `pairwise_similarity_matrix()` returned raw dicts (and the server
+  serialized fields the result dataclass never had, dropping the real data);
+  they now return the same `DocumentComparisonResult` /
+  `DocumentSimilarityMatrix` dataclasses as `LocalVectorDB`. `nearest_neighbors`
+  gained the `score_threshold`/`filters` parameters on the remote client and
+  server. Removed the remote-only legacy `hybrid_query()`/`keyword_search()`.
+- **HTTP contract**: rate-limit (429) responses now use the standard
+  `{"error": {...}}` envelope (the stock slowapi body broke the client);
+  `POST /{db}/query_builder` renamed to `/{db}/query-builder`; database names
+  that collide with top-level API paths (e.g. `databases`, `health`) are
+  rejected at creation; `PATCH` added to the default CORS methods;
+  `DELETE /{db}` on a missing database returns 404 instead of 200; SSE and
+  fact-check error payloads no longer leak internal exception text.
+- **CLI**: failing `tuning`/`maintenance`/`backup verify`/`backup pitr`/
+  `migrate`/`db get`/`db delete`/`delete` invocations now exit non-zero;
+  machine-output flags are unified to `--json/-j` (boolean) and `--format/-f`
+  (choice), with `-o/--output` reserved for output files; `--help` works
+  without a config file and `lvdb serve` falls back to localhost defaults;
+  `config init --cors-origins` now persists; and `lvdb db <name> add` errors on
+  a path-like argument that does not exist instead of silently storing it as
+  text (use `--text` to force literal text).

@@ -385,7 +385,7 @@ Check Authentication Status
    lvdb auth status
 
    # Show in JSON format
-   lvdb auth status --output json
+   lvdb auth status --format json
 
 **Example Output**:
 
@@ -431,10 +431,10 @@ API keys support permission levels for fine-grained access control:
                         --created-by "api-team"
 
    # JSON output for scripting
-   lvdb auth create-key --description "Script Access" --permission-level read_only --output json
+   lvdb auth create-key --description "Script Access" --permission-level read_only --format json
 
    # Key-only output for automation
-   lvdb auth create-key --permission-level read_write --output key-only
+   lvdb auth create-key --permission-level read_write --format key-only
 
 **Options**:
 
@@ -442,7 +442,7 @@ API keys support permission levels for fine-grained access control:
 - ``--permission-level, -p``: Permission level (read_only, read_write) - defaults to read_write
 - ``--expires-days``: Number of days until key expires (omit for no expiration)
 - ``--created-by``: Identifier of who is creating the key
-- ``--output, -o``: Output format (table, json, key-only)
+- ``--format, -f``: Output format (table, json, key-only)
 
 **Example Output**:
 
@@ -480,7 +480,7 @@ List API Keys
    lvdb auth list-keys --show-stats
 
    # JSON output
-   lvdb auth list-keys --output json
+   lvdb auth list-keys --format json
 
 **Example Output**:
 
@@ -511,7 +511,7 @@ Get Key Information
    lvdb auth key-info key_20241201_abc123
 
    # JSON output
-   lvdb auth key-info key_20241201_abc123 --output json
+   lvdb auth key-info key_20241201_abc123 --format json
 
 **Example Output**:
 
@@ -565,10 +565,10 @@ Rotate API Keys
    lvdb auth rotate-key key_20241201_abc123
 
    # JSON output for automation
-   lvdb auth rotate-key key_20241201_abc123 --output json
+   lvdb auth rotate-key key_20241201_abc123 --format json
 
    # Key-only output
-   lvdb auth rotate-key key_20241201_abc123 --output key-only
+   lvdb auth rotate-key key_20241201_abc123 --format key-only
 
 **Example Output**:
 
@@ -1193,7 +1193,7 @@ Update database metadata schema from files or JSON strings, with optional column
 
    # Update from JSON string
    lvdb db my_database schema update \
-     --schema-string '{"title": "text", "author": "text", "year": "integer"}'
+     --schema '{"title": "text", "author": "text", "year": "integer"}'
 
    # Dry run to preview changes
    lvdb db my_database schema update --schema new_schema.json --dry-run
@@ -1207,7 +1207,7 @@ Update database metadata schema from files or JSON strings, with optional column
    # Column mapping from file
    lvdb db my_database schema update \
      --schema new_schema.json \
-     --mapping-file column_mappings.json
+     --mapping column_mappings.json
 
 **Options**:
 
@@ -1342,7 +1342,7 @@ Common Schema Evolution Patterns
 
    # Rename columns while preserving data
    lvdb db my_database schema update \
-     --schema-string '{"title": "text", "author": "text", "year": "integer"}' \
+     --schema '{"title": "text", "author": "text", "year": "integer"}' \
      --mapping '{"doc_title": "title", "author_name": "author", "pub_year": "year"}'
 
 **Adding New Fields with Defaults**:
@@ -1383,14 +1383,14 @@ Common Schema Evolution Patterns
    lvdb db my_database schema export --output backup_$(date +%Y%m%d).json
 
    # 2. Test changes with dry run
-   lvdb db my_database schema update --schema new_schema.json --mapping-file mappings.json --dry-run
+   lvdb db my_database schema update --schema new_schema.json --mapping mappings.json --dry-run
 
    # 3. Apply changes if satisfied
-   lvdb db my_database schema update --schema new_schema.json --mapping-file mappings.json --verbose
+   lvdb db my_database schema update --schema new_schema.json --mapping mappings.json --verbose
 
    # 4. Verify results
-   lvdb db my_database schema show table
-   lvdb db my_database search "test query" 3
+   lvdb db my_database schema show --format table
+   lvdb db my_database search "test query" --limit 3
 
 Best Practices
 """"""""""""""
@@ -1463,7 +1463,7 @@ Best Practices
 
    # 3. Test search functionality on copy
    echo "Testing search functionality..."
-   lvdb db "${DB_NAME}_test" search "test query" 5 > /dev/null
+   lvdb db "${DB_NAME}_test" search "test query" --limit 5 > /dev/null
 
    if [ $? -ne 0 ]; then
        echo "Search test failed. Aborting."
@@ -1473,11 +1473,11 @@ Best Practices
 
    # 4. Apply to production
    echo "Applying to production..."
-   lvdb db $DB_NAME schema update --schema $SCHEMA_FILE --mapping-file $MAPPING_FILE --force
+   lvdb db $DB_NAME schema update --schema $SCHEMA_FILE --mapping $MAPPING_FILE --force
 
    # 5. Verify production update
    echo "Verifying production update..."
-   lvdb db $DB_NAME schema show table
+   lvdb db $DB_NAME schema show --format table
    lvdb db $DB_NAME stats
 
    # 6. Cleanup
@@ -1938,7 +1938,7 @@ split before ingesting it, or for feeding chunks to another tool.
    lvdb chunk report.pdf --method sentences --max-tokens 300
 
    # Chunk every Markdown file matching a glob into a file
-   lvdb chunk "docs/*.md" --method paragraphs -O chunks.jsonl
+   lvdb chunk "docs/*.md" --method paragraphs -o chunks.jsonl
 
    # Chunk text from stdin with word chunks and a 20-token overlap
    echo "some long text..." | lvdb chunk - --method words --overlap 20
@@ -1951,8 +1951,8 @@ extraction (the default is auto-detection per file).
 
 - ``--method, -M``: Chunking strategy. One of ``sentences``, ``tokens``, ``words``, ``lines``, ``characters``, ``paragraphs``, ``sections``, ``code-blocks`` (default: ``sentences``)
 - ``--max-tokens, --chunk-size, -s``: Maximum tokens per chunk (default: 500)
-- ``--overlap, -o``: Token overlap between consecutive chunks; ignored by some strategies (default: 0)
-- ``--output, -O``: Write JSONL to this file instead of stdout
+- ``--overlap``: Token overlap between consecutive chunks; ignored by some strategies (default: 0)
+- ``--output, -o``: Write JSONL to this file instead of stdout
 - ``--extract/--no-extract``: Force or disable text extraction for file inputs (default: auto)
 
 **Output Format**:

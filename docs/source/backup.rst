@@ -43,11 +43,12 @@ Create a full backup of a database:
 
     $ lvdb backup create mydatabase
 
-Create an incremental backup:
+Create an incremental backup (requires the parent backup's ID — incremental
+backups are stored as a delta against their parent):
 
 .. code-block:: bash
 
-    $ lvdb backup create mydatabase --type incremental
+    $ lvdb backup create mydatabase --type incremental --parent <parent-backup-id>
 
 Create a backup with a specific compression algorithm:
 

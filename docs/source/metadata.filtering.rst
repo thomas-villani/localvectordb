@@ -670,16 +670,22 @@ Unsupported Operators
        print(f"Filter error: {e}")
        # Error: Unsupported operator: $invalid
 
-Type Mismatches
-^^^^^^^^^^^^^^^
+Operator/Type Mismatches
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Using a string operator such as ``$contains`` against a non-text field does not
+raise; it falls back to a substring ``LIKE`` match on the value's text form,
+which is rarely what you want. Prefer the numeric comparison operators for
+numeric fields:
 
 .. code-block:: python
 
-   try:
-       docs = db.filter(where={"year": {"$contains": "2020"}})  # Wrong operator for integer field
-   except DatabaseError as e:
-       print(f"Filter error: {e}")
-       # Error: $contains not supported for integer fields
+   # Silently does a LIKE '%2020%' match — usually not intended:
+   docs = db.filter(where={"year": {"$contains": "2020"}})
+
+   # Use a numeric comparison instead:
+   docs = db.filter(where={"year": 2020})
+   docs = db.filter(where={"year": {"$gte": 2020, "$lt": 2025}})
 
 Common Error Messages
 ^^^^^^^^^^^^^^^^^^^^^
