@@ -52,7 +52,7 @@ def create_api_key(ctx, description, expires_days, created_by, permission_level,
         \b
         lvdb auth create-key --description "For admin" --permission-level read_write
         lvdb auth create-key --description "For monitoring" --permission-level read_only
-        lvdb auth create-key --expires-days 30 --output json
+        lvdb auth create-key --expires-days 30 --format json
     """
     try:
         from localvectordb_server.keymanager import get_key_manager
@@ -124,7 +124,7 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
     Examples:
         \b
         lvdb auth list-keys
-        lvdb auth list-keys --active-only --output json
+        lvdb auth list-keys --active-only --format json
     """
     try:
         from localvectordb_server.keymanager import get_key_manager
@@ -297,7 +297,7 @@ def rotate_api_key(ctx, key_id, output):
     Examples:
         \b
         lvdb auth rotate-key <key_id>
-        lvdb auth rotate-key <key_id> --output key-only
+        lvdb auth rotate-key <key_id> --format key-only
     """
     try:
         from localvectordb_server.keymanager import get_key_manager
@@ -455,7 +455,7 @@ def show_key_info(ctx, key_id, output):
     Examples:
         \b
         lvdb auth key-info <key_id>
-        lvdb auth key-info <key_id> --output json
+        lvdb auth key-info <key_id> --format json
     """
     try:
         from localvectordb_server.keymanager import get_key_manager
@@ -550,7 +550,7 @@ def auth_status(ctx, output):
     Examples:
         \b
         lvdb auth status
-        lvdb auth status --output json
+        lvdb auth status --format json
     """
     try:
         cfg = ctx.obj["config"]

@@ -60,7 +60,7 @@ def create_key(config_path: Path, permission: str) -> str:
             f"e2e {permission}",
             "-p",
             permission,
-            "--output",
+            "--format",
             "key-only",
         ],
         capture_output=True,

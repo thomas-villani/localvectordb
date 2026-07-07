@@ -618,7 +618,7 @@ class TestAuthCreateKey:
         assert "key-abc123" in result.output
 
     def test_create_key_json_output(self, runner, fake_config, config_file, tmp_db_folder):
-        """create-key --output json should emit valid JSON."""
+        """create-key --format json should emit valid JSON."""
         mock_km = MagicMock()
         mock_km.create_key.return_value = self._make_key_record()
 
@@ -632,7 +632,7 @@ class TestAuthCreateKey:
         assert "plain_key" in parsed
 
     def test_create_key_key_only_output(self, runner, fake_config, config_file, tmp_db_folder):
-        """create-key --output key-only should emit only the key string."""
+        """create-key --format key-only should emit only the key string."""
         mock_km = MagicMock()
         mock_km.create_key.return_value = self._make_key_record()
 
@@ -735,7 +735,7 @@ class TestAuthListKeys:
         assert "key-002" in result.output
 
     def test_list_keys_json(self, runner, fake_config, config_file, tmp_db_folder):
-        """list-keys --output json should emit valid JSON."""
+        """list-keys --format json should emit valid JSON."""
         mock_km = MagicMock()
         mock_km.list_keys.return_value = self._make_key_records()
 
@@ -1359,7 +1359,7 @@ class TestAuthStatus:
         assert "Authentication Status" in result.output
 
     def test_auth_status_json(self, runner, fake_config, config_file, tmp_db_folder):
-        """auth status --output json should emit valid JSON."""
+        """auth status --format json should emit valid JSON."""
         mock_km = MagicMock()
         mock_km.get_stats.return_value = {
             "total_keys": 1,
