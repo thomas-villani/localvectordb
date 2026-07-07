@@ -35,7 +35,7 @@ Route Permissions
 * ``POST /api/v1/<db_name>/query`` - Query documents
 * ``POST /api/v1/<db_name>/query/stream`` - Stream query results (SSE)
 * ``POST /api/v1/<db_name>/search/*`` - All search endpoints
-* ``POST /api/v1/<db_name>/query_builder`` - Execute a QueryBuilder query
+* ``POST /api/v1/<db_name>/query-builder`` - Execute a QueryBuilder query
 * ``POST /api/v1/<db_name>/query-multi-column`` - Multi-column query
 * ``POST /api/v1/<db_name>/filter`` - Filter documents
 * ``POST /api/v1/<db_name>/embeddings`` - Get embeddings
@@ -1362,7 +1362,7 @@ The body carries the serialized builder state: ``search_clauses``, ``exact_filte
 ``semantic_filters``, plus optional ``search_type``, ``vector_weight``, ``return_type``,
 ``order_by``, ``limit``, ``offset``, ``group_by``, and ``aggregations``.
 
-**Endpoint**: ``POST /api/v1/{db_name}/query_builder``
+**Endpoint**: ``POST /api/v1/{db_name}/query-builder``
 
 **Request Body**:
 

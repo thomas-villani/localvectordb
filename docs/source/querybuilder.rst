@@ -631,7 +631,8 @@ Use query explanation to understand reranking decisions:
        if "_execution_plan" in result.metadata:
            plan = result.metadata["_execution_plan"]
            if "reranking" in plan["steps"]:
-               print(f"Reranking applied: {plan['reranking_details']}")
+               # detailed=True adds a "details" entry; "steps" is always present.
+               print(f"Reranking applied. Plan details: {plan.get('details')}")
 
 Best Practices for Reranking
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -668,13 +669,17 @@ Optimizing Performance
 
 .. code-block:: python
 
-   # Process a large result set in manageable batches
-   results = (
+   # Process a large result set in manageable batches. batch_size is honoured by
+   # stream() (which pages through a cursor); execute() always returns the full
+   # list, so pass batch_size to stream() rather than execute().
+   for batch in (
        db.query_builder()
        .search("common term")  # Potentially matches many documents
        .filter(is_public=True)
-       .execute(batch_size=200)  # Process in batches of 200 to reduce memory usage
-   )
+       .stream(batch_size=200)  # Yields lists of up to 200 results at a time
+   ):
+       for result in batch:
+           ...  # process each result
 
    # Remove semantically similar results to reduce redundancy and increase diversity of returned documents
    results = (

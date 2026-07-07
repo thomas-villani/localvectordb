@@ -173,7 +173,8 @@ results = db.query("content", search_type="hybrid")
 ### Start the Server
 
 ```bash
-# Quick start with defaults
+# Quick start: with no config file, serves on localhost:5000 with built-in
+# defaults. Run `lvdb config init` first to customize (host, auth, CORS, ...).
 lvdb serve
 
 # Production configuration
@@ -211,9 +212,12 @@ model = "nomic-embed-text"
 [server]
 host = "0.0.0.0"
 port = 5000
-require_api_key = true
 enable_rate_limiting = true
 rate_limit = "100 per minute"
+
+# Authentication and CORS live under the [server.security] table.
+[server.security]
+require_api_key = true
 cors_enabled = true
 cors_allowed_origins = ["http://localhost:3000"]
 ```
@@ -509,6 +513,8 @@ better chunk boundaries.
 
 ```python
 # Upload files via HTTP API
+import requests
+
 files = {'files': open('document.pdf', 'rb')}
 response = requests.post(
     'http://localhost:5000/api/v1/mydb/upload',
@@ -611,23 +617,32 @@ results = db.query(
 ### Code Repository Search
 
 ```python
-# Create database for code files
-db = VectorDB("code", "./data", 
+import glob
+import os
+from datetime import datetime, timezone
+
+from localvectordb import VectorDB, get_common_metadata_schemas
+
+# Create database for code files. Declaring a metadata schema is what lets the
+# metadata below be stored (undeclared fields are dropped with a warning).
+db = VectorDB("code", "./data",
               chunking_method="code-blocks",
-              chunk_size=1000)
+              chunk_size=1000,
+              metadata_schema=get_common_metadata_schemas("code_repository"))
 
 # Add Python files
-import glob
 for file_path in glob.glob("**/*.py", recursive=True):
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         content = f.read()
-    
+
     db.upsert(
         documents=[content],
         metadata=[{
-            'file_path': file_path,
-            'language': 'python',
-            'last_modified': os.path.getmtime(file_path)
+            "file_path": file_path,
+            "language": "python",
+            "last_modified": datetime.fromtimestamp(
+                os.path.getmtime(file_path), tz=timezone.utc
+            ).isoformat(),
         }]
     )
 

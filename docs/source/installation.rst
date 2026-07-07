@@ -212,9 +212,11 @@ First-Time Setup
       import localvectordb
       print(localvectordb.__version__)
 
-      # Test basic functionality
+      # Test basic functionality. The "mock" provider needs no external service,
+      # so this verifies the install without a running Ollama/API backend.
       from localvectordb import VectorDB
-      db = VectorDB("test", ":memory:")
+      db = VectorDB("test", ":memory:", embedding_provider="mock", embedding_model="mock")
+      db.upsert(["hello world"])
       print("LocalVectorDB installed successfully!")
 
 #. **Test Embedding Provider**:
