@@ -14,6 +14,7 @@ from localvectordb_server.cli._utils import (
     get_ctx_db,
     get_stdin_input,
     load_file_for_ingest,
+    looks_like_path,
     print_db_stats,
     warn,
 )
@@ -319,7 +320,17 @@ def search(
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
     if not results:
-        click.secho("No results found.", fg="red", err=True)
+        # Machine-readable mode always emits valid JSON (an empty array), even
+        # when nothing matched, so downstream `| jq` pipelines don't choke.
+        if output_as_json:
+            if output:
+                with open(output, "w") as f:
+                    f.write("[]")
+                click.echo(f"Results saved to {output}", err=True)
+            else:
+                click.echo("[]")
+        else:
+            click.secho("No results found.", fg="red", err=True)
         return
 
     # Format and display results
@@ -354,8 +365,14 @@ def search(
     help="Force (or disable) text extraction. Default: auto — binary/document "
     "formats (PDF, DOCX, HTML, CSV, ...) are extracted to Markdown, plain text is read as-is.",
 )
+@click.option(
+    "--text",
+    is_flag=True,
+    default=False,
+    help="Treat every argument as literal document text, even if it looks like a file path.",
+)
 @click.pass_context
-def add_to_database(ctx, files_or_text, metadata, id, extract):
+def add_to_database(ctx, files_or_text, metadata, id, extract, text):
     """
     Add document(s) to the database.
 
@@ -412,6 +429,14 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
         for file_or_text_input in files_or_text:
             file_or_text_input = file_or_text_input.strip("'").strip('"')
 
+            # ``--text`` short-circuits all path/glob handling: the argument is
+            # stored verbatim as document text no matter what it looks like.
+            if text:
+                all_inputs.append(file_or_text_input)
+                auto_metadata.append({"source": "cli"})
+                auto_ids.append(None)
+                continue
+
             if os.path.isfile(file_or_text_input):
                 click.secho(f"Reading {file_or_text_input}...", fg="blue", err=True)
                 result = load_file_for_ingest(file_or_text_input, force_extract=force_extract)
@@ -425,31 +450,43 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
                 all_inputs.append(result.text)
                 auto_metadata.append(result.metadata)
                 auto_ids.append(os.path.splitext(os.path.basename(file_or_text_input))[0])
-            elif os.path.isdir(os.path.dirname(file_or_text_input)):
-                glob_pattern = os.path.basename(file_or_text_input)
-                if any(c in glob_pattern for c in "*?[]"):
-                    matching_files = glob.glob(file_or_text_input, recursive=True)
-                    for file in matching_files:
-                        if not os.path.isfile(file):
-                            continue
-                        click.echo(f"Reading {file}...", err=True)
-                        result = load_file_for_ingest(file, force_extract=force_extract)
-                        if result.text is None:
-                            click.secho(
-                                f"Skipping `{file}`: {result.error}",
-                                fg="bright_red",
-                                err=True,
-                            )
-                            continue
-                        all_inputs.append(result.text)
-                        auto_metadata.append(result.metadata)
-                        auto_ids.append(os.path.splitext(os.path.basename(file))[0])
-                else:
-                    click.secho(f"Error: invalid pattern: {file_or_text_input}", fg="bright_red", err=True)
-            else:
-                all_inputs.append(file_or_text_input)
-                auto_metadata.append({"source": "cli"})
-                auto_ids.append(None)
+                continue
+
+            glob_pattern = os.path.basename(file_or_text_input)
+            has_glob = any(c in glob_pattern for c in "*?[]")
+            if has_glob and os.path.isdir(os.path.dirname(file_or_text_input)):
+                matching_files = glob.glob(file_or_text_input, recursive=True)
+                for file in matching_files:
+                    if not os.path.isfile(file):
+                        continue
+                    click.echo(f"Reading {file}...", err=True)
+                    result = load_file_for_ingest(file, force_extract=force_extract)
+                    if result.text is None:
+                        click.secho(
+                            f"Skipping `{file}`: {result.error}",
+                            fg="bright_red",
+                            err=True,
+                        )
+                        continue
+                    all_inputs.append(result.text)
+                    auto_metadata.append(result.metadata)
+                    auto_ids.append(os.path.splitext(os.path.basename(file))[0])
+                continue
+
+            # Not an existing file and not a usable glob. If it *looks* like a
+            # path, the user almost certainly mistyped a filename — fail loudly
+            # instead of silently storing the path string as a document. Glob-ish
+            # strings fall through to literal text (preserving prior behaviour).
+            if not has_glob and looks_like_path(file_or_text_input):
+                error(
+                    f"'{file_or_text_input}' looks like a file path but no such file exists. "
+                    "Use --text to add it as literal text, or check the path."
+                )
+
+            # Plain literal text (sentences, words, glob-ish strings with no match).
+            all_inputs.append(file_or_text_input)
+            auto_metadata.append({"source": "cli"})
+            auto_ids.append(None)
 
     # Handle metadata
     if metadata:
@@ -525,7 +562,7 @@ def add_to_database(ctx, files_or_text, metadata, id, extract):
         click.echo(",".join(new_ids))
 
     except Exception as e:
-        click.secho(f"Error: Unexpected error while adding documents: {str(repr(e))}", fg="bright_red")
+        click.secho(f"Error: Unexpected error while adding documents: {str(repr(e))}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -643,8 +680,7 @@ def get_document(
                 outline=outline,
             )
         except DocumentNotFoundError:
-            click.echo(f"Document {doc_id} was not found in '{db.name}'")
-            return
+            error(f"Document {doc_id} was not found in '{db.name}'")
         except ValueError as e:
             # Bad range, unknown section, empty/out-of-range chunk selection, ...
             error(str(e))
@@ -706,7 +742,7 @@ def get_document(
         # must not be reclassified by the generic handler below.
         raise
     except Exception as e:
-        click.secho(f"Error retrieving document: {str(e)}", fg="bright_red")
+        click.secho(f"Error retrieving document: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -762,7 +798,16 @@ def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_as_json
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
     if not results:
-        click.secho("No related documents found.", fg="red", err=True)
+        # Emit valid JSON (empty array) in machine mode even with no neighbours.
+        if output_as_json:
+            if output:
+                with open(output, "w") as f:
+                    f.write("[]")
+                click.echo(f"Results saved to {output}", err=True)
+            else:
+                click.echo("[]")
+        else:
+            click.secho("No related documents found.", fg="red", err=True)
         return
 
     title = f"Documents related to `{doc_id}`: {len(results)} Results"
@@ -827,10 +872,13 @@ def update_document(ctx, doc_id, file_or_text, metadata):
         if updated:
             click.echo(f"Successfully updated document: {doc_id}")
         else:
-            click.echo(f"Document {doc_id} not found")
+            click.secho(f"Document {doc_id} not found", fg="bright_red", err=True)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error: Unexpected error while updating document: {str(repr(e))}", fg="bright_red")
+        click.secho(f"Error: Unexpected error while updating document: {str(repr(e))}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -853,17 +901,20 @@ def delete_document(ctx, doc_id):
 
     try:
         if not db.exists(doc_id):
-            click.echo(f"Document {doc_id} not found")
-            return
+            click.secho(f"Document {doc_id} not found", fg="bright_red", err=True)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
         deleted_count = db.delete(doc_id)
         if deleted_count > 0:
             click.echo(f"Successfully deleted document: {doc_id}")
         else:
-            click.echo("No documents were deleted")
+            click.secho("No documents were deleted", fg="bright_red", err=True)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error: Unexpected error while deleting document: {str(repr(e))}", fg="bright_red")
+        click.secho(f"Error: Unexpected error while deleting document: {str(repr(e))}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -992,7 +1043,7 @@ def show_schema(ctx, format, output):
 @click.option(
     "--dry-run", "--dry", is_flag=True, default=False, help="Show what would be changed without making changes"
 )
-@click.option("--force", "-f", is_flag=True, default=False, help="Skip confirmation prompts")
+@click.option("--force", is_flag=True, default=False, help="Skip confirmation prompts")
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Show detailed output")
 @click.pass_context
 def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):

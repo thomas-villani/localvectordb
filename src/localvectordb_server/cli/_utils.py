@@ -49,6 +49,43 @@ def success(message: str) -> None:
     click.secho(message, fg="green", err=True)
 
 
+def require_config(ctx: "click.Context") -> "Config":
+    """Return the loaded config, or exit with a friendly error if none was found.
+
+    Commands that genuinely need a configuration file call this at the top of
+    their body. Because ``--help`` is an eager Click option it fires *before* the
+    command body, so help still renders without a config file even though a real
+    invocation exits 1 here.
+    """
+    cfg: Optional["Config"] = ctx.obj.get("config")
+    if cfg is None:
+        click.secho(
+            "No configuration file found. Create one with 'lvdb config init'",
+            fg="bright_red",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    return cfg
+
+
+def looks_like_path(value: str) -> bool:
+    """Heuristic: does ``value`` look like a filesystem path (vs. literal text)?
+
+    Returns True when the argument contains a path separator, or is a single
+    whitespace-free token ending in a short (1-10 char) alphanumeric extension
+    (e.g. ``notes.txt``, ``report.pdf``). Plain sentences with spaces are text.
+    """
+    import re
+
+    if not value:
+        return False
+    if "/" in value or "\\" in value:
+        return True
+    if any(c.isspace() for c in value):
+        return False
+    return re.search(r"\.[A-Za-z0-9]{1,10}$", value) is not None
+
+
 def find_config_file(config_path: Optional[str] = None) -> Optional[str]:
     """Find configuration file in order of precedence"""
     # First check explicit path

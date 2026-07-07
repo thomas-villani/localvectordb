@@ -310,11 +310,11 @@ class TestDeleteDatabase:
         assert not faiss_path.exists()
 
     def test_delete_not_found(self, runner, fake_config, config_file, tmp_db_folder):
-        """Deleting a non-existent database should print a 'not found' message."""
+        """Deleting a non-existent database should error to stderr and exit nonzero."""
         with _patch_cli_init(fake_config, config_file, tmp_db_folder):
             result = runner.invoke(cli, ["delete", "nonexistent", "--confirm"])
-        assert result.exit_code == 0
-        assert "not found" in result.output.lower()
+        assert result.exit_code != 0
+        assert "not found" in result.stderr.lower()
 
     def test_delete_aborted_by_user(self, runner, fake_config, config_file, tmp_db_folder):
         """If the user types something other than 'confirm', deletion is aborted."""
@@ -626,7 +626,7 @@ class TestAuthCreateKey:
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
         ):
-            result = runner.invoke(cli, ["auth", "create-key", "--output", "json"])
+            result = runner.invoke(cli, ["auth", "create-key", "--format", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert "plain_key" in parsed
@@ -640,7 +640,7 @@ class TestAuthCreateKey:
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
         ):
-            result = runner.invoke(cli, ["auth", "create-key", "--output", "key-only"])
+            result = runner.invoke(cli, ["auth", "create-key", "--format", "key-only"])
         assert result.exit_code == 0
         assert result.output.strip() == "lvdb_test_key_abc123"
 
@@ -660,7 +660,7 @@ class TestAuthCreateKey:
                     "create-key",
                     "--expires-days",
                     "30",
-                    "--output",
+                    "--format",
                     "key-only",
                 ],
             )
@@ -679,7 +679,7 @@ class TestAuthCreateKey:
         ):
             result = runner.invoke(cli, ["auth", "create-key"])
         assert result.exit_code != 0
-        assert "Error" in result.output
+        assert "Error" in result.stderr
 
 
 # ============================================================================
@@ -743,7 +743,7 @@ class TestAuthListKeys:
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
         ):
-            result = runner.invoke(cli, ["auth", "list-keys", "--output", "json"])
+            result = runner.invoke(cli, ["auth", "list-keys", "--format", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -793,7 +793,7 @@ class TestAuthListKeys:
         ):
             result = runner.invoke(cli, ["auth", "list-keys"])
         assert result.exit_code != 0
-        assert "Error" in result.output
+        assert "Error" in result.stderr
 
 
 # ============================================================================
@@ -1287,7 +1287,7 @@ class TestServe:
         ):
             result = runner.invoke(cli, ["serve", "--disable-ollama-check"])
         assert result.exit_code != 0
-        assert "Configuration error" in result.output
+        assert "Configuration error" in result.stderr
 
 
 # ============================================================================
@@ -1373,7 +1373,7 @@ class TestAuthStatus:
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch("localvectordb_server.keymanager.get_key_manager", return_value=mock_km),
         ):
-            result = runner.invoke(cli, ["auth", "status", "--output", "json"])
+            result = runner.invoke(cli, ["auth", "status", "--format", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert "auth_enabled" in parsed
@@ -1578,3 +1578,265 @@ class TestDbAddDefaultIds:
         assert ids[0] == "readme"
         assert ids[1] is None  # duplicate stem falls back to a generated id
         assert "Duplicate document id" in result.output
+
+
+# ============================================================================
+# Pre-release fixes: nonzero exit codes, --help without config, flag renames
+# ============================================================================
+
+
+def _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db, db_name="testdb"):
+    """Patch the cli + db group callbacks so ctx.obj['db'] is a mock database."""
+    obj = {
+        "config": fake_config,
+        "config_path": config_file,
+        "api_key_db_path": os.path.join(tmp_db_folder, "api_keys.db"),
+        "db_folder": tmp_db_folder,
+        "db_name": db_name,
+        "db": mock_db,
+    }
+
+    @click.pass_context
+    def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
+        ctx.ensure_object(dict)
+        ctx.obj = obj
+
+    @click.pass_context
+    def _patched_db_group_callback(ctx, name):
+        ctx.obj.update({"db_name": name, "db": mock_db})
+
+    from localvectordb_server.cli._db import db_group
+
+    return (
+        patch.object(cli, "callback", _patched_cli_callback),
+        patch.object(db_group, "callback", _patched_db_group_callback),
+    )
+
+
+@pytest.mark.unit
+class TestHelpWithoutConfig:
+    """`--help` for every command must render (exit 0) with no config file."""
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--help"],
+            ["list", "--help"],
+            ["create", "--help"],
+            ["delete", "--help"],
+            ["db", "mydb", "--help"],
+            ["db", "mydb", "search", "--help"],
+            ["auth", "--help"],
+            ["auth", "create-key", "--help"],
+        ],
+    )
+    def test_help_renders_without_config(self, runner, args):
+        with patch("localvectordb_server.cli._utils.find_config_file", return_value=None):
+            result = runner.invoke(cli, args)
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
+
+@pytest.mark.unit
+class TestRequireConfigErrors:
+    """Real (non-help) invocations of config-needing commands exit 1 cleanly."""
+
+    @pytest.mark.parametrize("args", [["list"], ["create", "x"], ["delete", "x"], ["rename", "a", "b"]])
+    def test_missing_config_exits_one(self, runner, args):
+        with patch("localvectordb_server.cli._utils.find_config_file", return_value=None):
+            result = runner.invoke(cli, args)
+        assert result.exit_code != 0
+        assert "No configuration file found" in result.stderr
+
+    def test_delete_missing_database_exits_one(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["delete", "ghost", "--confirm"])
+        assert result.exit_code != 0
+        assert "not found" in result.stderr.lower()
+
+
+@pytest.mark.unit
+class TestTuningExitCodes:
+    def test_tuning_get_unknown_db_exits_one(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["tuning", "get", "nosuchdb"])
+        assert result.exit_code != 0
+        assert "not found" in result.stderr.lower()
+
+    def test_maintenance_optimize_unknown_db_exits_one(self, runner, fake_config, config_file, tmp_db_folder):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["maintenance", "optimize", "nosuchdb"])
+        assert result.exit_code != 0
+        assert "not found" in result.stderr.lower()
+
+
+def _write_backup_tar(path, backup_id="bkp-123", database_name="mydb", backup_type="full"):
+    """Write a minimal *.lvdb-backup tar containing a manifest.json."""
+    import io
+    import tarfile
+
+    manifest = {
+        "backup_id": backup_id,
+        "database_name": database_name,
+        "backup_type": backup_type,
+        "created_at": "2025-01-01T00:00:00+00:00",
+    }
+    data = json.dumps(manifest).encode("utf-8")
+    with tarfile.open(path, "w") as tar:
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+
+@pytest.mark.unit
+class TestBackupExitCodes:
+    def test_verify_missing_backup_exits_one(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        loc = tmp_path / "backups"
+        loc.mkdir()
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(cli, ["backup", "verify", "nope", "--location", str(loc)])
+        assert result.exit_code != 0
+
+    def test_verify_invalid_backup_exits_one(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        loc = tmp_path / "backups"
+        loc.mkdir()
+        _write_backup_tar(loc / "bkp-123.lvdb-backup", backup_id="bkp-123")
+
+        mock_bm = MagicMock()
+        mock_bm.verify_backup.return_value = False
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.cli._backup.BackupManager", return_value=mock_bm),
+        ):
+            result = runner.invoke(cli, ["backup", "verify", "bkp-123", "--location", str(loc)])
+        assert result.exit_code != 0
+        assert "verification failed" in result.stderr.lower()
+
+    def test_pitr_no_backups_exits_one(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        loc = tmp_path / "backups"
+        loc.mkdir()
+        dest = tmp_path / "restored"
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(
+                cli, ["backup", "pitr", "2024-01-15 14:30:00", "--to-location", str(dest), "--location", str(loc)]
+            )
+        assert result.exit_code != 0
+
+
+@pytest.mark.unit
+class TestMigrateExitCodes:
+    def test_apply_failure_exits_one(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        Path(tmp_db_folder, "mydb.sqlite").write_text("x", encoding="utf-8")
+        mig_dir = tmp_path / "migrations"
+        mig_dir.mkdir()
+
+        mock_engine = MagicMock()
+        mock_engine.migrate.return_value = {"success": False, "error": "boom"}
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.cli._migration.MigrationEngine", return_value=mock_engine),
+        ):
+            result = runner.invoke(cli, ["migrate", "apply", "mydb", "--no-backup", "--migrations-dir", str(mig_dir)])
+        assert result.exit_code != 0
+        assert "Migration failed" in result.stderr
+
+    def test_rollback_failure_exits_one(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        Path(tmp_db_folder, "mydb.sqlite").write_text("x", encoding="utf-8")
+        mig_dir = tmp_path / "migrations"
+        mig_dir.mkdir()
+
+        mock_engine = MagicMock()
+        mock_engine.rollback.return_value = {"success": False, "error": "boom"}
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.cli._migration.MigrationEngine", return_value=mock_engine),
+        ):
+            result = runner.invoke(
+                cli, ["migrate", "rollback", "mydb", "1.0.0", "--no-backup", "--migrations-dir", str(mig_dir)]
+            )
+        assert result.exit_code != 0
+        assert "Rollback failed" in result.stderr
+
+
+@pytest.mark.unit
+class TestDbAddPathContract:
+    def test_missing_pathlike_arg_errors(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", "nosuchfile.txt"])
+        assert result.exit_code != 0
+        assert "looks like a file path" in result.stderr
+        mock_db.upsert.assert_not_called()
+
+    def test_text_flag_forces_literal(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["doc_1"]
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", "nosuchfile.txt", "--text"])
+        assert result.exit_code == 0
+        assert mock_db.upsert.call_args[1]["documents"] == ["nosuchfile.txt"]
+
+    def test_plain_sentence_still_text(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.upsert.return_value = ["doc_1"]
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "add", "just a plain sentence"])
+        assert result.exit_code == 0
+        assert mock_db.upsert.call_args[1]["documents"] == ["just a plain sentence"]
+
+
+@pytest.mark.unit
+class TestDbSearchJsonEmpty:
+    def test_search_empty_json_prints_empty_array(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.query.return_value = []
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "search", "no match", "--json"])
+        assert result.exit_code == 0
+        # Status lines go to stderr; the stdout JSON payload is an empty array.
+        assert result.output[result.output.index("[") :].strip() == "[]"
+
+    def test_related_empty_json_prints_empty_array(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.nearest_neighbors.return_value = []
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1", "--json"])
+        assert result.exit_code == 0
+        assert result.output[result.output.index("[") :].strip() == "[]"
+
+
+@pytest.mark.unit
+class TestConfigInitCorsAndForce:
+    def test_cors_origins_persist(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        out = tmp_path / "cfg.toml"
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            result = runner.invoke(
+                cli, ["config", "init", "--cors-origins", "http://localhost:3000", "--output", str(out)]
+            )
+        assert result.exit_code == 0
+        text = out.read_text(encoding="utf-8")
+        assert "http://localhost:3000" in text
+        # The default "*" must not be what got written for the origins list.
+        assert 'cors_allowed_origins = "*"' not in text
+
+    def test_force_overwrites_existing_noninteractive(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        out = tmp_path / "cfg.toml"
+        out.write_text("old", encoding="utf-8")
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            # Closed stdin (input="") would hang the old getchar()-based prompt.
+            result = runner.invoke(cli, ["config", "init", "--output", str(out), "--force"], input="")
+        assert result.exit_code == 0
+        assert out.read_text(encoding="utf-8") != "old"
+
+    def test_existing_file_without_force_aborts(self, runner, fake_config, config_file, tmp_db_folder, tmp_path):
+        out = tmp_path / "cfg.toml"
+        out.write_text("old", encoding="utf-8")
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            runner.invoke(cli, ["config", "init", "--output", str(out)], input="")
+        # Does not hang; file left untouched.
+        assert out.read_text(encoding="utf-8") == "old"

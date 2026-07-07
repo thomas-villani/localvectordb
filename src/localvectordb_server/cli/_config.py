@@ -313,6 +313,7 @@ def set_config_value(ctx, key, value, dry_run, force):
 @click.option("--max-request-size-mb", type=int, help="Set the maximum request size in MB", default=100)
 # Interactive mode
 @click.option("--interactive", "-I", is_flag=True, help="Interactive guided configuration")
+@click.option("--force", is_flag=True, help="Overwrite an existing configuration file without prompting")
 @click.pass_context
 def init_config(
     ctx,
@@ -334,6 +335,7 @@ def init_config(
     enable_file_upload,
     max_request_size_mb,
     interactive,
+    force,
 ):
     """
     Initialize a new configuration file with default settings.
@@ -368,10 +370,11 @@ def init_config(
     if not output:
         output = f"./{DEFAULT_CONFIG_FILE}.{format}"
 
-    if os.path.exists(output):
-        click.echo(f"Configuration file `{output}` exists! Overwrite (Y/n)?")
-        char = click.getchar()
-        if char.lower() != "y":
+    # click.confirm aborts cleanly on closed/non-interactive stdin (unlike
+    # click.getchar, which hangs); --force skips the prompt entirely.
+    if os.path.exists(output) and not force:
+        if not click.confirm(f"Configuration file `{output}` exists. Overwrite?", default=False):
+            click.echo("Configuration cancelled.")
             return
 
     from localvectordb_server.config import Config
@@ -407,8 +410,9 @@ def init_config(
     if enable_rate_limiting:
         _configure_rate_limiting(config, rate_limit)
 
-    # Configure CORS
-    if enable_cors:
+    # Configure CORS. Passing --cors-origins implies configuring CORS even
+    # without --enable-cors, so the supplied origins are never silently dropped.
+    if enable_cors or cors_origins:
         _configure_cors(config, cors_origins)
 
     # Configure authentication
@@ -678,23 +682,30 @@ def _configure_rate_limiting(config, rate_limit):
 
 
 def _configure_cors(config, cors_origins):
-    """Configure CORS settings"""
-    config.server.cors_enabled = True
+    """Configure CORS settings.
+
+    CORS fields live on ``config.server.security`` (that is what ``generate_toml``
+    and the runtime read). Writing to ``config.server`` directly would create
+    stray attributes that never reach the generated config, so the flag would be
+    silently dropped — hence the values here target ``.security``.
+    """
+    security = config.server.security
+    security.cors_enabled = True
 
     if cors_origins:
         if cors_origins.lower() in ["all", "*"]:
-            config.server.cors_allowed_origins = "*"
+            security.cors_allowed_origins = "*"
             click.secho("Configured CORS: Allow all origins (*)", fg="yellow")
             click.secho("Warning: Allowing all origins may be insecure in production", fg="red")
         else:
             origins = [origin.strip() for origin in cors_origins.split(",")]
-            config.server.cors_allowed_origins = origins
+            security.cors_allowed_origins = origins
             click.secho(f"Configured CORS origins: {origins}", fg="green")
     else:
         # Default to localhost for development
-        config.server.cors_allowed_origins = ["http://localhost:3000", "http://localhost:8080"]
+        security.cors_allowed_origins = ["http://localhost:3000", "http://localhost:8080"]
         click.secho(
-            "Configured CORS: localhost development origins: " f"{', '.join(config.server.cors_allowed_origins)}",
+            "Configured CORS: localhost development origins: " f"{', '.join(security.cors_allowed_origins)}",
             fg="green",
         )
 

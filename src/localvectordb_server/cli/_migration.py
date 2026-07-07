@@ -52,7 +52,7 @@ def migrate_group(ctx):
     type=click.Path(exists=True, file_okay=False),
     help="Directory containing migration files (default: ./migrations)",
 )
-@click.option("--json", "output_json", is_flag=True, help="Output status in JSON format")
+@click.option("--json", "-j", "output_json", is_flag=True, help="Output status in JSON format")
 @click.pass_context
 def migration_status(ctx, database_name, migrations_dir, output_json):
     """
@@ -158,7 +158,7 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
     help="Backup storage location (default: ./backups)",
 )
 @click.option("--dry-run", is_flag=True, help="Validate migrations without applying them")
-@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
 @click.pass_context
 def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, backup_location, dry_run, output_json):
     """
@@ -237,18 +237,24 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, bac
                             click.echo(f"    ✓ {version}")
 
             else:
-                click.secho("✗ Migration failed", fg="red")
+                click.secho("✗ Migration failed", fg="red", err=True)
                 if result.get("error"):
-                    click.echo(f"  Error: {result['error']}")
+                    click.echo(f"  Error: {result['error']}", err=True)
 
                 if result.get("migration_errors"):
-                    click.echo("  Migration errors:")
+                    click.echo("  Migration errors:", err=True)
                     for error in result["migration_errors"]:
-                        click.secho(f"    - {error}", fg="red")
+                        click.secho(f"    - {error}", fg="red", err=True)
 
                 if result.get("backup_id"):
-                    click.echo(f"  Backup available for rollback: {result['backup_id'][:8]}")
+                    click.echo(f"  Backup available for rollback: {result['backup_id'][:8]}", err=True)
 
+        # A failed migration must exit nonzero.
+        if not result["success"]:
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         result = {"success": False, "error": str(e), "database": database_name}
 
@@ -277,7 +283,7 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, bac
     help="Backup storage location (default: ./backups)",
 )
 @click.option("--dry-run", is_flag=True, help="Validate rollback without applying it")
-@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
 @click.pass_context
 def rollback_migrations(
     ctx, database_name, target_version, migrations_dir, backup, backup_location, dry_run, output_json
@@ -364,18 +370,24 @@ def rollback_migrations(
                             click.echo(f"    ✓ {version}")
 
             else:
-                click.secho("✗ Rollback failed", fg="red")
+                click.secho("✗ Rollback failed", fg="red", err=True)
                 if result.get("error"):
-                    click.echo(f"  Error: {result['error']}")
+                    click.echo(f"  Error: {result['error']}", err=True)
 
                 if result.get("rollback_errors"):
-                    click.echo("  Rollback errors:")
+                    click.echo("  Rollback errors:", err=True)
                     for error in result["rollback_errors"]:
-                        click.secho(f"    - {error}", fg="red")
+                        click.secho(f"    - {error}", fg="red", err=True)
 
                 if result.get("backup_id"):
-                    click.echo(f"  Backup available: {result['backup_id'][:8]}")
+                    click.echo(f"  Backup available: {result['backup_id'][:8]}", err=True)
 
+        # A failed rollback must exit nonzero.
+        if not result["success"]:
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         result = {"success": False, "error": str(e), "database": database_name, "target_version": target_version}
 
@@ -403,7 +415,7 @@ def rollback_migrations(
     default="basic",
     help="Type of migration template to create",
 )
-@click.option("--json", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
 def create_migration(description, version, migrations_dir, template, output_json):
     """
     Create a new migration template file.
@@ -493,7 +505,7 @@ def create_migration(description, version, migrations_dir, template, output_json
     help="Directory containing migration files (default: ./migrations)",
 )
 @click.option("--show-dependencies", "-d", is_flag=True, help="Show migration dependencies")
-@click.option("--json", "output_json", is_flag=True, help="Output in JSON format")
+@click.option("--json", "-j", "output_json", is_flag=True, help="Output in JSON format")
 def list_migrations(migrations_dir, show_dependencies, output_json):
     """
     List available migration files.
