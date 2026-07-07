@@ -21,8 +21,14 @@ from localvectordb_server.cli._utils import (
     EXIT_CODE_OLLAMA_ERROR,
     error,
     info,
+    require_config,
     success,
 )
+
+
+def _binds_localhost(host: str) -> bool:
+    """True if ``host`` binds only the loopback interface (safe default)."""
+    return host in ("127.0.0.1", "localhost", "::1")
 
 
 @click.command()
@@ -72,6 +78,27 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     from localvectordb.exceptions import ConfigurationError
     from localvectordb_server.app import create_app
     from localvectordb_server.config import load_config
+
+    if config_path is None:
+        # No config file found. Fall back to built-in defaults ONLY when the
+        # default host binds loopback; refuse to silently expose all interfaces.
+        from localvectordb_server.config import Config
+
+        default_host = Config().server.host
+        if not _binds_localhost(default_host):
+            click.secho(
+                f"No config file found and the built-in default host ({default_host}) is not "
+                "localhost-only. Refusing to serve on all interfaces without an explicit config. "
+                "Run 'lvdb config init' to create one.",
+                fg="bright_red",
+                err=True,
+            )
+            raise click.exceptions.Exit(EXIT_CODE_CONFIGURATION_ERROR)
+        click.secho(
+            "No config file found — using built-in defaults (localhost only). " "Run 'lvdb config init' to customize.",
+            fg="yellow",
+            err=True,
+        )
 
     try:
         # Load config first for Ollama check before building the app
@@ -131,10 +158,10 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
         )
 
     except ConfigurationError as e:
-        click.secho(f"Configuration error: {e}", fg="bright_red")
+        click.secho(f"Configuration error: {e}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_CONFIGURATION_ERROR) from e
     except Exception as e:
-        click.secho(f"Error: {e}", fg="bright_red")
+        click.secho(f"Error: {e}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -155,6 +182,7 @@ def list_databases(ctx, details):
         lvdb list --details
 
     """
+    require_config(ctx)
     db_folder = ctx.obj["db_folder"]
 
     if os.path.isdir(db_folder):
@@ -230,12 +258,14 @@ def create_vector_database(
         lvdb create mydb --metadata-schema research_papers
 
     """
+    require_config(ctx)
     db_folder = ctx.obj["db_folder"]
     if not db_folder:
-        click.secho("No configuration found and `--db-folder` not specified.", fg="bright_red")
-        click.echo(
+        click.secho("No configuration found and `--db-folder` not specified.", fg="bright_red", err=True)
+        click.secho(
             "Use the `--db-folder` option or create a configuration file with `lvdb config init`, or "
-            "specify the location of an existing config file using `--config <path-to-config>`"
+            "specify the location of an existing config file using `--config <path-to-config>`",
+            err=True,
         )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
@@ -325,6 +355,7 @@ def delete_database(ctx, name, confirm):
         lvdb delete mydb --confirm
 
     """
+    require_config(ctx)
     db_folder = ctx.obj["db_folder"]
 
     if not db_folder or not os.path.exists(db_folder):
@@ -359,10 +390,15 @@ def delete_database(ctx, name, confirm):
                 click.secho(f"- {f} deleted", fg="magenta")
             click.secho(f"Database '{name}' was deleted", fg="magenta")
         except Exception as e:
-            click.secho(f"Error deleting database '{name}': {str(repr(e))}", fg="bright_red")
+            click.secho(f"Error deleting database '{name}': {str(repr(e))}", fg="bright_red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
     else:
-        click.echo(f"Database {name} was not found in {os.path.abspath(db_folder)}! No action taken.")
+        click.secho(
+            f"Database {name} was not found in {os.path.abspath(db_folder)}! No action taken.",
+            fg="bright_red",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
 
 @click.command("rename")
@@ -383,6 +419,7 @@ def rename_database(ctx, old_name, new_name):
         \b
         lvdb rename oldname newname
     """
+    require_config(ctx)
     db_folder = ctx.obj["db_folder"]
     if not db_folder or not os.path.exists(db_folder):
         error("DB folder not specified or does not exist.")

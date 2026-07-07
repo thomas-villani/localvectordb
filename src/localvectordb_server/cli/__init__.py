@@ -130,10 +130,13 @@ def cli(ctx, config, db_folder, verbose, quiet):
     config_path = find_config_file(config)
 
     if not config_path:
-        if ctx.invoked_subcommand not in ("config", "mcp", "tuning", "maintenance", "version", "chunk"):
-            click.secho("No configuration file found. Create one with 'lvdb config init'", fg="bright_red", err=True)
-            raise click.exceptions.Exit(1)
-        cfg = config_path = api_key_path = db_folder = None
+        # No config file found. Do NOT hard-exit here: --help (an eager option)
+        # must render for every command/subcommand without a config file. Each
+        # command that genuinely needs config calls require_config(ctx) in its
+        # body, which raises the friendly exit-1 for real invocations. Any
+        # ``--db-folder`` passed on the command line is preserved so commands
+        # that can run folder-only (e.g. tuning/maintenance) still work.
+        cfg = config_path = api_key_path = None
     else:
         from localvectordb.exceptions import ConfigurationError
         from localvectordb_server.config import load_config

@@ -44,7 +44,6 @@ from localvectordb_server.cli._utils import (
 )
 @click.option(
     "--overlap",
-    "-o",
     type=int,
     default=0,
     show_default=True,
@@ -52,7 +51,7 @@ from localvectordb_server.cli._utils import (
 )
 @click.option(
     "--output",
-    "-O",
+    "-o",
     type=click.Path(dir_okay=False, writable=True),
     default=None,
     help="Write JSONL to this file instead of stdout.",
@@ -75,7 +74,7 @@ def chunk_command(files_or_text, method, max_tokens, overlap, output, extract):
         \b
         lvdb chunk notes.md
         lvdb chunk report.pdf --method sentences --max-tokens 300
-        lvdb chunk "docs/*.md" --method paragraphs -O chunks.jsonl
+        lvdb chunk "docs/*.md" --method paragraphs -o chunks.jsonl
         echo "some long text..." | lvdb chunk - --method words --overlap 20
     """
     if len(files_or_text) == 0:

@@ -46,12 +46,12 @@ def get_tuning_config(ctx, database, format):
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         # Open database and get tuning config
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
@@ -75,16 +75,17 @@ def get_tuning_config(ctx, database, format):
             for key, value in config["pragmas"].items():
                 click.echo(f"  {key}: {value}")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"Error getting tuning configuration: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @tuning_group.command("set")
 @click.argument("database")
 @click.argument("profile")
-@click.option(
-    "--override", "-o", multiple=True, metavar="KEY=VALUE", help="Pragma override (can be used multiple times)"
-)
+@click.option("--override", multiple=True, metavar="KEY=VALUE", help="Pragma override (can be used multiple times)")
 @click.option("--no-persist", is_flag=True, help="Don't persist settings to database")
 @click.option("--dry-run", is_flag=True, help="Show what would be applied without applying")
 @click.pass_context
@@ -97,7 +98,7 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
         for override_str in override:
             if "=" not in override_str:
                 click.echo(f"Error: Invalid override format '{override_str}'. Use KEY=VALUE", err=True)
-                return
+                raise click.exceptions.Exit(1)
 
             key, value = override_str.split("=", 1)
             key = key.strip()
@@ -126,12 +127,12 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         # Apply tuning
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
@@ -148,10 +149,14 @@ def set_tuning_profile(ctx, database, profile, override, no_persist, dry_run):
         if not no_persist:
             click.echo("\nSettings persisted to database")
 
+    except click.exceptions.Exit:
+        raise
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
     except Exception as e:
         click.echo(f"Error applying tuning profile: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @tuning_group.command("set-pragma")
@@ -167,12 +172,12 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         # Parse pragma value
         if pragma_value.lower() in ("true", "false"):
@@ -202,8 +207,11 @@ def set_pragma_override(ctx, database, pragma_key, pragma_value, no_persist):
         if not no_persist:
             click.echo(" Setting persisted to database")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"Error setting pragma: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @tuning_group.command("auto")
@@ -228,12 +236,12 @@ def auto_tune_database(ctx, database, interactive, workload_type, memory_constra
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         # Prepare workload info
         workload = None
@@ -275,8 +283,11 @@ def auto_tune_database(ctx, database, interactive, workload_type, memory_constra
             else:
                 click.echo("\n Run with --apply to apply these settings")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"Error running auto-tuner: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @click.group(name="maintenance")
@@ -302,12 +313,12 @@ def checkpoint_database(ctx, database, mode):
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
         db.sqlite_checkpoint(mode)
@@ -315,8 +326,11 @@ def checkpoint_database(ctx, database, mode):
 
         click.echo(f" SQLite WAL checkpoint completed for '{database}' with mode '{mode}'")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"Error running checkpoint: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @maintenance_group.command("optimize")
@@ -329,12 +343,12 @@ def optimize_database(ctx, database):
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db = LocalVectorDB(name=database, base_path=db_folder, create_if_not_exists=False)
         db.sqlite_optimize()
@@ -342,8 +356,11 @@ def optimize_database(ctx, database):
 
         click.echo(f" SQLite PRAGMA optimize completed for '{database}'")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"Error running optimize: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @maintenance_group.command("vacuum")
@@ -359,12 +376,12 @@ def vacuum_database(ctx, database, incremental, pages, confirm):
         db_folder = ctx.obj.get("db_folder")
         if not db_folder:
             click.echo("Error: Database folder not configured", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         db_path = Path(db_folder) / f"{database}.sqlite"
         if not db_path.exists():
             click.echo(f"Error: Database '{database}' not found", err=True)
-            return
+            raise click.exceptions.Exit(1)
 
         if not incremental and not confirm:
             click.echo("  WARNING: VACUUM requires exclusive database access and may take significant time.")
@@ -383,8 +400,11 @@ def vacuum_database(ctx, database, incremental, pages, confirm):
 
         db.close()
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"Error running vacuum: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 @maintenance_group.command("analyze-system")
@@ -430,6 +450,7 @@ def analyze_system_resources(format):
 
     except Exception as e:
         click.echo(f"Error analyzing system: {e}", err=True)
+        raise click.exceptions.Exit(1) from e
 
 
 # Export command groups

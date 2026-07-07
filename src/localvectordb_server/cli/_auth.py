@@ -36,7 +36,9 @@ def auth(ctx):
     default="read_write",
     help="Permission level for the key (default: read_write)",
 )
-@click.option("--output", "-o", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format")
+@click.option(
+    "--format", "-f", "output", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format"
+)
 @click.pass_context
 def create_api_key(ctx, description, expires_days, created_by, permission_level, output):
     """
@@ -98,15 +100,17 @@ def create_api_key(ctx, description, expires_days, created_by, permission_level,
             click.echo()
             click.secho("⚠️  Store this key securely - it cannot be retrieved again!", fg="red")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error creating API key: {str(e)}", fg="bright_red")
+        click.secho(f"Error creating API key: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command("list-keys")
 @click.option("--active-only", "-a", is_flag=True, help="Show only active keys")
 @click.option("--include-expired/--no-expired", default=True, help="Include expired keys")
-@click.option("--output", "-o", type=click.Choice(["table", "json"]), default="table", help="Output format")
+@click.option("--format", "-f", "output", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.option("--show-stats", "-s", is_flag=True, help="Show key management statistics")
 @click.pass_context
 def list_api_keys(ctx, active_only, include_expired, output, show_stats):
@@ -209,8 +213,10 @@ def list_api_keys(ctx, active_only, include_expired, output, show_stats):
                     f" {created:<12} {expires:<22} {last_used:<12}"
                 )
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error listing API keys: {str(e)}", fg="bright_red")
+        click.secho(f"Error listing API keys: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -267,14 +273,18 @@ def revoke_api_key(ctx, key_id, confirm):
             click.secho(f"Failed to revoke key '{key_id}'.", fg="bright_red")
             raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error revoking API key: {str(e)}", fg="bright_red")
+        click.secho(f"Error revoking API key: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command("rotate-key")
 @click.argument("key_id")
-@click.option("--output", "-o", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format")
+@click.option(
+    "--format", "-f", "output", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format"
+)
 @click.pass_context
 def rotate_api_key(ctx, key_id, output):
     """
@@ -350,8 +360,10 @@ def rotate_api_key(ctx, key_id, output):
             click.echo()
             click.secho("⚠️  Update your applications with the new key!", fg="red")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error rotating API key: {str(e)}", fg="bright_red")
+        click.secho(f"Error rotating API key: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
@@ -422,14 +434,16 @@ def prune_expired_keys(ctx, soft_delete, dry_run, confirm):
         action_past = "deactivated" if soft_delete else "deleted"
         click.secho(f"✓ {count} expired key(s) {action_past}.", fg="green")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error pruning expired keys: {str(e)}", fg="bright_red")
+        click.secho(f"Error pruning expired keys: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command("key-info")
 @click.argument("key_id")
-@click.option("--output", "-o", type=click.Choice(["table", "json"]), default="table", help="Output format")
+@click.option("--format", "-f", "output", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.pass_context
 def show_key_info(ctx, key_id, output):
     """
@@ -515,13 +529,15 @@ def show_key_info(ctx, key_id, output):
             else:
                 click.echo("  Last used: Never")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error getting key info: {str(e)}", fg="bright_red")
+        click.secho(f"Error getting key info: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
 @auth.command("status")
-@click.option("--output", "-o", type=click.Choice(["table", "json"]), default="table", help="Output format")
+@click.option("--format", "-f", "output", type=click.Choice(["table", "json"]), default="table", help="Output format")
 @click.pass_context
 def auth_status(ctx, output):
     """
@@ -588,6 +604,8 @@ def auth_status(ctx, output):
                 if "error" in db_status:
                     click.echo(f"  Error: {db_status['error']}")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
-        click.secho(f"Error reading auth status: {str(e)}", fg="bright_red")
+        click.secho(f"Error reading auth status: {str(e)}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e

@@ -118,7 +118,7 @@ class TestChunkCommand:
 
     def test_chunk_output_file(self, runner, tmp_path):
         out = tmp_path / "out.jsonl"
-        result = runner.invoke(cli, ["chunk", "some text to chunk", "-O", str(out)])
+        result = runner.invoke(cli, ["chunk", "some text to chunk", "-o", str(out)])
         assert result.exit_code == 0
         assert len(_jsonl(out.read_text(encoding="utf-8"))) >= 1
 
