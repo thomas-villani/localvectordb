@@ -130,7 +130,9 @@ import numpy as np
 from localvectordb.core import (
     Chunk,
     Document,
+    DocumentComparisonResult,
     DocumentScoringMethod,
+    DocumentSimilarityMatrix,
     MetadataField,
     MetadataFieldType,
     QueryResult,
@@ -883,7 +885,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
@@ -918,7 +920,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 ids = [ids]
 
         # Prepare request payload
-        payload = {"documents": documents, "batch_size": batch_size}
+        payload = {"documents": documents, "batch_size": batch_size if batch_size is not None else 100}
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -941,7 +943,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
@@ -979,7 +981,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 ids = [ids]
 
         # Prepare request payload
-        payload = {"documents": documents, "batch_size": batch_size, "errors": errors}
+        payload = {
+            "documents": documents,
+            "batch_size": batch_size if batch_size is not None else 100,
+            "errors": errors,
+        }
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -1029,7 +1035,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
@@ -1089,7 +1095,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/upload")
 
         # Build form data
-        form_data = {"batch_size": str(batch_size), "mode": "upsert"}  # Specify upsert mode
+        form_data = {
+            "batch_size": str(batch_size if batch_size is not None else 100),
+            "mode": "upsert",
+        }  # Specify upsert mode
 
         if metadata is not None:
             form_data["metadata"] = json.dumps(metadata)
@@ -1123,7 +1132,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         extractor_kwargs: Optional[Dict[str, Any]] = None,
@@ -1188,7 +1197,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/{self.name}/upload")
 
         # Build form data
-        form_data = {"batch_size": str(batch_size), "mode": "insert", "errors": errors}  # Specify insert mode
+        form_data = {
+            "batch_size": str(batch_size if batch_size is not None else 100),
+            "mode": "insert",
+            "errors": errors,
+        }  # Specify insert mode
 
         if metadata is not None:
             form_data["metadata"] = json.dumps(metadata)
@@ -1221,7 +1234,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         chunks_by_document: Dict[str, Union[List["Chunk"], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """
@@ -1265,7 +1278,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 serializable_chunks[doc_id] = [str(c) for c in chunks]
 
         # Prepare request payload
-        payload: Dict[str, Any] = {"chunks_by_document": serializable_chunks, "batch_size": batch_size}
+        payload: Dict[str, Any] = {
+            "chunks_by_document": serializable_chunks,
+            "batch_size": batch_size if batch_size is not None else 100,
+        }
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -1284,7 +1300,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self,
         chunks_by_document: Dict[str, Union[List["Chunk"], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
@@ -1336,7 +1352,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Prepare request payload
         payload: Dict[str, Any] = {
             "chunks_by_document": serializable_chunks,
-            "batch_size": batch_size,
+            "batch_size": batch_size if batch_size is not None else 100,
             "errors": errors,
         }
 
@@ -2192,23 +2208,6 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Async context manager exit"""
         await self.close_async()
 
-    def hybrid_query(
-        self,
-        query_text: str,
-        k: int = 10,
-        vector_weight: float = 0.7,
-        metadata_filters: Optional[dict] = None,
-        **kwargs: Any,
-    ) -> List[QueryResult]:
-        """Legacy method for backward compatibility - use query() instead"""
-        return self.query(query_text, search_type="hybrid", k=k, filters=metadata_filters, vector_weight=vector_weight)
-
-    def keyword_search(
-        self, query_text: str, k: int = 10, metadata_filters: Optional[dict] = None
-    ) -> List[QueryResult]:
-        """Legacy method for backward compatibility - use query() instead"""
-        return self.query(query_text, search_type="keyword", k=k, filters=metadata_filters)
-
     @classmethod
     def database_exists(
         cls,
@@ -2311,7 +2310,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         **kwargs,
     ) -> List[str]:
@@ -2347,7 +2346,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 ids = [ids]
 
         # Prepare request payload
-        payload = {"documents": documents, "batch_size": batch_size}
+        payload = {"documents": documents, "batch_size": batch_size if batch_size is not None else 100}
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -2370,7 +2369,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         **kwargs,
@@ -2410,7 +2409,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 ids = [ids]
 
         # Prepare request payload
-        payload = {"documents": documents, "batch_size": batch_size, "errors": errors}
+        payload = {
+            "documents": documents,
+            "batch_size": batch_size if batch_size is not None else 100,
+            "errors": errors,
+        }
 
         if metadata is not None:
             payload["metadata"] = metadata
@@ -3630,7 +3633,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         similarity: float = result.get("similarity", 0.0)
         return similarity
 
-    def compare_documents_detailed(self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7):
+    def compare_documents_detailed(
+        self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7
+    ) -> DocumentComparisonResult:
         """Compare two documents with detailed chunk-level analysis.
 
         Parameters
@@ -3645,21 +3650,29 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         Returns
         -------
         DocumentComparisonResult
-            Detailed comparison result with chunk similarities.
+            Detailed comparison result with per-chunk alignments.
         """
         payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2, "chunk_threshold": chunk_threshold}
         response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/compare/detailed", json=payload)
-        return self._handle_response(response)
+        return DocumentComparisonResult.from_dict(self._handle_response(response))
 
-    async def compare_documents_detailed_async(self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7):
+    async def compare_documents_detailed_async(
+        self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7
+    ) -> DocumentComparisonResult:
         """Async version of compare_documents_detailed."""
         payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2, "chunk_threshold": chunk_threshold}
         response = await self._make_request_with_retry_async(
             "POST", f"/api/v1/{self.name}/compare/detailed", json=payload
         )
-        return self._handle_response(response)
+        return DocumentComparisonResult.from_dict(self._handle_response(response))
 
-    def nearest_neighbors(self, doc_id: str, k: int = 5) -> List[QueryResult]:
+    def nearest_neighbors(
+        self,
+        doc_id: str,
+        k: int = 5,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[QueryResult]:
         """Find nearest neighbors for a document.
 
         Parameters
@@ -3668,27 +3681,37 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             The document ID to find neighbors for.
         k : int
             Number of neighbors to return.
+        score_threshold : float
+            Minimum similarity score to include.
+        filters : dict, optional
+            Metadata filter applied to candidate documents.
 
         Returns
         -------
         List[QueryResult]
             List of nearest neighbor results.
         """
-        payload = {"doc_id": doc_id, "k": k}
+        payload = {"doc_id": doc_id, "k": k, "score_threshold": score_threshold, "filters": filters}
         response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/nearest-neighbors", json=payload)
         result = self._handle_response(response)
         return [qr for r in result.get("results", []) if (qr := QueryResult.from_dict(r)) is not None]
 
-    async def nearest_neighbors_async(self, doc_id: str, k: int = 5) -> List[QueryResult]:
+    async def nearest_neighbors_async(
+        self,
+        doc_id: str,
+        k: int = 5,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[QueryResult]:
         """Async version of nearest_neighbors."""
-        payload = {"doc_id": doc_id, "k": k}
+        payload = {"doc_id": doc_id, "k": k, "score_threshold": score_threshold, "filters": filters}
         response = await self._make_request_with_retry_async(
             "POST", f"/api/v1/{self.name}/nearest-neighbors", json=payload
         )
         result = self._handle_response(response)
         return [qr for r in result.get("results", []) if (qr := QueryResult.from_dict(r)) is not None]
 
-    def pairwise_similarity_matrix(self, doc_ids: Optional[List[str]] = None):
+    def pairwise_similarity_matrix(self, doc_ids: Optional[List[str]] = None) -> DocumentSimilarityMatrix:
         """Compute pairwise similarity matrix for documents.
 
         Parameters
@@ -3703,15 +3726,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
         payload = {"doc_ids": doc_ids}
         response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/similarity-matrix", json=payload)
-        return self._handle_response(response)
+        return DocumentSimilarityMatrix.from_dict(self._handle_response(response))
 
-    async def pairwise_similarity_matrix_async(self, doc_ids: Optional[List[str]] = None):
+    async def pairwise_similarity_matrix_async(self, doc_ids: Optional[List[str]] = None) -> DocumentSimilarityMatrix:
         """Async version of pairwise_similarity_matrix."""
         payload = {"doc_ids": doc_ids}
         response = await self._make_request_with_retry_async(
             "POST", f"/api/v1/{self.name}/similarity-matrix", json=payload
         )
-        return self._handle_response(response)
+        return DocumentSimilarityMatrix.from_dict(self._handle_response(response))
 
     # ========================================================================
     # Fact-checking methods

@@ -549,6 +549,23 @@ class ChunkAlignment:
     chunk_index_2: int
     similarity: float
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "chunk_index_1": self.chunk_index_1,
+            "chunk_index_2": self.chunk_index_2,
+            "similarity": self.similarity,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ChunkAlignment":
+        """Reconstruct from a dict produced by :meth:`to_dict`."""
+        return cls(
+            chunk_index_1=int(data["chunk_index_1"]),
+            chunk_index_2=int(data["chunk_index_2"]),
+            similarity=float(data["similarity"]),
+        )
+
 
 @dataclass
 class DocumentComparisonResult:
@@ -583,6 +600,33 @@ class DocumentComparisonResult:
     unmatched_chunks_1: List[int]
     unmatched_chunks_2: List[int]
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "doc_id_1": self.doc_id_1,
+            "doc_id_2": self.doc_id_2,
+            "overall_similarity": self.overall_similarity,
+            "chunk_alignments": [a.to_dict() for a in self.chunk_alignments],
+            "matched_ratio_1": self.matched_ratio_1,
+            "matched_ratio_2": self.matched_ratio_2,
+            "unmatched_chunks_1": list(self.unmatched_chunks_1),
+            "unmatched_chunks_2": list(self.unmatched_chunks_2),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DocumentComparisonResult":
+        """Reconstruct from a dict produced by :meth:`to_dict`."""
+        return cls(
+            doc_id_1=data["doc_id_1"],
+            doc_id_2=data["doc_id_2"],
+            overall_similarity=float(data["overall_similarity"]),
+            chunk_alignments=[ChunkAlignment.from_dict(a) for a in data.get("chunk_alignments", [])],
+            matched_ratio_1=float(data["matched_ratio_1"]),
+            matched_ratio_2=float(data["matched_ratio_2"]),
+            unmatched_chunks_1=[int(i) for i in data.get("unmatched_chunks_1", [])],
+            unmatched_chunks_2=[int(i) for i in data.get("unmatched_chunks_2", [])],
+        )
+
 
 @dataclass
 class DocumentSimilarityMatrix:
@@ -601,6 +645,23 @@ class DocumentSimilarityMatrix:
     matrix: np.ndarray
     doc_ids: List[str]
     embeddings: np.ndarray
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-compatible dict (arrays become nested lists)."""
+        return {
+            "matrix": self.matrix.tolist(),
+            "doc_ids": list(self.doc_ids),
+            "embeddings": self.embeddings.tolist(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DocumentSimilarityMatrix":
+        """Reconstruct from a dict produced by :meth:`to_dict`."""
+        return cls(
+            matrix=np.array(data.get("matrix", []), dtype=float),
+            doc_ids=list(data.get("doc_ids", [])),
+            embeddings=np.array(data.get("embeddings", []), dtype=float),
+        )
 
 
 @dataclass

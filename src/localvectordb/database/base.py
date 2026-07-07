@@ -39,7 +39,7 @@ class BaseVectorDB(ABC):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         """Insert or update documents in the database."""
@@ -51,7 +51,7 @@ class BaseVectorDB(ABC):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
@@ -320,7 +320,7 @@ class BaseVectorDB(ABC):
         self,
         chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
     ) -> List[str]:
         pass
@@ -330,7 +330,7 @@ class BaseVectorDB(ABC):
         self,
         chunks_by_document: Dict[str, Union[List[Chunk], List[str]]],
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
@@ -342,7 +342,7 @@ class BaseVectorDB(ABC):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         extractor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
@@ -354,7 +354,7 @@ class BaseVectorDB(ABC):
         file_paths: Union[str, Path, List[Union[str, Path]]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         extractor_kwargs: Optional[Dict[str, Any]] = None,
@@ -368,7 +368,7 @@ class BaseVectorDB(ABC):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         **kwargs: Any,
     ) -> List[str]:
@@ -381,7 +381,7 @@ class BaseVectorDB(ABC):
         documents: Union[str, List[str]],
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         ids: Optional[Union[str, List[str]]] = None,
-        batch_size: int = 100,
+        batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
         errors: Literal["ignore", "raise"] = "raise",
         **kwargs: Any,

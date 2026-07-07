@@ -28,8 +28,8 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
         Name of the database
     base_path : Union[str, Path]
         Path or URL to the database. If it starts with 'http://' or 'https://',
-        a RemoteVectorDB or AsyncRemoteVectorDB will be created. Otherwise,
-        a LocalVectorDB or AsyncLocalVectorDB will be created.
+        a RemoteVectorDB will be created. Otherwise, a LocalVectorDB will be
+        created.
     **kwargs : dict
         Additional arguments to pass to the appropriate constructor.
 
@@ -47,13 +47,14 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
 
         For RemoteVectorDB, these include:
         - api_key: str - API key for authentication
-        - timeout: float - Timeout for HTTP requests
+        - request_timeout: int - Timeout for HTTP requests
         - max_retries: int - Number of retry attempts
         - retry_delay: float - Base delay between retries
+        - connection_pool_limits: httpx.Limits - HTTP connection pool settings
 
     Returns
     -------
-    Union[LocalVectorDB, RemoteVectorDB, AsyncLocalVectorDB, AsyncRemoteVectorDB]
+    Union[LocalVectorDB, RemoteVectorDB]
         An instance of the appropriate vector database class
 
     Examples
@@ -117,33 +118,35 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
         base_url = base_path_str
 
         # Filter out LocalVectorDB-specific kwargs that don't apply to RemoteVectorDB
-        remote_kwargs = {
-            k: v
-            for k, v in kwargs.items()
-            if k
-            not in [
-                "connection_pool_size",  # Local-only parameter
-            ]
-        }
+        local_only = [
+            "doc_id_pattern",
+            "batch_size",
+            "faiss_index_type",
+            "faiss_index_hnsw_flat_neighbors",
+            "faiss_index_lsh_bits",
+            "connection_pool_size",
+            "pipeline_worker_timeout",
+            "hierarchical_embeddings",
+            "section_pattern",
+            "section_metadata_extractors",
+        ]
+        remote_kwargs = {k: v for k, v in kwargs.items() if k not in local_only}
 
         return RemoteVectorDB(name=name, base_url=base_url, **remote_kwargs)
     else:
         # Local database
 
         # Filter out RemoteVectorDB-specific kwargs that don't apply to LocalVectorDB
-        local_kwargs = {
-            k: v
-            for k, v in kwargs.items()
-            if k
-            not in [
-                "api_key",  # Remote-only parameter
-                "timeout",  # Remote-only parameter (renamed in remote)
-                "max_retries",  # Remote-only parameter
-                "retry_delay",  # Remote-only parameter
-                "authorization_header",  # Remote-only parameter
-                "connection_limits",  # Remote-only parameter
-            ]
-        }
+        remote_only = [
+            "api_key",
+            "request_timeout",
+            "max_retries",
+            "retry_delay",
+            "max_concurrent_requests",
+            "authorization_header",
+            "connection_pool_limits",
+        ]
+        local_kwargs = {k: v for k, v in kwargs.items() if k not in remote_only}
 
         return LocalVectorDB(name=name, base_path=base_path, **local_kwargs)
 

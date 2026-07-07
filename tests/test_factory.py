@@ -98,7 +98,7 @@ class TestVectorDBFactory:
                 name="test_db",
                 base_path="./local",
                 api_key="should-be-filtered",  # Remote-only
-                timeout=30,  # Remote-only
+                request_timeout=30,  # Remote-only
                 enable_gpu=True,  # Local-only
                 connection_pool_size=5,  # Local-only
             )
@@ -106,7 +106,7 @@ class TestVectorDBFactory:
             # Check that remote-only params were filtered out
             call_kwargs = mock_local.call_args[1]
             assert "api_key" not in call_kwargs
-            assert "timeout" not in call_kwargs
+            assert "request_timeout" not in call_kwargs
             assert call_kwargs["enable_gpu"] is True
             assert call_kwargs["connection_pool_size"] == 5
 
@@ -120,7 +120,7 @@ class TestVectorDBFactory:
                 name="test_db",
                 base_path="http://localhost:5000",
                 api_key="test-key",  # Remote-only
-                timeout=30,  # Remote-only
+                request_timeout=30,  # Remote-only
                 connection_pool_size=10,  # Local-only - should be filtered
             )
 
@@ -128,7 +128,7 @@ class TestVectorDBFactory:
             call_kwargs = mock_remote.call_args[1]
             assert "connection_pool_size" not in call_kwargs
             assert call_kwargs["api_key"] == "test-key"
-            assert call_kwargs["timeout"] == 30
+            assert call_kwargs["request_timeout"] == 30
 
     def test_shared_parameters_passed_through(self):
         """Test that shared parameters are passed to both local and remote."""

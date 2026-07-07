@@ -490,26 +490,6 @@ class TestRemoteVectorDBLegacyMethods:
         """Create a mock remote database for testing."""
         return RemoteVectorDB("test_db")
 
-    def test_hybrid_query_method(self, mock_httpx_client, mock_db):
-        """Test legacy hybrid_query method."""
-        with patch.object(mock_db, "query") as mock_query:
-            mock_query.return_value = []
-
-            mock_db.hybrid_query("test query", k=10, vector_weight=0.8, metadata_filters={"author": "Test"})
-
-            mock_query.assert_called_once_with(
-                "test query", search_type="hybrid", k=10, filters={"author": "Test"}, vector_weight=0.8
-            )
-
-    def test_keyword_search_method(self, mock_httpx_client, mock_db):
-        """Test legacy keyword_search method."""
-        with patch.object(mock_db, "query") as mock_query:
-            mock_query.return_value = []
-
-            mock_db.keyword_search("test query", k=5, metadata_filters={"category": "test"})
-
-            mock_query.assert_called_once_with("test query", search_type="keyword", k=5, filters={"category": "test"})
-
 
 @pytest.mark.client
 class TestRemoteVectorDBErrorHandling:
