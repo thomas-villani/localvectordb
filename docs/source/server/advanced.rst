@@ -248,7 +248,7 @@ Permission-Based Usage Patterns
      --permission-level read_only \
      --expires-days 90 \
      --created-by "api-team" \
-     --output key-only > /secure/public-api-key.txt
+     --format key-only > /secure/public-api-key.txt
 
    # Admin interface (full access)
    lvdb auth create-key \
@@ -761,7 +761,7 @@ Example monitoring script:
    curl -f http://localhost:5000/api/v1/health || exit 1
 
    # Check API key stats
-   API_STATS=$(lvdb auth status --output json)
+   API_STATS=$(lvdb auth status --format json)
    EXPIRING_KEYS=$(echo "$API_STATS" | jq '.database_keys.stats.expiring_soon')
 
    if [ "$EXPIRING_KEYS" -gt 5 ]; then

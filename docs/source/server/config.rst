@@ -291,10 +291,10 @@ Creating API Keys
    lvdb auth create-key --description "CI/CD Pipeline" --permission-level read_only --created-by "admin" --expires-days 90
 
    # Output just the key for scripting
-   lvdb auth create-key --description "Script access" --permission-level read_only --output key-only
+   lvdb auth create-key --description "Script access" --permission-level read_only --format key-only
 
    # Output as JSON for automation
-   lvdb auth create-key --description "API integration" --output json
+   lvdb auth create-key --description "API integration" --format json
 
 Managing API Keys
 ~~~~~~~~~~~~~~~~~
@@ -431,13 +431,13 @@ For automated deployments and CI/CD pipelines:
 .. code-block:: bash
 
    # Create a key for automation (outputs only the key)
-   API_KEY=$(lvdb auth create-key --description "CI/CD Pipeline" --expires-days 365 --output key-only)
+   API_KEY=$(lvdb auth create-key --description "CI/CD Pipeline" --expires-days 365 --format key-only)
 
    # Use in scripts
    export LVDB_API_KEY="$API_KEY"
 
    # Rotate keys programmatically
-   NEW_KEY=$(lvdb auth rotate-key $OLD_KEY_ID --output key-only)
+   NEW_KEY=$(lvdb auth rotate-key $OLD_KEY_ID --format key-only)
 
 Monitoring and Maintenance
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
