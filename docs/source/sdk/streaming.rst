@@ -97,7 +97,7 @@ How It Works
 ------------
 
 Under the hood, ``queryStream()`` sends a ``POST`` request to the server's SSE endpoint
-(``/api/v1/{db}/query/stream``) and parses the event stream. The SDK uses a custom SSE parser
+(``/api/v1/databases/{db}/query/stream``) and parses the event stream. The SDK uses a custom SSE parser
 rather than the browser's native ``EventSource`` because ``EventSource`` only supports ``GET``
 requests.
 

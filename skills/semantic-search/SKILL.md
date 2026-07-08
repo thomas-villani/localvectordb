@@ -214,7 +214,7 @@ from localvectordb import VectorDB
 
 # Automatically picks LocalVectorDB or RemoteVectorDB
 local_db = VectorDB("docs", "./local_path")
-remote_db = VectorDB("docs", "http://localhost:5000", api_key="key")
+remote_db = VectorDB("docs", "http://localhost:8000", api_key="key")
 ```
 
 ## Embedding Providers

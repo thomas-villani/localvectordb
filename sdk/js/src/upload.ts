@@ -67,7 +67,7 @@ export async function uploadFiles(
   }
 
   const response = await httpClient.postRaw(
-    `/api/v1/${encodeURIComponent(dbName)}/upload`,
+    `/api/v1/databases/${encodeURIComponent(dbName)}/upload`,
     formData,
   );
 

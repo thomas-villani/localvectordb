@@ -404,7 +404,7 @@ class ServerSettings(BaseSettings):
     environment: str = "development"
 
     host: str = "127.0.0.1"
-    port: int = 5000
+    port: int = 8000
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 

@@ -19,6 +19,7 @@ from localvectordb_server.cli._utils import (
     EXIT_CODE_CONFIGURATION_ERROR,
     EXIT_CODE_ERROR,
     EXIT_CODE_OLLAMA_ERROR,
+    EXIT_CODE_PERMISSION_ERROR,
     error,
     info,
     require_config,
@@ -39,7 +40,15 @@ def _binds_localhost(host: str) -> bool:
     help="The interface to bind to (e.g. 127.0.0.1 for local serving).",
     envvar="LVDB_HOST",
 )
-@click.option("--port", "-p", default=None, type=int, help="The port to bind to (default = 5000).", envvar="LVDB_PORT")
+@click.option(
+    "--port",
+    "-p",
+    default=None,
+    type=int,
+    show_default="8000",
+    help="The port to bind to. Falls back to server.port from config when omitted.",
+    envvar="LVDB_PORT",
+)
 @click.option("--debug", is_flag=True, help="Enable debug mode.", envvar="LVDB_DEBUG")
 @click.option(
     "--log-level",
@@ -68,7 +77,7 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     \b
     Examples:
         \b
-        lvdb serve --host 0.0.0.0 --port 5000
+        lvdb serve --host 0.0.0.0 --port 8000
         lvdb serve --config ./.lvdb-config.toml --db-folder ./dbs
 
     """
@@ -238,7 +247,7 @@ def list_databases(ctx, details):
 @click.option(
     "--metadata-schema",
     default=None,
-    type=click.Choice(["documents", "research_papers", "code_repository", "customer_support"]),
+    type=click.Choice(["files", "documents", "research_papers", "code_repository", "customer_support"]),
     help="Predefined metadata schema to use",
 )
 @click.pass_context
@@ -389,6 +398,8 @@ def delete_database(ctx, name, confirm):
                 os.remove(f)
                 click.secho(f"- {f} deleted", fg="magenta")
             click.secho(f"Database '{name}' was deleted", fg="magenta")
+        except PermissionError as e:
+            error(f"Permission denied deleting database '{name}': {e}", EXIT_CODE_PERMISSION_ERROR)
         except Exception as e:
             click.secho(f"Error deleting database '{name}': {str(repr(e))}", fg="bright_red", err=True)
             raise click.exceptions.Exit(EXIT_CODE_ERROR) from e

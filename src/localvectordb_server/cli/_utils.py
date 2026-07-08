@@ -14,11 +14,15 @@ from localvectordb.document_portions import parse_range_spec  # noqa: F401
 if TYPE_CHECKING:
     from localvectordb_server.config import Config
 
+# Semantic exit codes. NOTE: Click reserves exit code 2 for its own usage
+# errors (bad options/arguments), so the semantic codes deliberately skip 2 to
+# avoid an ambiguous overlap — a config-file problem now exits 5, never 2.
 EXIT_CODE_SUCCESS = 0
 EXIT_CODE_ERROR = 1
-EXIT_CODE_CONFIGURATION_ERROR = 2
+# 2 is reserved by Click for usage errors — do not reuse it.
 EXIT_CODE_OLLAMA_ERROR = 3
 EXIT_CODE_PERMISSION_ERROR = 4
+EXIT_CODE_CONFIGURATION_ERROR = 5
 DEFAULT_CONFIG_FILE = ".lvdb-config"
 
 

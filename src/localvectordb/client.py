@@ -121,9 +121,6 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
-if TYPE_CHECKING:
-    pass
-
 import httpx
 import numpy as np
 
@@ -148,9 +145,25 @@ from localvectordb.exceptions import (
     EmbeddingError,
     MetadataFilterError,
 )
+from localvectordb.query_builder import FILTER_OPERATOR_NAMES
 from localvectordb.sqlite_tuning import SqliteProfile
 
+if TYPE_CHECKING:
+    from localvectordb.query_builder import QueryBuilderInterface
+
 logger = logging.getLogger(__name__)
+
+# The remote QueryBuilder-execute endpoint cannot honour these local-only knobs
+# (its ``QueryBuilderStateBody`` has no field for them), so the remote builder
+# rejects them up front instead of silently dropping the setting server-side.
+_REMOTE_SEARCH_LEVEL_UNSUPPORTED = (
+    "RemoteQueryBuilder does not support .search_level(); the server executes at its "
+    "default level. Use a LocalVectorDB for index-level control."
+)
+_REMOTE_SEMANTIC_DEDUP_UNSUPPORTED = (
+    "RemoteQueryBuilder does not support .semantic_dedup(); it cannot be expressed in "
+    "the server query-builder contract. Use a LocalVectorDB, or deduplicate client-side."
+)
 
 # A reranker *instance* cannot cross the HTTP boundary; only a JSON-serializable
 # reranker_config can. The server reconstructs the reranker from that config.
@@ -226,31 +239,95 @@ class RemoteQueryBuilder:
         new_builder._aggregations = self._aggregations.copy()
         return new_builder
 
+    # Core search methods
     def search(
         self,
-        text: str,
+        query: str,
+        search_type: Optional[str] = None,
+        vector_weight: Optional[float] = None,
+        score_threshold: Optional[float] = None,
         columns: Optional[List[str]] = None,
-        search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
     ) -> "RemoteQueryBuilder":
-        """Add a search clause to the query."""
+        """Search the content for query text.
+
+        Mirrors :meth:`localvectordb.query_builder.QueryBuilder.search` so a chain
+        is portable between local and remote backends. The ``vector_weight`` is
+        folded into builder-level state (the server reads it per builder, not per
+        clause). ``score_threshold`` is serialized on the clause for
+        forward-compatibility but is not currently honored by the server
+        query-builder endpoint.
+        """
+        if not query or not isinstance(query, str):
+            raise ValueError("Query must be a non-empty string")
+
+        if search_type and search_type not in ("vector", "hybrid", "keyword"):
+            raise ValueError("`search_type` must be one of 'vector', 'hybrid', 'keyword'.")
+
+        if isinstance(vector_weight, float) and (vector_weight < 0.0 or vector_weight > 1.0):
+            raise ValueError("`vector_weight` must be a float between 0.0 and 1.0")
+
         builder = self.clone()
-        builder._search_clauses.append({"text": text, "columns": columns, "search_type": search_type})
+        # Preserve the existing wire keys (text/columns/search_type); score_threshold
+        # is additive and ignored by servers that do not read it.
+        builder._search_clauses.append(
+            {
+                "text": query,
+                "columns": columns,
+                "search_type": search_type or self._search_type,
+                "score_threshold": score_threshold,
+            }
+        )
+        if vector_weight:
+            builder._vector_weight = vector_weight
         return builder
 
-    def filter(self, field: str, **conditions) -> "RemoteQueryBuilder":
-        """Add an exact filter to the query."""
+    def search_field(self, field: str, query: str) -> "RemoteQueryBuilder":
+        """Find records where ``field`` contains ``query`` (case-insensitive for strings)."""
+        if not field or not isinstance(field, str):
+            raise ValueError("Field must be a non-empty string")
+
         builder = self.clone()
+        # Reproduce the local behaviour ({field: {"$ilike": query}} for strings,
+        # exact match otherwise) through the server's ``filter(field, **conditions)``
+        # reconstruction using operator-suffix kwargs.
+        conditions = {"ilike_": query} if isinstance(query, str) else {"eq_": query}
+        builder._exact_filters.append({"field": field, "conditions": conditions})
+        return builder
+
+    def filter(self, field: Optional[str] = None, value: Any = None, **kwargs: Any) -> "RemoteQueryBuilder":
+        """Add exact filter conditions.
+
+        Accepts the same call forms as
+        :meth:`localvectordb.query_builder.QueryBuilder.filter`: a positional
+        ``field``/``value`` pair, operator-suffix kwargs (``gte_=2020``), or plain
+        ``field=value`` kwargs. A positional ``value`` is serialized as an ``$eq``
+        condition so the server reconstructs an equivalent filter.
+        """
+        if field is not None and (not isinstance(field, str) or not field):
+            raise ValueError("Field must be a non-empty string")
+
+        for key in kwargs:
+            if key.endswith("_") and key[:-1] not in FILTER_OPERATOR_NAMES:
+                raise ValueError(f"Invalid operator suffix in '{key}'")
+            if key.endswith("_") and field is None:
+                raise ValueError("Field must be specified when using operators")
+
+        builder = self.clone()
+        conditions: Dict[str, Any] = dict(kwargs)
+        if field is not None and value is not None:
+            conditions.setdefault("eq_", value)
         builder._exact_filters.append({"field": field, "conditions": conditions})
         return builder
 
     def semantic_filter(
-        self, field: str, concept: str, threshold: float = 0.7, metric: Literal["cosine", "euclidean", "dot"] = "cosine"
+        self, field: str, concept: str, threshold: float = 0.8, metric: str = "cosine"
     ) -> "RemoteQueryBuilder":
         """
         Add a semantic filter to the query.
 
         The semantic filtering is performed server-side using the database's
-        configured embedding provider.
+        configured embedding provider. The default ``threshold`` (0.8) matches
+        the local :class:`~localvectordb.query_builder.QueryBuilder`.
 
         Parameters
         ----------
@@ -260,14 +337,20 @@ class RemoteQueryBuilder:
             The concept to match against
         threshold : float
             Minimum similarity score (0.0 to 1.0)
-        metric : Literal["cosine", "euclidean", "dot"]
-            Similarity metric to use
+        metric : str
+            Similarity metric to use ("cosine", "euclidean", "dot")
 
         Returns
         -------
         RemoteQueryBuilder
             A new builder with the semantic filter added
         """
+        if not field or not isinstance(field, str):
+            raise ValueError("Field must be a non-empty string")
+
+        if not concept or not isinstance(concept, str):
+            raise ValueError("Concept must be a non-empty string")
+
         if threshold < 0 or threshold > 1:
             raise ValueError("Threshold must be between 0 and 1")
 
@@ -275,37 +358,151 @@ class RemoteQueryBuilder:
         builder._semantic_filters.append({"field": field, "concept": concept, "threshold": threshold, "metric": metric})
         return builder
 
-    def order_by(self, field: str, direction: Literal["asc", "desc"] = "asc") -> "RemoteQueryBuilder":
-        """Add ordering to the query."""
+    # Search-type convenience methods
+    def vector(self, query: str, score_threshold: Optional[float] = None) -> "RemoteQueryBuilder":
+        """Use vector search."""
+        return self.search(query, search_type="vector", score_threshold=score_threshold)
+
+    def keyword(self, query: str, score_threshold: Optional[float] = None) -> "RemoteQueryBuilder":
+        """Use keyword search."""
+        return self.search(query, search_type="keyword", score_threshold=score_threshold)
+
+    def hybrid(
+        self, query: str, vector_weight: float = 0.7, score_threshold: Optional[float] = None
+    ) -> "RemoteQueryBuilder":
+        """Use hybrid search with the specified vector weight."""
+        return self.search(query, search_type="hybrid", vector_weight=vector_weight, score_threshold=score_threshold)
+
+    # Return-type configuration
+    def documents(
+        self, scoring_method: str = "frequency_boost", scoring_options: Optional[dict] = None
+    ) -> "RemoteQueryBuilder":
+        """Return full documents in results (default).
+
+        The ``scoring_method``/``scoring_options`` are accepted for signature
+        parity with the local builder but are governed by the server default;
+        the server query-builder endpoint does not read them from the state.
+        """
         builder = self.clone()
-        builder._order_by.append({"field": field, "direction": direction})
+        builder._return_type = "documents"
+        return builder
+
+    def chunks(self) -> "RemoteQueryBuilder":
+        """Return individual chunks in results with position information."""
+        builder = self.clone()
+        builder._return_type = "chunks"
+        return builder
+
+    def sections(self) -> "RemoteQueryBuilder":
+        """Return section-level results."""
+        builder = self.clone()
+        builder._return_type = "sections"
+        return builder
+
+    def context(self, window_size: int = 2) -> "RemoteQueryBuilder":
+        """Return chunks with a surrounding context window.
+
+        The ``window_size`` is accepted for signature parity but governed by the
+        server default; the server query-builder endpoint does not read a window
+        size from the state.
+        """
+        builder = self.clone()
+        builder._return_type = "context"
+        return builder
+
+    def search_level(self, level: Literal["chunks", "sections", "documents"]) -> "RemoteQueryBuilder":
+        """Not supported remotely (no server-side state field for it)."""
+        raise NotImplementedError(_REMOTE_SEARCH_LEVEL_UNSUPPORTED)
+
+    def semantic_dedup(self, threshold: float) -> "RemoteQueryBuilder":
+        """Not supported remotely (no server-side state field for it)."""
+        raise NotImplementedError(_REMOTE_SEMANTIC_DEDUP_UNSUPPORTED)
+
+    # Ordering methods
+    def order_by(self, field: str, direction: str = "desc") -> "RemoteQueryBuilder":
+        """Add ordering to the query.
+
+        The default direction is ``"desc"`` to match the local builder.
+        """
+        if direction.lower() not in ("asc", "desc"):
+            raise ValueError("`direction` must be 'asc' or 'desc'")
+        if not field:
+            raise ValueError("`field` must be a non-empty string")
+
+        builder = self.clone()
+        builder._order_by.append({"field": field, "direction": direction.lower()})
+        return builder
+
+    def order_by_score(self, direction: str = "desc") -> "RemoteQueryBuilder":
+        """Order results by relevance score."""
+        return self.order_by("score", direction)
+
+    def clear_ordering(self) -> "RemoteQueryBuilder":
+        """Remove all ordering clauses."""
+        builder = self.clone()
+        builder._order_by = []
         return builder
 
     def limit(self, n: int) -> "RemoteQueryBuilder":
         """Set the maximum number of results."""
+        if n <= 0:
+            raise ValueError("Limit must be positive")
         builder = self.clone()
         builder._limit = n
         return builder
 
     def offset(self, n: int) -> "RemoteQueryBuilder":
         """Set the result offset for pagination."""
+        if n < 0:
+            raise ValueError("Offset must be non-negative")
         builder = self.clone()
         builder._offset = n
         return builder
 
     def group_by(self, *fields: str) -> "RemoteQueryBuilder":
         """Group results by fields."""
+        if not fields:
+            raise ValueError("At least one field must be specified for grouping")
+        for field in fields:
+            if not isinstance(field, str) or not field.strip():
+                raise ValueError("All group_by fields must be non-empty strings")
         builder = self.clone()
         builder._group_by = list(fields)
         return builder
 
     def aggregate(
-        self, field: str, function: Literal["count", "sum", "avg", "min", "max"], alias: Optional[str] = None
+        self,
+        field: str,
+        function: Literal["count", "sum", "avg", "min", "max", "std", "var"],
+        alias: Optional[str] = None,
     ) -> "RemoteQueryBuilder":
         """Add an aggregation to the query."""
+        valid_functions = ["count", "sum", "avg", "min", "max", "std", "var"]
+        if function not in valid_functions:
+            raise ValueError(f"function must be one of: {', '.join(valid_functions)}")
         builder = self.clone()
         builder._aggregations.append({"field": field, "function": function, "alias": alias})
         return builder
+
+    def count_by(self, field: str = "*", alias: Optional[str] = None) -> "RemoteQueryBuilder":
+        """Count documents/chunks, optionally grouped by field."""
+        return self.aggregate(field, "count", alias or "count")
+
+    def sum_by(self, field: str, alias: Optional[str] = None) -> "RemoteQueryBuilder":
+        """Sum numeric values in a field."""
+        return self.aggregate(field, "sum", alias or f"sum_{field}")
+
+    def avg_by(self, field: str, alias: Optional[str] = None) -> "RemoteQueryBuilder":
+        """Calculate the average of numeric values in a field."""
+        return self.aggregate(field, "avg", alias or f"avg_{field}")
+
+    def min_by(self, field: str, alias: Optional[str] = None) -> "RemoteQueryBuilder":
+        """Find the minimum value in a field."""
+        return self.aggregate(field, "min", alias or f"min_{field}")
+
+    def max_by(self, field: str, alias: Optional[str] = None) -> "RemoteQueryBuilder":
+        """Find the maximum value in a field."""
+        return self.aggregate(field, "max", alias or f"max_{field}")
 
     def with_search_type(self, search_type: Literal["vector", "keyword", "hybrid"]) -> "RemoteQueryBuilder":
         """Set the default search type."""
@@ -362,6 +559,26 @@ class RemoteQueryBuilder:
             The query results
         """
         return await self._db._execute_query_builder_async(self.to_dict())
+
+    def count(self) -> int:
+        """Get the count of matching results without returning them.
+
+        The server query-builder endpoint has no dedicated count, so this
+        executes the query and returns the result count -- matching the local
+        builder's behaviour for search queries.
+        """
+        return len(self.execute())
+
+    async def count_async(self) -> int:
+        """Get the count of matching results asynchronously."""
+        return len(await self.execute_async())
+
+
+if TYPE_CHECKING:
+    # Static conformance guard: RemoteQueryBuilder must satisfy the portable
+    # QueryBuilderInterface so the local/remote fluent contract cannot drift.
+    def _assert_remote_query_builder_conforms(qb: "RemoteQueryBuilder") -> "QueryBuilderInterface":
+        return qb
 
 
 class _RemoteEmbeddingProvider(HTTPEmbeddingProvider):
@@ -762,7 +979,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
     def _load_database_info(self) -> None:
         """Load database information from server"""
-        url = self._build_url(f"/api/v1/{self.name}/info")
+        url = self._build_url(f"/api/v1/databases/{self.name}/info")
         response = self._make_request_with_retry("GET", url)
         db_info = self._handle_response(response)
 
@@ -807,26 +1024,51 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                     "default_value": field_def.default_value,
                 }
 
+        # Send the embedding/chunking configuration the constructor was given as
+        # the nested ``database``/``embedding`` objects the server honors (keys
+        # mirror EmbeddingSettings / DatabaseSettings). The server applies these
+        # over its own defaults, so a remote-created DB matches what the caller
+        # asked for instead of silently falling back to server defaults.
         payload = {
             "name": self.name,
             "metadata_schema": metadata_schema_data,
-            "embedding_provider": self._embedding_provider,
-            "embedding_model": self._embedding_model,
-            "embedding_config": self._embedding_config,
-            "chunking_method": self._chunking_method,
-            "chunk_size": self._chunk_size,
-            "chunk_overlap": self._chunk_overlap,
-            "enable_gpu": self._enable_gpu,
-            "enable_fts": self._enable_fts,
-            "sqlite_profile": self._sqlite_profile,
-            "sqlite_pragma_overrides": self._sqlite_pragma_overrides,
+            "embedding": {
+                "provider": self._embedding_provider,
+                "model": self._embedding_model,
+                "config": self._embedding_config,
+            },
+            "database": {
+                "chunking_method": self._chunking_method,
+                "chunk_size": self._chunk_size,
+                "chunk_overlap": self._chunk_overlap,
+                "enable_gpu": self._enable_gpu,
+                "enable_fts": self._enable_fts,
+            },
         }
 
         response = self._make_request_with_retry("POST", url, json=payload)
 
         created_db_info = self._handle_response(response)
-        config = created_db_info.get("config", {})
-        self._embedding_dimension = int(config.get("embedding_dimension", 0))
+        self._apply_server_config(created_db_info.get("config", {}))
+
+    def _apply_server_config(self, config: Dict[str, Any]) -> None:
+        """Adopt the server's authoritative config after create/load.
+
+        The server is the source of truth for what a database actually uses, so
+        we overwrite the locally-held provider/model/chunking values with what it
+        reports. This keeps ``embedding_model``/``chunk_size``/... and the remote
+        embedding proxy consistent with the server rather than with whatever the
+        caller passed (which the server may normalize or override).
+        """
+        if not config:
+            return
+        self._embedding_provider = config.get("embedding_provider", self._embedding_provider)
+        self._embedding_model = config.get("embedding_model", self._embedding_model)
+        self._embedding_dimension = int(config.get("embedding_dimension", self._embedding_dimension))
+        self._chunking_method = str(config.get("chunking_method", self._chunking_method))
+        self._chunk_size = int(config.get("chunk_size", self._chunk_size))
+        self._chunk_overlap = int(config.get("chunk_overlap", self._chunk_overlap))
+        self._enable_fts = bool(config.get("fts_enabled", self._enable_fts))
 
     @property
     def embedding_provider(self) -> EmbeddingProvider:
@@ -874,7 +1116,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics"""
-        url = self._build_url(f"/api/v1/{self.name}/info")
+        url = self._build_url(f"/api/v1/databases/{self.name}/info")
         response = self._make_request_with_retry("GET", url)
         db_info = self._handle_response(response)
         stats: Dict[str, Any] = db_info.get("stats", {})
@@ -931,7 +1173,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -996,7 +1238,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/insert")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/insert")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1017,7 +1259,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         int
             Number of matching documents
         """
-        url = self._build_url(f"/api/v1/{self.name}/documents/count")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/count")
 
         # Prepare payload
         payload = {}
@@ -1092,7 +1334,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
-        url = self._build_url(f"/api/v1/{self.name}/upload")
+        url = self._build_url(f"/api/v1/databases/{self.name}/upload")
 
         # Build form data
         form_data = {
@@ -1194,7 +1436,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
-        url = self._build_url(f"/api/v1/{self.name}/upload")
+        url = self._build_url(f"/api/v1/databases/{self.name}/upload")
 
         # Build form data
         form_data = {
@@ -1289,7 +1531,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/chunks")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/chunks")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1362,7 +1604,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/chunks/insert")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/chunks/insert")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1389,7 +1631,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             If any requested documents are not found
         """
         if isinstance(ids, str):
-            url = self._build_url(f"/api/v1/{self.name}/documents/{ids}")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents/{ids}")
             response = self._make_request_with_retry("GET", url)
 
             result = self._handle_response(response)
@@ -1399,7 +1641,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             return doc
         else:
             requested_ids: List[str] = ids
-            url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(requested_ids)}")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents?ids={','.join(requested_ids)}")
             response = self._make_request_with_retry("GET", url)
 
             result = self._handle_response(response)
@@ -1435,7 +1677,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         single_id = isinstance(chunk_ids, str)
         payload = {"ids": ([chunk_ids] if single_id else chunk_ids)}
 
-        url = self._build_url(f"/api/v1/{self.name}/embeddings")
+        url = self._build_url(f"/api/v1/databases/{self.name}/embeddings")
         response = self._make_request_with_retry("POST", url, json=payload)
         results = self._handle_response(response)
 
@@ -1460,7 +1702,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         single_id = isinstance(ids, str)
         payload = {"ids": ([ids] if single_id else ids)}
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/exists")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/exists")
         response = self._make_request_with_retry("POST", url, json=payload)
         results = self._handle_response(response)
 
@@ -1488,7 +1730,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Use batch endpoint for multiple IDs (threshold: 2+ IDs)
         if len(ids) >= 2:
-            url = self._build_url(f"/api/v1/{self.name}/documents/delete")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents/delete")
             payload: Dict[str, Any] = {"ids": ids}
             response = self._make_request_with_retry("POST", url, json=payload)
             result = self._handle_response(response)
@@ -1498,7 +1740,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         # Single ID: use original DELETE endpoint
         deleted_count = 0
         for doc_id in ids:
-            url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
             response = self._make_request_with_retry("DELETE", url)
             result = self._handle_response(response)
             deleted_count += int(result.get("deleted_count", 0))
@@ -1532,14 +1774,18 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if metadata is not None:
             payload["metadata"] = metadata
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
         response = self._make_request_with_retry("PATCH", url, json=payload)
 
         try:
             result = self._handle_response(response)
             updated: bool = result.get("updated", False)
             return updated
-        except DatabaseNotFoundError:
+        except (DatabaseNotFoundError, DocumentNotFoundError):
+            # A missing document is a "False" (not updated), matching the local
+            # backend's ``update() -> bool`` contract. DocumentNotFoundError is a
+            # sibling of DatabaseNotFoundError (not a subclass), so it must be
+            # named explicitly here or a 404 would escape as an exception.
             return False
 
     def query(
@@ -1626,7 +1872,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if reranker_config is not None:
             payload["reranker_config"] = reranker_config
 
-        url = self._build_url(f"/api/v1/{self.name}/query")
+        url = self._build_url(f"/api/v1/databases/{self.name}/query")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1698,7 +1944,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if filters is not None:
             payload["filters"] = filters
 
-        url = self._build_url(f"/api/v1/{self.name}/query-multi-column")
+        url = self._build_url(f"/api/v1/databases/{self.name}/query-multi-column")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1838,7 +2084,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if limit is not None:
             payload["limit"] = limit
 
-        url = self._build_url(f"/api/v1/{self.name}/filter")
+        url = self._build_url(f"/api/v1/databases/{self.name}/filter")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -1851,17 +2097,19 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 documents.append(parsed)
         return documents
 
-    def query_builder(self) -> Any:
+    def query_builder(self) -> "QueryBuilderInterface":
         """
         Create a new RemoteQueryBuilder for this database.
 
         The RemoteQueryBuilder provides a fluent API for building complex queries
-        that are executed server-side, including semantic filters.
+        that are executed server-side, including semantic filters. It is typed as
+        the shared :class:`~localvectordb.query_builder.QueryBuilderInterface`, so
+        the same fluent chain is portable to a ``LocalVectorDB``.
 
         Returns
         -------
-        RemoteQueryBuilder
-            A new query builder instance
+        QueryBuilderInterface
+            A new query builder instance (a ``RemoteQueryBuilder``)
 
         Examples
         --------
@@ -1901,7 +2149,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         List[QueryResult]
             The query results
         """
-        url = self._build_url(f"/api/v1/{self.name}/query-builder")
+        url = self._build_url(f"/api/v1/databases/{self.name}/query-builder")
         response = self._make_request_with_retry("POST", url, json=query_state)
         result = self._handle_response(response)
 
@@ -1923,7 +2171,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         List[QueryResult]
             The query results
         """
-        url = self._build_url(f"/api/v1/{self.name}/query-builder")
+        url = self._build_url(f"/api/v1/databases/{self.name}/query-builder")
         response = await self._make_request_with_retry_async("POST", url, json=query_state)
         result = self._handle_response(response)
 
@@ -2064,7 +2312,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "column_mapping": column_mapping,
         }
 
-        url = self._build_url(f"/api/v1/{self.name}/schema")
+        url = self._build_url(f"/api/v1/databases/{self.name}/schema")
         response = self._make_request_with_retry("PUT", url, json=payload)
 
         result = self._handle_response(response)
@@ -2112,7 +2360,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 print(f"{field_name}: {field_info['type']} "
                       f"(indexed={field_info['indexed']}, required={field_info['required']})")
         """
-        url = self._build_url(f"/api/v1/{self.name}/schema")
+        url = self._build_url(f"/api/v1/databases/{self.name}/schema")
         response = self._make_request_with_retry("GET", url)
         result = self._handle_response(response)
         schema_info: Dict[str, Any] = result.get("schema_info", {})
@@ -2299,7 +2547,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
     async def get_stats_async(self) -> Dict[str, Any]:
         """Get database statistics"""
-        url = self._build_url(f"/api/v1/{self.name}/info")
+        url = self._build_url(f"/api/v1/databases/{self.name}/info")
         response = await self._make_request_with_retry_async("GET", url)
         db_info = self._handle_response(response)
         stats: Dict[str, Any] = db_info.get("stats", {})
@@ -2357,7 +2605,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -2424,7 +2672,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/insert")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/insert")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -2495,7 +2743,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
-        url = self._build_url(f"/api/v1/{self.name}/upload")
+        url = self._build_url(f"/api/v1/databases/{self.name}/upload")
 
         # Build form data
         effective_batch_size = batch_size if batch_size is not None else 100
@@ -2601,7 +2849,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 raise FileNotFoundError(f"File not found: {fp}")
 
         # Prepare multipart form data
-        url = self._build_url(f"/api/v1/{self.name}/upload")
+        url = self._build_url(f"/api/v1/databases/{self.name}/upload")
 
         # Build form data
         effective_batch_size = batch_size if batch_size is not None else 100
@@ -2697,7 +2945,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/chunks")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/chunks")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -2777,7 +3025,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if similarity_threshold is not None:
             payload["similarity_threshold"] = similarity_threshold
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/chunks/insert")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/chunks/insert")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -2801,9 +3049,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         single_id = isinstance(ids, str)
         if single_id:
-            url = self._build_url(f"/api/v1/{self.name}/documents/{ids}")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents/{ids}")
         else:
-            url = self._build_url(f"/api/v1/{self.name}/documents?ids={','.join(ids)}")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents?ids={','.join(ids)}")
 
         response = await self._make_request_with_retry_async("GET", url)
         result = self._handle_response(response)
@@ -2837,7 +3085,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         single_id = isinstance(ids, str)
         check_ids = [ids] if single_id else ids
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/exists")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/exists")
         response = await self._make_request_with_retry_async("POST", url, json={"ids": check_ids})
         results = self._handle_response(response)
 
@@ -2866,7 +3114,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         # Use batch endpoint for multiple IDs (threshold: 2+ IDs)
         if len(ids) >= 2:
-            url = self._build_url(f"/api/v1/{self.name}/documents/delete")
+            url = self._build_url(f"/api/v1/databases/{self.name}/documents/delete")
             payload: Dict[str, Any] = {"ids": ids}
             response = await self._make_request_with_retry_async("POST", url, json=payload)
             resp_data = self._handle_response(response)
@@ -2877,7 +3125,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         deleted_count = 0
 
         async def delete_single(doc_id: str) -> int:
-            del_url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+            del_url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
             del_response = await self._make_request_with_retry_async("DELETE", del_url)
             del_result = self._handle_response(del_response)
             del_count: int = del_result.get("deleted_count", 0)
@@ -2908,7 +3156,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         int
             Number of matching documents
         """
-        url = self._build_url(f"/api/v1/{self.name}/documents/count")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/count")
 
         # Prepare payload
         payload: Dict[str, Any] = {}
@@ -2951,14 +3199,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if metadata is not None:
             payload["metadata"] = metadata
 
-        url = self._build_url(f"/api/v1/{self.name}/documents/{doc_id}")
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
 
         try:
             response = await self._make_request_with_retry_async("PATCH", url, json=payload)
             result = self._handle_response(response)
             updated: bool = result.get("updated", False)
             return updated
-        except DatabaseNotFoundError:
+        except (DatabaseNotFoundError, DocumentNotFoundError):
+            # See update(): a missing document is False, not an exception.
             return False
 
     async def query_async(
@@ -3043,7 +3292,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if reranker_config is not None:
             payload["reranker_config"] = reranker_config
 
-        url = self._build_url(f"/api/v1/{self.name}/query")
+        url = self._build_url(f"/api/v1/databases/{self.name}/query")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -3115,7 +3364,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if filters is not None:
             payload["filters"] = filters
 
-        url = self._build_url(f"/api/v1/{self.name}/query-multi-column")
+        url = self._build_url(f"/api/v1/databases/{self.name}/query-multi-column")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -3159,7 +3408,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if limit is not None:
             payload["limit"] = limit
 
-        url = self._build_url(f"/api/v1/{self.name}/filter")
+        url = self._build_url(f"/api/v1/databases/{self.name}/filter")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
 
@@ -3289,7 +3538,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         else:
             raise ValueError("new_schema must be a string (schema name) or dict")
 
-        url = self._build_url(f"/api/v1/{self.name}/schema")
+        url = self._build_url(f"/api/v1/databases/{self.name}/schema")
         payload: Dict[str, Any] = {
             "metadata_schema": schema_data,
             "drop_columns": drop_columns,
@@ -3342,7 +3591,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 print(f"{field_name}: {field_info['type']} "
                       f"(indexed={field_info['indexed']}, required={field_info['required']})")
         """
-        url = self._build_url(f"/api/v1/{self.name}/schema")
+        url = self._build_url(f"/api/v1/databases/{self.name}/schema")
         response = await self._make_request_with_retry_async("GET", url)
         result = self._handle_response(response)
         schema_info: Dict[str, Any] = result.get("schema_info", {})
@@ -3351,7 +3600,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     ## Tuning
     def get_sqlite_tuning(self) -> Dict[str, Any]:
         """Get current SQLite tuning configuration from remote server."""
-        response = self._make_request_with_retry("GET", f"/api/v1/{self.name}/tuning")
+        response = self._make_request_with_retry("GET", f"/api/v1/databases/{self.name}/tuning")
         result = self._handle_response(response)
         tuning: Dict[str, Any] = result.get("tuning", {})
         return tuning
@@ -3360,7 +3609,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Apply SQLite tuning profile via remote server."""
         payload = {"profile": profile, "overrides": overrides or {}, "persist": persist}
 
-        response = self._make_request_with_retry("PUT", f"/api/v1/{self.name}/tuning", json=payload)
+        response = self._make_request_with_retry("PUT", f"/api/v1/databases/{self.name}/tuning", json=payload)
         self._handle_response(response)
 
     def auto_tune(
@@ -3377,7 +3626,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 "interactive=True is not supported for remote databases; " "pass an explicit `workload` dict instead."
             )
         payload = {"workload": workload, "apply": apply}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/auto-tune", json=payload)
+        response = self._make_request_with_retry("POST", f"/api/v1/databases/{self.name}/auto-tune", json=payload)
         result = self._handle_response(response)
         recommendation: Dict[str, Any] = result.get("recommendation", {})
         return recommendation
@@ -3385,24 +3634,26 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     def sqlite_checkpoint(self, mode: str = "PASSIVE") -> None:
         """Run SQLite WAL checkpoint via remote server."""
         payload = {"mode": mode}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/checkpoint", json=payload)
+        response = self._make_request_with_retry(
+            "POST", f"/api/v1/databases/{self.name}/maintenance/checkpoint", json=payload
+        )
         self._handle_response(response)
 
     def sqlite_optimize(self) -> None:
         """Run SQLite PRAGMA optimize via remote server."""
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/optimize")
+        response = self._make_request_with_retry("POST", f"/api/v1/databases/{self.name}/maintenance/optimize")
         self._handle_response(response)
 
     def sqlite_vacuum(self) -> None:
         """Run SQLite VACUUM via remote server."""
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/maintenance/vacuum")
+        response = self._make_request_with_retry("POST", f"/api/v1/databases/{self.name}/maintenance/vacuum")
         self._handle_response(response)
 
     def sqlite_incremental_vacuum(self, pages: int = 2000) -> None:
         """Run incremental VACUUM via remote server."""
         payload = {"pages": pages}
         response = self._make_request_with_retry(
-            "POST", f"/api/v1/{self.name}/maintenance/incremental-vacuum", json=payload
+            "POST", f"/api/v1/databases/{self.name}/maintenance/incremental-vacuum", json=payload
         )
         self._handle_response(response)
 
@@ -3417,7 +3668,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Check if remote WAL is large and checkpoint if needed."""
         payload = {"threshold_mb": wal_mb_threshold}
         response = self._make_request_with_retry(
-            "POST", f"/api/v1/{self.name}/maintenance/checkpoint-if-large", json=payload
+            "POST", f"/api/v1/databases/{self.name}/maintenance/checkpoint-if-large", json=payload
         )
         data = self._handle_response(response)
         checkpointed: bool = data.get("checkpointed", False)
@@ -3485,7 +3736,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         }
 
         client = self._ensure_sync_client()
-        url = f"/api/v1/{self.name}/query/stream"
+        url = f"/api/v1/databases/{self.name}/query/stream"
 
         with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
@@ -3562,7 +3813,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         }
 
         client = await self._ensure_client()
-        url = f"/api/v1/{self.name}/query/stream"
+        url = f"/api/v1/databases/{self.name}/query/stream"
 
         async with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
@@ -3620,7 +3871,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Similarity score between the two documents.
         """
         payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/compare", json=payload)
+        response = self._make_request_with_retry("POST", f"/api/v1/databases/{self.name}/compare", json=payload)
         result = self._handle_response(response)
         similarity: float = result.get("similarity", 0.0)
         return similarity
@@ -3628,7 +3879,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     async def compare_documents_async(self, doc_id_1: str, doc_id_2: str) -> float:
         """Async version of compare_documents."""
         payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2}
-        response = await self._make_request_with_retry_async("POST", f"/api/v1/{self.name}/compare", json=payload)
+        response = await self._make_request_with_retry_async(
+            "POST", f"/api/v1/databases/{self.name}/compare", json=payload
+        )
         result = self._handle_response(response)
         similarity: float = result.get("similarity", 0.0)
         return similarity
@@ -3653,7 +3906,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Detailed comparison result with per-chunk alignments.
         """
         payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2, "chunk_threshold": chunk_threshold}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/compare/detailed", json=payload)
+        response = self._make_request_with_retry(
+            "POST", f"/api/v1/databases/{self.name}/compare/detailed", json=payload
+        )
         return DocumentComparisonResult.from_dict(self._handle_response(response))
 
     async def compare_documents_detailed_async(
@@ -3662,7 +3917,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Async version of compare_documents_detailed."""
         payload = {"doc_id_1": doc_id_1, "doc_id_2": doc_id_2, "chunk_threshold": chunk_threshold}
         response = await self._make_request_with_retry_async(
-            "POST", f"/api/v1/{self.name}/compare/detailed", json=payload
+            "POST", f"/api/v1/databases/{self.name}/compare/detailed", json=payload
         )
         return DocumentComparisonResult.from_dict(self._handle_response(response))
 
@@ -3692,7 +3947,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             List of nearest neighbor results.
         """
         payload = {"doc_id": doc_id, "k": k, "score_threshold": score_threshold, "filters": filters}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/nearest-neighbors", json=payload)
+        response = self._make_request_with_retry(
+            "POST", f"/api/v1/databases/{self.name}/nearest-neighbors", json=payload
+        )
         result = self._handle_response(response)
         return [qr for r in result.get("results", []) if (qr := QueryResult.from_dict(r)) is not None]
 
@@ -3706,7 +3963,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """Async version of nearest_neighbors."""
         payload = {"doc_id": doc_id, "k": k, "score_threshold": score_threshold, "filters": filters}
         response = await self._make_request_with_retry_async(
-            "POST", f"/api/v1/{self.name}/nearest-neighbors", json=payload
+            "POST", f"/api/v1/databases/{self.name}/nearest-neighbors", json=payload
         )
         result = self._handle_response(response)
         return [qr for r in result.get("results", []) if (qr := QueryResult.from_dict(r)) is not None]
@@ -3725,98 +3982,15 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Matrix with similarity scores between all document pairs.
         """
         payload = {"doc_ids": doc_ids}
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/similarity-matrix", json=payload)
+        response = self._make_request_with_retry(
+            "POST", f"/api/v1/databases/{self.name}/similarity-matrix", json=payload
+        )
         return DocumentSimilarityMatrix.from_dict(self._handle_response(response))
 
     async def pairwise_similarity_matrix_async(self, doc_ids: Optional[List[str]] = None) -> DocumentSimilarityMatrix:
         """Async version of pairwise_similarity_matrix."""
         payload = {"doc_ids": doc_ids}
         response = await self._make_request_with_retry_async(
-            "POST", f"/api/v1/{self.name}/similarity-matrix", json=payload
+            "POST", f"/api/v1/databases/{self.name}/similarity-matrix", json=payload
         )
         return DocumentSimilarityMatrix.from_dict(self._handle_response(response))
-
-    # ========================================================================
-    # Fact-checking methods
-    # ========================================================================
-
-    def fact_check(
-        self,
-        text: str,
-        *,
-        llm_provider: str = "anthropic",
-        llm_api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        similarity_threshold: float = 0.3,
-        min_grounding_score: float = 0.5,
-        search_type: str = "hybrid",
-        top_k: int = 10,
-    ) -> Dict[str, Any]:
-        """Check text against the database for factual grounding.
-
-        Parameters
-        ----------
-        text : str
-            The text to fact-check.
-        llm_provider : str
-            LLM provider to use (anthropic/openai/gemini).
-        llm_api_key : Optional[str]
-            API key for the LLM provider.
-        model : Optional[str]
-            Model name.
-        similarity_threshold : float
-            Minimum similarity for evidence retrieval.
-        min_grounding_score : float
-            Minimum grounding score for claims.
-        search_type : str
-            Search type for evidence retrieval.
-        top_k : int
-            Number of evidence documents to retrieve.
-
-        Returns
-        -------
-        Dict[str, Any]
-            Fact-check result with grounding score, claims, and evidence.
-        """
-        payload = {
-            "text": text,
-            "llm_provider": llm_provider,
-            "model": model,
-            "similarity_threshold": similarity_threshold,
-            "min_grounding_score": min_grounding_score,
-            "search_type": search_type,
-            "k": top_k,
-        }
-        if llm_api_key:
-            payload["llm_api_key"] = llm_api_key
-
-        response = self._make_request_with_retry("POST", f"/api/v1/{self.name}/factcheck", json=payload)
-        return self._handle_response(response)
-
-    async def fact_check_async(
-        self,
-        text: str,
-        *,
-        llm_provider: str = "anthropic",
-        llm_api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        similarity_threshold: float = 0.3,
-        min_grounding_score: float = 0.5,
-        search_type: str = "hybrid",
-        top_k: int = 10,
-    ) -> Dict[str, Any]:
-        """Async version of fact_check."""
-        payload = {
-            "text": text,
-            "llm_provider": llm_provider,
-            "model": model,
-            "similarity_threshold": similarity_threshold,
-            "min_grounding_score": min_grounding_score,
-            "search_type": search_type,
-            "k": top_k,
-        }
-        if llm_api_key:
-            payload["llm_api_key"] = llm_api_key
-
-        response = await self._make_request_with_retry_async("POST", f"/api/v1/{self.name}/factcheck", json=payload)
-        return self._handle_response(response)

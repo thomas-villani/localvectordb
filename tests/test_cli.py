@@ -425,7 +425,7 @@ class TestConfigShow:
             _patch_cli_init(fake_config, config_file, tmp_db_folder),
             patch("localvectordb_server.cli._config.asdict", return_value=mock_dict),
         ):
-            result = runner.invoke(cli, ["config", "show", "--json"])
+            result = runner.invoke(cli, ["config", "show", "--format", "json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output.split("\n", 2)[-1])  # skip header lines
         assert "database" in parsed
@@ -1047,7 +1047,7 @@ class TestDbSearch:
 
         p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, ["db", "testdb", "search", "query", "--json"])
+            result = runner.invoke(cli, ["db", "testdb", "search", "query", "--format", "json"])
         assert result.exit_code == 0
         # The status line goes to stderr; extract the JSON portion from output
         json_start = result.output.index("[")
@@ -1189,7 +1189,7 @@ class TestDbRelated:
 
         p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1", "--json"])
+            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1", "--format", "json"])
         assert result.exit_code == 0
         json_start = result.output.index("[")
         parsed = json.loads(result.output[json_start:])
@@ -1475,7 +1475,7 @@ class TestConfigLoadErrors:
         bad = tmp_path / ".lvdb-config.toml"
         bad.write_text("[database\nroot_dir = broken", encoding="utf-8")
         result = runner.invoke(cli, ["--config", str(bad), "list"])
-        assert result.exit_code == 2
+        assert result.exit_code == 5  # EXIT_CODE_CONFIGURATION_ERROR (5, not Click's usage-error 2)
         assert "Error loading configuration" in result.output
         assert "Traceback" not in result.output
 
@@ -1483,7 +1483,7 @@ class TestConfigLoadErrors:
         bad = tmp_path / ".lvdb-config.toml"
         bad.write_text('[server]\nport = -5\n[database]\nroot_dir = "dbs"\n', encoding="utf-8")
         result = runner.invoke(cli, ["--config", str(bad), "list"])
-        assert result.exit_code == 2
+        assert result.exit_code == 5  # EXIT_CODE_CONFIGURATION_ERROR
         assert "Error loading configuration" in result.output
         assert "Traceback" not in result.output
 
@@ -1795,7 +1795,7 @@ class TestDbSearchJsonEmpty:
         mock_db.query.return_value = []
         p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, ["db", "testdb", "search", "no match", "--json"])
+            result = runner.invoke(cli, ["db", "testdb", "search", "no match", "--format", "json"])
         assert result.exit_code == 0
         # Status lines go to stderr; the stdout JSON payload is an empty array.
         assert result.output[result.output.index("[") :].strip() == "[]"
@@ -1805,9 +1805,45 @@ class TestDbSearchJsonEmpty:
         mock_db.nearest_neighbors.return_value = []
         p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
         with p1, p2:
-            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1", "--json"])
+            result = runner.invoke(cli, ["db", "testdb", "related", "doc_1", "--format", "json"])
         assert result.exit_code == 0
         assert result.output[result.output.index("[") :].strip() == "[]"
+
+
+@pytest.mark.unit
+class TestFormatFlagStandardization:
+    """The `-j` short is a convenience alias for `--format json`; `--json` is gone."""
+
+    def test_search_dash_j_is_json_alias(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        r = MagicMock()
+        r.id, r.content, r.score, r.type, r.metadata = "doc_1", "Result text", 0.9, "document", {}
+        mock_db.query.return_value = [r]
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "search", "query", "-j"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output[result.output.index("[") :])
+        assert parsed[0]["id"] == "doc_1"
+
+    def test_old_json_flag_is_rejected(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.query.return_value = []
+        p1, p2 = _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "search", "query", "--json"])
+        # --json is no longer a valid option (usage error, Click exit 2).
+        assert result.exit_code == 2
+
+    def test_config_set_short_force_is_y(self, runner, fake_config, config_file, tmp_db_folder):
+        """`-y` (not `-f`) is the short for `config set --force`; `-f` is reserved for --format."""
+        with (
+            _patch_cli_init(fake_config, config_file, tmp_db_folder),
+            patch("localvectordb_server.cli._config.get_nested_value", return_value="127.0.0.1"),
+            patch("localvectordb_server.cli._config.set_nested_value"),
+        ):
+            result = runner.invoke(cli, ["config", "set", "server.host", "0.0.0.0", "-y"])
+        assert result.exit_code == 0
 
 
 @pytest.mark.unit

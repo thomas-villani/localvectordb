@@ -111,7 +111,7 @@ class CheckpointIfLargeResponse(StrictModel):
 
 
 @router.get(
-    "/{db_name}/tuning",
+    "/databases/{db_name}/tuning",
     response_model=TuningResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -133,7 +133,7 @@ def get_sqlite_tuning(db_name: str, db=Depends(get_db)):
 
 
 @router.put(
-    "/{db_name}/tuning",
+    "/databases/{db_name}/tuning",
     response_model=SetTuningResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -179,7 +179,7 @@ async def set_sqlite_tuning(db_name: str, body: SetTuningBody, db=Depends(get_db
 
 
 @router.post(
-    "/{db_name}/maintenance/checkpoint",
+    "/databases/{db_name}/maintenance/checkpoint",
     response_model=CheckpointResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -216,7 +216,7 @@ async def sqlite_checkpoint(db_name: str, body: Optional[CheckpointBody] = None,
 
 
 @router.post(
-    "/{db_name}/maintenance/optimize",
+    "/databases/{db_name}/maintenance/optimize",
     response_model=OptimizeResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -245,7 +245,7 @@ async def sqlite_optimize(db_name: str, db=Depends(get_db)):
 
 
 @router.post(
-    "/{db_name}/maintenance/vacuum",
+    "/databases/{db_name}/maintenance/vacuum",
     response_model=VacuumResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -275,7 +275,7 @@ async def sqlite_vacuum(db_name: str, db=Depends(get_db)):
 
 
 @router.post(
-    "/{db_name}/maintenance/incremental-vacuum",
+    "/databases/{db_name}/maintenance/incremental-vacuum",
     response_model=IncrementalVacuumResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -311,7 +311,7 @@ async def sqlite_incremental_vacuum(db_name: str, body: Optional[IncrementalVacu
 
 
 @router.post(
-    "/{db_name}/auto-tune",
+    "/databases/{db_name}/auto-tune",
     response_model=AutoTuneResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -354,7 +354,7 @@ async def auto_tune_database(db_name: str, body: Optional[AutoTuneBody] = None, 
 
 
 @router.post(
-    "/{db_name}/maintenance/checkpoint-if-large",
+    "/databases/{db_name}/maintenance/checkpoint-if-large",
     response_model=CheckpointIfLargeResponse,
     dependencies=[Depends(require_write_permission)],
 )

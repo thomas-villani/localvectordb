@@ -38,7 +38,7 @@ Create a client, connect to a database, add documents, and search:
 
    // 1. Create a client pointing at your server
    const client = new LocalVectorDBClient({
-     baseUrl: "http://localhost:5000",
+     baseUrl: "http://localhost:8000",
      apiKey: "lvdb_your_api_key",  // optional
    });
 
@@ -80,7 +80,7 @@ The client constructor accepts the following options:
 .. code-block:: typescript
 
    const client = new LocalVectorDBClient({
-     baseUrl: "http://localhost:5000",  // Server URL (required)
+     baseUrl: "http://localhost:8000",  // Server URL (required)
      apiKey: "lvdb_...",                // Bearer token (optional)
      timeout: 30000,                    // Request timeout in ms (default: 30 000)
      maxRetries: 3,                     // Retries for 5xx / network errors (default: 3)
@@ -106,14 +106,14 @@ natural. The two-level API (client + database handle) maps directly:
 
           db = RemoteVectorDB(
               name="mydb",
-              base_url="http://localhost:5000",
+              base_url="http://localhost:8000",
               api_key="lvdb_..."
           )
 
      - .. code-block:: typescript
 
           const client = new LocalVectorDBClient({
-            baseUrl: "http://localhost:5000",
+            baseUrl: "http://localhost:8000",
             apiKey: "lvdb_...",
           });
           const db = client.database("mydb");

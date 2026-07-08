@@ -34,7 +34,8 @@ def auth(ctx):
     "-p",
     type=click.Choice(["read_only", "read_write"]),
     default="read_write",
-    help="Permission level for the key (default: read_write)",
+    show_default=True,
+    help="Permission level for the key",
 )
 @click.option(
     "--format", "-f", "output", type=click.Choice(["table", "json", "key-only"]), default="table", help="Output format"

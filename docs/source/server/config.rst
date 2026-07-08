@@ -90,7 +90,7 @@ Server Configuration
    [server]
    # Basic server settings
    host = "127.0.0.1"             # Interface to bind to
-   port = 5000                    # Port to listen on
+   port = 8000                    # Port to listen on
    log_level = "INFO"             # DEBUG, INFO, WARNING, ERROR, CRITICAL
    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -246,7 +246,7 @@ Development Setup
 
    [server]
    host = "127.0.0.1"
-   port = 5000
+   port = 8000
    log_level = "DEBUG"
    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
@@ -794,7 +794,7 @@ Configuration Backup
    cp /etc/localvectordb/production.toml /backup/config_$(date +%Y%m%d).toml
 
    # Export database metadata
-   lvdb db my_database list --json > /backup/my_database_docs_$(date +%Y%m%d).json
+   lvdb db my_database list --format json > /backup/my_database_docs_$(date +%Y%m%d).json
 
 Troubleshooting
 ---------------

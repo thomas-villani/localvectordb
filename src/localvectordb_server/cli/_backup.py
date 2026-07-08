@@ -74,10 +74,19 @@ def backup_group(ctx):
 )
 @click.option("--no-verify", is_flag=True, help="Skip backup integrity verification")
 @click.option("--exclude-faiss", is_flag=True, help="Exclude FAISS index from backup")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.pass_context
 def create_backup(
-    ctx, database_name, backup_type, parent, location, compression, no_verify, exclude_faiss, output_json
+    ctx, database_name, backup_type, parent, location, compression, no_verify, exclude_faiss, output_format
 ):
     """
     Create a backup of the specified database.
@@ -93,6 +102,8 @@ def create_backup(
         lvdb backup create mydb --type incremental --parent backup-abc123
         lvdb backup create mydb --compression lzma --location /backups
     """
+
+    output_json = output_format == "json"
 
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
@@ -179,7 +190,16 @@ def create_backup(
 @click.option("--database", "-d", help="Filter backups for specific database")
 @click.option("--type", "-t", type=click.Choice(["full", "incremental"]), help="Filter by backup type")
 @click.option("--limit", "-n", type=int, help="Limit number of backups shown")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output in JSON format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.option(
     "--location",
     "-l",
@@ -187,7 +207,7 @@ def create_backup(
     help="Backup storage location to scan (default: ./backups)",
 )
 @click.pass_context
-def list_backups(ctx, database, type, limit, output_json, location):
+def list_backups(ctx, database, type, limit, output_format, location):
     """
     List available backups.
 
@@ -201,6 +221,8 @@ def list_backups(ctx, database, type, limit, output_json, location):
         lvdb backup list --database mydb --type full
         lvdb backup list --limit 10 --json
     """
+
+    output_json = output_format == "json"
 
     try:
         backup_location = Path(location) if location else Path("./backups")
@@ -327,9 +349,18 @@ def list_backups(ctx, database, type, limit, output_json, location):
     type=click.Path(exists=True, file_okay=False),
     help="Backup storage location (default: ./backups)",
 )
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.pass_context
-def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json):
+def restore_backup(ctx, backup_id, to_location, overwrite, location, output_format):
     """
     Restore a database from backup.
 
@@ -344,6 +375,8 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
         lvdb backup restore abc12345 --to-location ./restored
         lvdb backup restore abc12345 --overwrite
     """
+
+    output_json = output_format == "json"
 
     try:
         backup_location = Path(location) if location else Path("./backups")
@@ -456,8 +489,17 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_json
     type=click.Path(exists=True, file_okay=False),
     help="Backup storage location (default: ./backups)",
 )
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
-def verify_backup(backup_id, location, output_json):
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+def verify_backup(backup_id, location, output_format):
     """
     Verify backup integrity.
 
@@ -470,6 +512,8 @@ def verify_backup(backup_id, location, output_json):
         lvdb backup verify abc12345
         lvdb backup verify abc12345 --json
     """
+
+    output_json = output_format == "json"
 
     try:
         backup_location = Path(location) if location else Path("./backups")
@@ -557,8 +601,17 @@ def verify_backup(backup_id, location, output_json):
     help="Backup storage location (default: ./backups)",
 )
 @click.option("--dry-run", is_flag=True, help="Show what would be deleted without actually deleting")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
-def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+def cleanup_backups(older_than, keep_full, location, dry_run, output_format):
     """
     Clean up old backups based on retention policy.
 
@@ -572,6 +625,8 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
         lvdb backup cleanup --keep-full 5 --dry-run
         lvdb backup cleanup --older-than 7 --json
     """
+
+    output_json = output_format == "json"
 
     try:
         backup_location = Path(location) if location else Path("./backups")
@@ -662,8 +717,17 @@ def cleanup_backups(older_than, keep_full, location, dry_run, output_json):
     help="Backup storage location (default: ./backups)",
 )
 @click.option("--dry-run", is_flag=True, help="Validate recovery without actually restoring")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
-def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run, output_json):
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run, output_format):
     """
     Perform point-in-time recovery to a specific timestamp.
 
@@ -678,6 +742,8 @@ def point_in_time_recovery(timestamp, to_location, tolerance, location, dry_run,
         lvdb backup pitr "2024-01-15 14:30:00" --to-location ./restored
         lvdb backup pitr "2024-01-15T14:30:00Z" --tolerance 120 --dry-run
     """
+
+    output_json = output_format == "json"
 
     try:
         from datetime import datetime

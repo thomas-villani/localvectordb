@@ -130,7 +130,7 @@ Server Example
 .. code-block:: bash
 
     # Start LocalVectorDB server
-    lvdb serve --host 127.0.0.1 --port 5000
+    lvdb serve --host 127.0.0.1 --port 8000
 
     # Create database via CLI
     lvdb create my_database --embedding-model nomic-embed-text
@@ -155,7 +155,7 @@ databases.
     # Connect to remote LocalVectorDB server
     db = VectorDB(
         name="my_remote_db",
-        base_path="http://localhost:5000",
+        base_path="http://localhost:8000",
         # Include api_key if you configured the server with api keys.
         # api_key="your_api_key"
     )

@@ -53,7 +53,7 @@ class EmbeddingsResponse(StrictModel):
 
 
 @router.post(
-    "/{db_name}/embeddings",
+    "/databases/{db_name}/embeddings",
     response_model=DbEmbeddingsResponse,
     dependencies=[Depends(require_read_permission)],
 )

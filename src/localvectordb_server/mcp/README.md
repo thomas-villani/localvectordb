@@ -38,7 +38,7 @@ lvdb mcp serve --mode read-write
 lvdb mcp serve --databases-root ./my_databases
 
 # With database mappings (mix of local and remote)
-lvdb mcp serve --databases-map '{"local_db": "./databases", "remote_db": "http://localhost:5000"}'
+lvdb mcp serve --databases-map '{"local_db": "./databases", "remote_db": "http://localhost:8000"}'
 ```
 
 ### 2. Configure for Claude Desktop
@@ -90,7 +90,7 @@ LVDB_MCP_LOG_LEVEL="INFO"              # DEBUG, INFO, WARNING, ERROR
 
 # Database settings
 LVDB_MCP_DATABASES_ROOT="./databases"  # Default root for local databases
-LVDB_MCP_DATABASES_MAP="db1=./path1,db2=http://remote:5000"  # Name mappings
+LVDB_MCP_DATABASES_MAP="db1=./path1,db2=http://remote:8000"  # Name mappings
 
 # Default database parameters
 LVDB_MCP_EMBEDDING_PROVIDER="ollama"   # Embedding provider
@@ -124,7 +124,7 @@ root = "./databases"  # Default root for local databases
 # Optional: Map specific databases to paths or URLs
 [databases.map]
 local_docs = "./my_databases"
-remote_docs = "http://localhost:5000"
+remote_docs = "http://localhost:8000"
 
 [defaults]
 # Default parameters for database creation
@@ -234,7 +234,7 @@ embedding_model = "nomic-embed-text"
 
 ```toml
 [databases.map]
-remote_db = "http://localhost:5000"
+remote_db = "http://localhost:8000"
 
 [remote]
 timeout = 30
@@ -252,7 +252,7 @@ root = "./local_dbs"
 # Local databases use the root path
 local_docs = "./local_dbs"
 # Remote databases use URLs
-remote_docs = "http://vectordb-server:5000"
+remote_docs = "http://vectordb-server:8000"
 shared_knowledge = "https://api.example.com/vectordb"
 ```
 

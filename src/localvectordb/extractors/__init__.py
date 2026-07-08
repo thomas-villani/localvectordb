@@ -379,7 +379,7 @@ class ExtractorRegistry:
             return
         from importlib.metadata import entry_points
 
-        # Look for entry points in the 'localvectordb.embedding_providers' group
+        # Look for entry points in the 'localvectordb.file_extractors' group
         extractor_eps = entry_points(group="localvectordb.file_extractors")
 
         for ep in extractor_eps:

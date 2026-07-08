@@ -52,9 +52,18 @@ def migrate_group(ctx):
     type=click.Path(exists=True, file_okay=False),
     help="Directory containing migration files (default: ./migrations)",
 )
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output status in JSON format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.pass_context
-def migration_status(ctx, database_name, migrations_dir, output_json):
+def migration_status(ctx, database_name, migrations_dir, output_format):
     """
     Show migration status for a database.
 
@@ -67,6 +76,8 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
         lvdb migrate status mydb
         lvdb migrate status mydb --migrations-dir ./custom_migrations --json
     """
+
+    output_json = output_format == "json"
 
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
@@ -143,7 +154,7 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
 
 @migrate_group.command("apply")
 @click.argument("database_name")
-@click.option("--to-version", "-v", help="Target version to migrate to (default: latest)")
+@click.option("--to-version", help="Target version to migrate to (default: latest)")
 @click.option(
     "--migrations-dir",
     "-m",
@@ -158,9 +169,18 @@ def migration_status(ctx, database_name, migrations_dir, output_json):
     help="Backup storage location (default: ./backups)",
 )
 @click.option("--dry-run", is_flag=True, help="Validate migrations without applying them")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.pass_context
-def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, backup_location, dry_run, output_json):
+def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, backup_location, dry_run, output_format):
     """
     Apply pending migrations to a database.
 
@@ -175,6 +195,8 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, bac
         lvdb migrate apply mydb --to-version 1.2.0
         lvdb migrate apply mydb --dry-run --no-backup
     """
+
+    output_json = output_format == "json"
 
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
@@ -283,10 +305,19 @@ def apply_migrations(ctx, database_name, to_version, migrations_dir, backup, bac
     help="Backup storage location (default: ./backups)",
 )
 @click.option("--dry-run", is_flag=True, help="Validate rollback without applying it")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.pass_context
 def rollback_migrations(
-    ctx, database_name, target_version, migrations_dir, backup, backup_location, dry_run, output_json
+    ctx, database_name, target_version, migrations_dir, backup, backup_location, dry_run, output_format
 ):
     """
     Rollback database to a previous version.
@@ -300,6 +331,8 @@ def rollback_migrations(
         lvdb migrate rollback mydb 1.1.0
         lvdb migrate rollback mydb 1.0.0 --dry-run --no-backup
     """
+
+    output_json = output_format == "json"
 
     db_folder = ctx.obj.get("db_folder")
     if not db_folder:
@@ -401,7 +434,7 @@ def rollback_migrations(
 
 @migrate_group.command("create")
 @click.argument("description")
-@click.option("--version", "-v", required=True, help="Version number for the migration (e.g., 1.2.0)")
+@click.option("--version", required=True, help="Version number for the migration (e.g., 1.2.0)")
 @click.option(
     "--migrations-dir",
     "-m",
@@ -415,8 +448,17 @@ def rollback_migrations(
     default="basic",
     help="Type of migration template to create",
 )
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output result in JSON format")
-def create_migration(description, version, migrations_dir, template, output_json):
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+def create_migration(description, version, migrations_dir, template, output_format):
     """
     Create a new migration template file.
 
@@ -435,6 +477,8 @@ def create_migration(description, version, migrations_dir, template, output_json
         lvdb migrate create "add user table" --version 1.2.0 --template schema
         lvdb migrate create "migrate old data format" --version 1.2.1 --template data
     """
+
+    output_json = output_format == "json"
 
     try:
         # Validate version format
@@ -505,8 +549,17 @@ def create_migration(description, version, migrations_dir, template, output_json
     help="Directory containing migration files (default: ./migrations)",
 )
 @click.option("--show-dependencies", "-d", is_flag=True, help="Show migration dependencies")
-@click.option("--json", "-j", "output_json", is_flag=True, help="Output in JSON format")
-def list_migrations(migrations_dir, show_dependencies, output_json):
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+def list_migrations(migrations_dir, show_dependencies, output_format):
     """
     List available migration files.
 
@@ -519,6 +572,8 @@ def list_migrations(migrations_dir, show_dependencies, output_json):
         lvdb migrate list
         lvdb migrate list --show-dependencies --json
     """
+
+    output_json = output_format == "json"
 
     try:
         # Set up migrations directory

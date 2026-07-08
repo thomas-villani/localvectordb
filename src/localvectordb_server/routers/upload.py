@@ -97,7 +97,7 @@ def _extraction_kwargs(config) -> dict:
 
 
 @router.post(
-    "/{db_name}/upload",
+    "/databases/{db_name}/upload",
     response_model=UploadResponse,
     response_model_exclude_unset=True,
     dependencies=[Depends(require_write_permission)],

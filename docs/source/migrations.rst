@@ -55,7 +55,7 @@ View status as JSON:
 
 .. code-block:: bash
 
-    $ lvdb migrate status mydatabase --json
+    $ lvdb migrate status mydatabase --format json
 
 Applying Migrations
 ^^^^^^^^^^^^^^^^^^^

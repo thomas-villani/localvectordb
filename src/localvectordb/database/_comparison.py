@@ -7,6 +7,7 @@ search, and pairwise similarity matrices.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
@@ -383,6 +384,43 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
             unmatched_chunks_1=unmatched_1,
             unmatched_chunks_2=unmatched_2,
         )
+
+    # ------------------------------------------------------------------ #
+    # Public API – async twins                                             #
+    #                                                                      #
+    # Comparison is CPU/SQLite-bound sync work; the async variants run it  #
+    # off the event-loop thread so ``await db.<op>_async(...)`` works on a #
+    # LocalVectorDB the same way it does on RemoteVectorDB.                #
+    # ------------------------------------------------------------------ #
+
+    async def compare_documents_async(self, doc_id_1: str, doc_id_2: str) -> float:
+        """Async twin of :meth:`compare_documents`."""
+        return await asyncio.to_thread(self.compare_documents, doc_id_1, doc_id_2)
+
+    async def compare_documents_detailed_async(
+        self,
+        doc_id_1: str,
+        doc_id_2: str,
+        chunk_threshold: float = 0.7,
+    ) -> DocumentComparisonResult:
+        """Async twin of :meth:`compare_documents_detailed`."""
+        return await asyncio.to_thread(self.compare_documents_detailed, doc_id_1, doc_id_2, chunk_threshold)
+
+    async def nearest_neighbors_async(
+        self,
+        doc_id: str,
+        k: int = 5,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[QueryResult]:
+        """Async twin of :meth:`nearest_neighbors`."""
+        return await asyncio.to_thread(
+            lambda: self.nearest_neighbors(doc_id, k=k, score_threshold=score_threshold, filters=filters)
+        )
+
+    async def pairwise_similarity_matrix_async(self, doc_ids: Optional[List[str]] = None) -> DocumentSimilarityMatrix:
+        """Async twin of :meth:`pairwise_similarity_matrix`."""
+        return await asyncio.to_thread(self.pairwise_similarity_matrix, doc_ids)
 
     # ------------------------------------------------------------------ #
     # Public API – chunk similarity matrix                                 #

@@ -303,7 +303,7 @@ class TestServerSettings:
         settings = ServerSettings()
 
         assert settings.host == "127.0.0.1"
-        assert settings.port == 5000
+        assert settings.port == 8000
         assert settings.log_level == "INFO"
         assert settings.security.require_api_key is False
         assert settings.security.cors_enabled is True
@@ -916,7 +916,7 @@ class TestConfigRefactorFixes:
 
             # These should all be default values, not the legacy env values
             assert config.server.host == "127.0.0.1"  # default, not 192.168.1.1
-            assert config.server.port == 5000  # default, not 9999
+            assert config.server.port == 8000  # default, not 9999
             assert config.server.log_level == "INFO"  # default, not DEBUG
             assert config.database.root_dir == "./.lvdb"  # default, not /legacy/path
 

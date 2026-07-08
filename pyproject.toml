@@ -167,6 +167,7 @@ all = [
     "localvectordb[file-extraction]",
     "localvectordb[mcp]",
     "localvectordb[sentence-transformers]",
+    "localvectordb[local-embeddings]",
     "localvectordb[visualization]",
 ]
 

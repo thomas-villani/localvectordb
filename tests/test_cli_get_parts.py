@@ -159,7 +159,7 @@ class TestGetParts:
 
     def test_outline_json(self, runner, get_db):
         db, doc_id = get_db
-        result = self._invoke(runner, db, [doc_id, "--outline", "--json"])
+        result = self._invoke(runner, db, [doc_id, "--outline", "--format", "json"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         headings = [item["heading"] for item in payload["outline"]]
@@ -174,7 +174,7 @@ class TestGetParts:
 
     def test_chunk_json_has_index_and_position(self, runner, get_db):
         db, doc_id = get_db
-        result = self._invoke(runner, db, [doc_id, "--chunk", "0", "--json"])
+        result = self._invoke(runner, db, [doc_id, "--chunk", "0", "--format", "json"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["chunks"][0]["index"] == 0

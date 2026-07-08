@@ -238,7 +238,7 @@ Before using remote databases, start a LocalVectorDB server:
 .. code-block:: bash
 
    # Basic development server
-   lvdb serve --host 0.0.0.0 --port 5000
+   lvdb serve --host 0.0.0.0 --port 8000
 
    # Production server with authentication
    lvdb config init --enable-auth --enable-cors
@@ -257,7 +257,7 @@ Remote databases provide the same API as local databases but communicate over HT
    # Synchronous remote connection
    remote_db = VectorDB(
        name="my_database",
-       base_path="http://localhost:5000",   # Server URL
+       base_path="http://localhost:8000",   # Server URL
        api_key="your_api_key",             # If authentication enabled
        metadata_schema=schema
    )
@@ -269,7 +269,7 @@ Remote databases provide the same API as local databases but communicate over HT
    # Asynchronous remote connection (recommended)
    remote_db = VectorDB(
        name="my_database",
-       base_path="http://localhost:5000",
+       base_path="http://localhost:8000",
        api_key="your_api_key",
        request_timeout=60.0,               # Request timeout
        max_retries=3                       # Handle network issues
@@ -626,7 +626,7 @@ Server Management
 .. code-block:: bash
 
    # Start development server
-   lvdb serve --host 0.0.0.0 --port 5000
+   lvdb serve --host 0.0.0.0 --port 8000
 
    # Production server with configuration
    lvdb config init --enable-auth --enable-cors

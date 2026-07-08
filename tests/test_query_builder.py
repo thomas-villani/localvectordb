@@ -317,6 +317,27 @@ class TestQueryBuilderFilterMethods:
         sem_filter = result._semantic_filters[0]
         assert sem_filter.metric == SimilarityMetric.EUCLIDEAN
 
+    def test_semantic_filter_coerces_string_metric(self, builder):
+        """String metrics (as sent over HTTP / by the query-builder endpoint) are
+        coerced to the SimilarityMetric enum, including the ``dot`` alias.
+
+        Regression: a bare string was stored on SemanticFilter.metric and never
+        compared equal to an enum member, raising "Unsupported similarity metric"
+        at execution for any non-default metric on the remote path.
+        """
+        for raw, expected in [
+            ("cosine", SimilarityMetric.COSINE),
+            ("euclidean", SimilarityMetric.EUCLIDEAN),
+            ("dot", SimilarityMetric.DOT_PRODUCT),
+            ("dot_product", SimilarityMetric.DOT_PRODUCT),
+            ("manhattan", SimilarityMetric.MANHATTAN),
+        ]:
+            sem_filter = builder.semantic_filter("content", "AI", 0.9, metric=raw)._semantic_filters[0]
+            assert sem_filter.metric is expected
+
+        with pytest.raises(ValueError, match="Unsupported similarity metric"):
+            builder.semantic_filter("content", "AI", 0.9, metric="not-a-metric")
+
     def test_semantic_filter_validation(self, builder):
         """Test semantic filter validation."""
         with pytest.raises(ValueError, match="Field must be a non-empty string"):

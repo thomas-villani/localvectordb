@@ -120,7 +120,7 @@ The most common way to use file extraction is through the server upload API:
         -H "Authorization: Bearer your_api_key" \
         -F "files=@document.pdf" \
         -F "metadata={\"category\": \"research\"}" \
-        http://localhost:5000/api/v1/mydatabase/upload
+        http://localhost:8000/api/v1/databases/mydatabase/upload
 
 Direct extraction
 ^^^^^^^^^^^^^^^^^

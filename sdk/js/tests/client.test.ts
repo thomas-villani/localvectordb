@@ -79,7 +79,7 @@ describe("LocalVectorDBClient", () => {
     expect(body.embedding.provider).toBe("ollama");
   });
 
-  it("deleteDatabase() calls DELETE /api/v1/{name}", async () => {
+  it("deleteDatabase() calls DELETE /api/v1/databases/{name}", async () => {
     const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
     vi.mocked(globalThis.fetch).mockResolvedValue(
       jsonResponse({ message: "deleted", status: "success" }),
@@ -88,17 +88,29 @@ describe("LocalVectorDBClient", () => {
     await client.deleteDatabase("old_db");
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/old_db");
+    expect(url).toBe("http://localhost:5000/api/v1/databases/old_db");
     expect(init?.method).toBe("DELETE");
   });
 
-  it("globalSearch() calls POST /api/v1/search", async () => {
+  it("globalSearch() calls POST /api/v1/search and returns results_by_database", async () => {
     const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
     vi.mocked(globalThis.fetch).mockResolvedValue(
-      jsonResponse({ results: {}, search_type: "hybrid", return_type: "documents" }),
+      jsonResponse({
+        results_by_database: {
+          db1: [
+            { id: "1", score: 0.9, type: "document", content: "hi", metadata: {} },
+          ],
+        },
+        search_type: "hybrid",
+        return_type: "documents",
+      }),
     );
 
-    await client.globalSearch("test query", { search_type: "hybrid", k: 5 });
+    const result = await client.globalSearch("test query", {
+      search_type: "hybrid",
+      k: 5,
+    });
+    expect(result.results_by_database.db1).toHaveLength(1);
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
     expect(url).toBe("http://localhost:5000/api/v1/search");
@@ -120,18 +132,5 @@ describe("LocalVectorDBClient", () => {
     );
     expect(body.texts).toEqual(["hello"]);
     expect(body.provider).toBe("ollama");
-  });
-
-  it("factCheck() calls POST /api/v1/factcheck", async () => {
-    const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
-    vi.mocked(globalThis.fetch).mockResolvedValue(jsonResponse({ verdict: "supported" }));
-
-    await client.factCheck("The sky is blue", { databases: ["db1"] });
-
-    const body = JSON.parse(
-      (vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string),
-    );
-    expect(body.text).toBe("The sky is blue");
-    expect(body.databases).toEqual(["db1"]);
   });
 });

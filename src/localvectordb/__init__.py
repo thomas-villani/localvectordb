@@ -15,16 +15,39 @@ from localvectordb.backup import BackupManager, IncrementalBackupManager, PointI
 from localvectordb.chunking import ChunkerFactory
 from localvectordb.client import RemoteVectorDB
 from localvectordb.core import (
+    Chunk,
     ChunkAlignment,
+    ChunkPosition,
+    Document,
     DocumentComparisonResult,
+    DocumentScoringMethod,
     DocumentSimilarityMatrix,
     MetadataField,
+    MetadataFieldType,
+    QueryResult,
     Section,
     SectionBoundary,
 )
 from localvectordb.cursor import QueryCursor
 from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import EmbeddingRegistry
+from localvectordb.exceptions import (
+    BaseLocalVectorDBException,
+    ConfigurationError,
+    ConnectionPoolError,
+    CursorError,
+    CursorExhaustedError,
+    CursorExpiredError,
+    DatabaseError,
+    DatabaseNotFoundError,
+    DocumentNotFoundError,
+    DuplicateDocumentIDError,
+    EmbeddingError,
+    MetadataFilterError,
+    OllamaNotFoundError,
+    RerankerError,
+    ValidationError,
+)
 from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
 from localvectordb.factory import VectorDB
 from localvectordb.migration import Migration, MigrationEngine
@@ -47,12 +70,35 @@ __all__ = [
     "RerankerRegistry",
     "RemoteVectorDB",
     "VectorDB",
+    # Core data types returned/accepted by the public API
+    "Document",
+    "QueryResult",
+    "Chunk",
+    "ChunkPosition",
     "MetadataField",
+    "MetadataFieldType",
+    "DocumentScoringMethod",
     "Section",
     "SectionBoundary",
     "ChunkAlignment",
     "DocumentComparisonResult",
     "DocumentSimilarityMatrix",
+    # Exceptions raised by the public API
+    "BaseLocalVectorDBException",
+    "DatabaseError",
+    "DatabaseNotFoundError",
+    "DocumentNotFoundError",
+    "DuplicateDocumentIDError",
+    "MetadataFilterError",
+    "EmbeddingError",
+    "OllamaNotFoundError",
+    "ConfigurationError",
+    "ValidationError",
+    "ConnectionPoolError",
+    "RerankerError",
+    "CursorError",
+    "CursorExpiredError",
+    "CursorExhaustedError",
     "BackupManager",
     "IncrementalBackupManager",
     "PointInTimeRecoveryManager",

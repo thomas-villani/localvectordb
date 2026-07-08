@@ -23,10 +23,10 @@ Basic API Usage
 .. code-block:: bash
 
    # Check server health
-   curl http://localhost:5000/api/v1/health
+   curl http://localhost:8000/api/v1/health
 
    # Create a database
-   curl -X POST http://localhost:5000/api/v1/databases \
+   curl -X POST http://localhost:8000/api/v1/databases \
      -H "Content-Type: application/json" \
      -d '{
        "name": "my_database",
@@ -39,7 +39,7 @@ Basic API Usage
      }'
 
    # Add documents
-   curl -X POST http://localhost:5000/api/v1/my_database/documents \
+   curl -X POST http://localhost:8000/api/v1/databases/my_database/documents \
      -H "Content-Type: application/json" \
      -d '{
        "documents": ["This is my first document", "This is my second document"],
@@ -47,7 +47,7 @@ Basic API Usage
      }'
 
    # Search documents
-   curl -X POST http://localhost:5000/api/v1/my_database/query \
+   curl -X POST http://localhost:8000/api/v1/databases/my_database/query \
      -H "Content-Type: application/json" \
      -d '{
        "query": "search text",
@@ -74,7 +74,7 @@ For production use, enable API key authentication:
 
    # Use API keys in requests
    curl -H "Authorization: Bearer your_api_key_here" \
-        http://localhost:5000/api/v1/databases
+        http://localhost:8000/api/v1/databases
 
 Learn More
 ^^^^^^^^^^

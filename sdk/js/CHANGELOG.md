@@ -13,13 +13,13 @@ Initial public release. Targets the LocalVectorDB **v0.1.0** server HTTP API
 ### Added
 
 - `LocalVectorDBClient` — database management (`createDatabase`, `listDatabases`,
-  `deleteDatabase`), health/system info, cross-database `globalSearch`,
-  `embeddings`, and `factCheck`.
+  `deleteDatabase`), health/system info, cross-database `globalSearch`, and
+  `embeddings`.
 - `DatabaseHandle` — full per-database surface: document CRUD (`upsert`, `insert`,
   `get`, `update`, `delete`, `count`, `exists`, `list`), pre-chunked ingestion
   (`upsertChunks`, `insertChunks`), search (`query`, `queryMultiColumn`, `filter`),
   SSE streaming (`queryStream`), file upload with server-side extraction (`upload`),
-  schema management, embeddings, comparison, tuning/maintenance, and fact-checking.
+  schema management, embeddings, comparison, and tuning/maintenance.
 - Assembled-context query options: `context_window`, `context_unit`
   (`chunks`/`tokens`/`words`/`characters`), and `context_truncate`.
 - Typed error hierarchy mirroring server error codes (`LocalVectorDBError` and

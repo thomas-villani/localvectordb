@@ -281,22 +281,7 @@ export interface CompareDetailedOptions {
   chunk_threshold?: number;
 }
 
-export interface FactCheckOptions {
-  llm_provider?: string;
-  llm_api_key?: string;
-  model?: string;
-  similarity_threshold?: number;
-  min_grounding_score?: number;
-  search_type?: SearchType;
-  /** Number of evidence documents to retrieve (sent as `k` on the wire). */
-  k?: number;
-}
-
 export interface GlobalSearchOptions extends QueryOptions {
-  databases?: string[];
-}
-
-export interface GlobalFactCheckOptions extends FactCheckOptions {
   databases?: string[];
 }
 
@@ -330,10 +315,30 @@ export interface UploadOptions {
 // Response types (matching server JSON)
 // ---------------------------------------------------------------------------
 
+/**
+ * Server-authoritative database configuration echoed back on create.
+ *
+ * The server resolves the requested embedding/chunking settings (filling in
+ * defaults and the embedding dimension) and returns them here — treat this as
+ * the source of truth rather than the values sent in the request.
+ */
+export interface CreateDatabaseConfig {
+  name: string;
+  embedding_provider: string;
+  embedding_model: string;
+  embedding_dimension: number;
+  chunking_method: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  fts_enabled: boolean;
+  metadata_schema: Record<string, MetadataFieldDefinition>;
+  [key: string]: unknown;
+}
+
 export interface CreateDatabaseResponse {
   message: string;
   status: string;
-  config: Record<string, unknown>;
+  config: CreateDatabaseConfig;
 }
 
 export interface DatabaseListResponse {
@@ -435,7 +440,8 @@ export interface FilterResponse {
 }
 
 export interface GlobalSearchResponse {
-  results: Record<string, QueryResult[]>;
+  /** Per-database result lists, keyed by database name. */
+  results_by_database: Record<string, QueryResult[]>;
   search_type: string;
   return_type: string;
 }
@@ -520,10 +526,6 @@ export interface AutoTuneResponse {
   database: string;
   recommendation: Record<string, unknown>;
   status: string;
-}
-
-export interface FactCheckResponse {
-  [key: string]: unknown;
 }
 
 export interface UploadResponse {

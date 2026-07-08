@@ -65,15 +65,14 @@ export type {
   SetTuningOptions,
   AutoTuneOptions,
   CompareDetailedOptions,
-  FactCheckOptions,
   GlobalSearchOptions,
-  GlobalFactCheckOptions,
   DatabaseEmbeddingsOptions,
   UploadOptions,
   UploadableFile,
   SemanticFilter,
 
   // Responses
+  CreateDatabaseConfig,
   CreateDatabaseResponse,
   DatabaseListResponse,
   DatabaseInfoResponse,
@@ -102,7 +101,6 @@ export type {
   SetTuningResponse,
   MaintenanceResponse,
   AutoTuneResponse,
-  FactCheckResponse,
   UploadResponse,
   ServerErrorPayload,
 } from "./types.js";

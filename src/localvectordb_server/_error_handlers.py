@@ -18,36 +18,11 @@ from localvectordb.exceptions import (
 )
 from localvectordb_server._logcfg import request_id_var
 
-# Database names share the first path segment under /api/v1/ with the static
-# top-level endpoints, so a database may not take one of their names (e.g. a DB
-# named "databases" would make DELETE /api/v1/databases ambiguous). Reserve the
-# current static segments plus a margin of likely-future ones so that adding a
-# new top-level endpoint later stays backward compatible. Compared lower-cased.
-RESERVED_DATABASE_NAMES = frozenset(
-    {
-        # Currently mounted static segments
-        "databases",
-        "health",
-        "search",
-        "system",
-        "embeddings",
-        "factcheck",
-        # Reserved for future top-level endpoints
-        "api",
-        "v1",
-        "admin",
-        "documents",
-        "schema",
-        "tuning",
-        "streaming",
-        "stream",
-        "comparison",
-        "query",
-        "upload",
-        "metrics",
-        "status",
-    }
-)
+# Per-database routes are all namespaced under /api/v1/databases/{db_name}/...,
+# so a database name never shares a path segment with a static top-level endpoint
+# (health, search, embeddings, upload, ...). No names need to be reserved; the
+# only constraint is that the name be filesystem/path-safe (checked below).
+RESERVED_DATABASE_NAMES: frozenset[str] = frozenset()
 
 
 class APIError(Exception):
@@ -365,13 +340,6 @@ def validate_database_creation_params(data: Dict[str, Any]) -> Dict[str, Any]:
     invalid_chars = ["/", "\\", ":", "*", "?", '"', "<", ">", "|"]
     if any(char in name for char in invalid_chars):
         raise ValidationError(f"Database name contains invalid characters: {invalid_chars}", field="name", value=name)
-    if name.lower() in RESERVED_DATABASE_NAMES:
-        raise ValidationError(
-            f"'{name}' is a reserved name and cannot be used for a database "
-            "(it collides with a top-level API path).",
-            field="name",
-            value=name,
-        )
     if "metadata_schema" in data:
         validate_field_type(data, "metadata_schema", dict)
     if "database" in data:

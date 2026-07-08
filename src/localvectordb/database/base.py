@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 if TYPE_CHECKING:
     from localvectordb.cursor import QueryCursor
-    from localvectordb.query_builder import QueryBuilder
+    from localvectordb.query_builder import QueryBuilderInterface
 
 import aiosqlite
 import numpy as np
@@ -15,7 +15,15 @@ from faiss import Index
 from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema
 from localvectordb.chunking import PositionTrackingChunker
-from localvectordb.core import Chunk, Document, DocumentScoringMethod, MetadataField, QueryResult
+from localvectordb.core import (
+    Chunk,
+    Document,
+    DocumentComparisonResult,
+    DocumentScoringMethod,
+    DocumentSimilarityMatrix,
+    MetadataField,
+    QueryResult,
+)
 from localvectordb.embeddings import EmbeddingProvider
 from localvectordb.sqlite_tuning import SqliteProfile
 
@@ -234,6 +242,11 @@ class BaseVectorDB(ABC):
         """Get database statistics."""
         pass
 
+    @abstractmethod
+    async def get_stats_async(self) -> Dict[str, Any]:
+        """Get database statistics asynchronously (async twin of get_stats)."""
+        pass
+
     @property
     @abstractmethod
     def closed(self) -> bool:
@@ -274,7 +287,7 @@ class BaseVectorDB(ABC):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    def query_builder(self) -> "QueryBuilder":
+    def query_builder(self) -> "QueryBuilderInterface":
         """
         Create a new QueryBuilder for this database.
 
@@ -528,6 +541,92 @@ class BaseVectorDB(ABC):
     async def get_metadata_schema_info_async(self) -> Dict[str, Any]:
         """Get metadata schema information asynchronously."""
         pass
+
+    # ------------------------------------------------------------------
+    # Extended query and comparison surface.
+    #
+    # These are implemented by BOTH LocalVectorDB and RemoteVectorDB, so they
+    # belong to the shared contract and are declared abstract here to keep the
+    # two backends in lockstep (a missing/renamed method fails at construction
+    # instead of drifting silently). ``get_chunks`` is the one exception: it is
+    # local-only and provided as a raising default (see below).
+    #
+    # NOTE: ``query_multi_column[_async]`` and ``query_stream[_async]`` are also
+    # implemented on both backends but are intentionally NOT declared abstract
+    # here: their concrete ``return_type`` Literals differ slightly between the
+    # sync/async/remote variants (a pre-existing drift), which would trip mypy's
+    # Liskov override check. Harmonizing those signatures is a follow-up; until
+    # then they remain part of the de-facto contract without ABC enforcement.
+    # ------------------------------------------------------------------
+    @abstractmethod
+    def get_chunk_embeddings(self, chunk_ids: Union[str, List[str]]) -> "np.ndarray":
+        """Return the raw embedding vectors for one or more chunk IDs."""
+        pass
+
+    @abstractmethod
+    def compare_documents(self, doc_id_1: str, doc_id_2: str) -> float:
+        """Return the [0, 1] similarity between two documents."""
+        pass
+
+    @abstractmethod
+    async def compare_documents_async(self, doc_id_1: str, doc_id_2: str) -> float:
+        """Async twin of :meth:`compare_documents`."""
+        pass
+
+    @abstractmethod
+    def compare_documents_detailed(
+        self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7
+    ) -> DocumentComparisonResult:
+        """Return a rich chunk-level comparison between two documents."""
+        pass
+
+    @abstractmethod
+    async def compare_documents_detailed_async(
+        self, doc_id_1: str, doc_id_2: str, chunk_threshold: float = 0.7
+    ) -> DocumentComparisonResult:
+        """Async twin of :meth:`compare_documents_detailed`."""
+        pass
+
+    @abstractmethod
+    def nearest_neighbors(
+        self,
+        doc_id: str,
+        k: int = 5,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[QueryResult]:
+        """Return the *k* documents most similar to *doc_id*."""
+        pass
+
+    @abstractmethod
+    async def nearest_neighbors_async(
+        self,
+        doc_id: str,
+        k: int = 5,
+        score_threshold: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[QueryResult]:
+        """Async twin of :meth:`nearest_neighbors`."""
+        pass
+
+    @abstractmethod
+    def pairwise_similarity_matrix(self, doc_ids: Optional[List[str]] = None) -> DocumentSimilarityMatrix:
+        """Return an NxN document similarity matrix."""
+        pass
+
+    @abstractmethod
+    async def pairwise_similarity_matrix_async(self, doc_ids: Optional[List[str]] = None) -> DocumentSimilarityMatrix:
+        """Async twin of :meth:`pairwise_similarity_matrix`."""
+        pass
+
+    def get_chunks(self, document_id: str, indices: Optional[List[int]] = None) -> List[Chunk]:
+        """Return the stored chunks for a document.
+
+        Intentionally concrete (not ``@abstractmethod``): chunk retrieval is a
+        local-only capability. RemoteVectorDB inherits this raising default so a
+        local↔remote swap fails loudly here rather than with ``AttributeError``.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support get_chunks()")
 
     # Async context manager support
     async def __aenter__(self) -> "BaseVectorDB":

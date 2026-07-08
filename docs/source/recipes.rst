@@ -639,7 +639,7 @@ To set up a LocalVectorDB server for remote access and file uploads, you can use
    # We specify flags to enable auth with API keys, CORS, and file upload
    $ lvdb config init \
        --enable-auth \
-       --enable-cors --cors-origins http://localhost:5000 \
+       --enable-cors --cors-origins http://localhost:8000 \
        --enable-file-upload
 
    # Now we create an API key
@@ -729,7 +729,7 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
            const payload = { documents };
            if (metadata) payload.metadata = metadata;
 
-           return this.makeRequest(`/api/v1/${dbName}/documents`, {
+           return this.makeRequest(`/api/v1/databases/${dbName}/documents`, {
                method: 'POST',
                headers: { 'Content-Type': 'application/json' },
                body: JSON.stringify(payload)
@@ -769,7 +769,7 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
                payload.document_scoring_method = options.documentScoringMethod;
            }
 
-           return this.makeRequest(`/api/v1/${dbName}/query`, {
+           return this.makeRequest(`/api/v1/databases/${dbName}/query`, {
                method: 'POST',
                headers: { 'Content-Type': 'application/json' },
                body: JSON.stringify(payload)
@@ -796,7 +796,7 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
                formData.append('batch_size', options.batchSize.toString());
            }
 
-           return this.makeRequest(`/api/v1/${dbName}/upload`, {
+           return this.makeRequest(`/api/v1/databases/${dbName}/upload`, {
                method: 'POST',
                body: formData
                // Don't set Content-Type header - let browser set it with boundary
@@ -810,12 +810,12 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
 
        // Get database info (stats, schema, configuration)
        async getInfo(dbName) {
-           return this.makeRequest(`/api/v1/${dbName}/info`);
+           return this.makeRequest(`/api/v1/databases/${dbName}/info`);
        }
 
        // Get document by ID
        async getDocument(dbName, docId) {
-           return this.makeRequest(`/api/v1/${dbName}/documents/${docId}`);
+           return this.makeRequest(`/api/v1/databases/${dbName}/documents/${docId}`);
        }
    }
 
@@ -849,7 +849,7 @@ Complete HTML page showing how to integrate with the LocalVectorDB server.
 
            <div class="section">
                <h2>Configuration</h2>
-               <input type="text" id="serverUrl" placeholder="Server URL (e.g., http://localhost:5000)" value="http://localhost:5000">
+               <input type="text" id="serverUrl" placeholder="Server URL (e.g., http://localhost:8000)" value="http://localhost:8000">
                <input type="text" id="apiKey" placeholder="API Key">
                <input type="text" id="dbName" placeholder="Database Name" value="my_docs">
                <button onclick="initializeClient()">Connect</button>
