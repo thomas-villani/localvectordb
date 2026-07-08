@@ -318,19 +318,6 @@ Tuning & Maintenance
      apply: true,
    });
 
-Fact-Checking
--------------
-
-Check a text claim against documents in the database:
-
-.. code-block:: typescript
-
-   const result = await db.factCheck("The earth orbits the sun", {
-     llm_provider: "anthropic",
-     search_type: "hybrid",
-     k: 10,
-   });
-
 QueryOptions Reference
 ----------------------
 

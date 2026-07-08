@@ -109,7 +109,11 @@ def _normalize_chunks(chunks_by_document: Dict[str, List[Any]]) -> Dict[str, Lis
 # --------------------------------------------------------------------------- #
 
 
-@router.post("/{db_name}/documents", response_model=WriteResponse, dependencies=[Depends(require_write_permission)])
+@router.post(
+    "/databases/{db_name}/documents",
+    response_model=WriteResponse,
+    dependencies=[Depends(require_write_permission)],
+)
 @log_performance("upsert_documents")
 async def upsert_documents(
     db_name: str, body: UpsertDocumentsBody, db=Depends(get_db), config: Config = Depends(get_config)
@@ -158,7 +162,9 @@ async def upsert_documents(
 
 
 @router.post(
-    "/{db_name}/documents/insert", response_model=WriteResponse, dependencies=[Depends(require_write_permission)]
+    "/databases/{db_name}/documents/insert",
+    response_model=WriteResponse,
+    dependencies=[Depends(require_write_permission)],
 )
 @log_performance("insert_documents")
 async def insert_documents(
@@ -207,7 +213,9 @@ async def insert_documents(
 
 
 @router.post(
-    "/{db_name}/documents/chunks", response_model=WriteResponse, dependencies=[Depends(require_write_permission)]
+    "/databases/{db_name}/documents/chunks",
+    response_model=WriteResponse,
+    dependencies=[Depends(require_write_permission)],
 )
 @log_performance("upsert_from_chunks")
 async def upsert_from_chunks(db_name: str, body: UpsertChunksBody, db=Depends(get_db)):
@@ -230,7 +238,7 @@ async def upsert_from_chunks(db_name: str, body: UpsertChunksBody, db=Depends(ge
 
 
 @router.post(
-    "/{db_name}/documents/chunks/insert",
+    "/databases/{db_name}/documents/chunks/insert",
     response_model=WriteResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -263,7 +271,7 @@ async def insert_from_chunks(db_name: str, body: InsertChunksBody, db=Depends(ge
 
 
 @router.get(
-    "/{db_name}/documents/{doc_id}",
+    "/databases/{db_name}/documents/{doc_id}",
     response_model=DocumentResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -286,7 +294,7 @@ def get_document(db_name: str, doc_id: str, db=Depends(get_db)):
 
 
 @router.patch(
-    "/{db_name}/documents/{doc_id}",
+    "/databases/{db_name}/documents/{doc_id}",
     response_model=UpdateResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -320,22 +328,21 @@ async def update_document(db_name: str, doc_id: str, body: UpdateDocumentBody, d
 
 
 @router.delete(
-    "/{db_name}/documents/{doc_id}",
+    "/databases/{db_name}/documents/{doc_id}",
     response_model=DeleteResponse,
     dependencies=[Depends(require_write_permission)],
 )
 @log_performance("delete_document")
 def delete_document(db_name: str, doc_id: str, db=Depends(get_db)):
-    """Delete a document by ID."""
+    """Delete a document by ID.
+
+    Idempotent: deleting a nonexistent id returns 200 with ``deleted_count: 0``
+    rather than 404. This matches the batch delete endpoint (which reports
+    missing ids without raising) and the library's ``delete() -> int`` contract,
+    so single- and multi-delete behave consistently for a missing id.
+    """
     with request_context("delete_document"):
         try:
-            if not db.exists(doc_id):
-                raise APIError(
-                    message=f"Document '{doc_id}' not found in database '{db_name}'",
-                    error_code="DOCUMENT_NOT_FOUND",
-                    status_code=404,
-                    recoverable=True,
-                )
             deleted_count = db.delete(doc_id)
             db_logger.log_query(
                 "delete_document_success", database_name=db_name, document_id=doc_id, deleted_count=deleted_count
@@ -347,7 +354,7 @@ def delete_document(db_name: str, doc_id: str, db=Depends(get_db)):
 
 
 @router.post(
-    "/{db_name}/documents/delete",
+    "/databases/{db_name}/documents/delete",
     response_model=BatchDeleteResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -399,7 +406,7 @@ async def delete_documents_batch(db_name: str, body: BatchDeleteBody, db=Depends
 
 
 @router.post(
-    "/{db_name}/documents/count",
+    "/databases/{db_name}/documents/count",
     response_model=CountResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -419,7 +426,7 @@ async def count_documents(db_name: str, body: Optional[FilterBody] = None, db=De
 
 
 @router.post(
-    "/{db_name}/documents/exists",
+    "/databases/{db_name}/documents/exists",
     response_model=ExistsResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -436,7 +443,7 @@ async def check_documents_exist(db_name: str, body: ExistsBody, db=Depends(get_d
 
 
 @router.get(
-    "/{db_name}/documents",
+    "/databases/{db_name}/documents",
     dependencies=[Depends(require_read_permission)],
 )
 @log_performance("list_documents")

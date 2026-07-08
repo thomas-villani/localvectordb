@@ -19,7 +19,12 @@ from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
 from localvectordb_server._serializers import serialize_document, serialize_query_result
 from localvectordb_server.routers._deps import get_db, get_db_manager
-from localvectordb_server.routers._models import QueryBody, StrictModel
+from localvectordb_server.routers._models import (
+    MAX_PAGE_LIMIT,
+    DocumentResponse,
+    QueryBody,
+    StrictModel,
+)
 
 logger = logging.getLogger(__name__)
 db_logger = DatabaseLogger()
@@ -48,7 +53,7 @@ class FilterDocumentsBody(StrictModel):
 
     filters: Optional[Dict[str, Any]] = None
     order_by: Optional[str] = None
-    limit: Optional[int] = Field(default=None, ge=1, le=10000)
+    limit: Optional[int] = Field(default=None, ge=1, le=MAX_PAGE_LIMIT)
     offset: int = Field(default=0, ge=0)
 
 
@@ -78,6 +83,61 @@ class GlobalSearchBody(SearchBody):
     """Cross-database search body (adds an optional target database list)."""
 
     databases: Optional[List[str]] = None
+
+
+# --------------------------------------------------------------------------- #
+# Response models
+#
+# Per-result items are typed ``Dict[str, Any]`` on purpose: their shape is owned
+# by ``serialize_query_result`` / ``serialize_document``, and a stricter item
+# model would make FastAPI's ``response_model`` silently drop any field not
+# declared here. The envelope keys, however, are a frozen contract and are
+# locked (and surfaced in OpenAPI) by these models.
+# --------------------------------------------------------------------------- #
+
+
+class QueryResponse(StrictModel):
+    results: List[Dict[str, Any]]
+    search_type: str
+    return_type: str
+    total_results: int
+    processing_info: Dict[str, Any]
+
+
+class QueryBuilderResponse(StrictModel):
+    results: List[Dict[str, Any]]
+    total_results: int
+
+
+class MultiColumnResponse(StrictModel):
+    results: List[Dict[str, Any]]
+    search_type: str
+    return_type: str
+    total_results: int
+    columns_searched: Optional[List[str]] = None
+    processing_info: Dict[str, Any]
+
+
+class FilterInfo(StrictModel):
+    where_provided: bool
+    order_by_provided: bool
+    limit: Optional[int] = None
+    offset: int
+
+
+class FilterResponse(StrictModel):
+    documents: List[DocumentResponse]
+    count: int
+    filter_info: FilterInfo
+
+
+class GlobalSearchResponse(StrictModel):
+    # ``results_by_database`` (map keyed by db name), NOT ``results`` — every
+    # per-database endpoint returns ``results`` as a *list*, so the global
+    # endpoint uses a distinct key to keep ``results`` monomorphic across the API.
+    results_by_database: Dict[str, List[Dict[str, Any]]]
+    search_type: str
+    return_type: str
 
 
 async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -249,7 +309,11 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{db_name}/query", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/query",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("query_documents")
 async def query_documents(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Unified query interface for all search types."""
@@ -257,7 +321,11 @@ async def query_documents(db_name: str, body: SearchBody, db=Depends(get_db)):
         return await search_handler(db, db_name, body.model_dump())
 
 
-@router.post("/{db_name}/search/vector", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/search/vector",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("vector_search")
 async def vector_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Vector similarity search (convenience endpoint)."""
@@ -267,7 +335,11 @@ async def vector_search(db_name: str, body: SearchBody, db=Depends(get_db)):
         return await search_handler(db, db_name, params)
 
 
-@router.post("/{db_name}/search/keyword", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/search/keyword",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("keyword_search")
 async def keyword_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Keyword search (convenience endpoint)."""
@@ -277,7 +349,11 @@ async def keyword_search(db_name: str, body: SearchBody, db=Depends(get_db)):
         return await search_handler(db, db_name, params)
 
 
-@router.post("/{db_name}/search/hybrid", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/search/hybrid",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("hybrid_search")
 async def hybrid_search(db_name: str, body: SearchBody, db=Depends(get_db)):
     """Hybrid search (convenience endpoint)."""
@@ -287,7 +363,11 @@ async def hybrid_search(db_name: str, body: SearchBody, db=Depends(get_db)):
         return await search_handler(db, db_name, params)
 
 
-@router.post("/{db_name}/query-builder", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/query-builder",
+    response_model=QueryBuilderResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("query_builder")
 async def query_builder_execute(db_name: str, body: QueryBuilderStateBody, db=Depends(get_db)):
     """Execute a QueryBuilder query with full state from client.
@@ -362,7 +442,11 @@ async def query_builder_execute(db_name: str, body: QueryBuilderStateBody, db=De
             raise
 
 
-@router.post("/{db_name}/query-multi-column", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/query-multi-column",
+    response_model=MultiColumnResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("query_multi_column")
 async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get_db)):
     """Query across multiple columns (main content + embedding-enabled metadata fields)."""
@@ -419,7 +503,11 @@ async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get
             raise
 
 
-@router.post("/{db_name}/filter", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/databases/{db_name}/filter",
+    response_model=FilterResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("filter_documents")
 async def filter_documents(db_name: str, body: FilterDocumentsBody, db=Depends(get_db)):
     """Filter documents by metadata with enhanced filtering capabilities.
@@ -521,7 +609,11 @@ async def filter_documents(db_name: str, body: FilterDocumentsBody, db=Depends(g
 # ---------------------------------------------------------------------------
 
 
-@router.post("/search", dependencies=[Depends(require_read_permission)])
+@router.post(
+    "/search",
+    response_model=GlobalSearchResponse,
+    dependencies=[Depends(require_read_permission)],
+)
 @log_performance("global_search")
 async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manager)):
     """Search across multiple databases.
@@ -543,13 +635,17 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
     Returns::
 
         {
-            "results": {
+            "results_by_database": {
                 "db_one": [ ... ],
                 "db_two": [ ... ]
             },
             "search_type": "hybrid",
             "return_type": "documents"
         }
+
+    Note: the key is ``results_by_database`` (a map), not ``results``. Every
+    per-database endpoint returns ``results`` as a list, so the global search
+    uses a distinct key to keep ``results`` a list everywhere it appears.
     """
     with request_context("global_search"):
         try:
@@ -574,7 +670,11 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
             for db_name, db_results in results.items():
                 results[db_name] = [serialize_query_result(result) for result in db_results]
 
-            return {"results": results, "search_type": body.search_type, "return_type": body.return_type}
+            return {
+                "results_by_database": results,
+                "search_type": body.search_type,
+                "return_type": body.return_type,
+            }
 
         except Exception as e:
             db_logger.log_error("global_search", e, search_type=body.search_type)

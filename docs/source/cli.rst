@@ -3,6 +3,36 @@ Command-Line Interface
 
 The LocalVectorDB CLI provides comprehensive tools for database management, document operations, and server administration.
 
+Exit Codes
+----------
+
+Commands exit ``0`` on success and a non-zero code on failure. The semantic
+codes deliberately skip ``2``, which Click reserves for its own usage errors
+(unknown option, bad argument, missing value), so a configuration problem can
+never be confused with a usage mistake.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 88
+
+   * - Code
+     - Meaning
+   * - ``0``
+     - Success
+   * - ``1``
+     - Generic runtime error (operation failed, not found, invalid input)
+   * - ``2``
+     - Usage error — emitted by Click for unknown options, bad arguments, or
+       missing values (not raised by the commands themselves)
+   * - ``3``
+     - Ollama check failed (``lvdb serve`` could not find or reach Ollama)
+   * - ``4``
+     - Permission error (e.g. filesystem permission denied writing a config
+       file or deleting a database)
+   * - ``5``
+     - Configuration error (config file missing, unreadable, invalid, or a bad
+       ``config``/``tuning`` target)
+
 Installation
 ------------
 
@@ -41,7 +71,7 @@ Starting the Server
 **Options**:
 
 - ``--host, -H``: Interface to bind to (default: 127.0.0.1)
-- ``--port, -p``: Port to bind to (default: 5000)
+- ``--port, -p``: Port to bind to (default: 8000; falls back to ``server.port`` from config)
 - ``--debug``: Enable debug mode
 - ``--log-level, -l``: Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - ``--disable-ollama-check, -x``: Skip Ollama availability check
@@ -116,7 +146,7 @@ View Configuration
 
    [server]
    host = "127.0.0.1"
-   port = 5000
+   port = 8000
    log_level = "INFO"
    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
    max_request_size = 104857600
@@ -217,7 +247,7 @@ Set configuration values using dot notation with intelligent type conversion:
 **Options**:
 
 - ``--dry-run, -n``: Show what would be changed without saving
-- ``--force, -f``: Skip confirmation prompt
+- ``--force, -y``: Skip confirmation prompt
 
 **Type Conversion**:
 
@@ -637,7 +667,7 @@ Once you have created an API key, use it in your applications:
    # Using the API key in requests
    curl -H "Authorization: Bearer lvdb_XyZ9k2mN7qP4wR8tL3vB5nM9kJ7hF2dS6xW1qE4yT8rL9pN3mK5" \
         -H "Content-Type: application/json" \
-        -X POST http://localhost:5000/api/v1/my_database/query \
+        -X POST http://localhost:8000/api/v1/databases/my_database/query \
         -d '{"query": "machine learning", "search_type": "vector", "k": 5}'
 
 **Python Example**:
@@ -652,7 +682,7 @@ Once you have created an API key, use it in your applications:
    }
 
    response = requests.post(
-       "http://localhost:5000/api/v1/my_database/query",
+       "http://localhost:8000/api/v1/databases/my_database/query",
        headers=headers,
        json={"query": "neural networks", "search_type": "vector", "k": 10}
    )
@@ -666,7 +696,7 @@ Once you have created an API key, use it in your applications:
 
    # Use in application
    curl -H "Authorization: Bearer $LVDB_API_KEY" \
-        -X GET http://localhost:5000/api/v1/my_database/info
+        -X GET http://localhost:8000/api/v1/databases/my_database/info
 
 Security Best Practices
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -900,11 +930,11 @@ Get Documents
    lvdb db my_database get doc_1 --output retrieved_doc.txt
 
    # JSON output
-   lvdb db my_database get doc_1 --json
+   lvdb db my_database get doc_1 --format json
 
 By default ``get`` returns the whole document. The following flags return a
 **part** of the document instead and are mutually exclusive (only one may be
-given per invocation). They compose with ``--json``, ``--pretty``,
+given per invocation). They compose with ``--format, -f``, ``--pretty``,
 ``--metadata`` and ``--output``.
 
 .. code-block:: bash
@@ -929,7 +959,7 @@ given per invocation). They compose with ``--json``, ``--pretty``,
 
 - ``--chunk M[:N]``: Return the persisted chunk at 0-based index ``M`` (as it
   was stored at ingest), or the inclusive range ``M:N``. Open-ended forms
-  ``M:``/``:N``/``:`` are accepted. In ``--json`` mode each chunk is emitted
+  ``M:``/``:N``/``:`` are accepted. In ``--format, -f`` mode each chunk is emitted
   with its ``index``, ``content`` and full ``position``.
 - ``--range M:N``: Return the character slice ``content[M:N]`` (0-based,
   end-exclusive). Open-ended forms are accepted.
@@ -942,7 +972,7 @@ given per invocation). They compose with ``--json``, ``--pretty``,
   available headings are listed.
 - ``--outline``: Print the document's section outline as an indented tree
   (or a JSON list of ``{index, heading, level, start_line, end_line}`` with
-  ``--json``).
+  ``--format, -f``).
 
 Update Documents
 """"""""""""""""
@@ -981,7 +1011,7 @@ List Documents
    lvdb db my_database list --output doc_ids.txt
 
    # JSON format
-   lvdb db my_database list --json
+   lvdb db my_database list --format json
 
 Search Operations
 ^^^^^^^^^^^^^^^^^
@@ -1023,7 +1053,7 @@ Search Operations
    lvdb db my_database search "AI" --output search_results.txt
 
    # JSON output
-   lvdb db my_database search "algorithms" --json --metadata
+   lvdb db my_database search "algorithms" --format json --metadata
 
 **Options**:
 
@@ -1037,9 +1067,9 @@ Search Operations
 - ``--context-unit``: Unit for ``--context-window`` (``chunks``, ``tokens``, ``words``, ``characters``) - defaults to ``chunks``
 - ``--context-truncate``: Hard-truncate assembled context to exactly the budget (non-chunk ``--context-unit`` only)
 - ``--metadata-filter``: Metadata filter in JSON format
-- ``--metadata/--no-metadata, -m``: Include metadata in output
+- ``--metadata/--no-metadata``: Include metadata in output
 - ``--pretty, -p``: Human-readable, titled output
-- ``--json, -j``: JSON output
+- ``--format, -f``: Output format (``table`` or ``json``, default ``table``); ``-j`` is a shortcut for ``--format json``
 - ``--output, -o``: Write results to a file instead of stdout
 
 **Context Results**:
@@ -1117,7 +1147,7 @@ itself.
 
    # Pretty, JSON, or file output (same conventions as search)
    lvdb db my_database related doc_1 --pretty --metadata
-   lvdb db my_database related doc_1 --json
+   lvdb db my_database related doc_1 --format json
    lvdb db my_database related doc_1 --output related.txt
 
 **Options**:
@@ -1125,9 +1155,9 @@ itself.
 - ``--limit, -n``: Maximum number of related documents (default: 5)
 - ``--score-threshold``: Minimum similarity score to include (default: 0.0)
 - ``--metadata-filter``: Metadata filter (JSON) applied to candidate documents
-- ``--metadata/--no-metadata, -m``: Include metadata in output
+- ``--metadata/--no-metadata``: Include metadata in output
 - ``--pretty, -p``: Human-readable, titled output
-- ``--json, -j``: JSON output
+- ``--format, -f``: Output format (``table`` or ``json``, default ``table``); ``-j`` is a shortcut for ``--format json``
 - ``--output, -o``: Write results to a file instead of stdout
 
 Results are returned as ``QueryResult`` objects (``type="document"``) sorted by
@@ -1212,10 +1242,10 @@ Update database metadata schema from files or JSON strings, with optional column
 **Options**:
 
 - ``--schema, -s``: JSON string or path to JSON file containing new schema definition
-- ``--mapping, -m``: Column mapping as JSON string or path to JSON file (old_name: new_name)
+- ``--mapping``: Column mapping as JSON string or path to JSON file (old_name: new_name)
 - ``--drop-columns, --drop``: Actually drop removed columns (WARNING: data loss)
 - ``--dry-run, --dry``: Show what would be changed without making changes
-- ``--force, -f``: Skip confirmation prompts
+- ``--force``: Skip confirmation prompts
 - ``--verbose, -v``: Show detailed output
 
 **Schema File Format**:
@@ -1908,7 +1938,7 @@ Shell vs CLI Command Comparison
 .. code-block:: bash
 
    # Scripting and automation
-   lvdb db prod search "query" --json > results.json
+   lvdb db prod search "query" --format json > results.json
 
    # One-time operations
    lvdb db prod add important_doc.txt
@@ -1996,7 +2026,7 @@ Bulk Operations
    lvdb db papers add papers.txt --metadata metadata.json --id ids.txt
 
    # Search and save results for further processing
-   lvdb db papers search "deep learning" --json --output dl_papers.json
+   lvdb db papers search "deep learning" --format json --output dl_papers.json
 
    # Batch process search results
    for query in "neural networks" "machine learning" "computer vision"; do
@@ -2062,7 +2092,7 @@ Pipeline Integration
    touch /tmp/last_processed
 
    # Search and generate report
-   lvdb db research_pipeline search "quarterly report" --json > quarterly_matches.json
+   lvdb db research_pipeline search "quarterly report" --format json > quarterly_matches.json
 
 Troubleshooting
 ---------------
@@ -2165,7 +2195,7 @@ Create Backups
 - ``--compression, -c``: Compression algorithm (none, gzip, lzma, bzip2; default ``gzip``)
 - ``--no-verify``: Skip backup integrity verification after creation
 - ``--exclude-faiss``: Exclude the FAISS index from the backup
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 List Backups
 ^^^^^^^^^^^^^
@@ -2182,7 +2212,7 @@ List Backups
    lvdb backup list --type full --limit 10
 
    # Scan a specific backup location, in JSON format
-   lvdb backup list --location /backups/localvectordb --json
+   lvdb backup list --location /backups/localvectordb --format json
 
 **Options**:
 
@@ -2190,7 +2220,7 @@ List Backups
 - ``--type, -t``: Filter by backup type (full, incremental)
 - ``--limit, -n``: Limit the number of backups shown
 - ``--location, -l``: Backup storage location to scan (default ``./backups``)
-- ``--json``: Output in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 **Example Output**:
 
@@ -2220,14 +2250,14 @@ Restore Backups
    lvdb backup restore backup_20241201_001 --to-location ./restored --overwrite
 
    # Restore from a specific backup store, JSON output
-   lvdb backup restore abc12345 --location /backups/localvectordb --json
+   lvdb backup restore abc12345 --location /backups/localvectordb --format json
 
 **Options**:
 
 - ``--to-location, -t``: Directory to restore to (default: the backup's original location)
 - ``--overwrite``: Overwrite existing files without confirmation
 - ``--location, -l``: Backup storage location to read from (default ``./backups``)
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 The ``BACKUP_ID`` argument accepts a partial ID; the first matching backup file is used.
 For incremental backups the full backup chain is located and applied automatically.
@@ -2241,12 +2271,12 @@ Verify Backups
    lvdb backup verify abc12345
 
    # Verify a backup in a specific store, JSON output
-   lvdb backup verify backup_20241201_001 --location /backups/localvectordb --json
+   lvdb backup verify backup_20241201_001 --location /backups/localvectordb --format json
 
 **Options**:
 
 - ``--location, -l``: Backup storage location to read from (default ``./backups``)
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 **Example Output**:
 
@@ -2278,7 +2308,7 @@ Clean Up Backups
    lvdb backup cleanup --keep-full 5 --dry-run
 
    # Clean up a specific backup store, JSON output
-   lvdb backup cleanup --location /backups/localvectordb --json
+   lvdb backup cleanup --location /backups/localvectordb --format json
 
 **Options**:
 
@@ -2286,7 +2316,7 @@ Clean Up Backups
 - ``--keep-full``: Minimum number of full backups to keep (default ``3``)
 - ``--location, -l``: Backup storage location (default ``./backups``)
 - ``--dry-run``: Show what would be deleted without actually deleting
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 ``cleanup`` operates on all backups in the store (it takes no database argument) while
 maintaining backup-chain integrity and keeping a minimum number of full backups.
@@ -2303,7 +2333,7 @@ Point-in-Time Recovery
    lvdb backup pitr "2024-12-01T14:30:00Z" --to-location ./restored --tolerance 120 --dry-run
 
    # Read from a specific backup store, JSON output
-   lvdb backup pitr "2024-12-01 14:30:00" --to-location ./restored --location /backups/localvectordb --json
+   lvdb backup pitr "2024-12-01 14:30:00" --to-location ./restored --location /backups/localvectordb --format json
 
 **Options**:
 
@@ -2311,7 +2341,7 @@ Point-in-Time Recovery
 - ``--tolerance``: Tolerance in minutes for finding a recovery point (default ``60``)
 - ``--location, -l``: Backup storage location (default ``./backups``)
 - ``--dry-run``: Validate recovery without actually restoring
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 The ``TIMESTAMP`` argument accepts ``YYYY-MM-DD HH:MM:SS`` or ISO-8601 format. The database
 name is read from the backup store, so it is not passed on the command line.
@@ -2360,12 +2390,12 @@ Migration Status
    lvdb migrate status my_database --migrations-dir ./custom_migrations
 
    # JSON output for automation
-   lvdb migrate status my_database --json
+   lvdb migrate status my_database --format json
 
 **Options**:
 
 - ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
-- ``--json``: Output status in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 **Example Output**:
 
@@ -2410,12 +2440,12 @@ Apply Migrations
 
 **Options**:
 
-- ``--to-version, -v``: Target version to migrate to (default: latest)
+- ``--to-version``: Target version to migrate to (default: latest)
 - ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
 - ``--backup/--no-backup``: Create a backup before migrating (default: enabled)
 - ``--backup-location, -b``: Backup storage location (default ``./backups``)
 - ``--dry-run``: Validate migrations without applying them
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 **Example Migration Session**:
 
@@ -2469,7 +2499,7 @@ Rollback Migrations
 - ``--backup/--no-backup``: Create a backup before rolling back (default: enabled)
 - ``--backup-location, -b``: Backup storage location (default ``./backups``)
 - ``--dry-run``: Validate the rollback without applying it
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 Both the ``DATABASE_NAME`` and ``TARGET_VERSION`` positional arguments are required.
 
@@ -2489,10 +2519,10 @@ Create Migration Templates
 
 **Options**:
 
-- ``--version, -v``: Version number for the migration, e.g. ``1.2.0`` (**required**)
+- ``--version``: Version number for the migration, e.g. ``1.2.0`` (**required**)
 - ``--migrations-dir, -m``: Directory to create the migration in (default ``./migrations``)
 - ``--template, -t``: Template type — ``basic`` (default), ``schema``, or ``data``
-- ``--json``: Output the result in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 **Example Generated Migration**:
 
@@ -2569,7 +2599,7 @@ List Migrations
    lvdb migrate list
 
    # Show each migration's dependencies, JSON output
-   lvdb migrate list --show-dependencies --json
+   lvdb migrate list --show-dependencies --format json
 
    # List migrations from a custom directory
    lvdb migrate list --migrations-dir ./custom_migrations
@@ -2578,7 +2608,7 @@ List Migrations
 
 - ``--migrations-dir, -m``: Directory containing migration files (default ``./migrations``)
 - ``--show-dependencies, -d``: Show migration dependencies
-- ``--json``: Output in JSON format
+- ``--format, -f``: Output format (``table`` (default) or ``json``); ``-j`` is a shortcut for ``--format json``
 
 ``list`` scans the migrations directory itself, so it takes no database argument.
 
@@ -2785,7 +2815,7 @@ Start MCP Server
    lvdb mcp serve --databases-root /data/vector_databases
 
    # Start with database mapping
-   lvdb mcp serve --databases-map '{"papers": "/data/research", "docs": "http://remote-server:5000/docs"}'
+   lvdb mcp serve --databases-map '{"papers": "/data/research", "docs": "http://remote-server:8000/docs"}'
 
    # Start with debug logging
    lvdb mcp serve --log-level DEBUG
@@ -2821,7 +2851,7 @@ template. See :doc:`mcp` for the complete configuration reference.
    [databases.map]
    research = "/data/research_papers"
    documentation = "/data/docs"
-   shared_knowledge = "http://knowledge-server:5000/shared"
+   shared_knowledge = "http://knowledge-server:8000/shared"
 
 **Claude Desktop Integration**:
 

@@ -34,7 +34,7 @@ export async function* streamQuery(
   // Use postRaw so we get the raw Response with a readable body stream.
   // Pass a very long timeout / no timeout — streaming can take a while.
   const response = await httpClient.postRaw(
-    `/api/v1/${encodeURIComponent(dbName)}/query/stream`,
+    `/api/v1/databases/${encodeURIComponent(dbName)}/query/stream`,
     body,
   );
 

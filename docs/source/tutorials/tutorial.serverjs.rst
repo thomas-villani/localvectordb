@@ -47,7 +47,7 @@ During the interactive setup, choose these options:
 
 * **Configuration file path**: `./.lvdb-config.toml` (default)
 * **Server host**: `127.0.0.1`
-* **Server port**: `5000`
+* **Server port**: `8000`
 * **Database directory**: `./search-demo-db`
 * **Enable CORS**: `Yes` (important for web applications!)
 * **CORS origins**: `localhost` or `all` (for development **only**)
@@ -86,7 +86,7 @@ Start the Server
    # Start the LocalVectorDB server
    lvdb serve
 
-You should see output indicating the server is running on `http://127.0.0.1:5000`. Keep this terminal window open while developing the web application.
+You should see output indicating the server is running on `http://127.0.0.1:8000`. Keep this terminal window open while developing the web application.
 
 Creating the Web Application
 ============================
@@ -516,7 +516,7 @@ JavaScript Functionality (script.js)
 .. code-block:: javascript
 
    // Configuration
-   const API_BASE_URL = 'http://127.0.0.1:5000/api/v1';
+   const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
    const DATABASE_NAME = 'search_demo';
 
    // DOM Elements
@@ -563,7 +563,7 @@ JavaScript Functionality (script.js)
            }
        } catch (error) {
            console.error('❌ Server connection failed:', error);
-           showError('Cannot connect to LocalVectorDB server. Please ensure it is running on http://127.0.0.1:5000');
+           showError('Cannot connect to LocalVectorDB server. Please ensure it is running on http://127.0.0.1:8000');
        }
    }
 
@@ -831,7 +831,7 @@ here and load the front-end files separately in the next step.
    # Start the LocalVectorDB server (serves the API only)
    lvdb serve
 
-You should see output indicating the server is running on `http://127.0.0.1:5000`.
+You should see output indicating the server is running on `http://127.0.0.1:8000`.
 
 Access Your Search Engine
 -------------------------
@@ -842,7 +842,7 @@ yourself. You have two easy options:
 **Option A -- open the file directly**
 
 Just double-click ``index.html`` (or drag it into your browser). It will load from a
-``file://`` URL and call the API at ``http://127.0.0.1:5000``. This is a cross-origin request,
+``file://`` URL and call the API at ``http://127.0.0.1:8000``. This is a cross-origin request,
 which is exactly why we enabled CORS during configuration -- without it the browser would
 block the requests.
 
@@ -857,9 +857,9 @@ Serve the three files over HTTP from their directory using Python's built-in ser
 
 Then:
 
-1. Make sure your LocalVectorDB API server is running on port 5000 (``lvdb serve``).
+1. Make sure your LocalVectorDB API server is running on port 8000 (``lvdb serve``).
 2. Open your browser and navigate to ``http://127.0.0.1:8080/index.html``.
-3. (Either option) The page calls the API at ``http://127.0.0.1:5000/api/v1`` -- keep that
+3. (Either option) The page calls the API at ``http://127.0.0.1:8000/api/v1`` -- keep that
    server running too.
 
 You should see your search engine! Try searching for terms like:
@@ -921,7 +921,7 @@ Troubleshooting
    .. code-block:: bash
 
       # Check if server is responding
-      curl http://127.0.0.1:5000/api/v1/health
+      curl http://127.0.0.1:8000/api/v1/health
 
 **No Search Results**
    Make sure you have documents in your database:

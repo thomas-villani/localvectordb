@@ -64,7 +64,19 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Literal, Optional, Union, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    Union,
+    overload,
+    runtime_checkable,
+)
 
 import numpy as np
 
@@ -85,6 +97,29 @@ class SimilarityMetric(Enum):
     EUCLIDEAN = "euclidean"
     DOT_PRODUCT = "dot_product"
     MANHATTAN = "manhattan"
+
+    @classmethod
+    def from_value(cls, value: "SimilarityMetric | str") -> "SimilarityMetric":
+        """Coerce a metric to the enum, accepting the string forms sent over HTTP.
+
+        The remote query-builder path (and the ``/query-builder`` endpoint) pass
+        ``metric`` as a plain string, and the client's public API uses ``"dot"``
+        as the short form of ``dot_product``. Without this coercion a remote
+        ``semantic_filter`` with a non-default metric stored a bare string that
+        never compared equal to any enum member, raising "Unsupported similarity
+        metric" at execution time.
+        """
+        if isinstance(value, cls):
+            return value
+        key = str(value).strip().lower()
+        aliases = {"dot": cls.DOT_PRODUCT, "dotproduct": cls.DOT_PRODUCT}
+        if key in aliases:
+            return aliases[key]
+        try:
+            return cls(key)
+        except ValueError as exc:
+            valid = ", ".join(m.value for m in cls)
+            raise ValueError(f"Unsupported similarity metric: {value!r} (expected one of: {valid}, dot)") from exc
 
 
 @dataclass
@@ -260,6 +295,117 @@ class AggregationClause:
 FILTER_OPERATOR_NAMES = tuple(map(lambda x: x[1:], FILTER_OPERATORS))
 
 
+@runtime_checkable
+class QueryBuilderInterface(Protocol):
+    """Portable fluent contract shared by the local and remote query builders.
+
+    This :class:`typing.Protocol` declares the subset of the fluent API that
+    **both** :class:`QueryBuilder` (local, SQLite + FAISS) and
+    ``RemoteQueryBuilder`` (HTTP, server-side execution) can honour identically.
+    A chain written against this surface -- e.g.
+    ``db.query_builder().search(...).filter(...).order_by(...).limit(...).execute()``
+    -- behaves the same whether ``db`` is a ``LocalVectorDB`` or a
+    ``RemoteVectorDB``. ``VectorDB()`` therefore returns this type so callers can
+    migrate local-to-remote without touching their query code.
+
+    A ``Protocol`` (structural typing) is used deliberately instead of an ABC to
+    avoid MRO/method-shadowing issues in the local mixin hierarchy; conformance
+    is asserted statically at the bottom of this module and in ``client.py``.
+
+    Deliberately excluded (not portable, hence not part of the shared contract):
+
+    - ``search_level`` / ``semantic_dedup`` -- accepted locally but the server's
+      QueryBuilder-execute endpoint has no state field for them, so the remote
+      backend cannot honour them (it raises ``NotImplementedError``).
+    - ``having`` / ``having_count``, ``rerank*``, ``explain``, ``validate``,
+      ``debug_info``, ``cursor`` / ``stream`` / ``get_execution_plan*`` -- local
+      only; the remote backend has no server-side equivalent.
+
+    Note also that granular arguments that the server does not read
+    (``context`` window size, ``documents`` scoring options) are accepted by the
+    remote builder for signature parity but currently governed by server
+    defaults; see the corresponding ``RemoteQueryBuilder`` methods.
+    """
+
+    # Search
+    def search(
+        self,
+        query: str,
+        search_type: Optional[str] = None,
+        vector_weight: Optional[float] = None,
+        score_threshold: Optional[float] = None,
+    ) -> "QueryBuilderInterface": ...
+
+    def search_field(self, field: str, query: str) -> "QueryBuilderInterface": ...
+
+    def filter(self, field: Optional[str] = None, value: Any = None, **kwargs: Any) -> "QueryBuilderInterface": ...
+
+    def semantic_filter(
+        self, field: str, concept: str, threshold: float = ..., metric: Any = ...
+    ) -> "QueryBuilderInterface": ...
+
+    def vector(self, query: str, score_threshold: Optional[float] = None) -> "QueryBuilderInterface": ...
+
+    def keyword(self, query: str, score_threshold: Optional[float] = None) -> "QueryBuilderInterface": ...
+
+    def hybrid(
+        self, query: str, vector_weight: float = ..., score_threshold: Optional[float] = None
+    ) -> "QueryBuilderInterface": ...
+
+    # Return-type configuration
+    def documents(
+        self, scoring_method: Any = ..., scoring_options: Optional[dict] = None
+    ) -> "QueryBuilderInterface": ...
+
+    def chunks(self) -> "QueryBuilderInterface": ...
+
+    def sections(self) -> "QueryBuilderInterface": ...
+
+    def context(self, window_size: int = ...) -> "QueryBuilderInterface": ...
+
+    # Ordering
+    def order_by(self, field: str, direction: str = ...) -> "QueryBuilderInterface": ...
+
+    def order_by_score(self, direction: str = ...) -> "QueryBuilderInterface": ...
+
+    def clear_ordering(self) -> "QueryBuilderInterface": ...
+
+    # Pagination
+    def limit(self, n: int) -> "QueryBuilderInterface": ...
+
+    def offset(self, n: int) -> "QueryBuilderInterface": ...
+
+    # Grouping / aggregation
+    def group_by(self, *fields: str) -> "QueryBuilderInterface": ...
+
+    def aggregate(self, field: str, function: Any, alias: Optional[str] = None) -> "QueryBuilderInterface": ...
+
+    def count_by(self, field: str = ..., alias: Optional[str] = None) -> "QueryBuilderInterface": ...
+
+    def sum_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilderInterface": ...
+
+    def avg_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilderInterface": ...
+
+    def min_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilderInterface": ...
+
+    def max_by(self, field: str, alias: Optional[str] = None) -> "QueryBuilderInterface": ...
+
+    # Execution
+    #
+    # ``execute`` narrows to ``List[QueryResult]`` for the common (non-streaming)
+    # call both backends share; the local overloads still satisfy it. ``execute_async``
+    # is declared with the local backend's wider union return so its
+    # (non-overloaded) signature conforms -- the remote backend returns the
+    # ``List`` branch, which is a subtype.
+    def execute(self) -> List[QueryResult]: ...
+
+    async def execute_async(self) -> Union[List[QueryResult], Iterator[List[QueryResult]]]: ...
+
+    def count(self) -> int: ...
+
+    async def count_async(self) -> int: ...
+
+
 class QueryBuilder:
     """
     Fluent interface for building complex vector database queries with async support.
@@ -422,9 +568,19 @@ class QueryBuilder:
         return builder
 
     def semantic_filter(
-        self, field: str, concept: str, threshold: float = 0.8, metric: SimilarityMetric = SimilarityMetric.COSINE
+        self,
+        field: str,
+        concept: str,
+        threshold: float = 0.8,
+        metric: Union[SimilarityMetric, str] = SimilarityMetric.COSINE,
     ) -> "QueryBuilder":
-        """Add semantic filtering based on conceptual similarity."""
+        """Add semantic filtering based on conceptual similarity.
+
+        ``metric`` accepts either a :class:`SimilarityMetric` or its string form
+        (``"cosine"``, ``"euclidean"``, ``"dot"``/``"dot_product"``,
+        ``"manhattan"``); strings are coerced so the remote/query-builder path
+        works identically to the local one.
+        """
         if not field or not isinstance(field, str):
             raise ValueError("Field must be a non-empty string")
 
@@ -433,6 +589,8 @@ class QueryBuilder:
 
         if not 0 <= threshold <= 1:
             raise ValueError("Threshold must be between 0 and 1")
+
+        metric = SimilarityMetric.from_value(metric)
 
         builder = self.clone()
         semantic_filter = SemanticFilter(field, concept, threshold, metric)
@@ -1749,3 +1907,12 @@ class AsyncQueryExecutor(_QueryExecutorBase):
                 yield batch
 
     # Shared methods inherited from _QueryExecutorBase
+
+
+if TYPE_CHECKING:
+    # Static conformance guard: the local QueryBuilder must satisfy the portable
+    # QueryBuilderInterface. mypy verifies this assignment at type-check time; if
+    # a shared method's signature drifts, this stops type-checking rather than
+    # letting the local/remote contract silently diverge again.
+    def _assert_query_builder_conforms(qb: "QueryBuilder") -> QueryBuilderInterface:
+        return qb

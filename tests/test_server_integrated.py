@@ -391,7 +391,7 @@ class TestDatabaseLifecycle:
             assert result["status"] == "success"
             assert "test_lifecycle_db" in result["message"]
 
-        response = integration_client.get("/api/v1/test_lifecycle_db/info", headers=valid_auth_headers)
+        response = integration_client.get("/api/v1/databases/test_lifecycle_db/info", headers=valid_auth_headers)
         assert response.status_code == 200
         result = response.json()
         assert result["name"] == "test_lifecycle_db"
@@ -403,7 +403,7 @@ class TestDatabaseLifecycle:
 
         with patch("pathlib.Path.exists") as mock_exists, patch("os.remove"):
             mock_exists.return_value = True
-            response = integration_client.delete("/api/v1/test_lifecycle_db", headers=valid_auth_headers)
+            response = integration_client.delete("/api/v1/databases/test_lifecycle_db", headers=valid_auth_headers)
             assert response.status_code == 200
             result = response.json()
             assert result["status"] == "success"
@@ -427,21 +427,23 @@ class TestDatabaseLifecycle:
         }
 
         response = integration_client.post(
-            "/api/v1/schema_test_db/documents", json=doc_data, headers=valid_auth_headers
+            "/api/v1/databases/schema_test_db/documents", json=doc_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
         result = response.json()
         assert len(result["ids"]) == 2
 
         query_data = {"query": "test document", "search_type": "vector", "k": 5}
-        response = integration_client.post("/api/v1/schema_test_db/query", json=query_data, headers=valid_auth_headers)
+        response = integration_client.post(
+            "/api/v1/databases/schema_test_db/query", json=query_data, headers=valid_auth_headers
+        )
         assert response.status_code == 200
         result = response.json()
         assert len(result["results"]) >= 0
 
         filter_data = {"filters": {"author": "Alice"}}
         response = integration_client.post(
-            "/api/v1/schema_test_db/filter", json=filter_data, headers=valid_auth_headers
+            "/api/v1/databases/schema_test_db/filter", json=filter_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
         result = response.json()
@@ -454,18 +456,22 @@ class TestErrorHandlingIntegration:
     """Test error handling across multiple components."""
 
     def test_database_not_found_flow(self, integration_client, valid_auth_headers):
-        response = integration_client.get("/api/v1/nonexistent_db/info", headers=valid_auth_headers)
+        response = integration_client.get("/api/v1/databases/nonexistent_db/info", headers=valid_auth_headers)
         assert response.status_code == 404
 
     def test_document_not_found_flow(self, integration_client, integration_app, valid_auth_headers):
         integration_app.state.db_manager.create_db("error_test_db")
-        response = integration_client.get("/api/v1/error_test_db/documents/nonexistent", headers=valid_auth_headers)
+        response = integration_client.get(
+            "/api/v1/databases/error_test_db/documents/nonexistent", headers=valid_auth_headers
+        )
         assert response.status_code == 404
 
     def test_invalid_request_data_flow(self, integration_client, integration_app, valid_auth_headers):
         integration_app.state.db_manager.create_db("validation_test_db")
 
-        response = integration_client.post("/api/v1/validation_test_db/query", json={}, headers=valid_auth_headers)
+        response = integration_client.post(
+            "/api/v1/databases/validation_test_db/query", json={}, headers=valid_auth_headers
+        )
         assert response.status_code == 400
 
         response = integration_client.post(
@@ -489,7 +495,9 @@ class TestErrorHandlingIntegration:
 
         # Query endpoint
         query_data = {"query": "anything", "search_type": "keyword", "filters": {"no_such_field": "x"}}
-        response = integration_client.post("/api/v1/filter_error_db/query", json=query_data, headers=valid_auth_headers)
+        response = integration_client.post(
+            "/api/v1/databases/filter_error_db/query", json=query_data, headers=valid_auth_headers
+        )
         assert response.status_code == 400
         error = response.json()["error"]
         assert error["code"] == "INVALID_FILTER"
@@ -498,7 +506,9 @@ class TestErrorHandlingIntegration:
 
         # Filter endpoint
         response = integration_client.post(
-            "/api/v1/filter_error_db/filter", json={"filters": {"no_such_field": "x"}}, headers=valid_auth_headers
+            "/api/v1/databases/filter_error_db/filter",
+            json={"filters": {"no_such_field": "x"}},
+            headers=valid_auth_headers,
         )
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "INVALID_FILTER"
@@ -507,9 +517,9 @@ class TestErrorHandlingIntegration:
         protected_endpoints = [
             ("/api/v1/databases", "GET"),
             ("/api/v1/databases", "POST"),
-            ("/api/v1/test_db/info", "GET"),
-            ("/api/v1/test_db/documents", "POST"),
-            ("/api/v1/test_db/query", "POST"),
+            ("/api/v1/databases/test_db/info", "GET"),
+            ("/api/v1/databases/test_db/documents", "POST"),
+            ("/api/v1/databases/test_db/query", "POST"),
         ]
 
         for endpoint, method in protected_endpoints:
@@ -537,19 +547,23 @@ class TestMultiDatabaseOperations:
         response = integration_client.post("/api/v1/search", json=search_data, headers=valid_auth_headers)
         assert response.status_code == 200
         result = response.json()
-        assert "results" in result
-        assert len(result["results"]) >= 2
+        assert "results_by_database" in result
+        assert len(result["results_by_database"]) >= 2
 
     def test_database_isolation(self, integration_client, integration_app, valid_auth_headers):
         integration_app.state.db_manager.create_db("isolation_db1")
         integration_app.state.db_manager.create_db("isolation_db2")
 
         doc_data = {"documents": ["Document only in db1"]}
-        response = integration_client.post("/api/v1/isolation_db1/documents", json=doc_data, headers=valid_auth_headers)
+        response = integration_client.post(
+            "/api/v1/databases/isolation_db1/documents", json=doc_data, headers=valid_auth_headers
+        )
         assert response.status_code == 200
 
         query_data = {"query": "Document only in db1", "k": 5}
-        response = integration_client.post("/api/v1/isolation_db2/query", json=query_data, headers=valid_auth_headers)
+        response = integration_client.post(
+            "/api/v1/databases/isolation_db2/query", json=query_data, headers=valid_auth_headers
+        )
         assert response.status_code == 200
         result = response.json()
         assert len(result["results"]) == 0
@@ -565,7 +579,7 @@ class TestEmbeddingIntegration:
         integration_app.state.db_manager.create_db("embedding_test_db")
         embed_data = {"texts": ["test text for embedding"]}
         response = integration_client.post(
-            "/api/v1/embedding_test_db/embeddings", json=embed_data, headers=valid_auth_headers
+            "/api/v1/databases/embedding_test_db/embeddings", json=embed_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
         result = response.json()
@@ -662,26 +676,26 @@ class TestCompleteWorkflow:
             "metadata": [{"author": "Alice"}, {"author": "Bob"}],
         }
         response = integration_client.post(
-            "/api/v1/workflow_test_db/documents", json=doc_data, headers=valid_auth_headers
+            "/api/v1/databases/workflow_test_db/documents", json=doc_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
         doc_ids = response.json()["ids"]
 
         search_data = {"query": "document", "k": 5}
         response = integration_client.post(
-            "/api/v1/workflow_test_db/query", json=search_data, headers=valid_auth_headers
+            "/api/v1/databases/workflow_test_db/query", json=search_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
         update_data = {"content": "Updated first document", "metadata": {"author": "Alice Updated"}}
         # Partial document update is PATCH (was PUT) in the model-driven API.
         response = integration_client.patch(
-            f"/api/v1/workflow_test_db/documents/{doc_ids[0]}", json=update_data, headers=valid_auth_headers
+            f"/api/v1/databases/workflow_test_db/documents/{doc_ids[0]}", json=update_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
         response = integration_client.get(
-            f"/api/v1/workflow_test_db/documents/{doc_ids[0]}", headers=valid_auth_headers
+            f"/api/v1/databases/workflow_test_db/documents/{doc_ids[0]}", headers=valid_auth_headers
         )
         assert response.status_code == 200
         result = response.json()
@@ -689,17 +703,17 @@ class TestCompleteWorkflow:
 
         filter_data = {"filters": {"author": "Bob"}}
         response = integration_client.post(
-            "/api/v1/workflow_test_db/filter", json=filter_data, headers=valid_auth_headers
+            "/api/v1/databases/workflow_test_db/filter", json=filter_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
         response = integration_client.delete(
-            f"/api/v1/workflow_test_db/documents/{doc_ids[1]}", headers=valid_auth_headers
+            f"/api/v1/databases/workflow_test_db/documents/{doc_ids[1]}", headers=valid_auth_headers
         )
         assert response.status_code == 200
 
         response = integration_client.get(
-            f"/api/v1/workflow_test_db/documents/{doc_ids[1]}", headers=valid_auth_headers
+            f"/api/v1/databases/workflow_test_db/documents/{doc_ids[1]}", headers=valid_auth_headers
         )
         assert response.status_code == 404
 
@@ -708,7 +722,7 @@ class TestCompleteWorkflow:
 
         doc_data = {"documents": ["Document with original key"]}
         response = integration_client.post(
-            "/api/v1/rotation_test_db/documents", json=doc_data, headers=valid_auth_headers
+            "/api/v1/databases/rotation_test_db/documents", json=doc_data, headers=valid_auth_headers
         )
         assert response.status_code == 200
 
@@ -747,11 +761,11 @@ class TestPermissionEnforcement:
         "method, path, json_body",
         [
             ("post", "/api/v1/databases", {"name": "perm_new_db"}),
-            ("post", "/api/v1/perm_db/documents", {"documents": ["hello"]}),
-            ("post", "/api/v1/perm_db/documents/insert", {"documents": ["hello"]}),
-            ("patch", "/api/v1/perm_db/documents/doc_1", {"content": "changed"}),
-            ("delete", "/api/v1/perm_db/documents/doc_1", None),
-            ("delete", "/api/v1/perm_db", None),
+            ("post", "/api/v1/databases/perm_db/documents", {"documents": ["hello"]}),
+            ("post", "/api/v1/databases/perm_db/documents/insert", {"documents": ["hello"]}),
+            ("patch", "/api/v1/databases/perm_db/documents/doc_1", {"content": "changed"}),
+            ("delete", "/api/v1/databases/perm_db/documents/doc_1", None),
+            ("delete", "/api/v1/databases/perm_db", None),
         ],
     )
     def test_read_only_key_blocked_on_writes(self, integration_client, read_only_headers, method, path, json_body):
@@ -868,12 +882,11 @@ class TestUncoveredRoutersAuth:
     @pytest.mark.parametrize(
         "method, path",
         [
-            ("get", "/api/v1/any_db/schema"),
-            ("post", "/api/v1/any_db/query/stream"),
-            ("post", "/api/v1/any_db/upload"),
-            ("post", "/api/v1/any_db/compare"),
-            ("post", "/api/v1/any_db/factcheck"),
-            ("get", "/api/v1/any_db/tuning"),
+            ("get", "/api/v1/databases/any_db/schema"),
+            ("post", "/api/v1/databases/any_db/query/stream"),
+            ("post", "/api/v1/databases/any_db/upload"),
+            ("post", "/api/v1/databases/any_db/compare"),
+            ("get", "/api/v1/databases/any_db/tuning"),
         ],
     )
     def test_endpoint_requires_auth(self, integration_client, method, path):
@@ -893,7 +906,7 @@ class TestUncoveredRoutersHappyPath:
     def test_get_schema_info(self, integration_app, integration_client, valid_auth_headers):
         mock_db = self._prepare_db(integration_app, "schema_db")
         mock_db.get_metadata_schema_info.return_value = {"fields": {}, "field_count": 0}
-        response = integration_client.get("/api/v1/schema_db/schema", headers=valid_auth_headers)
+        response = integration_client.get("/api/v1/databases/schema_db/schema", headers=valid_auth_headers)
         assert response.status_code == 200
         body = response.json()
         assert body["database"] == "schema_db"
@@ -903,7 +916,7 @@ class TestUncoveredRoutersHappyPath:
         mock_db = self._prepare_db(integration_app, "cmp_db")
         mock_db.compare_documents.return_value = 0.87
         response = integration_client.post(
-            "/api/v1/cmp_db/compare",
+            "/api/v1/databases/cmp_db/compare",
             json={"doc_id_1": "a", "doc_id_2": "b"},
             headers=valid_auth_headers,
         )
@@ -913,7 +926,7 @@ class TestUncoveredRoutersHappyPath:
     def test_get_tuning(self, integration_app, integration_client, valid_auth_headers):
         mock_db = self._prepare_db(integration_app, "tune_db")
         mock_db.get_sqlite_tuning.return_value = {"profile": "balanced", "pragmas": {}}
-        response = integration_client.get("/api/v1/tune_db/tuning", headers=valid_auth_headers)
+        response = integration_client.get("/api/v1/databases/tune_db/tuning", headers=valid_auth_headers)
         assert response.status_code == 200
         assert response.json()["tuning"]["profile"] == "balanced"
 
@@ -922,7 +935,7 @@ class TestUncoveredRoutersHappyPath:
         integration_app.state.config.server.file_upload_enabled = True
         files = {"files": ("note.txt", b"hello world from an uploaded file", "text/plain")}
         response = integration_client.post(
-            "/api/v1/upload_db/upload",
+            "/api/v1/databases/upload_db/upload",
             files=files,
             data={"use_filename_as_id": "true"},
             headers=valid_auth_headers,
@@ -940,11 +953,11 @@ class TestUncoveredRoutersHappyPath:
         del mock_db.query_cursor_async
         del mock_db.query_stream
         integration_client.post(
-            "/api/v1/stream_db/documents", json={"documents": ["hello world"]}, headers=valid_auth_headers
+            "/api/v1/databases/stream_db/documents", json={"documents": ["hello world"]}, headers=valid_auth_headers
         )
         with integration_client.stream(
             "POST",
-            "/api/v1/stream_db/query/stream",
+            "/api/v1/databases/stream_db/query/stream",
             json={"query": "hello", "search_type": "vector", "k": 5},
             headers=valid_auth_headers,
         ) as response:
@@ -953,7 +966,7 @@ class TestUncoveredRoutersHappyPath:
         assert "done" in body
 
     def test_missing_db_returns_404(self, integration_client, valid_auth_headers):
-        response = integration_client.get("/api/v1/does_not_exist/schema", headers=valid_auth_headers)
+        response = integration_client.get("/api/v1/databases/does_not_exist/schema", headers=valid_auth_headers)
         assert response.status_code == 404
 
 
@@ -963,26 +976,34 @@ class TestHTTPContractRegressions:
     """Regression tests for the v0.1.0 HTTP contract hardening."""
 
     def test_delete_nonexistent_database_returns_404(self, integration_client, valid_auth_headers):
-        response = integration_client.delete("/api/v1/never_created_db", headers=valid_auth_headers)
+        response = integration_client.delete("/api/v1/databases/never_created_db", headers=valid_auth_headers)
         assert response.status_code == 404
         body = response.json()
         # Standard error envelope, not a 200 "no action taken".
         assert body["error"]["code"] == "DATABASE_NOT_FOUND"
 
-    def test_reserved_database_name_rejected(self, integration_client, valid_auth_headers):
+    def test_formerly_reserved_database_name_now_allowed(self, integration_client, valid_auth_headers):
+        # Per-database routes are namespaced under /api/v1/databases/{db_name},
+        # so names that used to collide with top-level segments (e.g. "search")
+        # are no longer reserved and must create successfully.
         response = integration_client.post(
             "/api/v1/databases",
-            json={"name": "databases", "embedding_provider": "mock", "embedding_model": "test-model"},
+            json={"name": "search"},
             headers=valid_auth_headers,
         )
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+
+        # And the namespaced info route for that database resolves without
+        # colliding with the global /api/v1/search endpoint.
+        info = integration_client.get("/api/v1/databases/search/info", headers=valid_auth_headers)
+        assert info.status_code == 200
 
     def test_query_builder_path_is_hyphenated(self, integration_app):
         # The public path is /query-builder; the old underscore path must be gone.
         paths = {r.path for r in integration_app.routes}
-        assert "/api/v1/{db_name}/query-builder" in paths
-        assert "/api/v1/{db_name}/query_builder" not in paths
+        assert "/api/v1/databases/{db_name}/query-builder" in paths
+        assert "/api/v1/databases/{db_name}/query_builder" not in paths
 
 
 class TestRateLimitEnvelope:

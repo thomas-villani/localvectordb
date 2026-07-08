@@ -69,7 +69,7 @@ List backups in JSON format:
 
 .. code-block:: bash
 
-    $ lvdb backup list --database mydatabase --json
+    $ lvdb backup list --database mydatabase --format json
 
 Restoring from Backup
 ^^^^^^^^^^^^^^^^^^^^^
@@ -440,7 +440,7 @@ To verify several backups, list them first and verify each ID:
 
 .. code-block:: bash
 
-    $ lvdb backup list --json
+    $ lvdb backup list --format json
 
 **Python API:**
 

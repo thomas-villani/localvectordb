@@ -11,6 +11,7 @@ from typing import Optional
 
 import click
 
+from localvectordb_server.cli._utils import error
 from localvectordb_server.mcp.config import MCPConfig
 
 
@@ -53,9 +54,8 @@ def serve(mode, config, databases_root, databases_map, log_level):
             mapping = json.loads(databases_map)
             env_format = ",".join(f"{k}={v}" for k, v in mapping.items())
             os.environ["LVDB_MCP_DATABASES_MAP"] = env_format
-        except json.JSONDecodeError as e:
-            click.echo("Error: Invalid JSON for databases-map", err=True)
-            raise click.Abort() from e
+        except json.JSONDecodeError:
+            error("Error: Invalid JSON for databases-map")
 
     # Configure logging (to stderr so it doesn't interfere with stdio)
     logging.basicConfig(
@@ -119,8 +119,7 @@ def status(config):
             click.echo(f"  ... and {len(enabled_tools) - 10} more")
 
     except Exception as e:
-        click.echo(f"Error checking status: {e}", err=True)
-        raise click.Abort() from e
+        error(f"Error checking status: {e}")
 
 
 @mcp_commands.command()
@@ -169,8 +168,7 @@ def test(mode, config):
         click.echo("All tests passed!")
 
     except Exception as e:
-        click.echo(f"Test failed: {e}", err=True)
-        raise click.Abort() from e
+        error(f"Test failed: {e}")
 
 
 @mcp_commands.command()
@@ -265,7 +263,7 @@ root = {_toml_scalar(cfg.databases_root)}
 # Map specific database names to paths or URLs
 # [databases.map]
 # docs = "./my_databases"
-# remote_docs = "http://localhost:5000"
+# remote_docs = "http://localhost:8000"
 
 [defaults]
 # Default parameters for database creation

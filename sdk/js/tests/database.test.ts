@@ -35,7 +35,7 @@ describe("DatabaseHandle", () => {
   // Info
   // -----------------------------------------------------------------------
 
-  it("info() calls GET /api/v1/{name}/info", async () => {
+  it("info() calls GET /api/v1/databases/{name}/info", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
       jsonResponse({ name: "testdb", stats: {}, config: {} }),
@@ -45,7 +45,7 @@ describe("DatabaseHandle", () => {
     expect(result.name).toBe("testdb");
 
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/info");
+    expect(url).toBe("http://localhost:5000/api/v1/databases/testdb/info");
   });
 
   // -----------------------------------------------------------------------
@@ -79,7 +79,9 @@ describe("DatabaseHandle", () => {
     await db.insert("single doc", { errors: "ignore" });
 
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/documents/insert");
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/databases/testdb/documents/insert",
+    );
   });
 
   // -----------------------------------------------------------------------
@@ -96,7 +98,9 @@ describe("DatabaseHandle", () => {
     expect(doc.id).toBe("abc");
 
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/documents/abc");
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/databases/testdb/documents/abc",
+    );
   });
 
   it("get(string[]) calls GET /documents?ids=...", async () => {
@@ -130,8 +134,32 @@ describe("DatabaseHandle", () => {
     await db.update("doc1", { content: "new content" });
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/documents/doc1");
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/databases/testdb/documents/doc1",
+    );
     expect(init?.method).toBe("PATCH");
+  });
+
+  it("update() resolves { updated: false } on 404 DOCUMENT_NOT_FOUND", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: "DOCUMENT_NOT_FOUND",
+            message: "document 'missing' not found",
+            timestamp: "2026-01-01T00:00:00Z",
+            request_id: "req-1",
+            details: {},
+            recoverable: false,
+          },
+        },
+        404,
+      ),
+    );
+
+    const result = await db.update("missing", { content: "x" });
+    expect(result.updated).toBe(false);
   });
 
   // -----------------------------------------------------------------------
@@ -147,8 +175,20 @@ describe("DatabaseHandle", () => {
     await db.delete("doc1");
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/documents/doc1");
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/databases/testdb/documents/doc1",
+    );
     expect(init?.method).toBe("DELETE");
+  });
+
+  it("delete(string) of a missing id resolves with deleted_count 0 (idempotent)", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ message: "not found", deleted_count: 0 }),
+    );
+
+    const result = await db.delete("missing");
+    expect(result.deleted_count).toBe(0);
   });
 
   it("delete(string[]) calls POST /documents/delete", async () => {
@@ -160,7 +200,9 @@ describe("DatabaseHandle", () => {
     await db.delete(["doc1", "doc2"]);
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/documents/delete");
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/databases/testdb/documents/delete",
+    );
     expect(init?.method).toBe("POST");
   });
 
@@ -275,7 +317,7 @@ describe("DatabaseHandle", () => {
     await db.getSchema();
 
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:5000/api/v1/testdb/schema");
+    expect(url).toBe("http://localhost:5000/api/v1/databases/testdb/schema");
   });
 
   // -----------------------------------------------------------------------
@@ -318,26 +360,6 @@ describe("DatabaseHandle", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Fact-Check
-  // -----------------------------------------------------------------------
-
-  it("factCheck() sends text and options", async () => {
-    const db = client().database("testdb");
-    vi.mocked(globalThis.fetch).mockResolvedValue(jsonResponse({ verdict: "supported" }));
-
-    await db.factCheck("The earth is round", { llm_provider: "anthropic", k: 5 });
-
-    const body = JSON.parse(
-      vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string,
-    );
-    expect(body.text).toBe("The earth is round");
-    expect(body.llm_provider).toBe("anthropic");
-    // Top-k is sent as `k` on the wire (server rejects `top_k`).
-    expect(body.k).toBe(5);
-    expect(body.top_k).toBeUndefined();
-  });
-
-  // -----------------------------------------------------------------------
   // Maintenance (hyphenated server paths)
   // -----------------------------------------------------------------------
 
@@ -351,7 +373,7 @@ describe("DatabaseHandle", () => {
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
     expect(url).toBe(
-      "http://localhost:5000/api/v1/testdb/maintenance/incremental-vacuum",
+      "http://localhost:5000/api/v1/databases/testdb/maintenance/incremental-vacuum",
     );
     expect(init?.method).toBe("POST");
   });
@@ -366,7 +388,7 @@ describe("DatabaseHandle", () => {
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
     expect(url).toBe(
-      "http://localhost:5000/api/v1/testdb/maintenance/checkpoint-if-large",
+      "http://localhost:5000/api/v1/databases/testdb/maintenance/checkpoint-if-large",
     );
     expect(init?.method).toBe("POST");
 

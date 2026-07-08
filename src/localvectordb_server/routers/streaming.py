@@ -26,7 +26,7 @@ class StreamQueryBody(QueryBody):
     batch_size: int = Field(default=10, ge=1, le=1000)
 
 
-@router.post("/{db_name}/query/stream", dependencies=[Depends(require_read_permission)])
+@router.post("/databases/{db_name}/query/stream", dependencies=[Depends(require_read_permission)])
 async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
     """Stream query results via Server-Sent Events.
 

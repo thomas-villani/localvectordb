@@ -107,9 +107,18 @@ def show_db_stats(ctx):
 @click.option("--limit", "-n", type=int, default=None, help="Limit number of ids returned")
 @click.option("--offset", "-s", type=int, default=0, help="Offset of ids returned")
 @click.option("--output", "-o", type=click.Path(exists=False, file_okay=True), default=None, help="Output to file")
-@click.option("--json", "-j", "output_as_json", is_flag=True, default=False, help="Output in json format")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.pass_context
-def list_document_ids(ctx, limit, offset, output, output_as_json):
+def list_document_ids(ctx, limit, offset, output, output_format):
     """
     List document IDs in database
 
@@ -120,9 +129,10 @@ def list_document_ids(ctx, limit, offset, output, output_as_json):
     Examples:
         \b
         lvdb db mydb list
-        lvdb db mydb list --limit 10 --offset 20 --json
+        lvdb db mydb list --limit 10 --offset 20 --format json
     """
     db = get_ctx_db(ctx)
+    output_as_json = output_format == "json"
 
     # Get all documents and apply pagination
     all_docs = db.filter(limit=limit, offset=offset)
@@ -248,9 +258,18 @@ def _render_query_results(results, *, title, output_as_json, output, metadata, p
     help="Hard-truncate assembled context to exactly the budget (non-chunk --context-unit only)",
 )
 @click.option("--metadata-filter", help="Metadata filter in JSON format")
-@click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
-@click.option("--metadata/--no-metadata", "-m", default=False, help="Include metadata in output")
+@click.option("--metadata/--no-metadata", default=False, help="Include metadata in output")
 @click.option("--pretty", "-p", default=False, is_flag=True)
 @click.pass_context
 def search(
@@ -266,7 +285,7 @@ def search(
     context_unit,
     context_truncate,
     metadata_filter,
-    output_as_json,
+    output_format,
     output,
     metadata,
     pretty,
@@ -281,17 +300,18 @@ def search(
     Examples:
     \b
         lvdb db mydb search "search text" --limit 5 --search-type hybrid
-        lvdb db mydb search "search text" --metadata-filter '{"author":"Smith"}' --json
+        lvdb db mydb search "search text" --metadata-filter '{"author":"Smith"}' --format json
 
     """
+    output_as_json = output_format == "json"
+
     # Parse metadata filter if provided
     filter_dict = None
     if metadata_filter:
         try:
             filter_dict = json.loads(metadata_filter)
-        except json.JSONDecodeError as e:
-            click.secho("Error: Metadata filter must be valid JSON", fg="red", err=True)
-            raise click.Abort() from e
+        except json.JSONDecodeError:
+            error("Error: Metadata filter must be valid JSON")
 
     db = get_ctx_db(ctx)
 
@@ -585,9 +605,18 @@ def _format_outline_text(items: List[dict]) -> str:
 
 @db_group.command("get")
 @click.argument("doc_id")
-@click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
-@click.option("--metadata/--no-metadata", "-m", default=False, help="Enable/Disable retrieving document metadata")
+@click.option("--metadata/--no-metadata", default=False, help="Enable/Disable retrieving document metadata")
 @click.option("--pretty", "-p", is_flag=True, default=False, help="Output results with title and formatting")
 @click.option(
     "--chunk",
@@ -623,7 +652,7 @@ def _format_outline_text(items: List[dict]) -> str:
 def get_document(
     ctx,
     doc_id,
-    output_as_json,
+    output_format,
     output,
     metadata,
     pretty,
@@ -644,7 +673,7 @@ def get_document(
     Examples:
         \b
         lvdb db mydb get doc_1
-        lvdb db mydb get doc_1 --json --metadata
+        lvdb db mydb get doc_1 --format json --metadata
         lvdb db mydb get doc_1 --chunk 2:5
         lvdb db mydb get doc_1 --range 0:200
         lvdb db mydb get doc_1 --lines 10:20
@@ -652,6 +681,7 @@ def get_document(
         lvdb db mydb get doc_1 --outline
     """
     db = get_ctx_db(ctx)
+    output_as_json = output_format == "json"
 
     # At most one selection mode may be active (default: whole document).
     active_modes = [
@@ -751,12 +781,21 @@ def get_document(
 @click.option("--limit", "-n", default=5, help="Maximum number of related documents")
 @click.option("--score-threshold", default=0.0, type=float, help="Minimum similarity score threshold")
 @click.option("--metadata-filter", help="Metadata filter in JSON format")
-@click.option("--json", "-j", "output_as_json", is_flag=True, default=False)
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
 @click.option("--output", "-o", type=click.Path(file_okay=True, dir_okay=False), help="Output file for results")
-@click.option("--metadata/--no-metadata", "-m", default=False, help="Include metadata in output")
+@click.option("--metadata/--no-metadata", default=False, help="Include metadata in output")
 @click.option("--pretty", "-p", is_flag=True, default=False)
 @click.pass_context
-def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_as_json, output, metadata, pretty):
+def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_format, output, metadata, pretty):
     """
     Find documents related to DOC_ID (nearest neighbours by embedding).
 
@@ -769,16 +808,17 @@ def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_as_json
     Examples:
         \b
         lvdb db mydb related doc_1
-        lvdb db mydb related doc_1 --limit 10 --json
+        lvdb db mydb related doc_1 --limit 10 --format json
         lvdb db mydb related doc_1 --metadata-filter '{"author":"Smith"}' --metadata
     """
+    output_as_json = output_format == "json"
+
     filter_dict = None
     if metadata_filter:
         try:
             filter_dict = json.loads(metadata_filter)
-        except json.JSONDecodeError as e:
-            click.secho("Error: Metadata filter must be valid JSON", fg="red", err=True)
-            raise click.Abort() from e
+        except json.JSONDecodeError:
+            error("Error: Metadata filter must be valid JSON")
 
     db = get_ctx_db(ctx)
 
@@ -1034,9 +1074,7 @@ def show_schema(ctx, format, output):
 
 @schema_group.command("update")
 @click.option("--schema", "-s", type=str, help="Path to JSON file or JSON string containing new schema definition")
-@click.option(
-    "--mapping", "-m", type=str, help="Column mapping as JSON string or or path to JSON file (old_name: new_name)"
-)
+@click.option("--mapping", type=str, help="Column mapping as JSON string or or path to JSON file (old_name: new_name)")
 @click.option(
     "--drop-columns", "--drop", is_flag=True, default=False, help="Actually drop removed columns (WARNING: data loss)"
 )

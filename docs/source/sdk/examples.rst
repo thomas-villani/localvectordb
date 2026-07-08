@@ -17,7 +17,7 @@ Use LocalVectorDB as the retrieval layer for a RAG pipeline:
    import { LocalVectorDBClient } from "@localvectordb/sdk";
    import Anthropic from "@anthropic-ai/sdk";
 
-   const lvdb = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
+   const lvdb = new LocalVectorDBClient({ baseUrl: "http://localhost:8000" });
    const db = lvdb.database("knowledge_base");
    const anthropic = new Anthropic();
 
@@ -65,7 +65,7 @@ Ingest files from a directory with metadata:
    import { join, extname, basename } from "path";
    import { LocalVectorDBClient } from "@localvectordb/sdk";
 
-   const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
+   const client = new LocalVectorDBClient({ baseUrl: "http://localhost:8000" });
    const db = client.database("documents");
 
    async function ingestDirectory(dirPath: string): Promise<void> {
@@ -122,7 +122,7 @@ Expose LocalVectorDB search through an Express API:
    app.use(express.json());
 
    const lvdb = new LocalVectorDBClient({
-     baseUrl: process.env.LVDB_URL ?? "http://localhost:5000",
+     baseUrl: process.env.LVDB_URL ?? "http://localhost:8000",
      apiKey: process.env.LVDB_API_KEY,
    });
 
@@ -177,7 +177,7 @@ A minimal HTML search widget using the SDK via a bundler:
      import { LocalVectorDBClient } from "@localvectordb/sdk";
 
      const client = new LocalVectorDBClient({
-       baseUrl: "http://localhost:5000",
+       baseUrl: "http://localhost:8000",
      });
      const db = client.database("my_docs");
 
@@ -211,7 +211,7 @@ Compare documents across databases:
 
 .. code-block:: typescript
 
-   const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
+   const client = new LocalVectorDBClient({ baseUrl: "http://localhost:8000" });
 
    // Search across all databases
    const global = await client.globalSearch("climate change impacts", {

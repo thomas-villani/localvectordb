@@ -572,7 +572,7 @@ The ``RemoteVectorDB`` client inherits all tuning capabilities from the ``Tuning
    # Connect to remote database with initial tuning profile
    remote_db = RemoteVectorDB(
        name="mydatabase",
-       base_url="http://server:5000",
+       base_url="http://server:8000",
        api_key="your_api_key",
        sqlite_profile="read_optimized"
    )
@@ -690,7 +690,7 @@ Manage tuning across multiple remote databases:
    for db_name, profile in databases:
        remote_db = RemoteVectorDB(
            name=db_name,
-           base_url="http://server:5000",
+           base_url="http://server:8000",
            api_key="admin_key"
        )
 

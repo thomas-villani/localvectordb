@@ -1,4 +1,5 @@
 import type { HttpClient } from "./http.js";
+import { DocumentNotFoundError } from "./errors.js";
 import { streamQuery } from "./sse.js";
 import { uploadFiles } from "./upload.js";
 import type {
@@ -16,8 +17,6 @@ import type {
   Document,
   EmbeddingsResponse,
   ExistsResponse,
-  FactCheckOptions,
-  FactCheckResponse,
   FilterOptions,
   FilterResponse,
   InsertChunksOptions,
@@ -69,7 +68,7 @@ export class DatabaseHandle {
 
   /** URL prefix for this database. */
   private get prefix(): string {
-    return `/api/v1/${encodeURIComponent(this.name)}`;
+    return `/api/v1/databases/${encodeURIComponent(this.name)}`;
   }
 
   // =========================================================================
@@ -129,15 +128,28 @@ export class DatabaseHandle {
     return resp.documents;
   }
 
-  /** Update a document's content and/or metadata. */
+  /**
+   * Update a document's content and/or metadata.
+   *
+   * Resolves with `updated: false` when the document does not exist (the server
+   * returns 404 `DOCUMENT_NOT_FOUND`), matching the Python client, rather than
+   * throwing.
+   */
   async update(
     id: string,
     options: { content?: string; metadata?: Record<string, unknown> },
   ): Promise<UpdateResponse> {
-    return this.http.patch<UpdateResponse>(
-      `${this.prefix}/documents/${encodeURIComponent(id)}`,
-      options,
-    );
+    try {
+      return await this.http.patch<UpdateResponse>(
+        `${this.prefix}/documents/${encodeURIComponent(id)}`,
+        options,
+      );
+    } catch (err) {
+      if (err instanceof DocumentNotFoundError) {
+        return { message: err.message, updated: false };
+      }
+      throw err;
+    }
   }
 
   /**
@@ -432,20 +444,5 @@ export class DatabaseHandle {
       `${this.prefix}/maintenance/checkpoint-if-large`,
       thresholdMb !== undefined ? { threshold_mb: thresholdMb } : {},
     );
-  }
-
-  // =========================================================================
-  // Fact-Check
-  // =========================================================================
-
-  /** Check text against this database for factual grounding. */
-  async factCheck(
-    text: string,
-    options?: FactCheckOptions,
-  ): Promise<FactCheckResponse> {
-    return this.http.post<FactCheckResponse>(`${this.prefix}/factcheck`, {
-      text,
-      ...options,
-    });
   }
 }

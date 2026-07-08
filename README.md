@@ -159,7 +159,7 @@ from localvectordb import VectorDB
 # Use HTTP server (automatically detected by URL)
 db = VectorDB(
     "my_docs", 
-    "http://localhost:5000",
+    "http://localhost:8000",
     api_key="your_api_key"
 )
 
@@ -173,12 +173,12 @@ results = db.query("content", search_type="hybrid")
 ### Start the Server
 
 ```bash
-# Quick start: with no config file, serves on localhost:5000 with built-in
+# Quick start: with no config file, serves on localhost:8000 with built-in
 # defaults. Run `lvdb config init` first to customize (host, auth, CORS, ...).
 lvdb serve
 
 # Production configuration
-lvdb --config ./config.toml serve --host 0.0.0.0 --port 5000
+lvdb --config ./config.toml serve --host 0.0.0.0 --port 8000
 ```
 
 ### Configuration
@@ -211,7 +211,7 @@ model = "nomic-embed-text"
 
 [server]
 host = "0.0.0.0"
-port = 5000
+port = 8000
 enable_rate_limiting = true
 rate_limit = "100 per minute"
 
@@ -291,7 +291,7 @@ npm install @localvectordb/sdk
 ```typescript
 import { LocalVectorDBClient } from "@localvectordb/sdk";
 
-const client = new LocalVectorDBClient({ baseUrl: "http://localhost:5000" });
+const client = new LocalVectorDBClient({ baseUrl: "http://localhost:8000" });
 const db = client.database("my_docs");
 
 await db.upsert(["First document", "Second document"]);
@@ -383,30 +383,29 @@ docs = db.filter(
 |--------|----------|-------------|
 | `GET` | `/api/v1/databases` | List databases |
 | `POST` | `/api/v1/databases` | Create database |
-| `GET` | `/api/v1/{db}/info` | Database info |
-| `POST` | `/api/v1/{db}/documents` | Upsert documents |
-| `GET` | `/api/v1/{db}/documents/{id}` | Get document |
-| `PATCH` | `/api/v1/{db}/documents/{id}` | Update document |
-| `DELETE` | `/api/v1/{db}/documents/{id}` | Delete document |
-| `POST` | `/api/v1/{db}/query` | Search documents |
-| `POST` | `/api/v1/{db}/query/stream` | Stream results (SSE) |
-| `POST` | `/api/v1/{db}/filter` | Filter documents |
-| `POST` | `/api/v1/{db}/upload` | Upload files |
-| `POST` | `/api/v1/{db}/compare` | Compare documents |
-| `POST` | `/api/v1/{db}/nearest-neighbors` | Find similar documents |
-| `POST` | `/api/v1/{db}/factcheck` | Fact-check text |
+| `GET` | `/api/v1/databases/{db}/info` | Database info |
+| `POST` | `/api/v1/databases/{db}/documents` | Upsert documents |
+| `GET` | `/api/v1/databases/{db}/documents/{id}` | Get document |
+| `PATCH` | `/api/v1/databases/{db}/documents/{id}` | Update document |
+| `DELETE` | `/api/v1/databases/{db}/documents/{id}` | Delete document |
+| `POST` | `/api/v1/databases/{db}/query` | Search documents |
+| `POST` | `/api/v1/databases/{db}/query/stream` | Stream results (SSE) |
+| `POST` | `/api/v1/databases/{db}/filter` | Filter documents |
+| `POST` | `/api/v1/databases/{db}/upload` | Upload files |
+| `POST` | `/api/v1/databases/{db}/compare` | Compare documents |
+| `POST` | `/api/v1/databases/{db}/nearest-neighbors` | Find similar documents |
 
 Example API usage:
 
 ```bash
 # Create database
-curl -X POST http://localhost:5000/api/v1/databases \
+curl -X POST http://localhost:8000/api/v1/databases \
   -H "Authorization: Bearer your_api_key" \
   -H "Content-Type: application/json" \
   -d '{"name": "my_db"}'
 
 # Search documents
-curl -X POST http://localhost:5000/api/v1/my_db/query \
+curl -X POST http://localhost:8000/api/v1/databases/my_db/query \
   -H "Authorization: Bearer your_api_key" \
   -H "Content-Type: application/json" \
   -d '{"query": "machine learning", "search_type": "hybrid", "k": 5}'
@@ -439,7 +438,7 @@ cat content.txt | lvdb db mydb add -
 lvdb db mydb search "query text" --search-type hybrid --limit 10
 
 # Get document (or a portion: --chunk / --range / --lines / --section / --outline)
-lvdb db mydb get doc_1 --json --metadata
+lvdb db mydb get doc_1 --format json --metadata
 
 # Find documents related to an existing one (nearest neighbours)
 lvdb db mydb related doc_1 --limit 5
@@ -517,7 +516,7 @@ import requests
 
 files = {'files': open('document.pdf', 'rb')}
 response = requests.post(
-    'http://localhost:5000/api/v1/mydb/upload',
+    'http://localhost:8000/api/v1/databases/mydb/upload',
     files=files,
     headers={'Authorization': 'Bearer your_api_key'}
 )
@@ -557,7 +556,7 @@ RUN pip install localvectordb[server,file-extraction]
 COPY config.toml /app/config.toml
 WORKDIR /app
 
-EXPOSE 5000
+EXPOSE 8000
 CMD ["lvdb", "--config", "config.toml", "serve"]
 ```
 
@@ -569,7 +568,7 @@ lvdb config set server.db_registry_type "RedisCache"
 lvdb config set server.db_registry_settings '{"host": "redis", "port": 6379, "db": 1}'
 
 # Start with multiple uvicorn workers
-uvicorn "localvectordb_server.app:create_app" --factory --host 0.0.0.0 --port 5000 --workers 4
+uvicorn "localvectordb_server.app:create_app" --factory --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 ### Environment Variables

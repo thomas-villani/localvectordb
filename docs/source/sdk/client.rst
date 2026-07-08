@@ -16,7 +16,7 @@ Creating a Client
    import { LocalVectorDBClient } from "@localvectordb/sdk";
 
    const client = new LocalVectorDBClient({
-     baseUrl: "http://localhost:5000",
+     baseUrl: "http://localhost:8000",
      apiKey: "lvdb_your_key",
    });
 
@@ -136,21 +136,6 @@ Generate embeddings without inserting documents:
    );
    // embeddings: number[][] (one vector per input text)
 
-Global Fact-Check
-~~~~~~~~~~~~~~~~~
-
-Check a claim against multiple databases:
-
-.. code-block:: typescript
-
-   const result = await client.factCheck(
-     "The speed of light is approximately 300,000 km/s",
-     {
-       databases: ["physics", "reference"],
-       llm_provider: "anthropic",
-     }
-   );
-
 ClientConfig Reference
 ----------------------
 
@@ -165,7 +150,7 @@ ClientConfig Reference
    * - ``baseUrl``
      - ``string``
      - *(required)*
-     - Server URL (e.g. ``http://localhost:5000``)
+     - Server URL (e.g. ``http://localhost:8000``)
    * - ``apiKey``
      - ``string``
      - ``undefined``

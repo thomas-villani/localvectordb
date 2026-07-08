@@ -20,7 +20,7 @@ LocalVectorDB supports two API key permission levels:
 
    # Include API key in Authorization header
    curl -H "Authorization: Bearer your_api_key_here" \
-        http://localhost:5000/api/v1/endpoint
+        http://localhost:8000/api/v1/endpoint
 
 Route Permissions
 ^^^^^^^^^^^^^^^^^
@@ -28,44 +28,42 @@ Route Permissions
 **Read-Only Routes** (accessible with both read_only and read_write keys):
 
 * ``GET /api/v1/databases`` - List databases
-* ``GET /api/v1/<db_name>/info`` - Get database information
-* ``GET /api/v1/<db_name>/documents/<doc_id>`` - Get document by ID
-* ``GET /api/v1/<db_name>/documents`` - List documents
-* ``POST /api/v1/<db_name>/documents/exists`` - Check document existence
-* ``POST /api/v1/<db_name>/query`` - Query documents
-* ``POST /api/v1/<db_name>/query/stream`` - Stream query results (SSE)
-* ``POST /api/v1/<db_name>/search/*`` - All search endpoints
-* ``POST /api/v1/<db_name>/query-builder`` - Execute a QueryBuilder query
-* ``POST /api/v1/<db_name>/query-multi-column`` - Multi-column query
-* ``POST /api/v1/<db_name>/filter`` - Filter documents
-* ``POST /api/v1/<db_name>/embeddings`` - Get embeddings
-* ``GET /api/v1/<db_name>/schema`` - Get metadata schema
-* ``POST /api/v1/<db_name>/compare`` - Compare two documents
-* ``POST /api/v1/<db_name>/compare/detailed`` - Detailed document comparison
-* ``POST /api/v1/<db_name>/nearest-neighbors`` - Nearest neighbors of a document
-* ``POST /api/v1/<db_name>/similarity-matrix`` - Pairwise similarity matrix
-* ``POST /api/v1/<db_name>/factcheck`` - Fact-check text against a database
-* ``POST /api/v1/factcheck`` - Fact-check text across databases
-* ``POST /api/v1/<db_name>/documents/count`` - Count documents
-* ``GET /api/v1/<db_name>/tuning`` - Get SQLite tuning configuration
+* ``GET /api/v1/databases/<db_name>/info`` - Get database information
+* ``GET /api/v1/databases/<db_name>/documents/<doc_id>`` - Get document by ID
+* ``GET /api/v1/databases/<db_name>/documents`` - List documents
+* ``POST /api/v1/databases/<db_name>/documents/exists`` - Check document existence
+* ``POST /api/v1/databases/<db_name>/query`` - Query documents
+* ``POST /api/v1/databases/<db_name>/query/stream`` - Stream query results (SSE)
+* ``POST /api/v1/databases/<db_name>/search/*`` - All search endpoints
+* ``POST /api/v1/databases/<db_name>/query-builder`` - Execute a QueryBuilder query
+* ``POST /api/v1/databases/<db_name>/query-multi-column`` - Multi-column query
+* ``POST /api/v1/databases/<db_name>/filter`` - Filter documents
+* ``POST /api/v1/databases/<db_name>/embeddings`` - Get embeddings
+* ``GET /api/v1/databases/<db_name>/schema`` - Get metadata schema
+* ``POST /api/v1/databases/<db_name>/compare`` - Compare two documents
+* ``POST /api/v1/databases/<db_name>/compare/detailed`` - Detailed document comparison
+* ``POST /api/v1/databases/<db_name>/nearest-neighbors`` - Nearest neighbors of a document
+* ``POST /api/v1/databases/<db_name>/similarity-matrix`` - Pairwise similarity matrix
+* ``POST /api/v1/databases/<db_name>/documents/count`` - Count documents
+* ``GET /api/v1/databases/<db_name>/tuning`` - Get SQLite tuning configuration
 * ``GET /api/v1/system/resources`` - Analyze system resources
 
 **Write Routes** (require read_write keys):
 
 * ``POST /api/v1/databases`` - Create database
-* ``DELETE /api/v1/<db_name>`` - Delete database
-* ``POST /api/v1/<db_name>/documents`` - Add/update documents
-* ``POST /api/v1/<db_name>/documents/insert`` - Insert documents
-* ``POST /api/v1/<db_name>/documents/chunks`` - Upsert from pre-chunked data
-* ``POST /api/v1/<db_name>/documents/chunks/insert`` - Insert from pre-chunked data
-* ``POST /api/v1/<db_name>/documents/delete`` - Batch-delete documents by ID
-* ``PATCH /api/v1/<db_name>/documents/<doc_id>`` - Update document
-* ``DELETE /api/v1/<db_name>/documents/<doc_id>`` - Delete document
-* ``POST /api/v1/<db_name>/upload`` - Upload files
-* ``PUT /api/v1/<db_name>/schema`` - Update metadata schema
-* ``PUT /api/v1/<db_name>/tuning`` - Apply SQLite tuning profile
-* ``POST /api/v1/<db_name>/auto-tune`` - Auto-tune recommendations
-* ``POST /api/v1/<db_name>/maintenance/*`` - Maintenance operations
+* ``DELETE /api/v1/databases/<db_name>`` - Delete database
+* ``POST /api/v1/databases/<db_name>/documents`` - Add/update documents
+* ``POST /api/v1/databases/<db_name>/documents/insert`` - Insert documents
+* ``POST /api/v1/databases/<db_name>/documents/chunks`` - Upsert from pre-chunked data
+* ``POST /api/v1/databases/<db_name>/documents/chunks/insert`` - Insert from pre-chunked data
+* ``POST /api/v1/databases/<db_name>/documents/delete`` - Batch-delete documents by ID
+* ``PATCH /api/v1/databases/<db_name>/documents/<doc_id>`` - Update document
+* ``DELETE /api/v1/databases/<db_name>/documents/<doc_id>`` - Delete document
+* ``POST /api/v1/databases/<db_name>/upload`` - Upload files
+* ``PUT /api/v1/databases/<db_name>/schema`` - Update metadata schema
+* ``PUT /api/v1/databases/<db_name>/tuning`` - Apply SQLite tuning profile
+* ``POST /api/v1/databases/<db_name>/auto-tune`` - Auto-tune recommendations
+* ``POST /api/v1/databases/<db_name>/maintenance/*`` - Maintenance operations
 
 Error Responses
 ^^^^^^^^^^^^^^^
@@ -124,7 +122,7 @@ Create a new vector database with optional configuration.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/databases \
+   curl -X POST http://localhost:8000/api/v1/databases \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -149,7 +147,7 @@ Create a new vector database with optional configuration.
    import requests
 
    response = requests.post(
-       "http://localhost:5000/api/v1/databases",
+       "http://localhost:8000/api/v1/databases",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -208,14 +206,14 @@ Get a list of all available databases.
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/databases
+        http://localhost:8000/api/v1/databases
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.get(
-       "http://localhost:5000/api/v1/databases",
+       "http://localhost:8000/api/v1/databases",
        headers={"Authorization": "Bearer your_api_key"}
    )
 
@@ -236,21 +234,21 @@ Get Database Info
 
 Retrieve detailed information about a specific database.
 
-**Endpoint**: ``GET /api/v1/{db_name}/info``
+**Endpoint**: ``GET /api/v1/databases/{db_name}/info``
 
 **curl Example**:
 
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/research_papers/info
+        http://localhost:8000/api/v1/databases/research_papers/info
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.get(
-       "http://localhost:5000/api/v1/research_papers/info",
+       "http://localhost:8000/api/v1/databases/research_papers/info",
        headers={"Authorization": "Bearer your_api_key"}
    )
 
@@ -288,7 +286,7 @@ Delete Database
 
 Delete a database and all its data.
 
-**Endpoint**: ``DELETE /api/v1/{db_name}``
+**Endpoint**: ``DELETE /api/v1/databases/{db_name}``
 
 **curl Example**:
 
@@ -296,14 +294,14 @@ Delete a database and all its data.
 
    curl -X DELETE \
      -H "Authorization: Bearer your_api_key" \
-     http://localhost:5000/api/v1/old_database
+     http://localhost:8000/api/v1/databases/old_database
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.delete(
-       "http://localhost:5000/api/v1/old_database",
+       "http://localhost:8000/api/v1/databases/old_database",
        headers={"Authorization": "Bearer your_api_key"}
    )
 
@@ -317,7 +315,7 @@ Upsert Documents
 
 Insert or update documents in the database.
 
-**Endpoint**: ``POST /api/v1/{db_name}/documents``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/documents``
 
 **Request Body**:
 
@@ -337,7 +335,7 @@ Insert or update documents in the database.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/documents \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/documents \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -382,7 +380,7 @@ Insert or update documents in the database.
    ]
 
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/documents",
+       "http://localhost:8000/api/v1/databases/research_papers/documents",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -410,7 +408,7 @@ Insert Documents
 
 Insert new documents (fails if ID already exists).
 
-**Endpoint**: ``POST /api/v1/{db_name}/documents/insert``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/documents/insert``
 
 **Request Body**:
 
@@ -428,7 +426,7 @@ Insert new documents (fails if ID already exists).
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/documents/insert \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/documents/insert \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -443,7 +441,7 @@ Insert new documents (fails if ID already exists).
 .. code-block:: python
 
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/documents/insert",
+       "http://localhost:8000/api/v1/databases/research_papers/documents/insert",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -463,21 +461,21 @@ Get Document
 
 Retrieve a specific document by ID.
 
-**Endpoint**: ``GET /api/v1/{db_name}/documents/{doc_id}``
+**Endpoint**: ``GET /api/v1/databases/{db_name}/documents/{doc_id}``
 
 **curl Example**:
 
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/research_papers/documents/doc_1
+        http://localhost:8000/api/v1/databases/research_papers/documents/doc_1
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.get(
-       "http://localhost:5000/api/v1/research_papers/documents/doc_1",
+       "http://localhost:8000/api/v1/databases/research_papers/documents/doc_1",
        headers={"Authorization": "Bearer your_api_key"}
    )
 
@@ -507,7 +505,7 @@ Update Document
 
 Update a document's content and/or metadata.
 
-**Endpoint**: ``PATCH /api/v1/{db_name}/documents/{doc_id}``
+**Endpoint**: ``PATCH /api/v1/databases/{db_name}/documents/{doc_id}``
 
 **Request Body**:
 
@@ -522,7 +520,7 @@ Update a document's content and/or metadata.
 
 .. code-block:: bash
 
-   curl -X PATCH http://localhost:5000/api/v1/research_papers/documents/doc_1 \
+   curl -X PATCH http://localhost:8000/api/v1/databases/research_papers/documents/doc_1 \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -535,7 +533,7 @@ Update a document's content and/or metadata.
 .. code-block:: python
 
    response = requests.patch(
-       "http://localhost:5000/api/v1/research_papers/documents/doc_1",
+       "http://localhost:8000/api/v1/databases/research_papers/documents/doc_1",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -553,7 +551,7 @@ Delete Document
 
 Delete a document from the database.
 
-**Endpoint**: ``DELETE /api/v1/{db_name}/documents/{doc_id}``
+**Endpoint**: ``DELETE /api/v1/databases/{db_name}/documents/{doc_id}``
 
 **curl Example**:
 
@@ -561,14 +559,14 @@ Delete a document from the database.
 
    curl -X DELETE \
      -H "Authorization: Bearer your_api_key" \
-     http://localhost:5000/api/v1/research_papers/documents/doc_1
+     http://localhost:8000/api/v1/databases/research_papers/documents/doc_1
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.delete(
-       "http://localhost:5000/api/v1/research_papers/documents/doc_1",
+       "http://localhost:8000/api/v1/databases/research_papers/documents/doc_1",
        headers={"Authorization": "Bearer your_api_key"}
    )
 
@@ -580,7 +578,7 @@ Check Document Existence
 
 Check if documents exist by their IDs.
 
-**Endpoint**: ``POST /api/v1/{db_name}/documents/exists``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/documents/exists``
 
 **Request Body**:
 
@@ -594,7 +592,7 @@ Check if documents exist by their IDs.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/documents/exists \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/documents/exists \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{"ids": ["doc_1", "doc_2", "nonexistent"]}'
@@ -604,7 +602,7 @@ Check if documents exist by their IDs.
 .. code-block:: python
 
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/documents/exists",
+       "http://localhost:8000/api/v1/databases/research_papers/documents/exists",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -618,9 +616,9 @@ List Documents
 ^^^^^^^^^^^^^^
 
 List documents with pagination, or bulk-get by ID. To filter by metadata, use
-``POST /api/v1/{db_name}/filter`` instead (this ``GET`` endpoint does not filter).
+``POST /api/v1/databases/{db_name}/filter`` instead (this ``GET`` endpoint does not filter).
 
-**Endpoint**: ``GET /api/v1/{db_name}/documents``
+**Endpoint**: ``GET /api/v1/databases/{db_name}/documents``
 
 **Query Parameters**:
 
@@ -646,11 +644,11 @@ List documents with pagination, or bulk-get by ID. To filter by metadata, use
 
    # 1) Bulk-get three docs by ID
    curl -H "Authorization: Bearer your_api_key" \
-        "http://localhost:5000/api/v1/research_papers/documents?ids=doc_1,doc_42,doc_xyz"
+        "http://localhost:8000/api/v1/databases/research_papers/documents?ids=doc_1,doc_42,doc_xyz"
 
    # 2) Paginate through all docs (no ids)
    curl -H "Authorization: Bearer your_api_key" \
-        "http://localhost:5000/api/v1/research_papers/documents?offset=50&limit=50"
+        "http://localhost:8000/api/v1/databases/research_papers/documents?offset=50&limit=50"
 
 **Python Examples**:
 
@@ -658,7 +656,7 @@ List documents with pagination, or bulk-get by ID. To filter by metadata, use
 
    import requests
 
-   base = "http://localhost:5000/api/v1/research_papers/documents"
+   base = "http://localhost:8000/api/v1/databases/research_papers/documents"
    headers = {"Authorization": "Bearer your_api_key"}
 
    # Bulk-get by IDs
@@ -677,7 +675,7 @@ Count Documents
 
 Count documents, optionally matching metadata filters.
 
-**Endpoint**: ``POST /api/v1/{db_name}/documents/count``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/documents/count``
 
 **Request Body** (optional):
 
@@ -694,7 +692,7 @@ Batch Delete Documents
 
 Delete multiple documents by ID in a single request (max 1000 IDs).
 
-**Endpoint**: ``POST /api/v1/{db_name}/documents/delete``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/documents/delete``
 
 **Request Body**:
 
@@ -716,8 +714,8 @@ objects with a ``content``/``text`` field).
 
 **Endpoints**:
 
-- ``POST /api/v1/{db_name}/documents/chunks`` - Upsert from chunks
-- ``POST /api/v1/{db_name}/documents/chunks/insert`` - Insert from chunks (conflict handling via ``errors``)
+- ``POST /api/v1/databases/{db_name}/documents/chunks`` - Upsert from chunks
+- ``POST /api/v1/databases/{db_name}/documents/chunks/insert`` - Insert from chunks (conflict handling via ``errors``)
 
 **Request Body**:
 
@@ -803,7 +801,7 @@ Upload Files to Database
 
 Upload one or more files to a database with automatic text extraction.
 
-**Endpoint**: ``POST /api/v1/{db_name}/upload``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/upload``
 
 **Headers**:
 
@@ -830,7 +828,7 @@ Upload one or more files to a database with automatic text extraction.
 .. code-block:: bash
 
    # Upload multiple files with metadata
-   curl -X POST "http://localhost:5000/api/v1/research_papers/upload" \
+   curl -X POST "http://localhost:8000/api/v1/databases/research_papers/upload" \
      -H "Authorization: Bearer lvdb_your_api_key" \
      -F "files=@document.pdf" \
      -F "files=@presentation.pptx" \
@@ -840,7 +838,7 @@ Upload one or more files to a database with automatic text extraction.
      -F "batch_size=50"
 
    # Upload single file using filename as ID
-   curl -X POST "http://localhost:5000/api/v1/my_database/upload" \
+   curl -X POST "http://localhost:8000/api/v1/databases/my_database/upload" \
      -H "Authorization: Bearer lvdb_your_api_key" \
      -F "files=@important_doc.pdf" \
      -F "use_filename_as_id=true" \
@@ -867,7 +865,7 @@ Upload one or more files to a database with automatic text extraction.
    }
 
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/upload",
+       "http://localhost:8000/api/v1/databases/research_papers/upload",
        headers={"Authorization": "Bearer lvdb_your_api_key"},
        files=files,
        data=data
@@ -935,7 +933,7 @@ Get information about supported file formats and extraction capabilities.
 
 .. code-block:: bash
 
-   curl -X GET "http://localhost:5000/api/v1/upload/supported-formats" \
+   curl -X GET "http://localhost:8000/api/v1/upload/supported-formats" \
      -H "Authorization: Bearer lvdb_your_api_key"
 
 **Python Example**:
@@ -943,7 +941,7 @@ Get information about supported file formats and extraction capabilities.
 .. code-block:: python
 
    response = requests.get(
-       "http://localhost:5000/api/v1/upload/supported-formats",
+       "http://localhost:8000/api/v1/upload/supported-formats",
        headers={"Authorization": "Bearer lvdb_your_api_key"}
    )
 
@@ -999,7 +997,7 @@ Preview text extraction from a file without adding it to the database.
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/upload/extract-preview" \
+   curl -X POST "http://localhost:8000/api/v1/upload/extract-preview" \
      -H "Authorization: Bearer lvdb_your_api_key" \
      -F "file=@sample.pdf"
 
@@ -1011,7 +1009,7 @@ Preview text extraction from a file without adding it to the database.
        files = {'file': ('sample.pdf', f, 'application/pdf')}
 
        response = requests.post(
-           "http://localhost:5000/api/v1/upload/extract-preview",
+           "http://localhost:8000/api/v1/upload/extract-preview",
            headers={"Authorization": "Bearer lvdb_your_api_key"},
            files=files
        )
@@ -1092,7 +1090,7 @@ The upload response includes ``metadata_fields_used`` and ``metadata_fields_igno
 
    # Create database with file upload schema
    response = requests.post(
-       "http://localhost:5000/api/v1/databases",
+       "http://localhost:8000/api/v1/databases",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1121,7 +1119,7 @@ The upload response includes ``metadata_fields_used`` and ``metadata_fields_igno
    }
 
    upload_response = requests.post(
-       "http://localhost:5000/api/v1/document_library/upload",
+       "http://localhost:8000/api/v1/databases/document_library/upload",
        headers={"Authorization": "Bearer your_api_key"},
        files=files,
        data=data
@@ -1135,7 +1133,7 @@ Unified Query Interface
 
 The main search endpoint supporting vector, keyword, and hybrid search.
 
-**Endpoint**: ``POST /api/v1/{db_name}/query``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/query``
 
 **Request Body**:
 
@@ -1176,7 +1174,7 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 .. code-block:: bash
 
    # Vector search
-   curl -X POST http://localhost:5000/api/v1/research_papers/query \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/query \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1188,7 +1186,7 @@ The main search endpoint supporting vector, keyword, and hybrid search.
      }'
 
    # Hybrid search
-   curl -X POST http://localhost:5000/api/v1/research_papers/query \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/query \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1204,7 +1202,7 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 
    # Vector search for research papers
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/query",
+       "http://localhost:8000/api/v1/databases/research_papers/query",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1227,7 +1225,7 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 
    # Hybrid search combining vector and keyword
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/query",
+       "http://localhost:8000/api/v1/databases/research_papers/query",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1279,13 +1277,13 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 Vector Search (Convenience Endpoint)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Endpoint**: ``POST /api/v1/{db_name}/search/vector``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/search/vector``
 
 **curl Example**:
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/search/vector \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/search/vector \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1297,13 +1295,13 @@ Vector Search (Convenience Endpoint)
 Keyword Search (Convenience Endpoint)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Endpoint**: ``POST /api/v1/{db_name}/search/keyword``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/search/keyword``
 
 **curl Example**:
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/search/keyword \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/search/keyword \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1314,13 +1312,13 @@ Keyword Search (Convenience Endpoint)
 Hybrid Search (Convenience Endpoint)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Endpoint**: ``POST /api/v1/{db_name}/search/hybrid``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/search/hybrid``
 
 **curl Example**:
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/search/hybrid \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/search/hybrid \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1338,13 +1336,13 @@ parameters as ``/query`` plus an optional ``batch_size``. The response is an ``t
 emitting ``result`` events (one serialized result each), a final ``done`` event with
 ``{"total_results": N}``, and an ``error`` event if streaming fails.
 
-**Endpoint**: ``POST /api/v1/{db_name}/query/stream``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/query/stream``
 
 **curl Example**:
 
 .. code-block:: bash
 
-   curl -N -X POST http://localhost:5000/api/v1/research_papers/query/stream \
+   curl -N -X POST http://localhost:8000/api/v1/databases/research_papers/query/stream \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1362,7 +1360,7 @@ The body carries the serialized builder state: ``search_clauses``, ``exact_filte
 ``semantic_filters``, plus optional ``search_type``, ``vector_weight``, ``return_type``,
 ``order_by``, ``limit``, ``offset``, ``group_by``, and ``aggregations``.
 
-**Endpoint**: ``POST /api/v1/{db_name}/query-builder``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/query-builder``
 
 **Request Body**:
 
@@ -1383,7 +1381,7 @@ Multi-Column Query
 
 Query across the main content column plus embedding-enabled metadata columns.
 
-**Endpoint**: ``POST /api/v1/{db_name}/query-multi-column``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/query-multi-column``
 
 **Request Body**:
 
@@ -1408,7 +1406,7 @@ Filter Documents
 
 Advanced filtering using SQL-like queries.
 
-**Endpoint**: ``POST /api/v1/{db_name}/filter``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/filter``
 
 **Request Body**:
 
@@ -1425,7 +1423,7 @@ Advanced filtering using SQL-like queries.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/filter \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/filter \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1443,7 +1441,7 @@ Advanced filtering using SQL-like queries.
 
    # Complex filtering
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/filter",
+       "http://localhost:8000/api/v1/databases/research_papers/filter",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1466,7 +1464,7 @@ Update Metadata Schema
 
 Update the metadata schema for an existing database. This allows you to add new metadata fields, modify existing ones, or remove fields from the schema.
 
-**Endpoint**: ``PUT /api/v1/{db_name}/schema``
+**Endpoint**: ``PUT /api/v1/databases/{db_name}/schema``
 
 **Request Body**:
 
@@ -1494,7 +1492,7 @@ Update the metadata schema for an existing database. This allows you to add new 
 
 .. code-block:: bash
 
-   curl -X PUT http://localhost:5000/api/v1/research_papers/schema \
+   curl -X PUT http://localhost:8000/api/v1/databases/research_papers/schema \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1519,7 +1517,7 @@ Update the metadata schema for an existing database. This allows you to add new 
    }
 
    response = requests.put(
-       "http://localhost:5000/api/v1/research_papers/schema",
+       "http://localhost:8000/api/v1/databases/research_papers/schema",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1580,21 +1578,21 @@ Get Metadata Schema Information
 
 Get detailed information about the current metadata schema for a database.
 
-**Endpoint**: ``GET /api/v1/{db_name}/schema``
+**Endpoint**: ``GET /api/v1/databases/{db_name}/schema``
 
 **curl Example**:
 
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/research_papers/schema
+        http://localhost:8000/api/v1/databases/research_papers/schema
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.get(
-       "http://localhost:5000/api/v1/research_papers/schema",
+       "http://localhost:8000/api/v1/databases/research_papers/schema",
        headers={"Authorization": "Bearer your_api_key"}
    )
 
@@ -1686,7 +1684,7 @@ Search across multiple databases simultaneously.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/search \
+   curl -X POST http://localhost:8000/api/v1/search \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1702,7 +1700,7 @@ Search across multiple databases simultaneously.
 
    # Search across all databases
    response = requests.post(
-       "http://localhost:5000/api/v1/search",
+       "http://localhost:8000/api/v1/search",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1716,7 +1714,7 @@ Search across multiple databases simultaneously.
    )
 
    # Results organized by database
-   results_by_db = response.json()["results"]
+   results_by_db = response.json()["results_by_database"]
    for db_name, results in results_by_db.items():
        print(f"\nResults from {db_name}:")
        for result in results:
@@ -1731,7 +1729,7 @@ underlying database does not support comparison, the server responds with HTTP `
 Compare Two Documents
 ^^^^^^^^^^^^^^^^^^^^^
 
-**Endpoint**: ``POST /api/v1/{db_name}/compare``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/compare``
 
 **Request Body**: ``{"doc_id_1": "doc_1", "doc_id_2": "doc_2"}``
 
@@ -1751,7 +1749,7 @@ Detailed Comparison
 
 Chunk-level comparison of two documents.
 
-**Endpoint**: ``POST /api/v1/{db_name}/compare/detailed``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/compare/detailed``
 
 **Request Body**: ``{"doc_id_1": "doc_1", "doc_id_2": "doc_2", "chunk_threshold": 0.7}``
 
@@ -1763,7 +1761,7 @@ Nearest Neighbors
 
 Find the documents most similar to a given document.
 
-**Endpoint**: ``POST /api/v1/{db_name}/nearest-neighbors``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/nearest-neighbors``
 
 **Request Body**: ``{"doc_id": "doc_1", "k": 5}``
 
@@ -1774,50 +1772,16 @@ Similarity Matrix
 
 Compute a pairwise similarity matrix across documents.
 
-**Endpoint**: ``POST /api/v1/{db_name}/similarity-matrix``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/similarity-matrix``
 
 **Request Body** (optional): ``{"doc_ids": ["doc_1", "doc_2", "doc_3"]}`` (omit to use all documents)
 
 **Response**: ``{"doc_ids", "matrix": [[...]], "similarity_pairs": [...], "status"}``
 
-Fact-Checking
--------------
-
-LLM-based factual grounding of text against your databases ("reverse RAG"). These endpoints
-require a read key and the ``localvectordb`` validation module; if it is unavailable the server
-responds with HTTP ``501``.
-
-Fact-Check Against One Database
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-**Endpoint**: ``POST /api/v1/{db_name}/factcheck``
-
-**Request Body**:
-
-.. code-block:: json
-
-   {
-     "text": "The claim to verify.",
-     "llm_provider": "anthropic",
-     "llm_api_key": "sk-...",
-     "model": "claude-sonnet-4-5",
-     "similarity_threshold": 0.3,
-     "min_grounding_score": 0.5,
-     "search_type": "hybrid",
-     "k": 10
-   }
-
-Only ``text`` is required. ``llm_provider`` defaults to ``anthropic``; ``llm_api_key`` may be
-omitted if the server has provider credentials in its environment. The response includes the
-serialized fact-check result plus ``"database"`` and ``"status": "success"``.
-
-Fact-Check Across Databases
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-**Endpoint**: ``POST /api/v1/factcheck``
-
-Same body as above, plus an optional ``"databases": ["db_a", "db_b"]`` list (defaults to all
-databases). The response is ``{"results": {<db>: {...}}, "databases_checked": [...], "status": "success"}``.
+.. note::
+   Fact-checking ("reverse RAG") is a **local-only** feature in v0.1.0. There are no HTTP
+   fact-check endpoints; use the :class:`~localvectordb.FactChecker` class directly against a
+   :class:`~localvectordb.LocalVectorDB`. See :doc:`../factcheck`.
 
 Embedding Operations
 --------------------
@@ -1827,7 +1791,7 @@ Get Embeddings from Database
 
 Generate embeddings using a database's configured embedding provider.
 
-**Endpoint**: ``POST /api/v1/{db_name}/embeddings``
+**Endpoint**: ``POST /api/v1/databases/{db_name}/embeddings``
 
 **Request Body**:
 
@@ -1841,7 +1805,7 @@ Generate embeddings using a database's configured embedding provider.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/research_papers/embeddings \
+   curl -X POST http://localhost:8000/api/v1/databases/research_papers/embeddings \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1853,7 +1817,7 @@ Generate embeddings using a database's configured embedding provider.
 .. code-block:: python
 
    response = requests.post(
-       "http://localhost:5000/api/v1/research_papers/embeddings",
+       "http://localhost:8000/api/v1/databases/research_papers/embeddings",
        headers={
            "Content-Type": "application/json",
            "Authorization": "Bearer your_api_key"
@@ -1887,7 +1851,7 @@ Generate embeddings using a specified provider and model.
 
 .. code-block:: bash
 
-   curl -X POST http://localhost:5000/api/v1/embeddings \
+   curl -X POST http://localhost:8000/api/v1/embeddings \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -1910,13 +1874,13 @@ Check server and system health.
 
 .. code-block:: bash
 
-   curl http://localhost:5000/api/v1/health
+   curl http://localhost:8000/api/v1/health
 
 **Python Example**:
 
 .. code-block:: python
 
-   response = requests.get("http://localhost:5000/api/v1/health")
+   response = requests.get("http://localhost:8000/api/v1/health")
    health = response.json()
 
    print(f"Status: {health['status']}")
@@ -1948,21 +1912,21 @@ Get SQLite Tuning Configuration
 
 Retrieve current SQLite tuning settings for a database.
 
-**Endpoint**: ``GET /api/v1/<db_name>/tuning``
+**Endpoint**: ``GET /api/v1/databases/<db_name>/tuning``
 
 **curl Example**:
 
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/mydatabase/tuning
+        http://localhost:8000/api/v1/databases/mydatabase/tuning
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.get(
-       "http://localhost:5000/api/v1/mydatabase/tuning",
+       "http://localhost:8000/api/v1/databases/mydatabase/tuning",
        headers={"Authorization": "Bearer your_api_key"}
    )
    config = response.json()
@@ -1999,7 +1963,7 @@ Set SQLite Tuning Configuration
 
 Apply a tuning profile with optional pragma overrides to a database.
 
-**Endpoint**: ``PUT /api/v1/<db_name>/tuning``
+**Endpoint**: ``PUT /api/v1/databases/<db_name>/tuning``
 
 **Request Body**:
 
@@ -2029,14 +1993,14 @@ are optional.
           "overrides": {"cache_size": -262144},
           "persist": true
         }' \
-        http://localhost:5000/api/v1/mydatabase/tuning
+        http://localhost:8000/api/v1/databases/mydatabase/tuning
 
 **Python Example**:
 
 .. code-block:: python
 
    response = requests.put(
-       "http://localhost:5000/api/v1/mydatabase/tuning",
+       "http://localhost:8000/api/v1/databases/mydatabase/tuning",
        headers={"Authorization": "Bearer your_api_key"},
        json={
            "profile": "fast_ingest",
@@ -2065,7 +2029,7 @@ Auto-Tune Database
 
 Get auto-tuning recommendations based on server resources and workload characteristics.
 
-**Endpoint**: ``POST /api/v1/<db_name>/auto-tune``
+**Endpoint**: ``POST /api/v1/databases/<db_name>/auto-tune``
 
 **Request Body**:
 
@@ -2098,7 +2062,7 @@ Get auto-tuning recommendations based on server resources and workload character
           },
           "apply": true
         }' \
-        http://localhost:5000/api/v1/mydatabase/auto-tune
+        http://localhost:8000/api/v1/databases/mydatabase/auto-tune
 
 **Response**:
 
@@ -2137,7 +2101,7 @@ and is **not** scoped to a database.
 .. code-block:: bash
 
    curl -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/system/resources
+        http://localhost:8000/api/v1/system/resources
 
 **Response**:
 
@@ -2162,7 +2126,7 @@ Perform maintenance operations on the database's SQLite backend.
 
 **SQLite Checkpoint**
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/checkpoint``
+**Endpoint**: ``POST /api/v1/databases/<db_name>/maintenance/checkpoint``
 
 .. code-block:: json
 
@@ -2172,15 +2136,15 @@ Perform maintenance operations on the database's SQLite backend.
 
 **SQLite Optimize**
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/optimize``
+**Endpoint**: ``POST /api/v1/databases/<db_name>/maintenance/optimize``
 
 **SQLite Vacuum** (full VACUUM; takes no body parameters)
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/vacuum``
+**Endpoint**: ``POST /api/v1/databases/<db_name>/maintenance/vacuum``
 
 **SQLite Incremental Vacuum** (separate endpoint)
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/incremental-vacuum``
+**Endpoint**: ``POST /api/v1/databases/<db_name>/maintenance/incremental-vacuum``
 
 .. code-block:: json
 
@@ -2192,7 +2156,7 @@ Perform maintenance operations on the database's SQLite backend.
 
 **Checkpoint If WAL Large**
 
-**Endpoint**: ``POST /api/v1/<db_name>/maintenance/checkpoint-if-large``
+**Endpoint**: ``POST /api/v1/databases/<db_name>/maintenance/checkpoint-if-large``
 
 .. code-block:: json
 
@@ -2209,24 +2173,24 @@ Perform maintenance operations on the database's SQLite backend.
         -H "Authorization: Bearer your_api_key" \
         -H "Content-Type: application/json" \
         -d '{"mode": "TRUNCATE"}' \
-        http://localhost:5000/api/v1/mydatabase/maintenance/checkpoint
+        http://localhost:8000/api/v1/databases/mydatabase/maintenance/checkpoint
 
    # Update query optimizer statistics
    curl -X POST \
         -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/mydatabase/maintenance/optimize
+        http://localhost:8000/api/v1/databases/mydatabase/maintenance/optimize
 
    # Run a full vacuum (no body)
    curl -X POST \
         -H "Authorization: Bearer your_api_key" \
-        http://localhost:5000/api/v1/mydatabase/maintenance/vacuum
+        http://localhost:8000/api/v1/databases/mydatabase/maintenance/vacuum
 
    # Run incremental vacuum
    curl -X POST \
         -H "Authorization: Bearer your_api_key" \
         -H "Content-Type: application/json" \
         -d '{"pages": 2000}' \
-        http://localhost:5000/api/v1/mydatabase/maintenance/incremental-vacuum
+        http://localhost:8000/api/v1/databases/mydatabase/maintenance/incremental-vacuum
 
 Tuning Endpoint Security
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2292,7 +2256,7 @@ unexpected errors are wrapped in an ``error`` object:
 
    try:
        response = requests.post(
-           "http://localhost:5000/api/v1/nonexistent/documents",
+           "http://localhost:8000/api/v1/databases/nonexistent/documents",
            headers={"Authorization": "Bearer your_api_key"},
            json={"documents": ["test"]}
        )

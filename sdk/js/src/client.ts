@@ -7,8 +7,6 @@ import type {
   DatabaseListResponse,
   DeleteDatabaseResponse,
   EmbeddingsResponse,
-  FactCheckResponse,
-  GlobalFactCheckOptions,
   GlobalSearchOptions,
   GlobalSearchResponse,
   HealthResponse,
@@ -82,7 +80,7 @@ export class LocalVectorDBClient {
   /** Delete a database. */
   async deleteDatabase(name: string): Promise<DeleteDatabaseResponse> {
     return this.http.del<DeleteDatabaseResponse>(
-      `/api/v1/${encodeURIComponent(name)}`,
+      `/api/v1/databases/${encodeURIComponent(name)}`,
     );
   }
 
@@ -125,17 +123,6 @@ export class LocalVectorDBClient {
       texts: Array.isArray(texts) ? texts : [texts],
       provider,
       model,
-    });
-  }
-
-  /** Check text for factual grounding across databases. */
-  async factCheck(
-    text: string,
-    options?: GlobalFactCheckOptions,
-  ): Promise<FactCheckResponse> {
-    return this.http.post<FactCheckResponse>("/api/v1/factcheck", {
-      text,
-      ...options,
     });
   }
 }

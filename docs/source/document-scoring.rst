@@ -170,7 +170,7 @@ in the request body. These parameters are forwarded directly to the local databa
 .. code-block:: bash
 
    # Unified query endpoint
-   curl -X POST http://localhost:8000/api/v1/my_db/query \
+   curl -X POST http://localhost:8000/api/v1/databases/my_db/query \
      -H "Content-Type: application/json" \
      -d '{
        "query": "machine learning",

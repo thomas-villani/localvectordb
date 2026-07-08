@@ -153,7 +153,7 @@ class TestRemoteVectorDBDocumentOperations:
 
         # Check request payload
         call_args = mock_httpx_client.request.call_args
-        assert call_args[0][1] == "http://127.0.0.1:5000/api/v1/test_db/documents"
+        assert call_args[0][1] == "http://127.0.0.1:5000/api/v1/databases/test_db/documents"
         payload = call_args[1]["json"]
         assert payload["documents"] == ["Test document"]
 
@@ -223,7 +223,9 @@ class TestRemoteVectorDBDocumentOperations:
         assert isinstance(result.created_at, datetime)
 
         # Check endpoint
-        mock_httpx_client.request.assert_called_with("GET", "http://127.0.0.1:5000/api/v1/test_db/documents/doc_1")
+        mock_httpx_client.request.assert_called_with(
+            "GET", "http://127.0.0.1:5000/api/v1/databases/test_db/documents/doc_1"
+        )
 
     def test_get_multiple_documents(self, mock_httpx_client, mock_db):
         """Test getting multiple documents."""
@@ -1119,7 +1121,7 @@ class TestRemoteContractRegressions:
         method, url = mock_httpx_client.request.call_args[0][:2]
         payload = mock_httpx_client.request.call_args[1]["json"]
         assert method == "POST"
-        assert url.endswith("/api/v1/test_db/auto-tune")
+        assert url.endswith("/api/v1/databases/test_db/auto-tune")
         assert payload == {"workload": {"workload_type": "write_heavy"}, "apply": False}
         assert result == {"profile_name": "fast_ingest", "applied": False}
 
@@ -1140,7 +1142,7 @@ class TestRemoteContractRegressions:
         method, url = mock_httpx_client.request.call_args[0][:2]
         payload = mock_httpx_client.request.call_args[1]["json"]
         assert method == "PUT"
-        assert url.endswith("/api/v1/test_db/schema")
+        assert url.endswith("/api/v1/databases/test_db/schema")
         assert isinstance(payload["metadata_schema"], dict) and payload["metadata_schema"]
         assert all(isinstance(v, dict) and "type" in v for v in payload["metadata_schema"].values())
 

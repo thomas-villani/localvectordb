@@ -149,7 +149,7 @@ Connect to a LocalVectorDB server::
     # Basic connection (no authentication)
     db = RemoteVectorDB(
         name="my_database",
-        base_url="http://localhost:5000"
+        base_url="http://localhost:8000"
     )
 
     # HTTPS connection with authentication
@@ -582,13 +582,13 @@ Database Management
 **Context Manager Support**::
 
     # Automatic cleanup with context manager
-    with RemoteVectorDB("mydb", "http://localhost:5000") as db:
+    with RemoteVectorDB("mydb", "http://localhost:8000") as db:
         db.upsert(documents)
         results = db.query("search")
     # Connection automatically closed
 
     # Async context manager
-    async with RemoteVectorDB("mydb", "http://localhost:5000") as db:
+    async with RemoteVectorDB("mydb", "http://localhost:8000") as db:
         await db.upsert_async(documents)
         results = await db.query_async("search")
 
@@ -606,7 +606,7 @@ All async methods follow the naming convention of adding ``_async`` suffix::
     from localvectordb.client import RemoteVectorDB
 
     async def main():
-        db = RemoteVectorDB("mydb", "http://localhost:5000")
+        db = RemoteVectorDB("mydb", "http://localhost:8000")
 
         # Async document operations
         doc_ids = await db.upsert_async(["Doc 1", "Doc 2"])
@@ -648,7 +648,7 @@ Async Context Manager
 Use async context manager for automatic cleanup::
 
     async def search_documents():
-        async with RemoteVectorDB("mydb", "http://localhost:5000") as db:
+        async with RemoteVectorDB("mydb", "http://localhost:8000") as db:
             # Concurrent searches
             results = await asyncio.gather(
                 db.query_async("machine learning", search_type="vector"),
@@ -892,7 +892,7 @@ Exception Types
     )
 
     try:
-        db = RemoteVectorDB("nonexistent", "http://localhost:5000")
+        db = RemoteVectorDB("nonexistent", "http://localhost:8000")
     except DatabaseNotFoundError as e:
         print(f"Database not found: {e}")
 
@@ -913,7 +913,7 @@ RemoteVectorDB includes automatic retry with exponential backoff::
 
     db = RemoteVectorDB(
         name="mydb",
-        base_url="http://localhost:5000",
+        base_url="http://localhost:8000",
         max_retries=3,  # Retry failed requests up to 3 times
         retry_delay=1.0  # Base delay, exponentially increases
     )
@@ -959,7 +959,7 @@ Optimize connection reuse::
     # Configure connection pooling for high-throughput
     db = RemoteVectorDB(
         name="mydb",
-        base_url="http://localhost:5000",
+        base_url="http://localhost:8000",
         connection_pool_limits=Limits(
             max_keepalive_connections=50,  # Keep more connections alive
             max_connections=200,  # Allow more total connections
@@ -1022,7 +1022,7 @@ RemoteVectorDB supports URI-based connections::
     db = from_uri("lvdb:///path/to/databases/mydb")
 
     # Remote HTTP
-    db = from_uri("lvdb+http://localhost:5000/mydb")
+    db = from_uri("lvdb+http://localhost:8000/mydb")
 
     # Remote HTTPS with auth
     db = from_uri("lvdb+https://api_key@vectordb.company.com/mydb")
@@ -1122,7 +1122,7 @@ If migrating from an older, pre-release API::
     # v0.1.0 code (remote)
     from localvectordb.client import RemoteVectorDB
 
-    db = RemoteVectorDB("mydb", "http://server:5000")
+    db = RemoteVectorDB("mydb", "http://server:8000")
     db.upsert(["text1", "text2"])
     results = db.query("query", search_type="vector")
 

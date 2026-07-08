@@ -47,10 +47,10 @@ Full Configuration File
    debug = false
    environment = "development"
    host = "127.0.0.1"
-   port = 5000
+   port = 8000
    log_level = "INFO"
    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-   file_upload_enabled = true   # enables the /api/v1/<db-name>/upload route
+   file_upload_enabled = true   # enables the /api/v1/databases/<db-name>/upload route
    max_request_size = 104857600
    enable_rate_limiting = false
    rate_limit = "100 per minute"
@@ -100,7 +100,7 @@ Full Configuration File
    # CORS settings
    cors_enabled = true
    # IMPORTANT: if CORS is enabled, you need to set the allowed origins!
-   cors_allowed_origins = ["http://localhost:5000", "https://your-website.com"]
+   cors_allowed_origins = ["http://localhost:8000", "https://your-website.com"]
    cors_allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
    # If you changed the default Authorization header, make sure to put it here too
    cors_allowed_headers = ["Content-Type", "Authorization"]
@@ -254,7 +254,7 @@ Server Settings
      - Host address to bind the server to.
    * - ``port``
      - int
-     - ``5000``
+     - ``8000``
      - Port number to bind the server to.
    * - ``log_level``
      - str
@@ -267,7 +267,7 @@ Server Settings
    * - ``file_upload_enabled``
      - bool
      - ``false``
-     - Whether to allow file uploads via the ``/api/v1/<db-name>/upload`` route.
+     - Whether to allow file uploads via the ``/api/v1/databases/<db-name>/upload`` route.
    * - ``max_request_size``
      - int
      - ``104857600`` (100 MB)

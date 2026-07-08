@@ -272,12 +272,12 @@ response:
 Because :class:`LLMProvider` is a runtime-checkable ``Protocol``, any object with a matching
 ``complete`` signature is accepted without subclassing.
 
-HTTP Server
------------
+Local-Only in v0.1.0
+--------------------
 
-The same functionality is exposed over HTTP when running the LocalVectorDB server. See the
-fact-checking endpoints in :doc:`server/routes` (``POST /api/v1/{db_name}/factcheck`` for a
-single database and ``POST /api/v1/factcheck`` across databases). Those endpoints require the
-``localvectordb`` validation module to be installed and accept ``llm_provider``,
-``llm_api_key``, ``model``, ``similarity_threshold``, ``min_grounding_score``, ``search_type``,
-and ``k`` in the request body.
+Fact-checking is a **local-only** feature: it runs in-process against one or more
+:class:`~localvectordb.LocalVectorDB` instances via the :class:`FactChecker` class shown above.
+The LocalVectorDB HTTP server does **not** expose fact-check endpoints, and
+:class:`~localvectordb.RemoteVectorDB` has no ``fact_check`` method. To fact-check against data
+served remotely, retrieve or open the database locally and construct a :class:`FactChecker`
+around it.

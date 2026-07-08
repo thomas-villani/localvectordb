@@ -104,7 +104,7 @@ class SimilarityMatrixResponse(StrictModel):
 
 
 @router.post(
-    "/{db_name}/compare",
+    "/databases/{db_name}/compare",
     response_model=CompareResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -133,7 +133,7 @@ async def compare_documents(db_name: str, body: CompareBody, db=Depends(get_db))
 
 
 @router.post(
-    "/{db_name}/compare/detailed",
+    "/databases/{db_name}/compare/detailed",
     response_model=CompareDetailedResponse,
     response_model_exclude_unset=True,
     dependencies=[Depends(require_read_permission)],
@@ -159,7 +159,7 @@ async def compare_documents_detailed(db_name: str, body: CompareDetailedBody, db
 
 
 @router.post(
-    "/{db_name}/nearest-neighbors",
+    "/databases/{db_name}/nearest-neighbors",
     response_model=NearestNeighborsResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -195,7 +195,7 @@ async def nearest_neighbors(db_name: str, body: NearestNeighborsBody, db=Depends
 
 
 @router.post(
-    "/{db_name}/similarity-matrix",
+    "/databases/{db_name}/similarity-matrix",
     response_model=SimilarityMatrixResponse,
     dependencies=[Depends(require_read_permission)],
 )

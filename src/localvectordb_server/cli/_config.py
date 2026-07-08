@@ -7,7 +7,9 @@ import click
 
 from localvectordb_server.cli._utils import (
     DEFAULT_CONFIG_FILE,
+    EXIT_CODE_PERMISSION_ERROR,
     _format_value_for_display,
+    error,
     get_nested_value,
     set_nested_value,
 )
@@ -50,8 +52,6 @@ def config_group(ctx):
     default=None,
     help="Output format (defaults to format of config file)",
 )
-@click.option("--toml", "format", flag_value="toml", help="Output in `toml` format")
-@click.option("--json", "format", flag_value="json", help="Output in `json` format")
 @click.option(
     "--section",
     "-s",
@@ -192,18 +192,16 @@ def get_config_value(ctx, key, format):
             click.echo(_format_value_for_display(value))
 
     except ValueError as e:
-        click.secho(f"Error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1) from e
+        error(f"Error: {e}")
     except Exception as e:
-        click.secho(f"Unexpected error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1) from e
+        error(f"Unexpected error: {e}")
 
 
 @config_group.command("set")
 @click.argument("key")
 @click.argument("value")
 @click.option("--dry-run", "-n", is_flag=True, help="Show what would be changed without saving")
-@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+@click.option("--force", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def set_config_value(ctx, key, value, dry_run, force):
     """
@@ -255,8 +253,11 @@ def set_config_value(ctx, key, value, dry_run, force):
         # Validate and save
         cfg.validate()
         config_text = cfg.generate_toml()
-        with open(config_path, "w", encoding="utf-8") as f:
-            f.write(config_text)
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write(config_text)
+        except PermissionError as e:
+            error(f"Permission denied writing configuration to {config_path}: {e}", EXIT_CODE_PERMISSION_ERROR)
 
         click.secho(f"\n✓ Configuration updated and saved to {config_path}", fg="green")
 
@@ -269,12 +270,12 @@ def set_config_value(ctx, key, value, dry_run, force):
             # Display-only echo; skip silently if the value can't be re-read.
             pass
 
+    except click.exceptions.Exit:
+        raise
     except ValueError as e:
-        click.secho(f"Error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1) from e
+        error(f"Error: {e}")
     except Exception as e:
-        click.secho(f"Unexpected error: {e}", fg="bright_red", err=True)
-        raise click.exceptions.Exit(1) from e
+        error(f"Unexpected error: {e}")
 
 
 @config_group.command("init")
@@ -283,7 +284,8 @@ def set_config_value(ctx, key, value, dry_run, force):
     "-f",
     type=click.Choice(["toml", "json"]),
     default="toml",
-    help="Configuration file format (default: toml)",
+    show_default=True,
+    help="Configuration file format",
 )
 @click.option("--output", type=click.Path(resolve_path=True), help="Path to create config file")
 @click.option(
@@ -308,7 +310,7 @@ def set_config_value(ctx, key, value, dry_run, force):
 @click.option("--enable-auth", is_flag=True, help="Enable API key authentication")
 # Server options
 @click.option("--host", help="Server host (default: 127.0.0.1)")
-@click.option("--port", type=int, help="Server port (default: 5000)")
+@click.option("--port", type=int, help="Server port (default: 8000)")
 @click.option("--enable-file-upload", is_flag=True, help="Enable file upload routes on the server")
 @click.option("--max-request-size-mb", type=int, help="Set the maximum request size in MB", default=100)
 # Interactive mode
@@ -422,8 +424,7 @@ def init_config(
     if enable_file_upload:
         config.server.file_upload_enabled = True
         if max_request_size_mb <= 0:
-            click.secho("Error: --max-request-size-mb must be a positive integer", err=True, fg="bright_red")
-            raise click.Abort()
+            error("Error: --max-request-size-mb must be a positive integer")
 
         config.server.max_request_size = max_request_size_mb * 1024 * 1024
 
@@ -458,7 +459,7 @@ def _interactive_config_init(format, output):
 
     # Server host and port
     host = click.prompt("Server host", default="127.0.0.1")
-    port = click.prompt("Server port", type=int, default=5000)
+    port = click.prompt("Server port", type=int, default=8000)
     config.server.host = host
     config.server.port = port
 
@@ -626,8 +627,7 @@ def _configure_redis_registry(config, redis_url):
         click.secho(f"Configured Redis registry: {redis_url}", fg="green")
 
     except Exception as e:
-        click.secho(f"Invalid Redis URL: {e}", fg="red")
-        raise click.Abort() from e
+        error(f"Invalid Redis URL: {e}")
 
 
 def _configure_file_registry(config):
@@ -761,8 +761,11 @@ def _save_config(config, output, format):
     else:
         raise ValueError(f"Unsupported config format: {format!r} (expected 'toml' or 'json')")
 
-    with open(output, "w", encoding="utf-8") as f:
-        f.write(config_text)
+    try:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(config_text)
+    except PermissionError as e:
+        error(f"Permission denied writing configuration to {output}: {e}", EXIT_CODE_PERMISSION_ERROR)
 
     click.secho(f"Configuration file `{output}` created!", fg="green", bold=True)
 

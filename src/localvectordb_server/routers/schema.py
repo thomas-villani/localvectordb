@@ -53,7 +53,7 @@ class SchemaInfoResponse(StrictModel):
 
 
 @router.put(
-    "/{db_name}/schema",
+    "/databases/{db_name}/schema",
     response_model=UpdateMetadataSchemaResponse,
     dependencies=[Depends(require_write_permission)],
 )
@@ -118,7 +118,7 @@ async def update_metadata_schema(db_name: str, body: UpdateMetadataSchemaBody, d
 
 
 @router.get(
-    "/{db_name}/schema",
+    "/databases/{db_name}/schema",
     response_model=SchemaInfoResponse,
     dependencies=[Depends(require_read_permission)],
 )

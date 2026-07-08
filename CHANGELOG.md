@@ -51,6 +51,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sphinx documentation with autodoc
 - CI/CD pipeline with linting, type checking, security scanning, and tests
 
+### Changed
+
+Breaking HTTP/API contract changes finalized before the v0.1.0 freeze (relevant
+to anyone tracking the pre-release):
+
+- **HTTP routes**: all per-database endpoints moved under `/api/v1/databases/{db_name}/...`
+  (for example `/api/v1/databases/{db_name}/query`). Global endpoints
+  (`/api/v1/databases`, `/api/v1/search`, `/api/v1/embeddings`, `/api/v1/health`,
+  `/api/v1/system/resources`, `/api/v1/upload/...`) are unchanged. Database names are
+  now namespaced under `/databases/`, so no database names are reserved.
+- **Global search**: `POST /api/v1/search` now returns the per-database map under
+  `results_by_database` (was `results`).
+- **Default server port** changed from `5000` to `8000` (5000 collides with the macOS
+  AirPlay Receiver).
+- Single-document delete (`DELETE /api/v1/databases/{db_name}/documents/{doc_id}`) is
+  idempotent — deleting a missing document succeeds instead of erroring.
+
+### Removed
+
+- Remote/HTTP fact-checking: the `/factcheck` HTTP endpoints and the
+  `RemoteVectorDB.fact_check()` client method are removed. Fact-checking ("reverse RAG")
+  remains available as a local-only feature via the `FactChecker` class over
+  `LocalVectorDB`.
+
 ### Fixed
 
 Issues found during pre-release end-to-end qualification with real embedding
@@ -126,15 +150,14 @@ frozen for v0.1.0):
   server. Removed the remote-only legacy `hybrid_query()`/`keyword_search()`.
 - **HTTP contract**: rate-limit (429) responses now use the standard
   `{"error": {...}}` envelope (the stock slowapi body broke the client);
-  `POST /{db}/query_builder` renamed to `/{db}/query-builder`; database names
-  that collide with top-level API paths (e.g. `databases`, `health`) are
-  rejected at creation; `PATCH` added to the default CORS methods;
-  `DELETE /{db}` on a missing database returns 404 instead of 200; SSE and
-  fact-check error payloads no longer leak internal exception text.
+  `query_builder` path is hyphenated (`query-builder`); `PATCH` added to the
+  default CORS methods; `DELETE` on a missing database returns 404 instead of
+  200; SSE error payloads no longer leak internal exception text.
 - **CLI**: failing `tuning`/`maintenance`/`backup verify`/`backup pitr`/
   `migrate`/`db get`/`db delete`/`delete` invocations now exit non-zero;
-  machine-output flags are unified to `--json/-j` (boolean) and `--format/-f`
-  (choice), with `-o/--output` reserved for output files; `--help` works
+  machine-output is unified on `--format/-f {table,json}` (with `-j` as a
+  shortcut for `--format json`), and `-o/--output` reserved for output files;
+  `--help` works
   without a config file and `lvdb serve` falls back to localhost defaults;
   `config init --cors-origins` now persists; and `lvdb db <name> add` errors on
   a path-like argument that does not exist instead of silently storing it as

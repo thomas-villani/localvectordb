@@ -16,7 +16,7 @@ npm install @localvectordb/sdk
 import { LocalVectorDBClient } from "@localvectordb/sdk";
 
 const client = new LocalVectorDBClient({
-  baseUrl: "http://localhost:5000",
+  baseUrl: "http://localhost:8000",
   apiKey: "lvdb_your_api_key", // optional
 });
 
@@ -50,7 +50,7 @@ Pass an API key in the client config. It is sent as a `Bearer` token in the `Aut
 
 ```typescript
 const client = new LocalVectorDBClient({
-  baseUrl: "http://localhost:5000",
+  baseUrl: "http://localhost:8000",
   apiKey: "lvdb_your_api_key",
 });
 ```
@@ -66,7 +66,6 @@ await client.createDatabase("name", options);
 await client.deleteDatabase("name");
 await client.globalSearch("query", options);
 await client.embeddings(["text"], "ollama", "nomic-embed-text");
-await client.factCheck("claim to verify", options);
 ```
 
 ### Database operations
@@ -107,9 +106,6 @@ await db.setTuning("write_heavy");
 await db.checkpoint();
 await db.optimize();
 await db.vacuum();
-
-// Fact-checking
-await db.factCheck("The sky is blue");
 ```
 
 ## Streaming
@@ -189,7 +185,7 @@ try {
 
 ```typescript
 const client = new LocalVectorDBClient({
-  baseUrl: "http://localhost:5000",
+  baseUrl: "http://localhost:8000",
   apiKey: "lvdb_...",       // optional
   timeout: 30000,           // request timeout in ms (default: 30s)
   maxRetries: 3,            // retry count for 5xx/network errors (default: 3)

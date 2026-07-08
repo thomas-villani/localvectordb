@@ -413,7 +413,7 @@ Client usage for remote databases:
    # Connect to remote database
    db = RemoteVectorDB(
        "my_database",
-       "http://localhost:5000",
+       "http://localhost:8000",
        api_key="your_api_key"
    )
 
@@ -438,7 +438,7 @@ Find documents by John Doe from 2020 onwards:
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/my_database/filter" \
+   curl -X POST "http://localhost:8000/api/v1/databases/my_database/filter" \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -455,7 +455,7 @@ Find high-quality tech/science documents that are featured OR trending, newest f
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/my_database/filter" \
+   curl -X POST "http://localhost:8000/api/v1/databases/my_database/filter" \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -481,7 +481,7 @@ Find machine learning articles by doctors with AI in the description:
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/my_database/filter" \
+   curl -X POST "http://localhost:8000/api/v1/databases/my_database/filter" \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -500,7 +500,7 @@ Find Python documents without deprecated content, with specific skill requiremen
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/my_database/filter" \
+   curl -X POST "http://localhost:8000/api/v1/databases/my_database/filter" \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{
@@ -561,7 +561,7 @@ Search for recent NLP content in AI category OR with NLP tags:
 
 .. code-block:: bash
 
-   curl -X POST "http://localhost:5000/api/v1/my_database/query" \
+   curl -X POST "http://localhost:8000/api/v1/databases/my_database/query" \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer your_api_key" \
      -d '{

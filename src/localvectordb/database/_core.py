@@ -1080,8 +1080,22 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.save)
 
-    async def get_async_stats(self) -> Dict[str, Any]:
-        """Get async-specific statistics"""
+    async def get_stats_async(self) -> Dict[str, Any]:
+        """Async twin of :meth:`get_stats` (database statistics).
+
+        Mirrors ``RemoteVectorDB.get_stats_async`` so ``await db.get_stats_async()``
+        works against either backend. Statistics collection is lightweight sync
+        SQLite work, so this delegates to the sync path.
+        """
+        return self.get_stats()
+
+    async def get_async_pool_stats(self) -> Dict[str, Any]:
+        """Get async connection-pool statistics.
+
+        Renamed from ``get_async_stats`` for v0.1.0: the old name collided with
+        (and read as) the async twin of ``get_stats`` while actually returning
+        pool internals. This reports the async pool only.
+        """
         stats = {}
         if self.async_connection_pool:
             stats["async_pool"] = self.async_connection_pool.stats

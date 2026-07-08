@@ -338,7 +338,7 @@ Nginx Example Configuration:
 .. code-block:: nginx
 
    upstream vectordb {
-       server 127.0.0.1:5000;
+       server 127.0.0.1:8000;
    }
 
    server {
@@ -414,7 +414,7 @@ When structured logging is enabled, logs are in JSON format:
      "request_id": "req_abc123",
      "api_key_hash": "hash_xyz789",
      "method": "POST",
-     "path": "/api/v1/mydb/search",
+     "path": "/api/v1/databases/mydb/search",
      "remote_addr": "10.0.1.100",
      "operation_type": "search",
      "operation": "vector_search",
@@ -519,7 +519,7 @@ Docker Deployment
    RUN chown -R vectordb:vectordb /app
    USER vectordb
 
-   EXPOSE 5000
+   EXPOSE 8000
 
    CMD ["lvdb", "--config", "/app/config/production.toml", "serve"]
 
@@ -539,7 +539,7 @@ Docker Deployment
      vectordb:
        build: .
        ports:
-         - "5000:5000"
+         - "8000:8000"
        environment:
          - LVDB_SERVER_CONFIG=/app/config/production.toml
          - REDIS_PASSWORD=${REDIS_PASSWORD}
@@ -593,7 +593,7 @@ Kubernetes Deployment
          - name: vectordb
            image: localvectordb-server:latest
            ports:
-           - containerPort: 5000
+           - containerPort: 8000
            env:
            - name: LVDB_SERVER_CONFIG
              value: "/config/production.toml"
@@ -618,13 +618,13 @@ Kubernetes Deployment
            livenessProbe:
              httpGet:
                path: /api/v1/health
-               port: 5000
+               port: 8000
              initialDelaySeconds: 30
              periodSeconds: 10
            readinessProbe:
              httpGet:
                path: /api/v1/health
-               port: 5000
+               port: 8000
              initialDelaySeconds: 5
              periodSeconds: 5
          volumes:
@@ -645,14 +645,14 @@ For production ASGI deployment:
 .. code-block:: bash
 
    uvicorn "localvectordb_server.app:create_app" --factory \
-       --host 0.0.0.0 --port 5000
+       --host 0.0.0.0 --port 8000
 
 **Multi-worker production**
 
 .. code-block:: bash
 
    uvicorn "localvectordb_server.app:create_app" --factory \
-       --host 0.0.0.0 --port 5000 \
+       --host 0.0.0.0 --port 8000 \
        --workers 4 \
        --log-level info \
        --access-log \
@@ -665,7 +665,7 @@ For production ASGI deployment:
    gunicorn "localvectordb_server.app:create_app" \
        --worker-class uvicorn.workers.UvicornWorker \
        --workers 4 \
-       --bind 0.0.0.0:5000 \
+       --bind 0.0.0.0:8000 \
        --timeout 300 \
        --keepalive 5 \
        --access-logfile /app/logs/access.log \
@@ -679,10 +679,10 @@ For production ASGI deployment:
 
    # Start with uvicorn (recommended)
    uvicorn "localvectordb_server.app:create_app" --factory \
-       --host 0.0.0.0 --port 5000 --workers 4
+       --host 0.0.0.0 --port 8000 --workers 4
 
    # Or use the CLI
-   lvdb serve --host 0.0.0.0 --port 5000
+   lvdb serve --host 0.0.0.0 --port 8000
 
 Performance Tuning
 ------------------
@@ -728,7 +728,7 @@ The ``/api/v1/health`` endpoint provides system status:
 
 .. code-block:: bash
 
-   curl http://localhost:5000/api/v1/health
+   curl http://localhost:8000/api/v1/health
 
 Response:
 
@@ -758,7 +758,7 @@ Example monitoring script:
    #!/bin/bash
 
    # Check health endpoint
-   curl -f http://localhost:5000/api/v1/health || exit 1
+   curl -f http://localhost:8000/api/v1/health || exit 1
 
    # Check API key stats
    API_STATS=$(lvdb auth status --format json)

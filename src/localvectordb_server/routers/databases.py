@@ -207,7 +207,7 @@ def list_databases(db_manager=Depends(get_db_manager)):
 
 
 @router.get(
-    "/{db_name}/info",
+    "/databases/{db_name}/info",
     response_model=DatabaseInfoResponse,
     dependencies=[Depends(require_read_permission)],
 )
@@ -245,7 +245,7 @@ def get_database_info(db_name: str, db=Depends(get_db)):
 
 
 @router.delete(
-    "/{db_name}",
+    "/databases/{db_name}",
     response_model=DeleteDatabaseResponse,
     dependencies=[Depends(require_write_permission)],
 )
