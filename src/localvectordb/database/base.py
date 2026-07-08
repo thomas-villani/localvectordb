@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 if TYPE_CHECKING:
+    from localvectordb._interfaces import QueryBuilderInterface
     from localvectordb.cursor import QueryCursor
-    from localvectordb.query_builder import QueryBuilderInterface
 
 import aiosqlite
 import numpy as np
