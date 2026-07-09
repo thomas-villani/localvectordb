@@ -195,6 +195,7 @@ dev = [
     "sphinx>=8.2.3",
     "sphinx-autodoc-typehints>=3.2.0",
     "sphinx-copybutton>=0.5.2",
+    "sphinx-design>=0.6.1",
     "sphinx-rtd-theme>=3.0.2",
     # Runtime extras exercised by the test suite (mcp deliberately excluded)
     "localvectordb[server]",

@@ -772,17 +772,17 @@ Installation Requirements
 
 .. code-block:: bash
 
-   pip install localvectordb[server]
+   pip install "localvectordb[server]"
 
 **Extended formats and OCR**:
 
 .. code-block:: bash
 
    # Extended/niche formats: latex, wiki, textile, archives, .enex, .fb2, outlook
-   pip install localvectordb[file-extraction]
+   pip install "localvectordb[file-extraction]"
 
    # OCR for scanned PDFs (also requires the Tesseract system binary)
-   pip install localvectordb[file-extraction-ocr]
+   pip install "localvectordb[file-extraction-ocr]"
 
 Extraction Security
 ^^^^^^^^^^^^^^^^^^^

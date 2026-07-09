@@ -100,10 +100,10 @@ Installation
    pip install localvectordb
 
    # With server capabilities
-   pip install localvectordb[server]
+   pip install "localvectordb[server]"
 
    # Development installation with all features
-   pip install localvectordb[all]
+   pip install "localvectordb[all]"
 
 Quick Example
 ^^^^^^^^^^^^^
@@ -730,7 +730,7 @@ the database object:
    detail = db.compare_documents_detailed("doc_a", "doc_b", chunk_threshold=0.7)
    print(f"Matched: {detail.matched_ratio_1:.0%} of doc_a, {detail.matched_ratio_2:.0%} of doc_b")
 
-   # Visualise (requires pip install localvectordb[visualization])
+   # Visualise (requires pip install "localvectordb[visualization]")
    fig = db.visualize_documents(method="tsne", n_clusters=3)
 
 See :doc:`comparison` for the full guide.

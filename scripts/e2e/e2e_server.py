@@ -214,7 +214,7 @@ key_database_path = '{(workdir / "api_keys.db").as_posix()}'
             headers = {"Authorization": f"Bearer {rw_key}"}
 
             r = httpx.post(
-                f"{base_url}/api/v1/{DB_NAME}/query",
+                f"{base_url}/api/v1/databases/{DB_NAME}/query",
                 headers=headers,
                 json={"query": "x", "search_type": "keyword", "filters": {"not_a_real_field": 1}},
                 timeout=30,
@@ -237,7 +237,7 @@ key_database_path = '{(workdir / "api_keys.db").as_posix()}'
                 (fixtures / "financial_report.docx").open("rb") as f2,
             ):
                 r = httpx.post(
-                    f"{base_url}/api/v1/{DB_NAME}/upload",
+                    f"{base_url}/api/v1/databases/{DB_NAME}/upload",
                     headers=headers,
                     files=[
                         ("files", ("machine_learning.pdf", f1, "application/pdf")),
@@ -279,14 +279,14 @@ key_database_path = '{(workdir / "api_keys.db").as_posix()}'
             c.section("read-only key enforcement")
             ro_headers = {"Authorization": f"Bearer {ro_key}"}
             r = httpx.post(
-                f"{base_url}/api/v1/{DB_NAME}/query",
+                f"{base_url}/api/v1/databases/{DB_NAME}/query",
                 headers=ro_headers,
                 json={"query": "volcano", "search_type": "keyword", "k": 2},
                 timeout=30,
             )
             c.check("read-only key can query", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
             r = httpx.post(
-                f"{base_url}/api/v1/{DB_NAME}/documents",
+                f"{base_url}/api/v1/databases/{DB_NAME}/documents",
                 headers=ro_headers,
                 json={"documents": ["sneaky write"], "ids": ["sneaky"]},
                 timeout=30,

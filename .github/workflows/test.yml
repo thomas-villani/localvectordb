@@ -88,6 +88,16 @@ jobs:
       - name: Check distribution metadata
         run: uvx twine check dist/*
 
+      # The base wheel must import with zero extras installed. A stray import of
+      # an extras-only dependency (this bit us once with psutil) is invisible to
+      # the dev-env test suite but breaks every `pip install localvectordb`.
+      - name: Verify base wheel imports with no extras
+        run: |
+          WHEEL="$(ls dist/*.whl)"
+          echo "Importing $WHEEL in an isolated environment..."
+          uv run --isolated --no-project --with "$WHEEL" \
+            python -c "import localvectordb; print('ok', localvectordb.__version__)"
+
       - name: Verify sdist excludes internal docs
         run: |
           if tar -tzf dist/*.tar.gz | grep -E 'competitive-analysis|claude-code-review|remote-layer-streaming|todo-v2'; then

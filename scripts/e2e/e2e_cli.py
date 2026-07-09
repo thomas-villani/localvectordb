@@ -88,22 +88,33 @@ model = "{model}"
         c.check("doc list shows all ids", all(s in r.stdout for s in expected_ids), r.stdout[-400:])
 
         c.section("search")
-        r = lvdb("db", DB, "search", "the Apollo moon landings", "--search-type", "hybrid", "--limit", "3", "--json")
+        r = lvdb(
+            "db",
+            DB,
+            "search",
+            "the Apollo moon landings",
+            "--search-type",
+            "hybrid",
+            "--limit",
+            "3",
+            "--format",
+            "json",
+        )
         c.check("hybrid search succeeds", r.returncode == 0, r.stderr[-300:])
         c.check("search finds space doc", "space_exploration" in r.stdout, r.stdout[-400:])
         try:
             payload = json.loads(r.stdout)
-            c.check("search --json is valid JSON", True)
+            c.check("search --format json is valid JSON", True)
             first = payload[0] if isinstance(payload, list) else payload.get("results", [{}])[0]
             c.check("top search hit is space doc", "space_exploration" in str(first), str(first)[:200])
         except (json.JSONDecodeError, IndexError, KeyError) as exc:
-            c.check("search --json is valid JSON", False, f"{exc}: {r.stdout[:200]}")
+            c.check("search --format json is valid JSON", False, f"{exc}: {r.stdout[:200]}")
 
         r = lvdb("db", DB, "search", "brunoise", "--search-type", "keyword", "--limit", "2")
         c.check("keyword search finds cooking doc", r.returncode == 0 and "french_cooking" in r.stdout, r.stdout[-300:])
 
         c.section("get + related")
-        r = lvdb("db", DB, "get", "space_exploration", "--json", "--metadata")
+        r = lvdb("db", DB, "get", "space_exploration", "--format", "json", "--metadata")
         c.check("get returns document", r.returncode == 0 and "Apollo" in r.stdout, r.stdout[-300:])
         r = lvdb("db", DB, "related", "french_cooking", "--limit", "2")
         c.check("related succeeds", r.returncode == 0, r.stderr[-300:] or r.stdout[-300:])

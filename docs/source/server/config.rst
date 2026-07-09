@@ -569,7 +569,7 @@ Docker Deployment
    RUN curl -fsSL https://ollama.ai/install.sh | sh
 
    # Install LocalVectorDB
-   RUN pip install localvectordb[server]
+   RUN pip install "localvectordb[server]"
 
    # Create app directory
    WORKDIR /app

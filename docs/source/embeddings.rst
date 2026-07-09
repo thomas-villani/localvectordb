@@ -261,7 +261,7 @@ Run any SentenceTransformer model locally. Supports Matryoshka dimension truncat
 
 .. note::
    Requires the ``sentence-transformers`` optional dependency:
-   ``pip install localvectordb[sentence-transformers]``
+   ``pip install "localvectordb[sentence-transformers]"``
 
 Configuration:
 
@@ -331,7 +331,7 @@ Run HuggingFace transformer models locally with full control over pooling and de
 
 .. note::
    Requires the ``local-embeddings`` optional dependency:
-   ``pip install localvectordb[local-embeddings]``
+   ``pip install "localvectordb[local-embeddings]"``
 
 Configuration:
 

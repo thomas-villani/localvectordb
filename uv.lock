@@ -1990,6 +1990,7 @@ dependencies = [
     { name = "faiss-cpu" },
     { name = "httpx" },
     { name = "numpy" },
+    { name = "psutil" },
     { name = "tiktoken" },
 ]
 
@@ -1998,10 +1999,10 @@ all = [
     { name = "all2md", extra = ["archive", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"] },
     { name = "bcrypt" },
     { name = "cachelib" },
+    { name = "click" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "matplotlib" },
-    { name = "psutil" },
     { name = "python-multipart" },
     { name = "scikit-learn" },
     { name = "sentence-transformers" },
@@ -2009,11 +2010,11 @@ all = [
     { name = "sse-starlette" },
     { name = "tomli-w" },
     { name = "torch" },
+    { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 benchmark = [
     { name = "h5py" },
-    { name = "psutil" },
 ]
 file-extraction = [
     { name = "all2md", extra = ["archive", "enex", "fb2", "html-readability", "latex", "outlook", "sanitizer", "textile", "wiki"] },
@@ -2035,8 +2036,8 @@ sentence-transformers = [
 server = [
     { name = "bcrypt" },
     { name = "cachelib" },
+    { name = "click" },
     { name = "fastapi" },
-    { name = "psutil" },
     { name = "python-multipart" },
     { name = "slowapi" },
     { name = "sse-starlette" },
@@ -2070,6 +2071,7 @@ dev = [
     { name = "sphinx" },
     { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-copybutton" },
+    { name = "sphinx-design" },
     { name = "sphinx-rtd-theme" },
     { name = "twine" },
 ]
@@ -2083,12 +2085,14 @@ requires-dist = [
     { name = "bcrypt", marker = "extra == 'server'", specifier = ">=5.0.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "cachelib", marker = "extra == 'server'", specifier = ">=0.14.0" },
+    { name = "click", marker = "extra == 'server'", specifier = ">=8.2" },
     { name = "faiss-cpu", specifier = ">=1.14.2" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.136.3" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.4.1" },
     { name = "h5py", marker = "extra == 'benchmark'", specifier = ">=3.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "localvectordb", extras = ["file-extraction"], marker = "extra == 'all'" },
+    { name = "localvectordb", extras = ["local-embeddings"], marker = "extra == 'all'" },
     { name = "localvectordb", extras = ["mcp"], marker = "extra == 'all'" },
     { name = "localvectordb", extras = ["sentence-transformers"], marker = "extra == 'all'" },
     { name = "localvectordb", extras = ["server"], marker = "extra == 'all'" },
@@ -2097,8 +2101,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "plotly", marker = "extra == 'visualization-interactive'", specifier = ">=5.15.0" },
-    { name = "psutil", marker = "extra == 'benchmark'", specifier = ">=5.9.0" },
-    { name = "psutil", marker = "extra == 'server'", specifier = ">=7.2.2" },
+    { name = "psutil", specifier = ">=5.9.0" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.32" },
     { name = "scikit-learn", marker = "extra == 'visualization'", specifier = ">=1.9.0" },
     { name = "sentence-transformers", marker = "extra == 'sentence-transformers'", specifier = ">=3.0.0" },
@@ -2132,6 +2135,7 @@ dev = [
     { name = "sphinx", specifier = ">=8.2.3" },
     { name = "sphinx-autodoc-typehints", specifier = ">=3.2.0" },
     { name = "sphinx-copybutton", specifier = ">=0.5.2" },
+    { name = "sphinx-design", specifier = ">=0.6.1" },
     { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
     { name = "twine", specifier = ">=5.0.0" },
 ]
@@ -4290,6 +4294,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fc/2b/a964715e7f5295f77509e59309959f4125122d648f86b4fe7d70ca1d882c/sphinx-copybutton-0.5.2.tar.gz", hash = "sha256:4cf17c82fb9646d1bc9ca92ac280813a3b605d8c421225fd9913154103ee1fbd", size = 23039, upload-time = "2023-04-14T08:10:22.998Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/48/1ea60e74949eecb12cdd6ac43987f9fd331156388dcc2319b45e2ebb81bf/sphinx_copybutton-0.5.2-py3-none-any.whl", hash = "sha256:fb543fd386d917746c9a2c50360c7905b605726b9355cd26e9974857afeae06e", size = 13343, upload-time = "2023-04-14T08:10:20.844Z" },
+]
+
+[[package]]
+name = "sphinx-design"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/7b/804f311da4663a4aecc6cf7abd83443f3d4ded970826d0c958edc77d4527/sphinx_design-0.7.0.tar.gz", hash = "sha256:d2a3f5b19c24b916adb52f97c5f00efab4009ca337812001109084a740ec9b7a", size = 2203582, upload-time = "2026-01-19T13:12:53.297Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/cf/45dd359f6ca0c3762ce0490f681da242f0530c49c81050c035c016bfdd3a/sphinx_design-0.7.0-py3-none-any.whl", hash = "sha256:f82bf179951d58f55dca78ab3706aeafa496b741a91b1911d371441127d64282", size = 2220350, upload-time = "2026-01-19T13:12:51.077Z" },
 ]
 
 [[package]]

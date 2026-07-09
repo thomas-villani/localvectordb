@@ -15,58 +15,23 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 > - ✅ **Reverse-RAG fact-checking** — ground LLM-generated text against your corpus, flagging unsupported or contradicted claims with citations.
 > - 📊 **Document comparison & visualization** — synteny ribbons and chord diagrams that show how two documents (or a document's own chunks) relate.
 
-## ✨ Features
+## Contents
 
-### 🗃️ **Document-First Architecture**
-- **Smart Chunking**: Position-tracking chunking with perfect document reconstruction
-- **Metadata Schema**: Structured, indexed metadata fields with validation
-- **Unified API**: Single interface for vector, keyword, and hybrid search
+- [Quick Start](#-quick-start) — install, index, search
+- [Use with Claude Code & other AI agents](#-use-with-claude-code--other-ai-agents)
+- [Features](#-features)
+- [Server Deployment](#️-server-deployment)
+- [TypeScript SDK](#-typescript-sdk)
+- [API Reference](#-api-reference)
+- [CLI Reference](#️-cli-reference)
+- [Architecture](#️-architecture)
+- [File Extraction](#-file-extraction)
+- [Configuration Options](#️-configuration-options)
+- [Production Deployment](#-production-deployment)
+- [Examples](#-examples)
+- [Contributing](#-contributing)
 
-### 🔍 **Advanced Search**
-- **Vector Search**: Semantic similarity via pluggable embedding providers — Ollama, OpenAI, Google, Jina, HuggingFace (Inference API + local), and Sentence Transformers
-- **Keyword Search**: Full-text search with SQLite FTS5
-- **Hybrid Search**: Combined vector + keyword with configurable weighting
-- **Reranking**: Optional cross-encoder reranking via Jina, Sentence Transformers, or HuggingFace
-- **Metadata Filtering**: MongoDB-style queries on structured metadata
-- **Document Scoring**: 11 chunk-to-document aggregation strategies for tuning relevance
-
-### 🧬 **Hierarchical Retrieval**
-- **Three-Level Hierarchy**: Index and search at *document*, *section*, and *chunk* granularity
-- **Automatic Section Detection**: Sections derived from document structure (Markdown headings by default, custom patterns supported)
-- **No Extra Embedding Cost**: Section/document vectors are centroids of existing chunk embeddings
-- **Section Metadata**: Pluggable extractors (heading path, keywords, word/char counts, or your own)
-
-### ✅ **Reverse-RAG Fact-Checking**
-- **Grounding Verification**: Check LLM-generated text against your databases claim-by-claim
-- **Citations & Contradictions**: Each claim scored, cited to a source excerpt, and flagged if contradicted
-- **Multi-Provider LLMs**: Works with Anthropic, OpenAI, or Gemini clients (auto-detected)
-
-### 📊 **Document Comparison & Visualization**
-- **Similarity & Neighbors**: Compare documents, find nearest neighbors, build similarity matrices
-- **Embedding Maps**: t-SNE / PCA projections with clustering
-- **Synteny & Chord Diagrams**: Visualize chunk-level alignment between documents or within one
-
-### 🌐 **Flexible Deployment**
-- **Local Database**: Direct SQLite + FAISS for maximum performance
-- **HTTP Server**: RESTful API with permission-based authentication, rate limiting, CORS
-- **Remote Client**: Seamless local/remote switching via factory pattern
-- **Multi-Worker**: Redis-based coordination for distributed deployments
-
-### 📄 **File Processing**
-- **Text Extraction**: PDF, DOCX, PPTX, XLSX, RTF, EPUB support
-- **Batch Upload**: Multi-file processing with metadata extraction
-- **Format Detection**: Automatic MIME type detection and processing
-
-### 🤖 **AI / LLM Integration**
-- **MCP Server**: Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server for Claude Desktop, Claude Code, and other MCP clients
-- **Read-Only by Default**: Safe knowledge-base access; opt into read-write explicitly
-- **TypeScript SDK**: First-class browser/Node client (`@localvectordb/sdk`)
-
-### 🛠️ **Developer Experience**
-- **CLI Tools**: Database management, server control, interactive shell
-- **Configuration**: TOML/JSON config with environment variable support
-- **Comprehensive Logging**: Structured logging with performance monitoring
-- **Type Safety**: Full type annotations and validation
+📖 **Full documentation:** <https://thomas-villani.github.io/localvectordb/>
 
 ## 🚀 Quick Start
 
@@ -168,6 +133,128 @@ doc_ids = db.upsert(["Remote document content"])
 results = db.query("content", search_type="hybrid")
 ```
 
+## 🤖 Use with Claude Code & other AI agents
+
+LocalVectorDB ships a built-in [Model Context Protocol](https://modelcontextprotocol.io/)
+server, so an AI agent can search your knowledge bases directly — no glue code.
+It is **read-only by default**, which makes it safe to point at a corpus you care
+about.
+
+```bash
+uv add "localvectordb[mcp]"     # or: pip install "localvectordb[mcp]"
+```
+
+Build a knowledge base with the CLI first (rich formats like PDF and DOCX are
+extracted to Markdown automatically):
+
+```bash
+lvdb create technical_docs --embedding-model nomic-embed-text
+lvdb db technical_docs add ./docs/*.md ./manual.pdf
+```
+
+### Claude Code
+
+Register the server once, from your project directory:
+
+```bash
+claude mcp add lvdb   -e LVDB_MCP_MODE=read-only   -e LVDB_MCP_DATABASES_ROOT=/path/to/databases   -- lvdb mcp serve
+```
+
+Everything after `--` is the launch command, passed through untouched. Use
+`-s project` to write a committed `.mcp.json` your team shares, `-s user` to make
+it available in every project; the default scope is `local` (this project, just
+you). Then `claude mcp list` to check status, `/mcp` inside a session to manage
+it, and `claude mcp remove lvdb` to undo.
+
+### Claude Desktop, and any other MCP client
+
+Add the same server to `claude_desktop_config.json` (or your client's equivalent
+config — the `mcpServers` block is a shared convention):
+
+```json
+{
+  "mcpServers": {
+    "lvdb": {
+      "type": "stdio",
+      "command": "lvdb",
+      "args": ["mcp", "serve"],
+      "env": {
+        "LVDB_MCP_MODE": "read-only",
+        "LVDB_MCP_DATABASES_ROOT": "/path/to/databases"
+      }
+    }
+  }
+}
+```
+
+### What the agent can do
+
+The server exposes focused tools — `query_database`, `find_related_documents`,
+`filter_documents`, `get_document` (a whole document, or a chunk / line range /
+section of one), and `list_databases`. Tool sets are configurable per deployment,
+so you can expose only what a given agent needs.
+
+Granting writes is explicit — `lvdb mcp serve --mode read-write` (or
+`LVDB_MCP_MODE=read-write`) additionally enables `upsert_documents`,
+`create_database`, and friends. Only do this for databases the agent is meant to
+modify.
+
+See the [MCP documentation](https://thomas-villani.github.io/localvectordb/mcp.html)
+for the full tool list, configuration reference, and security guidance.
+
+## ✨ Features
+
+### 🗃️ **Document-First Architecture**
+- **Smart Chunking**: Position-tracking chunking with perfect document reconstruction
+- **Metadata Schema**: Structured, indexed metadata fields with validation
+- **Unified API**: Single interface for vector, keyword, and hybrid search
+
+### 🔍 **Advanced Search**
+- **Vector Search**: Semantic similarity via pluggable embedding providers — Ollama, OpenAI, Google, Jina, HuggingFace (Inference API + local), and Sentence Transformers
+- **Keyword Search**: Full-text search with SQLite FTS5
+- **Hybrid Search**: Combined vector + keyword with configurable weighting
+- **Reranking**: Optional cross-encoder reranking via Jina, Sentence Transformers, or HuggingFace
+- **Metadata Filtering**: MongoDB-style queries on structured metadata
+- **Document Scoring**: 11 chunk-to-document aggregation strategies for tuning relevance
+
+### 🧬 **Hierarchical Retrieval**
+- **Three-Level Hierarchy**: Index and search at *document*, *section*, and *chunk* granularity
+- **Automatic Section Detection**: Sections derived from document structure (Markdown headings by default, custom patterns supported)
+- **No Extra Embedding Cost**: Section/document vectors are centroids of existing chunk embeddings
+- **Section Metadata**: Pluggable extractors (heading path, keywords, word/char counts, or your own)
+
+### ✅ **Reverse-RAG Fact-Checking**
+- **Grounding Verification**: Check LLM-generated text against your databases claim-by-claim
+- **Citations & Contradictions**: Each claim scored, cited to a source excerpt, and flagged if contradicted
+- **Multi-Provider LLMs**: Works with Anthropic, OpenAI, or Gemini clients (auto-detected)
+
+### 📊 **Document Comparison & Visualization**
+- **Similarity & Neighbors**: Compare documents, find nearest neighbors, build similarity matrices
+- **Embedding Maps**: t-SNE / PCA projections with clustering
+- **Synteny & Chord Diagrams**: Visualize chunk-level alignment between documents or within one
+
+### 🌐 **Flexible Deployment**
+- **Local Database**: Direct SQLite + FAISS for maximum performance
+- **HTTP Server**: RESTful API with permission-based authentication, rate limiting, CORS
+- **Remote Client**: Seamless local/remote switching via factory pattern
+- **Multi-Worker**: Redis-based coordination for distributed deployments
+
+### 📄 **File Processing**
+- **Text Extraction**: PDF, DOCX, PPTX, XLSX, RTF, EPUB support
+- **Batch Upload**: Multi-file processing with metadata extraction
+- **Format Detection**: Automatic MIME type detection and processing
+
+### 🤖 **AI / LLM Integration**
+- **MCP Server**: Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server for Claude Desktop, Claude Code, and other MCP clients
+- **Read-Only by Default**: Safe knowledge-base access; opt into read-write explicitly
+- **TypeScript SDK**: First-class browser/Node client (`@localvectordb/sdk`)
+
+### 🛠️ **Developer Experience**
+- **CLI Tools**: Database management, server control, interactive shell
+- **Configuration**: TOML/JSON config with environment variable support
+- **Comprehensive Logging**: Structured logging with performance monitoring
+- **Type Safety**: Full type annotations and validation
+
 ## 🖥️ Server Deployment
 
 ### Start the Server
@@ -237,47 +324,6 @@ lvdb auth list-keys --active-only
 # Revoke key
 lvdb auth revoke-key key_20241201_abc123
 ```
-
-## 🤖 MCP Server (Claude Desktop / Claude Code)
-
-LocalVectorDB ships a built-in [Model Context Protocol](https://modelcontextprotocol.io/)
-server, so an LLM agent can search and manage your vector databases directly. It
-works with **Claude Desktop**, **Claude Code**, and any other MCP client.
-
-```bash
-# Install with MCP support
-pip install localvectordb[mcp]
-
-# Start the server (read-only by default — safe for knowledge bases)
-lvdb mcp serve
-
-# Enable writes when you need them
-lvdb mcp serve --mode read-write
-```
-
-Register it with Claude Desktop (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "localvectordb": {
-      "command": "lvdb",
-      "args": ["mcp", "serve"],
-      "env": {
-        "LVDB_MCP_MODE": "read-only",
-        "LVDB_MCP_DATABASES_ROOT": "/path/to/databases"
-      }
-    }
-  }
-}
-```
-
-The server exposes focused tools — `query_database`, `find_related_documents`,
-`filter_documents`, `get_document` (whole document or a chunk/range/section
-portion), `list_databases`, and (in read-write mode) `upsert_documents`,
-`create_database`, and more. Tool sets are configurable per deployment. See the
-[MCP documentation](https://thomas-villani.github.io/localvectordb/mcp.html) for
-the full tool list, configuration, and security guidance.
 
 ## 🟦 TypeScript SDK
 
@@ -551,7 +597,7 @@ response = requests.post(
 ```dockerfile
 FROM python:3.12-slim
 
-RUN pip install localvectordb[server,file-extraction]
+RUN pip install "localvectordb[server,file-extraction]"
 
 COPY config.toml /app/config.toml
 WORKDIR /app
