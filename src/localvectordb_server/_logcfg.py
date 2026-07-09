@@ -47,6 +47,24 @@ def sanitize_log_value(value: Any, max_length: int = 256) -> str:
     return text
 
 
+class SafePlainFormatter(logging.Formatter):
+    """Plain-text formatter that prevents log-injection via embedded newlines.
+
+    Values interpolated through ``%(message)s`` are sanitized at the call site,
+    but ``exc_info`` hands the raw exception (and its traceback) straight to the
+    formatter, bypassing that sanitizer. A crafted exception message containing a
+    newline could otherwise emit a physical line that mimics a genuine record
+    (``TIMESTAMP [LEVEL] logger: ...``). We indent every continuation line so it
+    cannot start at column 0 like a real record, keeping multi-line tracebacks
+    readable while neutralizing forged entries. The structured (JSON) formatter is
+    already immune because json.dumps escapes newlines.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        return formatted.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\n  | ")
+
+
 def configure_logging(config, log_file: Optional[str] = None, debug: bool = False) -> None:
     """Configure enhanced logging for the application.
 
@@ -71,9 +89,12 @@ def configure_logging(config, log_file: Optional[str] = None, debug: bool = Fals
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
-            "standard": {"format": log_format},
+            "standard": {"()": SafePlainFormatter, "format": log_format},
             "structured": {"()": StructuredFormatter},
-            "security": {"format": "%(asctime)s [SECURITY] [%(levelname)s] %(name)s: %(message)s"},
+            "security": {
+                "()": SafePlainFormatter,
+                "format": "%(asctime)s [SECURITY] [%(levelname)s] %(name)s: %(message)s",
+            },
         },
         "handlers": {
             "console": {
