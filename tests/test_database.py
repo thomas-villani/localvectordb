@@ -5,12 +5,28 @@ Tests for localvectordb.database module.
 import sqlite3
 from unittest.mock import Mock, patch
 
+import faiss
 import numpy as np
 import pytest
+from conftest import make_faiss_index
 
 from localvectordb.core import Document, QueryResult
 from localvectordb.database import LocalVectorDB
 from localvectordb.exceptions import DatabaseNotFoundError, DocumentNotFoundError, DuplicateDocumentIDError
+
+pytestmark = pytest.mark.usefixtures("mock_faiss_io")
+
+
+def configure_faiss_module_double(mock_faiss, mock_index):
+    """
+    Make a whole-module ``faiss`` double faithful enough to construct a LocalVectorDB.
+
+    ``_index_supports_deletion`` does ``isinstance(base, faiss.IndexHNSW)``, so that
+    attribute has to be a real class rather than a Mock. And ``_live_faiss_ids`` only
+    skips ``faiss.vector_to_array`` when the index reports ``ntotal == 0``.
+    """
+    mock_faiss.IndexHNSW = faiss.IndexHNSW
+    mock_index.ntotal = 0
 
 
 def create_mock_connection():
@@ -95,7 +111,7 @@ class TestLocalVectorDBInitialization:
 
             mock_chunker.return_value = Mock()
             mock_faiss.return_value = Mock()
-            mock_faiss_idmap.return_value = Mock()
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             db = LocalVectorDB(name=":memory:", metadata_schema=sample_metadata_schema)
 
@@ -137,6 +153,7 @@ class TestLocalVectorDBInitialization:
             mock_embedding.return_value = mock_provider
 
             mock_index = Mock()
+            configure_faiss_module_double(mock_faiss, mock_index)
             mock_faiss.IndexFlatL2.return_value = mock_index
             mock_faiss.IndexIDMap2.return_value = mock_index
 
@@ -162,6 +179,7 @@ class TestLocalVectorDBInitialization:
             index_path.touch()
 
             mock_index = Mock()
+            configure_faiss_module_double(mock_faiss, mock_index)
             mock_faiss.read_index.return_value = mock_index
 
             db = LocalVectorDB(name="test", base_path=temp_dir)
@@ -205,7 +223,7 @@ class TestLocalVectorDBUpsert:
             mock_index.ntotal = 0
             mock_faiss.return_value = mock_index
 
-            mock_faiss_idmap.return_value = Mock()
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema_instance = Mock()
             mock_schema.return_value = mock_schema_instance
@@ -429,7 +447,7 @@ class TestLocalVectorDBRetrieval:
 
             mock_chunker.return_value = Mock()
             mock_faiss.return_value = Mock()
-            mock_faiss_idmap.return_value = Mock()
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema_instance = Mock()
             mock_schema_instance.metadata_fields = {}
@@ -576,7 +594,7 @@ class TestLocalVectorDBDeletion:
 
             mock_chunker.return_value = Mock()
             mock_faiss.return_value = Mock()
-            mock_faiss_idmap.return_value = Mock()
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema.return_value = Mock()
 
@@ -656,7 +674,7 @@ class TestLocalVectorDBUpdate:
 
             mock_chunker.return_value = Mock()
             mock_faiss.return_value = Mock()
-            mock_faiss_idmap.return_value = Mock()
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema_instance = Mock()
             mock_schema_instance.metadata_fields = {}
@@ -794,7 +812,9 @@ class TestLocalVectorDBQuery:
             mock_index = Mock()
             mock_index.search.return_value = (np.array([[0.1, 0.2]]), np.array([[0, 1]]))
             mock_faiss.return_value = mock_index
-            mock_faiss_idmap.return_value = mock_index
+            # __init__ seeds the faiss id counters off the index, so it must be real;
+            # the Mock is swapped in below, once construction is done.
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema.return_value = Mock()
 
@@ -923,7 +943,7 @@ class TestLocalVectorDBFilter:
 
             mock_chunker.return_value = Mock()
             mock_faiss.return_value = Mock()
-            mock_faiss_idmap.return_value = Mock()
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema_instance = Mock()
             mock_schema_instance.metadata_fields = {"author": Mock(), "rating": Mock()}
@@ -1039,7 +1059,9 @@ class TestLocalVectorDBProperties:
             mock_index = Mock()
             mock_index.ntotal = 100
             mock_faiss.return_value = mock_index
-            mock_faiss_idmap.return_value = mock_index
+            # __init__ seeds the faiss id counters off the index, so it must be real;
+            # the Mock is swapped in below, once construction is done.
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             mock_schema.return_value = Mock()
 
@@ -1263,9 +1285,12 @@ class TestMultiColumnEmbedding:
                 np.array([[0, 1, 2]]),  # indices
             )
             mock_faiss.return_value = mock_faiss_index
-            mock_faiss_idmap.return_value = mock_faiss_index
+            # __init__ seeds the faiss id counters off the index, so it must be real;
+            # the Mock is swapped in below, once construction is done.
+            mock_faiss_idmap.return_value = make_faiss_index()
 
             db = LocalVectorDB(name="test_db", base_path=temp_dir, metadata_schema=multi_column_schema)
+            db.index = mock_faiss_index
 
             # Mock the internal methods
             with patch.object(db, "_search_metadata_field") as mock_search_meta:

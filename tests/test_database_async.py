@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
+from conftest import make_faiss_index
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database import LocalVectorDB
@@ -41,6 +42,10 @@ class TestAsyncInitialization:
             patch("faiss.IndexFlatL2") as _mock_faiss,
             patch("faiss.IndexIDMap2") as _mock_faiss_idmap,
         ):
+            # A real index: __init__ reads ntotal/id_map off it, and save() hands it to
+            # faiss.write_index, neither of which terminates on a Mock. See conftest.
+            _mock_faiss_idmap.return_value = make_faiss_index()
+
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True
@@ -79,6 +84,10 @@ class TestAsyncInitialization:
             patch("faiss.IndexFlatL2") as _mock_faiss,
             patch("faiss.IndexIDMap2") as _mock_faiss_idmap,
         ):
+            # A real index: __init__ reads ntotal/id_map off it, and save() hands it to
+            # faiss.write_index, neither of which terminates on a Mock. See conftest.
+            _mock_faiss_idmap.return_value = make_faiss_index()
+
             # Setup mocks
             mock_provider = Mock()
             mock_provider.validate_model.return_value = True

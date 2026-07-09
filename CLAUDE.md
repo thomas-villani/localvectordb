@@ -27,8 +27,8 @@ The path to the python executable in the virtual environment is:
 ./.venv/Scripts/pytest.exe -m integration            # Integration tests only
 ./.venv/Scripts/pytest.exe -m performance           # Performance tests only
 
-# Run tests in parallel
-./.venv/Scripts/pytest.exe -n auto
+# Run tests in parallel (use no more than 4 workers, this box doesn't have a lot of memory)
+./.venv/Scripts/pytest.exe -n 4
 
 # Run specific test file
 ./.venv/Scripts/pytest.exe tests/test_core.py

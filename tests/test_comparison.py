@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
+from conftest import make_faiss_index
 
 from localvectordb.core import (
     ChunkAlignment,
@@ -36,7 +37,10 @@ def _make_db(temp_dir, n_docs=3, dim=32):
         mock_index = Mock()
         mock_index.ntotal = 0
         mock_flat.return_value = mock_index
-        mock_idmap.return_value = mock_index
+        # A real index: ``db.close()`` hands this to ``faiss.write_index``, which
+        # would never return on a Mock. Nothing here reads it -- these tests go
+        # through the ``_reconstruct_embeddings_batch`` stub in ``_seed_docs``.
+        mock_idmap.return_value = make_faiss_index(dim)
         mock_chunker.return_value = Mock()
 
         db = LocalVectorDB(

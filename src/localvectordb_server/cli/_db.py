@@ -958,6 +958,83 @@ def delete_document(ctx, doc_id):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
+@db_group.command("repair")
+@click.option("--dry-run", is_flag=True, help="Report what is wrong without modifying anything.")
+@click.pass_context
+def repair_database(ctx, dry_run):
+    """
+    Rebuild the FAISS index from SQLite, reassigning vector IDs.
+
+    Databases written before vector IDs became monotonic can contain duplicate
+    FAISS IDs, which make one vector answer for two documents -- so queries return
+    the wrong document. Such a database refuses to open, and this command fixes it.
+
+    Chunks that share a duplicated ID are re-embedded (their vectors cannot be told
+    apart); everything else is recovered from the existing index without calling the
+    embedding provider. Orphaned vectors are dropped.
+
+    \b
+    Example:
+        \b
+        lvdb db mydb repair --dry-run
+        lvdb db mydb repair
+
+    """
+    from localvectordb.database._repair import open_for_repair
+
+    db_name = ctx.obj["db_name"]
+    db_folder = ctx.obj.get("db_folder")
+
+    if not db_folder or not os.path.exists(db_folder):
+        error("DB_FOLDER does not exist.")
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    try:
+        # Deliberately not get_ctx_db(): the constructor's integrity check raises on
+        # exactly the databases this command exists to repair.
+        db = ctx.obj.get("db") or open_for_repair(db_name, db_folder)
+    except Exception as e:
+        error(f"Could not open database '{db_name}': {str(repr(e))}")
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+
+    try:
+        report = db.repair(dry_run=dry_run)
+
+        if report.healthy and dry_run:
+            click.secho(report.summary(), fg="bright_green")
+            return
+
+        if not report.healthy:
+            warn(report.summary())
+            if report.duplicate_ids:
+                shown = ", ".join(str(i) for i in report.duplicate_ids[:10])
+                more = f" (and {len(report.duplicate_ids) - 10} more)" if len(report.duplicate_ids) > 10 else ""
+                click.echo(f"  duplicate FAISS ids: {shown}{more}")
+        else:
+            click.echo(report.summary())
+
+        if dry_run:
+            click.echo("\nNothing was modified.")
+            return
+
+        if report.reembedded:
+            click.echo(f"  re-embedded {report.reembedded} chunk(s) whose vectors were ambiguous")
+        if report.sections_rebuilt or report.documents_rebuilt:
+            click.echo(
+                f"  hierarchical: {report.sections_rebuilt} section(s), "
+                f"{report.documents_rebuilt} document(s) reindexed"
+            )
+        click.secho(f"Repaired database '{db_name}'.", fg="bright_green")
+    except click.exceptions.Exit:
+        raise
+    except Exception as e:
+        error(f"Error: Unexpected error while repairing database: {str(repr(e))}")
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+    finally:
+        if not ctx.obj.get("db"):
+            db.close()
+
+
 @db_group.group("schema")
 @click.pass_context
 def schema_group(ctx):
