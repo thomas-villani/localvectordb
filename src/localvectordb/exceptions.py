@@ -27,6 +27,29 @@ class DuplicateDocumentIDError(DatabaseError, ValueError):
     pass
 
 
+class IndexIntegrityError(DatabaseError):
+    """
+    Raised when the SQLite rows and the FAISS index disagree in a way that
+    corrupts query results -- notably duplicate ``faiss_id`` values, which cause
+    one vector to be attributed to two different documents.
+
+    Recover with ``lvdb db <name> repair``.
+    """
+
+    pass
+
+
+class UnsupportedIndexOperationError(DatabaseError):
+    """
+    Raised when an operation is not supported by the configured FAISS index type.
+
+    Most commonly: ``IndexHNSWFlat`` cannot remove vectors, so documents cannot be
+    deleted or replaced in a database backed by it.
+    """
+
+    pass
+
+
 class DocumentNotFoundError(DatabaseError, KeyError):
     """Raised when one or more requested documents cannot be found"""
 

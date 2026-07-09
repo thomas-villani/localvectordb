@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
@@ -673,6 +674,10 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
     ):
         super().__init__()
         self._read_write_lock: ReadWriteLock
+        self._faiss_lock: ReadWriteLock
+        self._faiss_id_lock: threading.Lock
+        self._faiss_id_counters: Dict[str, int]
+        self._hierarchical_embeddings: bool
         self.schema: DatabaseSchema
         self.chunker: PositionTrackingChunker
         self.connection_pool: ConnectionPool
@@ -715,7 +720,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    def _store_metadata_embeddings(self, conn, document_id: str, field_embeddings: Dict[str, np.ndarray]) -> None:
+    def _store_metadata_embeddings(self, conn, document_id: str, field_embeddings: Dict[str, np.ndarray]) -> List[int]:
         pass
 
     @abstractmethod
@@ -724,6 +729,41 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
 
     @abstractmethod
     def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
+        pass
+
+    @abstractmethod
+    def _allocate_faiss_ids(self, name: str, count: int) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def _discard_faiss_ids_best_effort(self, faiss_ids: List[int]) -> None:
+        pass
+
+    @abstractmethod
+    def _require_deletable(self, operation: str) -> None:
+        pass
+
+    @abstractmethod
+    def _save_faiss_counters(self) -> None:
+        pass
+
+    @abstractmethod
+    def _remove_vectors(self, index: Any, faiss_ids: List[int], what: str) -> None:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def _live_faiss_ids(index: Any) -> np.ndarray:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def _unwrap_base_index(index: Any) -> Any:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def _base_index_type_name(cls, index: Any) -> str:
         pass
 
     @abstractmethod

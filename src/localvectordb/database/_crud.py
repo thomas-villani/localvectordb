@@ -15,8 +15,6 @@ from abc import ABC
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Union
 
-import numpy as np
-
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Chunk, ChunkPosition, Document, MetadataFieldType
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
@@ -420,6 +418,9 @@ class CrudMixin(LocalVectorDBBase, ABC):
         with self._read_write_lock.write_lock():
             if isinstance(ids, str):
                 ids = [ids]
+            # Refuse before touching SQLite: on an index that cannot remove vectors,
+            # committing the row deletion would orphan them and report success.
+            self._require_deletable("Deleting a document")
             faiss_ids_to_remove: List[int] = []
             with self.connection_pool.get_connection() as conn:
                 placeholders = ",".join(["?"] * len(ids))
@@ -480,17 +481,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
                     raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
                 else:
                     raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
-            if faiss_ids_to_remove and self.index is not None and hasattr(self.index, "remove_ids"):
-                try:
-                    ids_array = np.array(faiss_ids_to_remove, dtype=np.int64)
-                    # faiss accepts an ndarray of ids here (wrapped internally as an
-                    # IDSelectorBatch); the stub only types the IDSelector overload.
-                    self.index.remove_ids(ids_array)  # type: ignore[arg-type]
-                    logger.info(f"Removed {len(faiss_ids_to_remove)} vectors from FAISS index")
-                except Exception as e:
-                    logger.error(f"Failed to remove vectors from FAISS index: {e}")
-            elif faiss_ids_to_remove:
-                logger.warning(f"FAISS index doesn't support removal, {len(faiss_ids_to_remove)} vectors orphaned")
+            # SQLite is committed; now drop the vectors. A crash here leaves orphan
+            # vectors, which cost recall and are swept by `repair` -- never dangling
+            # rows, which could only be fixed by re-embedding.
+            if faiss_ids_to_remove:
+                self._remove_vectors(self.index, faiss_ids_to_remove, "chunk")
 
             # Remove hierarchical FAISS vectors
             if self._hierarchical_embeddings:
@@ -499,6 +494,8 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 if doc_faiss_ids_to_remove:
                     self._remove_document_vectors(doc_faiss_ids_to_remove)
 
+            self._save_internal()
+            self._save_faiss_counters()
             return deleted_count
 
     def update(self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> bool:
@@ -758,6 +755,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             ids = [ids]
         if not ids:
             return 0
+        self._require_deletable("Deleting a document")
         deleted_count = 0
         async with self.async_connection_pool.get_connection_context() as conn:
             placeholders = ",".join(["?" for _ in ids])
@@ -776,9 +774,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
             )
             faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
 
-            if faiss_ids:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
+            # Commit SQLite first, then remove the vectors -- matching the sync path.
+            # The reverse order (which this used to do) means a rollback leaves rows
+            # whose vectors are already gone: dangling rows, recoverable only by
+            # re-embedding. Committing first can only leave orphan vectors, which
+            # `repair` sweeps for free.
             await conn.execute("BEGIN")
             try:
                 await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
@@ -788,11 +788,19 @@ class CrudMixin(LocalVectorDBBase, ABC):
             except Exception:
                 await conn.rollback()
                 raise
+
+            if faiss_ids and deleted_count:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
         if deleted_count == 0:
             if len(ids) == 1:
                 raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
             else:
                 raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._save_internal)
+        await loop.run_in_executor(None, self._save_faiss_counters)
         logger.info(f"Deleted {deleted_count} documents")
         return deleted_count
 

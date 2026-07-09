@@ -19,6 +19,10 @@ from localvectordb.database import LocalVectorDB
 from localvectordb.embeddings import MockEmbeddings
 from localvectordb.factory import VectorDB
 
+# These tests keep a Mock as db.index (to stub search), so faiss's SWIG I/O must
+# not see it: write_index would walk `Mock.this` forever. See conftest.
+pytestmark = pytest.mark.usefixtures("mock_faiss_io")
+
 
 def create_mock_connection():
     """Create a properly mocked SQLite connection."""

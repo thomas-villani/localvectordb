@@ -435,6 +435,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 documents, metadata, ids, batch_size, similarity_threshold, mode="upsert"
             )
             self._save_next_doc_id()
+            self._save_faiss_counters()
             self._save_internal()
             return result_ids
 
@@ -582,6 +583,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 mode="upsert",
             )
             self._save_next_doc_id()
+            self._save_faiss_counters()
             self._save_internal()
             return result_ids
 
@@ -660,6 +662,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, mode="insert"
             )
             self._save_next_doc_id()
+            self._save_faiss_counters()
             self._save_internal()
             return result_ids
 
@@ -837,6 +840,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 mode="insert",
             )
             self._save_next_doc_id()
+            self._save_faiss_counters()
             self._save_internal()
             return result_ids
 
@@ -1223,11 +1227,17 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         _hash_cursor = conn.execute("SELECT DISTINCT content_hash FROM chunks")
                         existing_hashes = {row["content_hash"] for row in _hash_cursor.fetchall()}
 
+                    # FAISS ids added to the in-RAM index since the current BEGIN. The
+                    # index is not covered by the SQLite transaction, so a rollback must
+                    # compensate for them explicitly or they become orphan vectors.
+                    txn_faiss_ids: List[int] = []
+
                     def flush() -> None:
                         nonlocal docs_in_txn
                         if docs_in_txn > 0:
                             conn.commit()
                             docs_in_txn = 0
+                        txn_faiss_ids.clear()
                         for did in pending_doc_ids:
                             result_queue.put(did)
                         pending_doc_ids.clear()
@@ -1275,6 +1285,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
                             if docs_in_txn == 0:
                                 conn.execute("BEGIN")
+                                txn_faiss_ids.clear()
                             try:
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data["doc_id"])
@@ -1290,15 +1301,24 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 self._insert_documents_bulk(conn, documents_data, mode=db_mode)
                                 if new_embeddings.size > 0:
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
+                                    txn_faiss_ids.extend(
+                                        c.faiss_id for c in chunks_needing_embedding if c.faiss_id is not None
+                                    )
                                 self._insert_chunks_bulk(conn, chunks_data)
                                 if field_embeddings:
-                                    self._store_metadata_embeddings(conn, chunk_data["doc_id"], field_embeddings)
+                                    txn_faiss_ids.extend(
+                                        self._store_metadata_embeddings(conn, chunk_data["doc_id"], field_embeddings)
+                                    )
                                 # Hierarchical: store sections and update indices
                                 if self._hierarchical_embeddings:
                                     self._store_hierarchical_data(conn, chunk_data, all_chunks)
                                 docs_in_txn += 1
                             except Exception:
                                 conn.rollback()
+                                # Undo every main-index vector added since BEGIN: rollback
+                                # discards the rows, so without this the vectors orphan.
+                                self._discard_faiss_ids_best_effort(list(txn_faiss_ids))
+                                txn_faiss_ids.clear()
                                 docs_in_txn = 0
                                 pending_doc_ids.clear()
                                 raise
@@ -1501,6 +1521,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
                         with self.connection_pool.get_connection() as conn:
                             conn.execute("BEGIN")
+                            # The in-RAM FAISS index is outside this transaction; track
+                            # what we add so a rollback can undo it.
+                            txn_faiss_ids: List[int] = []
                             try:
                                 if mode == "upsert":
                                     self._remove_metadata_embeddings(conn, chunk_data["doc_id"])
@@ -1513,12 +1536,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 self._insert_documents_bulk(conn, documents_data, mode=db_mode)
                                 if new_embeddings.size > 0:
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
+                                    txn_faiss_ids.extend(
+                                        c.faiss_id for c in chunks_needing_embedding if c.faiss_id is not None
+                                    )
                                 self._insert_chunks_bulk(conn, chunks_data)
                                 if field_embeddings:
-                                    self._store_metadata_embeddings(conn, chunk_data["doc_id"], field_embeddings)
+                                    txn_faiss_ids.extend(
+                                        self._store_metadata_embeddings(conn, chunk_data["doc_id"], field_embeddings)
+                                    )
                                 conn.commit()
                             except Exception:
                                 conn.rollback()
+                                self._discard_faiss_ids_best_effort(txn_faiss_ids)
                                 raise
                     processed_ids.append(chunk_data["doc_id"])
                     result_queue.task_done()
@@ -1644,8 +1673,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         # Add section embeddings to FAISS index
         section_faiss_ids = None
         if section_embeddings is not None and len(section_embeddings) > 0:
-            start_id = self.section_index.ntotal if self.section_index else 0
-            section_faiss_ids = np.arange(start_id, start_id + len(section_embeddings), dtype=np.int64)
+            section_faiss_ids = self._allocate_faiss_ids("section", len(section_embeddings))
             self._add_vectors_to_section_index(section_embeddings, section_faiss_ids)
 
         # Insert section rows
@@ -1694,8 +1722,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
         # Add document embedding to FAISS index
         if document_embedding is not None and document_embedding.size > 0:
-            start_id = self.document_index.ntotal if self.document_index else 0
-            doc_faiss_id = np.array([start_id], dtype=np.int64)
+            doc_faiss_id = self._allocate_faiss_ids("document", 1)
             self._add_vectors_to_document_index(document_embedding, doc_faiss_id)
             conn.execute("UPDATE documents SET doc_faiss_id = ? WHERE id = ?", (int(doc_faiss_id[0]), doc_id))
 
@@ -1888,6 +1915,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
+        await loop.run_in_executor(None, self._save_faiss_counters)
         await loop.run_in_executor(None, self._save_internal)
         return result_ids
 
@@ -2060,6 +2088,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
+        await loop.run_in_executor(None, self._save_faiss_counters)
         await self.save_async()
         return result_ids
 
@@ -2148,6 +2177,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
+        await loop.run_in_executor(None, self._save_faiss_counters)
         await loop.run_in_executor(None, self._save_internal)
         return result_ids
 
@@ -2345,6 +2375,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
+        await loop.run_in_executor(None, self._save_faiss_counters)
         await self.save_async()
         return result_ids
 

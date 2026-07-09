@@ -43,9 +43,11 @@ from localvectordb.exceptions import (
     DocumentNotFoundError,
     DuplicateDocumentIDError,
     EmbeddingError,
+    IndexIntegrityError,
     MetadataFilterError,
     OllamaNotFoundError,
     RerankerError,
+    UnsupportedIndexOperationError,
     ValidationError,
 )
 from localvectordb.extractors import ExtractorRegistry, get_extractor_registry
@@ -89,6 +91,8 @@ __all__ = [
     "DatabaseNotFoundError",
     "DocumentNotFoundError",
     "DuplicateDocumentIDError",
+    "IndexIntegrityError",
+    "UnsupportedIndexOperationError",
     "MetadataFilterError",
     "EmbeddingError",
     "OllamaNotFoundError",

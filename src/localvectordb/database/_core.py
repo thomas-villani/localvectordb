@@ -15,8 +15,10 @@ CRUD) is mixed in via other modules to compose the final LocalVectorDB class.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import sqlite3
 import threading
 import uuid
@@ -36,7 +38,12 @@ from localvectordb.core import Chunk, MetadataField
 from localvectordb.database._faiss_utils import build_id_lookup
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
-from localvectordb.exceptions import DatabaseError, DatabaseNotFoundError
+from localvectordb.exceptions import (
+    DatabaseError,
+    DatabaseNotFoundError,
+    IndexIntegrityError,
+    UnsupportedIndexOperationError,
+)
 from localvectordb.section_detection import SectionDetector
 from localvectordb.section_metadata import SectionMetadataExtractor, resolve_extractors
 from localvectordb.sqlite_tuning import SqliteProfile, get_sqlite_pragma_profile, is_valid_sqlite_pragma_profile
@@ -96,6 +103,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         hierarchical_embeddings: bool = False,
         section_pattern: str = r"^(#{1,6})\s+(.+)$",
         section_metadata_extractors: Optional[List[Union[str, SectionMetadataExtractor]]] = None,
+        # Internal: bypass the on-open integrity check. Only ``repair`` sets this,
+        # because it must open exactly the databases the check refuses.
+        _skip_integrity_check: bool = False,
     ):
 
         super().__init__(
@@ -175,6 +185,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._read_write_lock: ReadWriteLock = ReadWriteLock()
         # ReadWrite lock for FAISS operations to allow concurrent reads
         self._faiss_lock: ReadWriteLock = ReadWriteLock()
+        # Guards the monotonic FAISS id counters only. Always acquired *before*
+        # _faiss_lock so the two are taken in a consistent order everywhere.
+        self._faiss_id_lock: threading.Lock = threading.Lock()
+        self._faiss_id_counters: Dict[str, int] = {}
 
         # Initialize SQLite tuning configuration
         profile = get_sqlite_pragma_profile(sqlite_profile, default="balanced")
@@ -245,6 +259,15 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         # Hierarchical embeddings: section and document FAISS indices
         self._init_hierarchical(hierarchical_embeddings, section_pattern, section_metadata_extractors)
+
+        # FAISS id allocation and dual-store integrity. Seeding must precede the
+        # integrity check: the counter floor is a max() and is safe to compute even
+        # on a corrupt database, which means no *new* collisions can be issued from
+        # this point on, whether or not the existing ones get repaired.
+        with self.connection_pool.get_connection() as conn:
+            self._seed_faiss_counters(conn)
+            if not _skip_integrity_check:
+                self._verify_integrity(conn)
 
         # How many items allowed on the processing queues.
         self.pipeline_queue_size: int = 3
@@ -435,6 +458,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 )
             self.index = faiss.IndexIDMap2(base_index)
             logger.info(f"Created new FAISS IndexIDMap2 with dimension {self.embedding_dimension}")
+        # Whether this index type can remove vectors. IndexHNSWFlat cannot: faiss
+        # raises from remove_ids. Detected from the *concrete* base index so it is
+        # correct for indices loaded from disk as well as freshly constructed ones.
+        self.supports_deletion = self._index_supports_deletion(self.index)
+        self.base_index_type = self._base_index_type_name(self.index)
+
         if enable_gpu:
             try:
                 # Check if GPU methods are available (guards against faiss-cpu builds)
@@ -454,6 +483,51 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 )
             except Exception as e:
                 logger.warning(f"Failed to check GPU availability: {e}. Falling back to CPU.")
+
+    @staticmethod
+    def _unwrap_base_index(index) -> Any:
+        """Return the concrete index wrapped by an IndexIDMap/IndexIDMap2."""
+        base = getattr(index, "index", index)
+        # downcast_index is a SWIG shim that unwraps proxies by walking `obj.this`
+        # until it reaches a SwigPyObject. Handed a non-Index it can loop forever
+        # rather than raise, so the except below would never fire. Skip the check
+        # when faiss itself is a test double -- then downcast_index is one too.
+        index_cls = getattr(faiss, "Index", None)
+        if isinstance(index_cls, type) and not isinstance(base, index_cls):
+            return base
+        try:
+            return faiss.downcast_index(base)
+        except Exception:  # pragma: no cover - downcast fails only on already-concrete types
+            return base
+
+    @classmethod
+    def _index_supports_deletion(cls, index) -> bool:
+        """
+        Whether ``remove_ids`` will succeed on this index.
+
+        Note ``hasattr(index, "remove_ids")`` is useless here: IndexIDMap2 always
+        exposes the method, and delegates to a base index that may not implement it.
+        """
+        if index is None:
+            return False
+        return not isinstance(cls._unwrap_base_index(index), faiss.IndexHNSW)
+
+    @classmethod
+    def _base_index_type_name(cls, index) -> str:
+        """Concrete base index class name, e.g. ``IndexFlatL2``. Used by ``repair``."""
+        if index is None:
+            return "IndexFlatL2"
+        return type(cls._unwrap_base_index(index)).__name__
+
+    def _require_deletable(self, operation: str) -> None:
+        """Refuse operations that would silently fail to remove vectors."""
+        if not self.supports_deletion:
+            raise UnsupportedIndexOperationError(
+                f"{operation} requires removing vectors, which {self.base_index_type} does not support. "
+                f"Vectors would be orphaned and the deletion silently lost. "
+                f"Rebuild the database with faiss_index_type='IndexFlatL2' (or 'IndexFlatIP' / 'IndexLSH') "
+                f"if you need to delete or replace documents; {self.base_index_type} is append-only."
+            )
 
     # Hierarchical FAISS index initialization and management
     def _init_hierarchical(
@@ -530,40 +604,45 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         with self._faiss_lock.write_lock():
             self.document_index.add_with_ids(embeddings.astype(np.float32), faiss_ids.astype(np.int64))
 
-    def _remove_section_vectors(self, faiss_ids: List[int]) -> None:
-        """Remove vectors from the section FAISS index."""
-        if not faiss_ids or self.section_index is None or not hasattr(self.section_index, "remove_ids"):
+    def _remove_vectors(self, index, faiss_ids: List[int], what: str) -> None:
+        """
+        Remove vectors from an index, or raise.
+
+        A swallowed failure here is how deletes came to silently not happen: the row
+        disappears from SQLite, the vector survives, and the caller is told it worked.
+        Callers gate on ``supports_deletion`` first, so reaching the raise means
+        something genuinely unexpected happened.
+        """
+        if not faiss_ids or index is None:
             return
         try:
             with self._faiss_lock.write_lock():
                 ids_array = np.array(faiss_ids, dtype=np.int64)
-                # faiss accepts an ndarray of ids here (wrapped internally as an
-                # IDSelectorBatch); the stub only types the IDSelector overload.
-                self.section_index.remove_ids(ids_array)  # type: ignore[arg-type]
+                # faiss accepts an ndarray of ids here, wrapped internally as an
+                # IDSelectorBatch.
+                index.remove_ids(ids_array)
+                logger.debug(f"Removed {len(faiss_ids)} {what} vectors from FAISS")
         except Exception as e:
-            logger.warning(f"Failed to remove section vectors from FAISS: {e}")
+            raise IndexIntegrityError(
+                f"Failed to remove {len(faiss_ids)} {what} vector(s) from the FAISS index: {e}. "
+                f"SQLite and FAISS may now disagree; run `lvdb db {self.name} repair`."
+            ) from e
+
+    def _remove_section_vectors(self, faiss_ids: List[int]) -> None:
+        """Remove vectors from the section FAISS index."""
+        self._remove_vectors(self.section_index, faiss_ids, "section")
 
     def _remove_document_vectors(self, faiss_ids: List[int]) -> None:
         """Remove vectors from the document FAISS index."""
-        if not faiss_ids or self.document_index is None or not hasattr(self.document_index, "remove_ids"):
-            return
-        try:
-            with self._faiss_lock.write_lock():
-                ids_array = np.array(faiss_ids, dtype=np.int64)
-                # faiss accepts an ndarray of ids here (wrapped internally as an
-                # IDSelectorBatch); the stub only types the IDSelector overload.
-                self.document_index.remove_ids(ids_array)  # type: ignore[arg-type]
-        except Exception as e:
-            logger.warning(f"Failed to remove document vectors from FAISS: {e}")
+        self._remove_vectors(self.document_index, faiss_ids, "document")
 
     def _add_vectors_to_faiss_bulk(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
         if len(embeddings) == 0:
             return
         if self.index is None:
             raise RuntimeError("FAISS index is not initialized")
+        new_faiss_ids = self._allocate_faiss_ids("main", len(embeddings))
         with self._faiss_lock.write_lock():
-            start_faiss_id = self.index.ntotal
-            new_faiss_ids = np.arange(start_faiss_id, start_faiss_id + len(embeddings), dtype=np.int64)
             self.index.add_with_ids(embeddings, new_faiss_ids)
             for i, chunk in enumerate(chunks):
                 chunk.faiss_id = int(new_faiss_ids[i])
@@ -571,17 +650,26 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
         if self.index is None:
             raise RuntimeError("FAISS index is not initialized")
-        if not faiss_ids or not hasattr(self.index, "remove_ids"):
+        if not faiss_ids:
+            return
+        self._require_deletable("Replacing or deleting a document")
+        self._remove_vectors(self.index, faiss_ids, "chunk")
+
+    def _discard_faiss_ids_best_effort(self, faiss_ids: List[int]) -> None:
+        """
+        Undo an in-RAM FAISS add whose SQLite transaction rolled back.
+
+        Ids are monotonic, so a failure here wastes ids and leaves orphan vectors --
+        it can never cause a collision. Orphans cost recall and are swept by ``repair``,
+        so this must not mask the original exception.
+        """
+        if not faiss_ids or self.index is None or not self.supports_deletion:
             return
         try:
             with self._faiss_lock.write_lock():
-                ids_array = np.array(faiss_ids, dtype=np.int64)
-                # faiss accepts an ndarray of ids here (wrapped internally as an
-                # IDSelectorBatch); the stub only types the IDSelector overload.
-                self.index.remove_ids(ids_array)  # type: ignore[arg-type]
-                logger.debug(f"Removed {len(faiss_ids)} vectors from FAISS index")
-        except Exception as e:
-            logger.warning(f"Failed to remove vectors from FAISS: {e}")
+                self.index.remove_ids(np.array(faiss_ids, dtype=np.int64))  # type: ignore[arg-type]
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"Could not roll back {len(faiss_ids)} FAISS vector(s) after a failed transaction: {e}")
 
     def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
         """
@@ -744,7 +832,190 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         return result
 
+    # ------------------
+    # Monotonic FAISS id allocation
+    # ------------------
+    #
+    # FAISS ids were once derived from ``index.ntotal``. That is wrong: ``remove_ids``
+    # *decrements* ntotal, so it is not a high-water mark, and any delete or replacing
+    # upsert re-issued ids that were still live. A duplicated id makes the hydration
+    # join return two chunk rows for one vector, so two documents get scored from a
+    # single distance -- and the row inserted later wins, hiding the correct document
+    # from its own query entirely.
+    #
+    # Ids now come from a per-index monotonic counter, seeded on open from a floor that
+    # dominates every id live in *either* store.
+
+    _FAISS_ID_CONFIG_KEYS = {
+        "main": "next_faiss_id_main",
+        "section": "next_faiss_id_section",
+        "document": "next_faiss_id_document",
+    }
+
+    def _allocate_faiss_ids(self, name: str, count: int) -> np.ndarray:
+        """
+        Reserve ``count`` fresh FAISS ids for the named index (main/section/document).
+
+        Never reads ``ntotal``. Acquire this before ``_faiss_lock``, never after, so
+        the two locks are always taken in the same order.
+        """
+        if count <= 0:
+            return np.array([], dtype=np.int64)
+        with self._faiss_id_lock:
+            start = self._faiss_id_counters.get(name, 0)
+            self._faiss_id_counters[name] = start + count
+            return np.arange(start, start + count, dtype=np.int64)
+
+    @staticmethod
+    def _live_faiss_ids(index) -> np.ndarray:
+        """External ids currently present in an IndexIDMap/IndexIDMap2."""
+        if index is None or index.ntotal == 0 or not hasattr(index, "id_map"):
+            return np.array([], dtype=np.int64)
+        return faiss.vector_to_array(index.id_map)
+
+    @staticmethod
+    def _scalar_or_none(conn, sql: str) -> Optional[int]:
+        """First column of the first row, or None when the query yields nothing."""
+        row = conn.execute(sql).fetchone()
+        return None if row is None or row[0] is None else int(row[0])
+
+    def _sqlite_max_faiss_id(self, conn, name: str) -> Optional[int]:
+        """Largest faiss_id SQLite references for the named index."""
+        if name == "main":
+            # chunks and column_embeddings share the main index's id space.
+            return self._scalar_or_none(
+                conn,
+                """
+                SELECT MAX(m) FROM (
+                    SELECT MAX(faiss_id) AS m FROM chunks
+                    UNION ALL
+                    SELECT MAX(faiss_id) AS m FROM column_embeddings
+                )
+                """,
+            )
+        if name == "section":
+            return self._scalar_or_none(conn, "SELECT MAX(faiss_id) FROM sections")
+        if name == "document":
+            return self._scalar_or_none(conn, "SELECT MAX(doc_faiss_id) FROM documents")
+        raise ValueError(f"unknown index name: {name!r}")
+
+    def _compute_faiss_id_floor(self, conn, index, name: str) -> int:
+        """
+        The smallest id that is safe to hand out next.
+
+        Dominates the persisted counter, every id SQLite references, and every id live
+        in the index -- so it is correct against a stale counter, against orphan vectors
+        left by a crash, and against a database written by an older version. Safe to
+        compute even on a corrupt database, because it is a max().
+
+        ``MAX(faiss_id) + 1`` alone would not do: a vector can outlive its row (a failed
+        removal, a crash after commit), and reusing its id would collide.
+        """
+        persisted = self._load_int_config(conn, self._FAISS_ID_CONFIG_KEYS[name], default=0)
+        sqlite_max = self._sqlite_max_faiss_id(conn, name)
+        live = self._live_faiss_ids(index)
+
+        floor = persisted
+        if sqlite_max is not None:
+            floor = max(floor, sqlite_max + 1)
+        if live.size:
+            floor = max(floor, int(live.max()) + 1)
+        return floor
+
+    def _seed_faiss_counters(self, conn) -> None:
+        self._faiss_id_counters["main"] = self._compute_faiss_id_floor(conn, self.index, "main")
+        if self._hierarchical_embeddings:
+            self._faiss_id_counters["section"] = self._compute_faiss_id_floor(conn, self.section_index, "section")
+            self._faiss_id_counters["document"] = self._compute_faiss_id_floor(conn, self.document_index, "document")
+
+    def _save_faiss_counters(self) -> None:
+        """
+        Persist the counters best-effort, after commit.
+
+        Correctness does not depend on this -- the open-time floor is authoritative.
+        It matters for one case the floor cannot cover: when *every* document has been
+        deleted, both SQLite and the index are empty and the floor collapses to 0, while
+        incremental backups may still re-add vectors under their original ids.
+        """
+        if self.is_memory_only:
+            return
+        counters = dict(self._faiss_id_counters)
+        if not counters:
+            return
+
+        def _write() -> None:
+            with self.connection_pool.get_connection() as conn:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                    [(self._FAISS_ID_CONFIG_KEYS[name], str(value)) for name, value in counters.items()],
+                )
+                conn.commit()
+
+        retry_on_locked(_write)
+
+    # ------------------
+    # Dual-store integrity
+    # ------------------
+
+    def _duplicate_main_faiss_ids(self, conn) -> List[int]:
+        rows = conn.execute("""
+            SELECT faiss_id FROM (
+                SELECT faiss_id FROM chunks WHERE faiss_id IS NOT NULL
+                UNION ALL
+                SELECT faiss_id FROM column_embeddings
+            )
+            GROUP BY faiss_id HAVING COUNT(*) > 1
+            """).fetchall()
+        return [int(r[0]) for r in rows]
+
+    def _verify_integrity(self, conn) -> None:
+        """
+        Check the SQLite/FAISS agreement on open.
+
+        Severity is split by whether a condition can produce *wrong results*:
+
+        * Duplicate ``faiss_id`` -- one vector attributed to two documents. Queries
+          return the wrong document, silently. Refuse to open.
+        * Count mismatch -- orphan vectors or dangling rows. Costs recall, never
+          correctness, and is the expected residue of a crash. Warn.
+        """
+        duplicates = self._duplicate_main_faiss_ids(conn)
+        if duplicates:
+            shown = ", ".join(str(d) for d in duplicates[:10])
+            more = f" (and {len(duplicates) - 10} more)" if len(duplicates) > 10 else ""
+            raise IndexIntegrityError(
+                f"Database '{self.name}' has {len(duplicates)} duplicate FAISS id(s): {shown}{more}. "
+                f"A duplicated id makes one vector hydrate two documents, so queries return the wrong "
+                f"document. This database was written by a version that allocated ids from index.ntotal. "
+                f"Run `lvdb db {self.name} repair` to rebuild the index."
+            )
+
+        if self.index is None:
+            return
+
+        n_chunks = self._scalar_or_none(conn, "SELECT COUNT(*) FROM chunks WHERE faiss_id IS NOT NULL")
+        n_columns = self._scalar_or_none(conn, "SELECT COUNT(*) FROM column_embeddings")
+        if n_chunks is None or n_columns is None:
+            return
+        expected = n_chunks + n_columns
+        if self.index.ntotal != expected:
+            logger.warning(
+                f"Database '{self.name}': FAISS index holds {self.index.ntotal} vectors but SQLite references "
+                f"{expected} ({n_chunks} chunks + {n_columns} metadata embeddings). This costs recall, not "
+                f"correctness -- it is the expected residue of an interrupted write. "
+                f"Run `lvdb db {self.name} repair` to reconcile."
+            )
+
     # Config/state helpers
+    def _load_int_config(self, conn, key: str, default: int = 0) -> int:
+        row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return default
+        try:
+            return int(row["value"])
+        except (TypeError, ValueError):
+            return default
+
     def _load_next_doc_id(self) -> int:
         with self.connection_pool.get_connection() as conn:
             cursor = conn.execute("SELECT value FROM config WHERE key = ?", ("next_doc_id",))
@@ -936,31 +1207,71 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             return doc_id
 
     # Persistence
-    def _save_internal(self):
-        if not self.is_memory_only and self.index is not None and self.index.ntotal > 0:
-            if hasattr(self.index, "index") and hasattr(self.index.index, "device"):
-                try:
-                    cpu_index = faiss.index_gpu_to_cpu(self.index)
-                    faiss.write_index(cpu_index, str(self.index_path))
-                except AttributeError:
-                    logger.warning("GPU-to-CPU conversion failed - FAISS may not have GPU support")
-                    faiss.write_index(self.index, str(self.index_path))
-                except Exception as e:
-                    logger.warning(f"Failed to convert GPU index to CPU for saving: {e}")
-                    faiss.write_index(self.index, str(self.index_path))
-            else:
-                faiss.write_index(self.index, str(self.index_path))
+    @staticmethod
+    def _atomic_write_index(index, path: Union[str, Path]) -> None:
+        """
+        Serialize an index so that a crash can never leave a truncated file.
 
-        # Save hierarchical FAISS indices
-        if self._hierarchical_embeddings and not self.is_memory_only:
-            if self.section_index is not None and self.section_index.ntotal > 0 and self.section_index_path:
-                faiss.write_index(self.section_index, str(self.section_index_path))
-            if self.document_index is not None and self.document_index.ntotal > 0 and self.document_index_path:
-                faiss.write_index(self.document_index, str(self.document_index_path))
+        Write to a temp file adjacent to the target (same volume, so ``os.replace`` is
+        atomic on Windows as well as POSIX), fsync it, then rename over the target.
+        The directory fsync is best-effort: Windows does not support it.
+        """
+        path = Path(path)
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            faiss.write_index(index, str(tmp))
+
+            # The handle must be writable: Windows rejects fsync on an O_RDONLY descriptor.
+            with open(tmp, "rb+") as fh:
+                os.fsync(fh.fileno())
+
+            os.replace(str(tmp), str(path))
+        except BaseException:
+            # Leave no partial file behind; the previous index at `path` is untouched.
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+            raise
+
+        try:
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except (OSError, PermissionError):  # pragma: no cover - not supported on Windows
+            pass
+
+    def _write_index_to_disk(self, index, path) -> None:
+        """Persist one index, converting off the GPU first if necessary."""
+        if index is None or not path:
+            return
+        to_write = index
+        if hasattr(index, "index") and hasattr(index.index, "device"):
+            try:
+                to_write = faiss.index_gpu_to_cpu(index)
+            except AttributeError:
+                logger.warning("GPU-to-CPU conversion failed - FAISS may not have GPU support")
+            except Exception as e:
+                logger.warning(f"Failed to convert GPU index to CPU for saving: {e}")
+        self._atomic_write_index(to_write, path)
+
+    def _save_internal(self):
+        if self.is_memory_only:
+            return
+
+        # An emptied index must still be written: skipping the write when ntotal == 0
+        # would leave the previous, populated file on disk, so reopening the database
+        # would resurrect every deleted vector.
+        with self._faiss_lock.read_lock():
+            self._write_index_to_disk(self.index, self.index_path)
+            if self._hierarchical_embeddings:
+                self._write_index_to_disk(self.section_index, self.section_index_path)
+                self._write_index_to_disk(self.document_index, self.document_index_path)
 
     def save(self):
         with self._read_write_lock.write_lock():
             self._save_internal()
+        self._save_faiss_counters()
 
     def close(self):
         """Close the database"""

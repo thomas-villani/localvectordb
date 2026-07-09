@@ -27,7 +27,8 @@ def mock_database_operations(db):
         _insert_documents_bulk=Mock(return_value=None),
         _insert_chunks_bulk=Mock(return_value=None),
         _add_vectors_to_faiss_bulk=Mock(return_value=None),
-        _store_metadata_embeddings=Mock(return_value=None),
+        # Returns the FAISS ids it allocated, so a rolled-back transaction can undo them.
+        _store_metadata_embeddings=Mock(return_value=[]),
         _remove_metadata_embeddings=Mock(return_value=None),
         _remove_old_chunks_batch=Mock(return_value=None),
     )

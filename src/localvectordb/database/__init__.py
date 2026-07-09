@@ -5,13 +5,21 @@ from localvectordb.database._core import LocalVectorDBCore
 from localvectordb.database._crud import CrudMixin
 from localvectordb.database._ingest import PipelineMixin
 from localvectordb.database._metadata import MetadataMixin
+from localvectordb.database._repair import RepairMixin, RepairReport
 from localvectordb.database._search import SearchMixin
 from localvectordb.database._tuning import LocalTuningMixin, TuningMixin
 from localvectordb.database.base import BaseVectorDB
 
 
 class LocalVectorDB(
-    LocalTuningMixin, PipelineMixin, SearchMixin, MetadataMixin, CrudMixin, ComparisonMixin, LocalVectorDBCore
+    LocalTuningMixin,
+    PipelineMixin,
+    SearchMixin,
+    MetadataMixin,
+    CrudMixin,
+    ComparisonMixin,
+    RepairMixin,
+    LocalVectorDBCore,
 ):
     """
     Document-first vector database with SQLite + FAISS + embeddings
@@ -57,4 +65,4 @@ class LocalVectorDB(
     pass
 
 
-__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin"]
+__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin", "RepairReport"]

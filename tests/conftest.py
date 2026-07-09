@@ -2,8 +2,17 @@
 Enhanced pytest fixtures with better test isolation for LocalVectorDB.
 """
 
-import asyncio
+# ruff: noqa: E402 - OMP_NUM_THREADS must be set before faiss loads; see below.
+
 import os
+
+# faiss links OpenMP, which allocates a per-thread arena as the extension module
+# loads: ~160 MB/thread, so ~1.15 GB on an 8-core box. The suite mocks faiss, so
+# those threads never do any work, but under `-n auto` the cost is paid once per
+# xdist worker. Set this before the transitive `import faiss` below.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+import asyncio
 import shutil
 import sys
 import tempfile
@@ -11,11 +20,50 @@ import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import faiss
 import numpy as np
 import pytest
 
 from localvectordb.core import Chunk, ChunkPosition, Document, MetadataField, MetadataFieldType
 from localvectordb.embeddings import MockEmbeddings
+
+# Captured before any test patches them, so make_faiss_index() still builds a real
+# index from inside a `patch("faiss.IndexIDMap2")` block.
+_REAL_INDEX_FLAT_L2 = faiss.IndexFlatL2
+_REAL_INDEX_ID_MAP2 = faiss.IndexIDMap2
+
+
+def make_faiss_index(dimension: int = 384):
+    """
+    A real, empty IndexIDMap2 to stand in for a database's index.
+
+    Never hand a Mock to faiss. Its SWIG shims resolve an argument by walking
+    ``obj.this`` until they reach a SwigPyObject; a Mock answers every ``.this``
+    with a fresh child Mock, so they neither terminate nor raise, and the process
+    allocates until the machine runs out of commit. ``LocalVectorDB.__init__``
+    reads ``ntotal``/``id_map`` off the index, and ``save()`` passes it to
+    ``faiss.write_index``, so the index a test constructs with must be real.
+    """
+    return _REAL_INDEX_ID_MAP2(_REAL_INDEX_FLAT_L2(dimension))
+
+
+def _stub_write_index(index, path):
+    """Stand in for faiss.write_index: produce the file the caller expects to fsync."""
+    with open(path, "wb"):
+        pass
+
+
+@pytest.fixture
+def mock_faiss_io():
+    """
+    Keep faiss's SWIG I/O away from a mocked index.
+
+    Opt in with ``pytestmark = pytest.mark.usefixtures("mock_faiss_io")`` in modules
+    whose tests must keep a Mock as ``db.index`` -- typically to stub ``search``.
+    Not autouse: tests that exercise persistence for real need the real functions.
+    """
+    with patch("faiss.write_index", side_effect=_stub_write_index), patch("faiss.read_index"):
+        yield
 
 
 @pytest.fixture(autouse=True)

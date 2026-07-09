@@ -57,27 +57,19 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             info["field_types"][field_type_value] = info["field_types"].get(field_type_value, 0) + 1
         return info
 
-    def _calculate_faiss_ids_for_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
-        """Calculate FAISS IDs for embeddings using index state (pure business logic)"""
-        assert self.index is not None
-        start_id = self.index.ntotal
-        if hasattr(self.index, "add_with_ids"):
-            return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
-        else:
-            # For basic add, we'll need to calculate after adding
-            return np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
-
     def _add_embeddings_to_faiss(self, embeddings: np.ndarray) -> np.ndarray:
-        """Add embeddings to FAISS index and return actual IDs (pure business logic for FAISS operations)"""
+        """
+        Add metadata-field embeddings to the main FAISS index and return their ids.
+
+        These share the main index -- and therefore its id space -- with chunk vectors,
+        which is why the dual-store invariant counts ``column_embeddings`` alongside
+        ``chunks``.
+        """
         assert self.index is not None
-        start_id = self.index.ntotal
-        if hasattr(self.index, "add_with_ids"):
-            ids = np.arange(start_id, start_id + len(embeddings), dtype=np.int64)
+        ids = self._allocate_faiss_ids("main", len(embeddings))
+        with self._faiss_lock.write_lock():
             self.index.add_with_ids(embeddings, ids)
-            return ids  # Return actual IDs used
-        else:
-            self.index.add(embeddings)
-            return np.arange(start_id, self.index.ntotal, dtype=np.int64)  # Fall back to range
+        return ids
 
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
         unknown_fields: set = set()
@@ -447,15 +439,23 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 field_embeddings[field_name] = embeddings
         return field_embeddings
 
-    def _store_metadata_embeddings(self, conn, document_id: str, field_embeddings: Dict[str, np.ndarray]) -> None:
+    def _store_metadata_embeddings(self, conn, document_id: str, field_embeddings: Dict[str, np.ndarray]) -> List[int]:
+        """Store metadata-field embeddings and return the FAISS ids allocated for them.
+
+        The caller needs the ids so a rolled-back transaction can undo the in-RAM
+        FAISS adds, which SQLite's rollback does not cover.
+        """
+        allocated: List[int] = []
         for field_name, embeddings in field_embeddings.items():
             if embeddings.size == 0:
                 continue
             # Use shared business logic for FAISS operations
             actual_ids = self._add_embeddings_to_faiss(embeddings)
+            allocated.extend(int(i) for i in actual_ids)
             # Track using actual IDs
             for chunk_index, faiss_id in enumerate(actual_ids):
                 self._track_column_embedding(conn, document_id, field_name, chunk_index, int(faiss_id))
+        return allocated
 
     async def _store_metadata_embeddings_async(
         self, conn: aiosqlite.Connection, document_id: str, field_embeddings: Dict[str, np.ndarray]
