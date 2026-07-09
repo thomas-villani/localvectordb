@@ -86,13 +86,18 @@ packages = ["src/localvectordb", "src/localvectordb_server"]
 
 [tool.hatch.build.targets.sdist]
 # Keep the source distribution to the Python package + its tests/docs. Internal
-# notes (competitive analysis, code reviews, scratch files) are gitignored and so
-# already excluded; this additionally drops dev-only and non-Python assets.
+# notes (competitive analysis, code reviews, scratch files) live under /etc and
+# are gitignored; we ALSO list them explicitly here so a stray un-ignore can
+# never silently publish them. This block additionally drops dev-only and
+# non-Python assets.
 exclude = [
     "/sdk",
     "/skills",
     "/benchmarks",
     "/scripts",
+    "/etc",
+    "/todo.md",
+    "/remote-layer-streaming.md",
     "/docs/build",
     "/.github",
     "/.claude",
