@@ -40,7 +40,7 @@ The CLI is included with the server installation:
 
 .. code-block:: bash
 
-   pip install localvectordb[server]
+   pip install "localvectordb[server]"
 
    # Verify installation
    lvdb --help

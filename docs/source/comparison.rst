@@ -188,10 +188,10 @@ Visualization requires optional dependencies:
 .. code-block:: bash
 
    # Core visualization (scikit-learn + matplotlib)
-   pip install localvectordb[visualization]
+   pip install "localvectordb[visualization]"
 
    # Interactive plots (adds plotly)
-   pip install localvectordb[visualization-interactive]
+   pip install "localvectordb[visualization-interactive]"
 
 Convenience Methods
 ^^^^^^^^^^^^^^^^^^^

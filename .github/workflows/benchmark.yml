@@ -1,0 +1,117 @@
+name: Benchmarks
+
+# Report-only. These run on GitHub's shared runners, whose vCPUs are noisy
+# neighbours, so the absolute numbers are useful as a published snapshot but
+# are NOT stable enough to gate a build on. Nothing here fails the workflow on
+# a performance regression.
+#
+# Both tiers are deterministic and keyless: tier 1 replays precomputed SIFT-128
+# vectors, tier 2 uses the mock embedding provider. That isolates library
+# overhead (our Python + FAISS + SQLite) from provider network latency, and
+# matches how benchmarks/BASELINE.md was captured.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Which tier to run (blank = both)"
+        required: false
+        type: choice
+        options: ["", "1", "2"]
+        default: ""
+      scales:
+        description: "Space-separated corpus scales, e.g. '10000 25000' (blank = defaults)"
+        required: false
+        type: string
+        default: ""
+      index_types:
+        description: "Space-separated FAISS index types for tier 1 (blank = defaults)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      # h5py lives in the `benchmark` extra, not the dev group, so a plain
+      # `uv sync --dev` would leave tier 1's SIFT loader unimportable.
+      - name: Install dependencies
+        run: uv sync --dev --extra benchmark
+
+      # The SIFT-128 dataset is a ~500MB HDF5 download from ann-benchmarks.com.
+      # Cache it so only the first run on a given key pays for it.
+      - name: Cache SIFT-128 dataset
+        uses: actions/cache@v4
+        with:
+          path: benchmarks/.cache
+          key: sift-128-euclidean-v1
+
+      - name: Download dataset if not cached
+        run: uv run python -m benchmarks.run --download-only
+
+      - name: Run benchmarks
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.tier }}" ]; then
+            ARGS="$ARGS --tier ${{ inputs.tier }}"
+          fi
+          if [ -n "${{ inputs.scales }}" ]; then
+            ARGS="$ARGS --scales ${{ inputs.scales }}"
+          fi
+          if [ -n "${{ inputs.index_types }}" ]; then
+            ARGS="$ARGS --index-types ${{ inputs.index_types }}"
+          fi
+          echo "Running: python -m benchmarks.run $ARGS"
+          uv run python -m benchmarks.run $ARGS
+
+      # run.py writes results_<timestamp>.{json,md} into benchmarks/results/.
+      - name: Publish report to job summary
+        if: always()
+        run: |
+          REPORT="$(ls -1t benchmarks/results/results_*.md 2>/dev/null | head -n 1)"
+          if [ -z "$REPORT" ]; then
+            echo "No benchmark report was produced." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "# Benchmark report"
+            echo
+            echo "Commit \`${GITHUB_SHA:0:7}\` on \`${GITHUB_REF_NAME}\`."
+            echo "Shared GitHub runner — treat absolute timings as indicative, not authoritative."
+            echo
+            cat "$REPORT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.ref_name }}
+          path: |
+            benchmarks/results/*.json
+            benchmarks/results/*.md
+          if-no-files-found: warn
+          retention-days: 90

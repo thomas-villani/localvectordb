@@ -48,10 +48,12 @@ Use the ``lvdb`` CLI to create and populate specialized databases:
    lvdb create technical_docs --embedding-model nomic-embed-text
 
    # Add documents using the CLI (the command is `add`; it accepts files, globs, or stdin)
-   # Note: `add` reads files as UTF-8 text — it does NOT run extraction. Use it for
-   # text/Markdown/source files. For PDF/DOCX/etc., extract via the server `/upload`
-   # endpoint or `db.upsert_from_file(...)` (see :doc:`/file-extraction`).
    lvdb db technical_docs add ./docs/user_guide.md
+
+   # Rich formats are extracted to Markdown automatically (PDF, DOCX, HTML, CSV, ...);
+   # plain text and source files are read as-is. Override with --extract/--no-extract.
+   lvdb db technical_docs add ./docs/manual.pdf
+
    # Add text from stdin with `-`
    echo "Key troubleshooting steps..." | lvdb db technical_docs add - --metadata '{"type": "troubleshooting"}'
 
@@ -204,7 +206,29 @@ You can also run the MCP server using Python directly:
 Claude Code
 -----------
 
-Claude Code automatically detects and uses MCP servers configured in your Claude Desktop settings. No additional configuration is required.
+Register the server with the ``claude mcp add`` command. Everything after the
+``--`` separator is the launch command, passed through to the subprocess
+untouched:
+
+.. code-block:: bash
+
+   claude mcp add lvdb \
+     -e LVDB_MCP_MODE=read-only \
+     -e LVDB_MCP_DATABASES_ROOT=/path/to/databases \
+     -- lvdb mcp serve
+
+The ``--scope`` (``-s``) flag controls where the registration is written:
+
+* ``local`` (default) — this project only, private to you
+* ``project`` — written to a committed ``.mcp.json``, shared with your team
+* ``user`` — available across all of your projects
+
+Manage the server with ``claude mcp list`` (shows connection status),
+``claude mcp get lvdb``, and ``claude mcp remove lvdb``. Inside a session, the
+``/mcp`` command opens an interactive panel.
+
+If you already configured the server in Claude Desktop, import it with
+``claude mcp add-from-claude-desktop`` rather than re-entering it by hand.
 
 Configuration
 =============
@@ -557,7 +581,7 @@ Common Issues
 -------------
 
 **Module not found**
-   Install with MCP support: ``pip install localvectordb[mcp]``
+   Install with MCP support: ``pip install "localvectordb[mcp]"``
 
 **Database not found**
    Check the ``LVDB_MCP_DATABASES_ROOT`` path exists and contains ``.sqlite`` files

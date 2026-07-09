@@ -29,8 +29,11 @@ benchmarks/.cache/
 benchmarks/results/
 
 # Project notes / scratch (kept local, never published)
+# NOTE: the sdist relies on these being gitignored — hatchling honours VCS
+# ignores, so an internal note that is merely *untracked* still ships.
 etc/
 todo.md
+remote-layer-streaming.md
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

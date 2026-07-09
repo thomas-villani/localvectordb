@@ -46,7 +46,7 @@ For running the LocalVectorDB HTTP server:
 
 .. code-block:: bash
 
-   pip install localvectordb[server]
+   pip install "localvectordb[server]"
 
 Additional dependencies:
 
@@ -61,7 +61,7 @@ For local inference with SentenceTransformer models:
 
 .. code-block:: bash
 
-   pip install localvectordb[sentence-transformers]
+   pip install "localvectordb[sentence-transformers]"
 
 Local Embeddings Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -69,7 +69,7 @@ For local inference with HuggingFace transformers models:
 
 .. code-block:: bash
 
-   pip install localvectordb[local-embeddings]
+   pip install "localvectordb[local-embeddings]"
 
 File Extraction Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -79,14 +79,14 @@ LaTeX, Outlook ``.msg``, FictionBook, wikitext, and more):
 
 .. code-block:: bash
 
-   pip install localvectordb[file-extraction]
+   pip install "localvectordb[file-extraction]"
 
 For OCR of scanned PDFs and images (requires the Tesseract binary — see
 *System Dependencies* below):
 
 .. code-block:: bash
 
-   pip install localvectordb[file-extraction-ocr]
+   pip install "localvectordb[file-extraction-ocr]"
 
 Extracted content is returned as **Markdown**, preserving headings, tables, and
 lists. See :doc:`/file-extraction` for the full format list and security
