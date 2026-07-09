@@ -1,0 +1,41 @@
+name: "LocalVectorDB CodeQL config"
+
+# Security queries remain fully enabled. The exclusions below are limited to
+# style/maintainability rules that produced sustained false-positive noise:
+# they account for the large majority of alerts dismissed on this repo to date,
+# and because a dismissal is bound to an alert fingerprint, each one resurrects
+# under a fresh alert number as soon as an unrelated edit shifts its line.
+
+queries:
+  - uses: security-and-quality
+
+query-filters:
+  # The only edges closing these cycles are TYPE_CHECKING-guarded
+  # (database/base.py, cursor.py) or function-local (base.py query_builder()).
+  # Deferring an import is the canonical remedy for a cycle, not a defect --
+  # no cycle exists at runtime and every import order resolves.
+  - exclude:
+      id: py/cyclic-import
+  - exclude:
+      id: py/unsafe-cyclic-import
+
+  # `try/finally: db.close()` is functionally identical to __exit__, which only
+  # calls self.close(). Flagged in cli/_shell.py, where the db is acquired at
+  # function top and captured by ~350 lines of REPL closures.
+  - exclude:
+      id: py/should-use-with
+
+  # Fires on PEP 544 Protocol stubs in _interfaces.py, where a `...` body is the
+  # standard placeholder. Genuine useless expressions are caught by ruff B018,
+  # which correctly exempts `...`.
+  - exclude:
+      id: py/ineffectual-statement
+
+  # Covered by ruff F841 (see [tool.ruff.lint] select in pyproject.toml).
+  - exclude:
+      id: py/unused-local-variable
+
+  # Import-style preference, not correctness; import layout is owned by ruff I
+  # (isort) and enforced in pre-commit.
+  - exclude:
+      id: py/import-and-import-from
