@@ -36,7 +36,7 @@ Uses full-text search (FTS5) to find documents containing specific terms. Ideal 
 
     # Find documents containing specific terms
     results = db.query(
-        "machine learning", 
+        "machine learning",
         search_type="keyword"
     )
 
@@ -45,6 +45,37 @@ Uses full-text search (FTS5) to find documents containing specific terms. Ideal 
 - Exact phrase matching
 - Technical terms or proper nouns
 - When you need precise keyword matches
+
+Query syntax
+""""""""""""
+
+Plain text is treated as a description of what you are looking for: its terms are
+combined with ``OR`` and the results are ranked by BM25, so a document matching the
+rarer terms of your query outranks one matching only its common words. You do not
+need every word to appear.
+
+For precise control, three pieces of FTS5 syntax are honoured:
+
+.. code-block:: python
+
+    # Exact phrase - the words must appear together, in order
+    db.query('"randomized controlled trial"', search_type="keyword")
+
+    # Require both terms: AND / OR / NOT must be UPPERCASE to be operators
+    db.query("aspirin AND mortality", search_type="keyword")
+
+    # Exclude a term
+    db.query("aspirin NOT aspirin-resistance", search_type="keyword")
+
+Lowercase ``and``, ``or`` and ``not`` are ordinary words, not operators. A question
+like ``"does aspirin not reduce risk"`` searches for those six words, which is almost
+certainly what you meant.
+
+.. note::
+
+   Everything else is escaped. FTS5 metacharacters (``*``, ``:``, ``^``, ``NEAR``,
+   parentheses) in your query text are stripped rather than interpreted, so untrusted
+   input cannot alter the search expression.
 
 ``search_type="hybrid"`` 
 ^^^^^^^^^^^^^^^^^^^^^^^^
