@@ -1,6 +1,6 @@
 # Retrieval Baseline (T1 reference)
 
-Relevance baseline for `main` at commit `26a92ce`, measured by
+Relevance baseline for `main` at commit `a6d2e98`, measured by
 `benchmarks/eval_retrieval.py`. **Every T1 retrieval change is measured against
 this.** A change that does not improve — or at least hold — `ndcg@10` gets
 reverted, not shipped.
@@ -57,82 +57,87 @@ from 0.645, suspect the harness before believing the result.
 
 | configuration | recall@1 | recall@5 | recall@10 | **ndcg@10** |
 |---|---|---|---|---|
-| hybrid vw=0.7 · best | 0.4957 | 0.7278 | 0.8079 | **0.6597** |
-| hybrid vw=0.3 · best | 0.4957 | 0.7311 | 0.8062 | 0.6592 |
-| hybrid vw=0.5 · best | 0.4957 | 0.7311 | 0.8062 | 0.6592 |
-| hybrid vw=0.9 · best | 0.4957 | 0.7286 | 0.8054 | 0.6590 |
+| hybrid vw=0.5 · best | 0.5621 | 0.7714 | 0.8410 | **0.7133** |
+| hybrid vw=0.5 · frequency_boost | 0.5529 | 0.7714 | 0.8410 | 0.7090 |
+| hybrid vw=0.5 · average | 0.5521 | 0.7679 | 0.8402 | 0.7086 |
+| hybrid vw=0.3 · frequency_boost | 0.5617 | 0.7539 | 0.8252 | 0.7004 |
+| hybrid vw=0.3 · best | 0.5592 | 0.7573 | 0.8252 | 0.6999 |
+| hybrid vw=0.3 · average | 0.5458 | 0.7509 | 0.8243 | 0.6942 |
+| **hybrid vw=0.7 · frequency_boost** ← library default | 0.5407 | 0.7596 | 0.8260 | **0.6940** |
+| hybrid vw=0.7 · best | 0.5407 | 0.7596 | 0.8260 | 0.6935 |
+| hybrid vw=0.7 · average | 0.5357 | 0.7604 | 0.8218 | 0.6924 |
+| hybrid vw=0.9 · best | 0.5040 | 0.7417 | 0.8010 | 0.6617 |
+| hybrid vw=0.9 · frequency_boost | 0.5040 | 0.7417 | 0.8010 | 0.6614 |
+| hybrid vw=0.9 · average | 0.4923 | 0.7392 | 0.8008 | 0.6586 |
 | keyword · best | 0.5183 | 0.7187 | 0.7876 | 0.6577 |
 | keyword · frequency_boost | 0.5183 | 0.7187 | 0.7876 | 0.6577 |
-| hybrid vw=0.3 · frequency_boost | 0.4857 | 0.7311 | 0.8062 | 0.6542 |
-| hybrid vw=0.3 · average | 0.4907 | 0.7253 | 0.7987 | 0.6523 |
-| hybrid vw=0.5 · average | 0.4907 | 0.7253 | 0.7987 | 0.6523 |
-| hybrid vw=0.9 · average | 0.4773 | 0.7186 | 0.8046 | 0.6497 |
-| hybrid vw=0.7 · average | 0.4807 | 0.7111 | 0.8029 | 0.6483 |
 | vector · best | 0.4800 | 0.7406 | 0.7860 | 0.6447 |
 | vector · average | 0.4757 | 0.7381 | 0.7858 | 0.6441 |
 | keyword · average | 0.4933 | 0.7037 | 0.7826 | 0.6427 |
-| hybrid vw=0.9 · frequency_boost | 0.4629 | 0.7156 | 0.7998 | 0.6398 |
-| **hybrid vw=0.7 · frequency_boost** ← library default | 0.4496 | 0.7181 | 0.8023 | **0.6343** |
-| hybrid vw=0.5 · frequency_boost | 0.4379 | 0.7300 | 0.8046 | 0.6299 |
 | vector · frequency_boost | 0.4456 | 0.7195 | 0.7871 | 0.6221 |
 
-### What changed since the previous baseline (`41b824a`)
+### What changed since the previous baseline (`26a92ce`)
 
-`41b824a` measured keyword search at `ndcg@10 = 0.0188`. It was not mis-tuned; it
-was non-functional. Two defects in `FTSQuerySanitization` meant **291 of the 300
-judged queries matched literally zero rows**. T1.0 fixed both.
+T1.1 replaced hybrid's un-normalized weighted sum with **relative-score fusion**:
+each leg is min-max normalized within the query's own candidate pool before being
+blended by `vector_weight`. Every `hybrid` row improved. Every `vector` and
+`keyword` row moved by exactly `+0.0000` — the check that T1.1 changed the fusion
+and nothing else.
 
-| configuration | `41b824a` | `26a92ce` | Δ |
+| configuration | `26a92ce` | `a6d2e98` | Δ |
 |---|---|---|---|
-| keyword · best | 0.0188 | 0.6577 | +0.6390 |
-| keyword · average | 0.0183 | 0.6427 | +0.6244 |
-| hybrid vw=0.7 · best | 0.6461 | 0.6597 | +0.0136 |
-| hybrid vw=0.7 · frequency_boost ← default | 0.6193 | 0.6343 | +0.0150 |
+| hybrid vw=0.5 · best (best in sweep) | 0.6592 | 0.7133 | +0.0541 |
+| hybrid vw=0.7 · frequency_boost ← default | 0.6343 | 0.6940 | +0.0598 |
+| hybrid vw=0.5 · frequency_boost | 0.6299 | 0.7090 | +0.0792 |
+| hybrid vw=0.9 · best | 0.6590 | 0.6617 | +0.0028 |
 | vector · best | 0.6447 | 0.6447 | **+0.0000** |
-
-Every vector-only row moved by exactly 0.0000. That is the check that T1.0 changed
-the keyword leg and nothing else.
+| keyword · best | 0.6577 | 0.6577 | **+0.0000** |
 
 ## What this measurement shows
 
-**1. Keyword search is now competitive with dense retrieval, and hybrid beats
-both.** `keyword · best` (0.6577) slightly outscores `vector · best` (0.6447) and
-has the best `recall@1` of any configuration (0.5183). Do not over-read this:
-SciFact is scientific claim verification, where the query shares a great deal of
-vocabulary with the target abstract, and BM25 is a famously strong baseline there.
-Expect the ordering to flip on a corpus with more paraphrase.
+**1. Normalizing the legs is worth ~0.06 nDCG. RRF is worth ~0.01.** The two
+candidate fixes were measured head to head before either was written. At the
+library default:
 
-**2. `vector_weight` now does something, but not what its name suggests.** It was
-previously inert — every `hybrid` row was identical because the keyword leg was
-always empty, making `vw * vs + (1-vw) * 0` a monotonic rescale of the vector
-score. The rows now differ. But `vw=0.3` and `vw=0.5` still tie to four decimals,
-and that has a cause worth fixing.
+| fusion | ndcg@10 | recall@1 |
+|---|---|---|
+| un-normalized weighted sum (before) | 0.6343 | 0.4496 |
+| Reciprocal Rank Fusion, k=60 (canonical) | 0.6439 | 0.4499 |
+| Reciprocal Rank Fusion, k=10 (best RRF) | 0.6778 | 0.5163 |
+| **relative-score fusion (shipped)** | **0.6940** | **0.5407** |
 
-`_fts_rank_to_similarity` (`_search.py`) is `1.0 - min(1.0, exp(bm25))`, an
-*absolute* transform of raw BM25 that is never normalized per query. On a real
-query the top-20 BM25 scores span `-16.6 … -12.4`, and the transform maps all of
-them into `[0.999996, 0.99999994]` — a spread of `2.3e-05`. Pure keyword search is
-unaffected, because SQLite orders by raw `bm25()` before the transform runs. But
-**hybrid fusion receives a near-constant `1.0` for every matched chunk**, so
-`vector_weight` behaves as a *presence* weight (chunk matched, or did not) rather
-than as a graded blend.
+The best row any family could reach, over every `vector_weight` and every scoring
+method: relative-score **0.7133**, RRF **0.6984**, un-normalized sum **0.6604**.
+RRF was also rejected on three grounds beyond nDCG: its scores max out near
+`1/(60+1)`, so any `score_threshold > 0.02` would silently return nothing; its `k`
+is a tuning knob that would be frozen at 1.0, and the canonical 60 is close to the
+worst value on this data; and it makes `frequency_boost`'s `min(1.0, …)` clamp
+unreachable, silently redefining that scoring method.
 
-This is T1.1's premise. Until T1.0 landed the transform was almost never reached,
-because nothing matched. It is now on the hot path for every query.
+**2. `vector_weight` finally behaves like a weight.** Under the old sum the keyword
+leg contributed a near-constant 1.0 to every chunk it retrieved, so `vector_weight`
+was asking "did the keyword leg find this at all?" rather than "how well?". The
+optimum now sits at `vw=0.5` (0.7090) rather than the default 0.7 (0.6940). **The
+default was deliberately left at 0.7.** The dense-versus-lexical tradeoff is
+corpus-dependent, SciFact is unusually lexical, and tuning a global default on one
+dataset is how you overfit a benchmark. Recheck on NFCorpus before moving it.
 
-**3. The library's default configuration is still one of the worst in the sweep.**
-`hybrid vw=0.7 · frequency_boost` scores 0.6343 against 0.6597 for
-`hybrid vw=0.7 · best` — 0.025 nDCG, ~4.0% relative, given away by the defaults
-alone. `frequency_boost` is the worst scoring method at every `vector_weight`.
+**3. Hybrid scores are now pool-relative.** They are comparable within one result
+set, but not across queries, and not across different `k` (which changes the
+candidate pool size). `score_threshold` on a hybrid query now selects by rank
+position within the pool rather than by absolute match quality. The best chunk of a
+leg always normalizes to 1.0 and the worst to 0.0 — the latter indistinguishable
+from a chunk that leg never retrieved. All three are inherent to relative-score
+fusion and are documented in `docs/source/document-scoring.rst`.
 
-It rewards documents with several matching chunks, which costs `recall@1` heavily
-(0.4496 vs 0.4957) — the top of the list is where it reorders worst. On the
-vector-only rows it does buy a hair of `recall@10` (0.7871 vs 0.7860), the one
-place its premise pays; on the hybrid rows even that disappears. On SciFact the
-effect is muted anyway: abstracts average 1.09 chunks, so most documents have
-exactly one chunk and the scoring method has nothing to aggregate.
-**Do not settle T1.6 (prune 11 scoring strategies to 3) on SciFact alone** — use
-NFCorpus, whose documents are longer.
+**4. `frequency_boost` is no longer catastrophic, and its clamp was load-bearing for
+the wrong reason.** It now sits within 0.005 of `best` at every `vector_weight`,
+where before it gave away up to 0.03. Its `min(1.0, best_score * multiplier)` clamp
+turns out to have been *rescuing* the old fusion rather than hurting it: with
+saturated keyword scores, `best * multiplier` routinely exceeded 1.0, and the clamp
+capped the damage (+0.1024 nDCG at `vw=0.1`). Under relative-score fusion the clamp
+now costs 0.0015–0.0026. It is a band-aid over the scale bug and should be revisited
+in T1.6 — **but not on SciFact**, whose documents average 1.09 chunks.
 
 ## Caveats
 
@@ -140,6 +145,9 @@ NFCorpus, whose documents are longer.
   exercised only by NFCorpus (`--dataset nfcorpus`) and by the unit tests.
 - 1.09 chunks/document means this dataset barely tests document-scoring
   aggregation or hierarchical retrieval.
+- SciFact is scientific claim verification: a query shares a great deal of
+  vocabulary with the target abstract, and BM25 is a famously strong baseline
+  there. Expect the vector/keyword ordering to shift on a paraphrase-heavy corpus.
 - Reranking (`--rerank`) is excluded from the committed baseline: it is slow on
   CPU and, per T1.2, currently reorders an already-truncated top-`k`, so it
   cannot improve recall by construction.
