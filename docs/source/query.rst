@@ -86,10 +86,21 @@ Combines vector and keyword search with configurable weighting. Provides the bes
 
     # Balanced semantic and keyword search
     results = db.query(
-        "neural network architectures", 
+        "neural network architectures",
         search_type="hybrid",
         vector_weight=0.7  # 70% vector, 30% keyword
     )
+
+Each leg is min-max normalized within the current query's candidate pool before the
+two are blended, so ``vector_weight`` shifts the balance rather than merely deciding
+which leg's raw scale dominates. See :doc:`document-scoring` for the exact formula.
+
+.. warning::
+
+   A hybrid score is relative to the query's own candidate pool, so it is comparable
+   within one result set but not across queries, and not across different values of
+   ``k``. Use ``score_threshold`` on hybrid queries to cut the tail of a ranking, not
+   to assert an absolute match quality.
 
 **When to use:**
 - Most general-purpose searches (recommended default)

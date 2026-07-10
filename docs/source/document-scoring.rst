@@ -145,20 +145,47 @@ similarity scores using an exponential mapping:
    similarity = 1.0 - min(1.0, exp(rank))
 
 This produces scores in [0, 1] where better BM25 matches yield higher similarity.
+Ranking is unaffected by the shape of this curve, because FTS5 orders by the raw
+BM25 score before the mapping is applied.
+
+.. note::
+
+   This mapping saturates. Any reasonably good BM25 match lands within about
+   ``2e-05`` of 1.0, and past a rank of roughly ``-36`` it reaches exactly 1.0.
+   Treat the absolute value of a keyword score as "matched", not as a measure of
+   how well. Hybrid fusion therefore normalizes the *raw* BM25 rank, never this
+   number.
 
 Hybrid Search
 ^^^^^^^^^^^^^
 
-Hybrid search runs vector and keyword searches independently, then merges the results
-with a weighted linear combination:
+Hybrid search runs vector and keyword searches independently, then fuses them with
+**relative-score fusion**: each leg's scores are min-max normalized within the
+current query's candidate pool, and the normalized values are blended:
 
 .. code-block:: text
 
-   final_score = vector_weight * vector_score + (1 - vector_weight) * keyword_score
+   v = (vector_score - min_vector) / (max_vector - min_vector)
+   k = (-bm25 - min(-bm25)) / (max(-bm25) - min(-bm25))
 
-The ``vector_weight`` parameter (default 0.7) controls the balance. Chunks appearing
-in only one result set receive 0.0 for the missing component. The merged scores are
-then filtered by ``score_threshold`` and passed to document-level aggregation.
+   final_score = vector_weight * v + (1 - vector_weight) * k
+
+Normalizing first is what makes ``vector_weight`` (default 0.7) an actual blend. The
+two legs are otherwise on incompatible, corpus-dependent scales -- a bounded
+similarity against raw BM25 -- and summing them directly lets whichever leg happens
+to span the wider range decide the ranking. Chunks appearing in only one result set
+receive 0.0 for the missing component. The fused scores are then filtered by
+``score_threshold`` and passed to document-level aggregation.
+
+.. warning::
+
+   Hybrid scores are **relative to the query's own candidate pool**. They are
+   comparable within a single result set, but not across queries, and not across
+   different values of ``k`` (which changes the pool size). A ``score_threshold``
+   on a hybrid query therefore selects by rank position within the pool rather than
+   by absolute match quality. Two further consequences: the best chunk of a leg
+   always normalizes to 1.0, and the worst normalizes to 0.0 -- indistinguishable
+   from a chunk that leg never retrieved at all.
 
 Using Scoring Methods via the Server API
 -----------------------------------------

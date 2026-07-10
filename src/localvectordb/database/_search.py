@@ -52,6 +52,67 @@ _CONTEXT_SEPARATOR = "\n\n---\n\n"
 _token_encoder: Any = None
 
 
+def _minmax_normalize(values: List[float]) -> List[float]:
+    """Scale ``values`` into ``[0, 1]`` relative to their own min and max."""
+    if not values:
+        return []
+    low, high = min(values), max(values)
+    span = high - low
+    if span <= 1e-12:
+        # A single candidate, or a pool of identical scores. There is nothing to
+        # rank, so every member is equally the best of what was retrieved.
+        return [1.0] * len(values)
+    return [(value - low) / span for value in values]
+
+
+def _relative_score_fusion(
+    vector_scores: Dict[str, float],
+    keyword_ranks: Dict[str, float],
+    vector_weight: float,
+) -> Dict[str, float]:
+    """Fuse the vector and keyword legs after normalizing each within this query.
+
+    The two legs arrive on incompatible, corpus-dependent scales: a bounded
+    similarity (``1/(1+L2)`` or ``(ip+1)/2``) against raw BM25, whose range depends
+    on the corpus and the query's term rarity. Summing them directly lets whichever
+    leg happens to span the wider range decide the ranking, regardless of
+    ``vector_weight``. Min-max within the query's own candidate pool is what makes
+    ``vector_weight`` an actual blend.
+
+    ``keyword_ranks`` must be *raw* BM25 (negative; more negative is better), never
+    the output of ``_fts_rank_to_similarity``: that transform maps every decent
+    match into a band ~2e-05 wide below 1.0, and saturates to exactly 1.0 once the
+    rank drops past about -36. Normalizing it would normalize float noise.
+
+    Two consequences worth knowing, both inherent to relative-score fusion:
+
+    * A chunk retrieved by only one leg scores 0.0 on the other -- the same value the
+      *worst* chunk of that leg normalizes to. Being retrieved last by a leg and not
+      being retrieved by it at all are indistinguishable here.
+    * Scores are relative to this query's candidate pool, so they are comparable within
+      one result set but not across queries, and not across different ``k`` (which
+      changes the pool size). ``score_threshold`` is therefore a threshold on rank
+      position within the pool, not on absolute match quality.
+
+    Returns ``{key: fused_score}`` in vector-leg-first insertion order, so that a
+    subsequent stable sort breaks ties toward the vector ranking, as before.
+    """
+    normalized_vector = dict(zip(vector_scores, _minmax_normalize(list(vector_scores.values())), strict=True))
+    # BM25 is negative-is-better, so negate before normalizing to get higher-is-better.
+    normalized_keyword = dict(
+        zip(keyword_ranks, _minmax_normalize([-rank for rank in keyword_ranks.values()]), strict=True)
+    )
+
+    fused: Dict[str, float] = {}
+    for key in (*vector_scores, *keyword_ranks):
+        if key in fused:
+            continue
+        fused[key] = vector_weight * normalized_vector.get(key, 0.0) + (1.0 - vector_weight) * normalized_keyword.get(
+            key, 0.0
+        )
+    return fused
+
+
 def _get_token_encoder() -> Any:
     """Lazily build (and cache) the tiktoken encoder used for token budgets.
 
@@ -465,7 +526,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 score = self._fts_rank_to_similarity(row["rank"])
                 if score < score_threshold:
                     continue
-                candidates.append(CursorCandidate(score=score, source="keyword", chunk_rowid=row["rowid"]))
+                candidates.append(
+                    CursorCandidate(
+                        score=score,
+                        source="keyword",
+                        chunk_rowid=row["rowid"],
+                        raw_rank=float(row["rank"]),
+                    )
+                )
         return candidates
 
     def _collect_hybrid_candidates(
@@ -486,73 +554,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not vector_candidates and not keyword_candidates:
             return []
 
-        # We need a common key to merge. Do a lightweight lookup to map
-        # faiss_ids and chunk_rowids to (document_id, chunk_index).
-        faiss_ids = [c.faiss_id for c in vector_candidates if c.faiss_id is not None]
-        chunk_rowids = [c.chunk_rowid for c in keyword_candidates if c.chunk_rowid is not None]
-
-        faiss_to_key: Dict[int, str] = {}
-        rowid_to_key: Dict[int, str] = {}
-        key_to_faiss: Dict[str, int] = {}
-
-        with self.connection_pool.get_connection() as conn:
-            if faiss_ids:
-                placeholders = ",".join(["?"] * len(faiss_ids))
-                cursor = conn.execute(
-                    f"SELECT faiss_id, document_id, chunk_index FROM chunks WHERE faiss_id IN ({placeholders})",
-                    faiss_ids,
-                )
-                for row in cursor.fetchall():
-                    key = f"{row['document_id']}:{row['chunk_index']}"
-                    faiss_to_key[row["faiss_id"]] = key
-                    key_to_faiss[key] = row["faiss_id"]
-
-            if chunk_rowids:
-                placeholders = ",".join(["?"] * len(chunk_rowids))
-                cursor = conn.execute(
-                    f"SELECT id, faiss_id, document_id, chunk_index FROM chunks WHERE id IN ({placeholders})",
-                    chunk_rowids,
-                )
-                for row in cursor.fetchall():
-                    key = f"{row['document_id']}:{row['chunk_index']}"
-                    rowid_to_key[row["id"]] = key
-                    if row["faiss_id"] is not None:
-                        key_to_faiss[key] = row["faiss_id"]
-
-        # Merge scores
-        combined: Dict[str, Dict[str, Any]] = {}
-        for c in vector_candidates:
-            key = faiss_to_key.get(c.faiss_id)  # type: ignore[arg-type,assignment]
-            if key:
-                combined[key] = {"vector_score": c.score, "keyword_score": 0.0, "faiss_id": c.faiss_id}
-
-        for c in keyword_candidates:
-            key = rowid_to_key.get(c.chunk_rowid)  # type: ignore[arg-type,assignment]
-            if key:
-                if key in combined:
-                    combined[key]["keyword_score"] = c.score
-                else:
-                    combined[key] = {
-                        "vector_score": 0.0,
-                        "keyword_score": c.score,
-                        "faiss_id": key_to_faiss.get(key),
-                    }
-
-        candidates: List[CursorCandidate] = []
-        for data in combined.values():
-            final_score = vector_weight * data["vector_score"] + (1.0 - vector_weight) * data["keyword_score"]
-            if final_score < score_threshold:
-                continue
-            candidates.append(
-                CursorCandidate(
-                    score=final_score,
-                    source="hybrid",
-                    faiss_id=data.get("faiss_id"),
-                )
-            )
-
-        candidates.sort(key=lambda c: c.score, reverse=True)
-        return candidates
+        return self._merge_hybrid_candidates(vector_candidates, keyword_candidates, vector_weight, score_threshold)
 
     def query_cursor(
         self,
@@ -806,7 +808,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
         vector_weight: float,
         score_threshold: float,
     ) -> List[CursorCandidate]:
-        """Merge vector and keyword candidates using a lightweight SQLite lookup."""
+        """Merge vector and keyword candidates using a lightweight SQLite lookup.
+
+        The single fusion point for the cursor and streaming paths;
+        ``_collect_hybrid_candidates`` delegates here rather than repeating it.
+        """
         faiss_ids = [c.faiss_id for c in vector_candidates if c.faiss_id is not None]
         chunk_rowids = [c.chunk_rowid for c in keyword_candidates if c.chunk_rowid is not None]
 
@@ -838,26 +844,23 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     if row["faiss_id"] is not None:
                         key_to_faiss[key] = row["faiss_id"]
 
-        combined: Dict[str, Dict[str, Any]] = {}
+        vector_scores: Dict[str, float] = {}
         for c in vector_candidates:
             key = faiss_to_key.get(c.faiss_id)  # type: ignore[arg-type,assignment]
             if key:
-                combined[key] = {"vector_score": c.score, "keyword_score": 0.0, "faiss_id": c.faiss_id}
+                vector_scores[key] = c.score
+
+        keyword_ranks: Dict[str, float] = {}
         for c in keyword_candidates:
             key = rowid_to_key.get(c.chunk_rowid)  # type: ignore[arg-type,assignment]
-            if key:
-                if key in combined:
-                    combined[key]["keyword_score"] = c.score
-                else:
-                    combined[key] = {"vector_score": 0.0, "keyword_score": c.score, "faiss_id": key_to_faiss.get(key)}
+            if key and c.raw_rank is not None:
+                keyword_ranks[key] = c.raw_rank
 
-        candidates: List[CursorCandidate] = []
-        for data in combined.values():
-            final_score = vector_weight * data["vector_score"] + (1.0 - vector_weight) * data["keyword_score"]
-            if final_score < score_threshold:
-                continue
-            candidates.append(CursorCandidate(score=final_score, source="hybrid", faiss_id=data.get("faiss_id")))
-
+        candidates = [
+            CursorCandidate(score=score, source="hybrid", faiss_id=key_to_faiss.get(key))
+            for key, score in _relative_score_fusion(vector_scores, keyword_ranks, vector_weight).items()
+            if score >= score_threshold
+        ]
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates
 
@@ -1091,6 +1094,95 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # ----------------
     # Keyword (sync)
     # ----------------
+    def _keyword_chunk_hits(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]],
+    ) -> Tuple[List[QueryResult], Dict[str, float]]:
+        """Hydrated chunk hits for the keyword leg, best-first, with their raw BM25 ranks.
+
+        ``QueryResult.score`` carries the bounded ``[0, 1]`` similarity the public API
+        promises. The second return value maps chunk key to *raw* BM25, which is what
+        hybrid fusion normalizes -- see ``_relative_score_fusion``.
+
+        Results come back in FTS rank order (best first). That is the same order a sort
+        by descending similarity produces, because ``_fts_rank_to_similarity`` is
+        monotone in the rank, so callers may truncate directly.
+        """
+        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized_query:
+            return [], {}
+
+        chunk_results: List[QueryResult] = []
+        raw_ranks: Dict[str, float] = {}
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT rowid, bm25(chunks_fts) AS rank
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
+                ORDER BY rank ASC
+                LIMIT ?
+            """,
+                (sanitized_query, limit),
+            )
+            valid_chunk_data, valid_chunk_ids = [], []
+            for row in cursor.fetchall():
+                score = self._fts_rank_to_similarity(row["rank"])
+                if score < score_threshold:
+                    continue
+                chunk_id = row["rowid"]
+                valid_chunk_data.append((chunk_id, score, float(row["rank"])))
+                valid_chunk_ids.append(chunk_id)
+            if not valid_chunk_ids:
+                return [], {}
+            placeholders = ",".join(["?"] * len(valid_chunk_ids))
+            cursor = conn.execute(
+                f"""
+                SELECT c.*, d.id as doc_id, d.content as doc_content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE c.id IN ({placeholders})
+            """,
+                valid_chunk_ids,
+            )
+            chunk_id_to_row, doc_ids_to_fetch = {}, set()
+            for row in cursor.fetchall():
+                chunk_id_to_row[row["id"]] = row
+                doc_ids_to_fetch.add(row["doc_id"])
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
+            for chunk_id, score, raw_rank in valid_chunk_data:
+                row = chunk_id_to_row.get(chunk_id)
+                if not row:
+                    continue
+                doc_metadata = doc_metadata_batch.get(row["doc_id"], {})
+                if filters and not matches_metadata_filter(doc_metadata, filters):
+                    continue
+                position = ChunkPosition(
+                    start=row["start_pos"],
+                    end=row["end_pos"],
+                    line=row["start_line"],
+                    column=row["start_col"],
+                    end_line=row["end_line"],
+                    end_column=row["end_col"],
+                )
+                key = f"{row['document_id']}:{row['chunk_index']}"
+                chunk_results.append(
+                    QueryResult(
+                        id=key,
+                        score=score,
+                        type="chunk",
+                        content=row["content"],
+                        metadata=doc_metadata,
+                        document_id=row["doc_id"],
+                        position=position,
+                    )
+                )
+                raw_ranks[key] = raw_rank
+        return chunk_results, raw_ranks
+
     def _keyword_search(
         self,
         query: str,
@@ -1108,72 +1200,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not self.fts_enabled:
             logger.warning("FTS not available, returning empty results")
             return []
-        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
-        if not sanitized_query:
-            return []
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
-        chunk_results: List[QueryResult] = []
-        with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute(
-                """
-                SELECT rowid, bm25(chunks_fts) AS rank
-                FROM chunks_fts
-                WHERE chunks_fts MATCH ?
-                ORDER BY rank ASC
-                LIMIT ?
-            """,
-                (sanitized_query, initial_k),
-            )
-            valid_chunk_data, valid_chunk_ids = [], []
-            for row in cursor.fetchall():
-                score = self._fts_rank_to_similarity(row["rank"])
-                if score < score_threshold:
-                    continue
-                chunk_id = row["rowid"]
-                valid_chunk_data.append((chunk_id, score))
-                valid_chunk_ids.append(chunk_id)
-            if not valid_chunk_ids:
-                return []
-            placeholders = ",".join(["?"] * len(valid_chunk_ids))
-            cursor = conn.execute(
-                f"""
-                SELECT c.*, d.id as doc_id, d.content as doc_content
-                FROM chunks c
-                JOIN documents d ON c.document_id = d.id
-                WHERE c.id IN ({placeholders})
-            """,
-                valid_chunk_ids,
-            )
-            chunk_id_to_row, doc_ids_to_fetch = {}, set()
-            for row in cursor.fetchall():
-                chunk_id_to_row[row["id"]] = row
-                doc_ids_to_fetch.add(row["doc_id"])
-            doc_metadata_batch = self._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
-            for chunk_id, score in valid_chunk_data:
-                row = chunk_id_to_row.get(chunk_id)
-                if not row:
-                    continue
-                doc_metadata = doc_metadata_batch.get(row["doc_id"], {})
-                if filters and not matches_metadata_filter(doc_metadata, filters):
-                    continue
-                position = ChunkPosition(
-                    start=row["start_pos"],
-                    end=row["end_pos"],
-                    line=row["start_line"],
-                    column=row["start_col"],
-                    end_line=row["end_line"],
-                    end_column=row["end_col"],
-                )
-                result = QueryResult(
-                    id=f"{row['document_id']}:{row['chunk_index']}",
-                    score=score,
-                    type="chunk",
-                    content=row["content"],
-                    metadata=doc_metadata,
-                    document_id=row["doc_id"],
-                    position=position,
-                )
-                chunk_results.append(result)
+        chunk_results, _ = self._keyword_chunk_hits(query, initial_k, score_threshold, filters)
+        if not chunk_results:
+            return []
         if semantic_dedup_threshold is not None:
             chunk_results.sort(key=lambda x: x.score, reverse=True)
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
@@ -1231,10 +1261,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
             )
         search_k = min(k * 4, 100)
         vector_results = self._vector_search(query, "chunks", search_k, 0.0, filters, 0, None)
-        keyword_results = self._keyword_search(query, "chunks", search_k, 0.0, filters, 0, None)
+        # `search_k * 2` mirrors the `initial_k` over-fetch `_keyword_search` applies for
+        # chunk results, so the keyword leg sees the same candidate pool it always has.
+        keyword_results, keyword_ranks = self._keyword_chunk_hits(query, search_k * 2, 0.0, filters)
+        keyword_results = keyword_results[:search_k]
         combined_results = self._combine_search_results(
             vector_results=vector_results,
             keyword_results=keyword_results,
+            keyword_ranks=keyword_ranks,
             vector_weight=vector_weight,
             k=search_k,
             score_threshold=0.0,
@@ -2587,25 +2621,27 @@ class SearchMixin(LocalVectorDBBase, ABC):
     def _combine_search_results(
         vector_results: List[QueryResult],
         keyword_results: List[QueryResult],
+        keyword_ranks: Dict[str, float],
         vector_weight: float,
         k: int,
         score_threshold: float,
     ) -> List[QueryResult]:
-        combined_results: Dict[str, Dict[str, Any]] = {}
+        """Fuse the two legs into one ranking. ``keyword_ranks`` maps chunk key to raw BM25."""
+        by_key: Dict[str, QueryResult] = {}
+        vector_scores: Dict[str, float] = {}
         for result in vector_results:
-            combined_results[result.id] = {"result": result, "vector_score": result.score, "keyword_score": 0.0}
+            by_key[result.id] = result
+            vector_scores[result.id] = result.score
+
+        ranks: Dict[str, float] = {}
         for result in keyword_results:
-            if result.id in combined_results:
-                combined_results[result.id]["keyword_score"] = result.score
-            else:
-                combined_results[result.id] = {"result": result, "vector_score": 0.0, "keyword_score": result.score}
+            by_key.setdefault(result.id, result)
+            ranks[result.id] = keyword_ranks[result.id]
+
         final_results: List[QueryResult] = []
-        for result_data in combined_results.values():
-            final_score = (
-                vector_weight * result_data["vector_score"] + (1.0 - vector_weight) * result_data["keyword_score"]
-            )
+        for key, final_score in _relative_score_fusion(vector_scores, ranks, vector_weight).items():
             if final_score >= score_threshold:
-                result = result_data["result"]
+                result = by_key[key]
                 result.score = final_score
                 final_results.append(result)
         final_results.sort(key=lambda x: x.score, reverse=True)
@@ -2882,26 +2918,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         )
         return final_results[:k]
 
-    async def _keyword_search_async(
+    async def _keyword_chunk_hits_async(
         self,
         query: str,
-        return_type: Literal["documents", "chunks", "context", "enriched"],
-        k: int,
+        limit: int,
         score_threshold: float,
         filters: Optional[Dict[str, Any]],
-        context_window: int,
-        semantic_dedup_threshold: Optional[float],
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
-        document_scoring_options: Optional[dict] = None,
-        context_unit: str = "chunks",
-        context_truncate: bool = False,
-    ) -> List[QueryResult]:
-        if not self.fts_enabled:
-            logger.warning("FTS not enabled, returning empty results")
-            return []
+    ) -> Tuple[List[QueryResult], Dict[str, float]]:
+        """Async counterpart of ``_keyword_chunk_hits``: hits best-first, plus raw BM25 ranks."""
         sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
         if not sanitized_query:
-            return []
+            return [], {}
         filter_clause = ""
         filter_params: List[Any] = []
         if filters:
@@ -2925,10 +2952,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 ORDER BY rank ASC
                 LIMIT ?
             """
-            params = [sanitized_query] + filter_params + [k * 2]
+            params = [sanitized_query] + filter_params + [limit]
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
         query_results: List[QueryResult] = []
+        raw_ranks: Dict[str, float] = {}
         for row in rows:
             fts_rank = row["rank"]
             # Convert FTS rank to similarity using consistent formula
@@ -2947,9 +2975,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     value = row[field_name]
                     if value is not None:
                         metadata[field_name] = value
+                key = f"{row['document_id']}:{row['chunk_index']}"
                 query_results.append(
                     QueryResult(
-                        id=f"{row['document_id']}:{row['chunk_index']}",
+                        id=key,
                         score=similarity,
                         type="chunk",
                         content=row["content"],
@@ -2958,6 +2987,27 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         position=position,
                     )
                 )
+                raw_ranks[key] = float(fts_rank)
+        return query_results, raw_ranks
+
+    async def _keyword_search_async(
+        self,
+        query: str,
+        return_type: Literal["documents", "chunks", "context", "enriched"],
+        k: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]],
+        context_window: int,
+        semantic_dedup_threshold: Optional[float],
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+        context_unit: str = "chunks",
+        context_truncate: bool = False,
+    ) -> List[QueryResult]:
+        if not self.fts_enabled:
+            logger.warning("FTS not enabled, returning empty results")
+            return []
+        query_results, _ = await self._keyword_chunk_hits_async(query, k * 2, score_threshold, filters)
         if semantic_dedup_threshold is not None:
             query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
         final_results = await self._process_search_results_async(
@@ -3005,13 +3055,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         vector_task = asyncio.create_task(
             self._vector_search_with_embedding_async(query_embedding, "chunks", search_k, 0.0, filters, 0, None, "best")
         )
-        keyword_task = asyncio.create_task(
-            self._keyword_search_async(query, "chunks", search_k, 0.0, filters, 0, None, "best")
-        )
-        vector_results, keyword_results = await asyncio.gather(vector_task, keyword_task)
+        # `search_k * 2` mirrors the over-fetch `_keyword_search_async` applies, so the
+        # keyword leg sees the same candidate pool it always has.
+        keyword_task = asyncio.create_task(self._keyword_chunk_hits_async(query, search_k * 2, 0.0, filters))
+        vector_results, (keyword_results, keyword_ranks) = await asyncio.gather(vector_task, keyword_task)
         combined_results = await self._combine_search_results_async(
             vector_results=vector_results,
-            keyword_results=keyword_results,
+            keyword_results=keyword_results[:search_k],
+            keyword_ranks=keyword_ranks,
             vector_weight=vector_weight,
             k=search_k,
             score_threshold=0.0,
@@ -3159,13 +3210,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
         self,
         vector_results: List[QueryResult],
         keyword_results: List[QueryResult],
+        keyword_ranks: Dict[str, float],
         vector_weight: float,
         k: int,
         score_threshold: float,
     ) -> List[QueryResult]:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._combine_search_results, vector_results, keyword_results, vector_weight, k, score_threshold
+            None,
+            self._combine_search_results,
+            vector_results,
+            keyword_results,
+            keyword_ranks,
+            vector_weight,
+            k,
+            score_threshold,
         )
 
     async def _process_search_results_async(

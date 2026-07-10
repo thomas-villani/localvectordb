@@ -32,6 +32,9 @@ class CursorCandidate:
     faiss_id: Optional[int] = None
     chunk_rowid: Optional[int] = None
     document_id: Optional[str] = None
+    # Raw BM25 for keyword candidates. Hybrid fusion normalizes this, not `score`:
+    # `_fts_rank_to_similarity` saturates to ~1.0 for any decent match.
+    raw_rank: Optional[float] = None
 
 
 @dataclass
