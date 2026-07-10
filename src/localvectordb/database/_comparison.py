@@ -22,6 +22,7 @@ from localvectordb.core import (
     QueryResult,
 )
 from localvectordb.database.base import LocalVectorDBBase
+from localvectordb.exceptions import DatabaseError
 
 if TYPE_CHECKING:
     from faiss import Index
@@ -210,16 +211,30 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
         List[QueryResult]
             Sorted by score descending; the reference document is excluded.
         """
-        from localvectordb._filters import matches_metadata_filter, validate_filter_spec
+        from localvectordb._filters import FilterQueryBuilder, matches_metadata_filter, validate_filter_spec
 
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
 
         ref_emb = self._get_document_embedding(doc_id)
 
-        # Gather all document IDs
+        # Gather candidate document IDs. Push a SQL-expressible metadata filter
+        # into this query so only matching documents are reconstructed and scored
+        # (T1.3); the Python matcher below stays the authority for any residual
+        # (e.g. dot-notation) filter. This does not starve results either way,
+        # since every matching document is scored before the top-k truncation.
+        candidate_sql = "SELECT id FROM documents"
+        candidate_params: tuple = ()
+        if filters:
+            try:
+                where_clause, where_params = FilterQueryBuilder(self.metadata_schema).build_where_clause(filters)
+            except DatabaseError:
+                where_clause = ""
+            if where_clause:
+                candidate_sql = f"SELECT id FROM documents WHERE {where_clause}"
+                candidate_params = tuple(where_params)
         with self.connection_pool.get_connection() as conn:
-            rows = conn.execute("SELECT id FROM documents").fetchall()
+            rows = conn.execute(candidate_sql, candidate_params).fetchall()
         all_ids = [r["id"] for r in rows if r["id"] != doc_id]
 
         if not all_ids:
