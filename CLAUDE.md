@@ -61,6 +61,20 @@ bash scripts/lint.sh
 ./.venv/Scripts/pre-commit.exe run --all-files
 ```
 
+### Retrieval evaluation (relevance)
+```bash
+# nDCG@10 / recall@k on BEIR SciFact with real embeddings.
+# First run downloads the dataset and builds the database (~6 min); it is then cached.
+./.venv/Scripts/python.exe benchmarks/eval_retrieval.py
+
+# Gate a retrieval change: non-zero exit if any configuration regressed
+./.venv/Scripts/python.exe benchmarks/eval_retrieval.py --check
+```
+Any change to search, fusion, reranking, or document scoring must be measured
+against `benchmarks/RETRIEVAL_BASELINE.md`. `MockEmbeddings` seeds `np.random` on
+a hash of the text, so tests using it cannot tell whether the right document
+ranks first — only this harness can.
+
 ### Documentation
 ```bash
 # Build Sphinx documentation

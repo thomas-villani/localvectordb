@@ -6,6 +6,32 @@ from pathlib import Path
 BENCHMARK_DIR = Path(__file__).parent
 CACHE_DIR = BENCHMARK_DIR / ".cache"
 RESULTS_DIR = BENCHMARK_DIR / "results"
+DATA_DIR = BENCHMARK_DIR / "data"
+
+# ---------------------------------------------------------------------------
+# Retrieval evaluation (T3-min). Distinct from the ANN/full-stack benchmarks
+# above: those measure *geometric* recall and latency, this measures whether the
+# right document comes back.
+# ---------------------------------------------------------------------------
+
+BEIR_BASE_URL = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets"
+
+# The committed T1 baseline. Tracked in git; `--check` diffs against it.
+BASELINE_JSON = BENCHMARK_DIR / "retrieval_baseline.json"
+
+EVAL_DATASET = "scifact"
+EVAL_EMBEDDING_PROVIDER = "sentence_transformers"
+EVAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+EVAL_RERANKER_PROVIDER = "sentence_transformers"
+EVAL_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+EVAL_K = 10
+EVAL_RECALL_K_VALUES = (1, 5, 10)
+
+# A regression is a drop larger than this on the primary metric. Query order is
+# deterministic and the model is fixed, so run-to-run noise is ~0; this is
+# headroom for floating-point drift across BLAS/threading, not for real losses.
+EVAL_REGRESSION_TOLERANCE = 0.005
 
 # SIFT-128 dataset
 SIFT_URL = "http://ann-benchmarks.com/sift-128-euclidean.hdf5"

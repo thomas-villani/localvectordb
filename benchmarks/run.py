@@ -10,9 +10,14 @@ import logging
 import sys
 from pathlib import Path
 
-# Ensure the project root is on sys.path so `benchmarks` package is importable
-# when run as `python benchmarks/run.py` from the project root.
-_project_root = str(Path(__file__).resolve().parent.parent)
+# Ensure the project root is on sys.path so the `benchmarks` package is importable
+# when run as `python benchmarks/run.py`, and drop `benchmarks/` itself: Python
+# prepends the script's directory, where `datasets.py`, `config.py`, `utils.py`
+# and `providers.py` shadow importable top-level modules. `sentence_transformers`
+# imports `datasets` and would get our SIFT loader.
+_here = Path(__file__).resolve().parent
+sys.path[:] = [p for p in sys.path if p and Path(p).resolve() != _here]
+_project_root = str(_here.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
