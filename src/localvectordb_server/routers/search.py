@@ -173,6 +173,7 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
     document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
     document_scoring_options = search_params.get("document_scoring_options", None)
     reranker_config = search_params.get("reranker_config")
+    rerank_k = search_params.get("rerank_k")
     semantic_filters = search_params.get("semantic_filters")
 
     try:
@@ -203,6 +204,7 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
             document_scoring_method=document_scoring_method,
             document_scoring_options=document_scoring_options,
             reranker_config=reranker_config,
+            rerank_k=rerank_k,
         )
 
         # Apply semantic filters server-side if provided

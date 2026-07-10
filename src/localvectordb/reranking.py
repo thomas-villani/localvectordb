@@ -45,8 +45,27 @@ class Reranker(ABC):
         Returns
         -------
         List[QueryResult]
-            Reranked results with updated scores. Original scores are preserved
-            in result.metadata["original_score"].
+            Reranked results with updated scores, best first.
+
+        Notes
+        -----
+        Every provider writes two metadata keys and leaves ``result.score`` holding
+        an **absolute** ``[0, 1]`` relevance score -- one that means the same thing
+        regardless of the other candidates in the batch, so it survives
+        ``score_threshold`` filtering and cross-query comparison:
+
+        * ``metadata["original_score"]`` -- the pre-rerank search score.
+        * ``metadata["rerank_raw_score"]`` -- the reranker model's raw output before
+          the provider's ``[0, 1]`` mapping.
+
+        The mapping is provider-specific because the raw scores are:
+
+        * **Jina** -- the API returns a native ``[0, 1]`` relevance score; used as-is.
+        * **SentenceTransformers / HuggingFace** -- a cross-encoder logit, squashed
+          with a logistic sigmoid. This is deliberately *not* a per-batch min-max:
+          min-max is pool-relative (top always 1.0, bottom always 0.0) and would
+          break ``score_threshold`` exactly as the pre-T1.1 hybrid fusion did.
+        * **Mock** -- word-overlap fraction, already in ``[0, 1]``.
         """
         pass
 
@@ -145,11 +164,13 @@ class JinaReranker(Reranker):
                 reranked = []
                 for item in data.get("results", []):
                     idx = item["index"]
+                    # Jina returns a native [0, 1] relevance score; used as-is.
                     score = float(item["relevance_score"])
                     result = results[idx]
                     if result.metadata is None:
                         result.metadata = {}
                     result.metadata["original_score"] = result.score
+                    result.metadata["rerank_raw_score"] = score
                     result.score = score
                     reranked.append(result)
 
@@ -202,11 +223,13 @@ class JinaReranker(Reranker):
                 reranked = []
                 for item in data.get("results", []):
                     idx = item["index"]
+                    # Jina returns a native [0, 1] relevance score; used as-is.
                     score = float(item["relevance_score"])
                     result = results[idx]
                     if result.metadata is None:
                         result.metadata = {}
                     result.metadata["original_score"] = result.score
+                    result.metadata["rerank_raw_score"] = score
                     result.score = score
                     reranked.append(result)
 
@@ -283,7 +306,7 @@ class SentenceTransformersReranker(Reranker):
         pairs = [[query, r.content or ""] for r in results]
         scores = cross_encoder.predict(pairs)
 
-        # Normalize scores to 0-1 range using sigmoid
+        # Absolute [0, 1] mapping of the cross-encoder logit via a logistic sigmoid.
         scores_array = np.array(scores, dtype=np.float64)
         normalized = 1.0 / (1.0 + np.exp(-scores_array))
 
@@ -291,6 +314,7 @@ class SentenceTransformersReranker(Reranker):
             if result.metadata is None:
                 result.metadata = {}
             result.metadata["original_score"] = result.score
+            result.metadata["rerank_raw_score"] = float(scores_array[i])
             result.score = float(normalized[i])
 
         ranked = sorted(results, key=lambda x: x.score, reverse=True)
@@ -368,18 +392,19 @@ class HuggingFaceReranker(Reranker):
                 if not isinstance(scores, list):
                     raise RerankerError(f"Unexpected response format: {type(scores)}")
 
-                # Normalize scores to 0-1
+                # Absolute [0, 1] mapping via a logistic sigmoid, matching the local
+                # cross-encoder path. NOT per-batch min-max: that is pool-relative
+                # (top always 1.0, bottom always 0.0), which breaks score_threshold
+                # and cross-query comparison -- the same defect T1.1 removed from
+                # hybrid fusion. See the Reranker.rerank docstring.
                 scores_array = np.array(scores, dtype=np.float64)
-                min_s, max_s = scores_array.min(), scores_array.max()
-                if max_s > min_s:
-                    normalized = (scores_array - min_s) / (max_s - min_s)
-                else:
-                    normalized = np.ones_like(scores_array)
+                normalized = 1.0 / (1.0 + np.exp(-scores_array))
 
                 for i, result in enumerate(results):
                     if result.metadata is None:
                         result.metadata = {}
                     result.metadata["original_score"] = result.score
+                    result.metadata["rerank_raw_score"] = float(scores_array[i])
                     result.score = float(normalized[i])
 
                 ranked = sorted(results, key=lambda x: x.score, reverse=True)
@@ -426,6 +451,7 @@ class MockReranker(Reranker):
             if result.metadata is None:
                 result.metadata = {}
             result.metadata["original_score"] = result.score
+            result.metadata["rerank_raw_score"] = overlap
             result.score = overlap
 
         ranked = sorted(results, key=lambda x: x.score, reverse=True)

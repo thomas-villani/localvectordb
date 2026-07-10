@@ -49,6 +49,26 @@ CONTEXT_UNITS: Tuple[str, ...] = ("chunks", "tokens", "words", "characters")
 # Separator inserted between adjacent chunks when assembling context/enriched text.
 _CONTEXT_SEPARATOR = "\n\n---\n\n"
 
+# Ceiling on the candidate pool fetched before reranking. A cross-encoder pass is
+# O(pool) model calls, so an unbounded `rerank_k` would let a caller trigger an
+# arbitrarily expensive rerank. 200 comfortably clears the `5*k` default for any
+# reasonable `k` while capping the worst case.
+_RERANK_K_MAX = 200
+
+
+def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
+    """Size of the candidate pool to fetch before reranking down to ``k``.
+
+    A reranker can only improve on the search legs if it sees candidates those
+    legs ranked *below* position ``k`` -- fetching exactly ``k`` and reranking is
+    a no-op on recall, which is the defect T1.2 fixes. The default over-fetch is
+    ``5*k``, clamped to ``[k, _RERANK_K_MAX]`` (never below ``k``: reranking must
+    not shrink the pool the caller asked for).
+    """
+    requested = rerank_k if rerank_k is not None else 5 * k
+    return max(k, min(requested, _RERANK_K_MAX))
+
+
 _token_encoder: Any = None
 
 
@@ -295,6 +315,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -383,6 +404,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     The lower percentile of chunks to sample for the overall document score
                 primary_weight : float, default = 0.7
                     The weight to apply to the primary percentile result
+        reranker : object, optional
+            A reranker instance whose ``rerank()`` re-scores the candidate pool.
+        reranker_config : dict, optional
+            Config from which the server/factory constructs a reranker, e.g.
+            ``{"provider": "jina", "model": "jina-reranker-v2-base-multilingual"}``.
+        rerank_k : int, optional
+            Size of the candidate pool to fetch and hand to the reranker before
+            truncating to ``k``. Only has an effect when a ``reranker`` or
+            ``reranker_config`` is supplied. Defaults to ``5*k`` (clamped to at
+            most 200); a reranker given only ``k`` candidates cannot improve
+            recall, since it never sees the results ranked just below the cutoff.
 
         Returns
         -------
@@ -406,11 +438,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     document_scoring_options=document_scoring_options,
                 )
 
+            # When a reranker is configured, over-fetch a larger candidate pool so
+            # it can promote results the search legs ranked below `k`; otherwise the
+            # rerank is a no-op on recall. `fetch_k == k` when no reranker, so the
+            # non-rerank path is byte-for-byte unchanged.
+            reranking = reranker is not None or bool(reranker_config)
+            fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
+
             if search_type == "vector":
                 results = self._vector_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
-                    k,
+                    fetch_k,
                     score_threshold,
                     filters,
                     context_window,
@@ -424,7 +463,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results = self._keyword_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
-                    k,
+                    fetch_k,
                     score_threshold,
                     filters,
                     context_window,
@@ -438,7 +477,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results = self._hybrid_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
-                    k,
+                    fetch_k,
                     score_threshold,
                     filters,
                     vector_weight,
@@ -452,9 +491,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
 
-            # Post-process: if return_type='sections', group chunk results by section
+            # Post-process: if return_type='sections', group chunk results by section.
+            # Keep the over-fetched pool intact here (fetch_k) so reranking still sees
+            # the extra candidates; the rerank step below truncates to k.
             if return_type == "sections" and self._hierarchical_embeddings:
-                results = self._assemble_section_results(results, k)
+                results = self._assemble_section_results(results, fetch_k)
 
             # Apply reranking if configured
             if reranker is not None:
@@ -2669,6 +2710,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Async query the database using vector, keyword, or hybrid search
@@ -2712,6 +2754,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_options : dict, optional
             Parameters for the document_scoring_method (to choose overall scores for documents from chunk results).
             For complete parameter documentation and examples, see the Document Scoring documentation.
+        rerank_k : int, optional
+            Size of the candidate pool to fetch and hand to the reranker before
+            truncating to ``k``. Only has an effect when a ``reranker`` or
+            ``reranker_config`` is supplied. Defaults to ``5*k`` (clamped to at
+            most 200). See ``query()`` for the rationale.
 
         Returns
         -------
@@ -2747,6 +2794,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 ),
             )
 
+        # Over-fetch a larger pool when reranking so the reranker can promote
+        # candidates the legs ranked below `k`; `fetch_k == k` otherwise, leaving
+        # the non-rerank path unchanged. Mirrors the sync `query()`.
+        reranking = reranker is not None or bool(reranker_config)
+        fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
+
         query_embedding: Optional[np.ndarray] = None
         if search_type in ["vector", "hybrid"]:
             query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
@@ -2755,7 +2808,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             query_embedding,
             search_type,
             return_type if return_type != "sections" else "chunks",
-            k,
+            fetch_k,
             score_threshold,
             filters,
             vector_weight,
