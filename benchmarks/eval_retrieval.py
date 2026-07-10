@@ -172,16 +172,28 @@ def preflight_embedding_model(provider: str, model: str) -> None:
         ) from exc
 
 
+def _git(*args: str) -> str:
+    out = subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
 def _git_commit() -> str:
+    """Identify the tree these numbers were measured on.
+
+    A dirty tree is marked as such. A baseline records what the code scored, and
+    `HEAD` alone would attribute uncommitted changes to the commit that predates
+    them -- which is precisely how a baseline comes to describe code that never
+    produced it.
+    """
     try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
-        return out.stdout.strip()
+        commit = _git("rev-parse", "--short", "HEAD")
+        return f"{commit}-dirty" if _git("status", "--porcelain") else commit
     except Exception:  # pragma: no cover - a benchmark should not die over provenance
         return "unknown"
 

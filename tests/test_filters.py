@@ -221,8 +221,10 @@ class TestJsonContainsAgainstRealSqlite:
 
 
 class TestFTSSanitization:
-    def test_multi_term_becomes_and_of_quoted_terms(self):
-        assert FTSQuerySanitization.sanitize_fts_query("hello world") == '"hello" AND "world"'
+    def test_multi_term_becomes_or_of_quoted_terms(self):
+        # OR, not AND: BM25 ranks partial matches, and requiring every term (stopwords
+        # included) made real queries match nothing. See tests/test_keyword_search_semantics.py.
+        assert FTSQuerySanitization.sanitize_fts_query("hello world") == '"hello" OR "world"'
 
     def test_single_term_quoted(self):
         assert FTSQuerySanitization.sanitize_fts_query("python") == '"python"'

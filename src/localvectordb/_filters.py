@@ -799,18 +799,48 @@ def matches_metadata_filter(doc_or_metadata, metadata_filter: dict) -> bool:
     )
 
 
+# FTS5 only recognises AND/OR/NOT as operators when they are written in uppercase and
+# stand alone between two operands. Detection therefore runs against the *original* query,
+# never against an uppercased copy: uppercasing is what turns an ordinary English "and"
+# into an operator.
+_FTS_BOOLEAN_OPERATOR = re.compile(r"\s(?:AND|OR|NOT)\s")
+_FTS_BOOLEAN_SPLIT = re.compile(r"\s+(AND|OR|NOT)\s+")
+
+# A cleaned term must retain at least one alphanumeric character to be a real FTS5 token.
+# `clean_term` preserves hyphens and apostrophes, so "(+)-" survives cleaning as a bare "-",
+# which tokenizes to nothing and only adds noise to the MATCH expression.
+_HAS_ALPHANUMERIC = re.compile(r"[^\W_]", re.UNICODE)
+
+
 class FTSQuerySanitization:
 
     @staticmethod
     def sanitize_fts_query(query: str) -> str:
         """
-        Sanitize query for FTS5 while preserving useful search capabilities
+        Sanitize a user query into a safe FTS5 MATCH expression.
 
-        This method tries to balance safety with search effectiveness by:
-        1. Supporting exact phrase matching with quotes
-        2. Using AND logic by default (all terms must match)
-        3. Safely handling FTS5 operators
-        4. Falling back to safe term-by-term search for complex queries
+        Bare natural-language text is treated as a description of what the user wants:
+        its terms are OR-joined so BM25 can rank partial matches, which is what BM25 is
+        for. Requiring every term (including stopwords) to appear makes almost any
+        real-world sentence match nothing at all.
+
+        Explicit search syntax is treated as a precise instruction and given FTS5's own
+        semantics:
+
+        - ``"exact phrase"`` matches that phrase.
+        - Uppercase ``AND`` / ``OR`` / ``NOT`` between operands are boolean operators,
+          exactly as FTS5 defines them. Lowercase ``and`` / ``or`` / ``not`` are ordinary
+          words, again exactly as FTS5 defines them.
+
+        Every term is cleaned of FTS5 metacharacters and quoted, so no part of the user's
+        input can be interpreted as syntax.
+
+        Examples
+        --------
+        >>> FTSQuerySanitization.sanitize_fts_query("aspirin does not reduce risk")
+        '"aspirin" OR "does" OR "not" OR "reduce" OR "risk"'
+        >>> FTSQuerySanitization.sanitize_fts_query("aspirin AND risk")
+        '"aspirin" AND "risk"'
         """
         if not query or not query.strip():
             return ""
@@ -831,25 +861,26 @@ class FTSQuerySanitization:
         if '"' in query:
             return FTSQuerySanitization.handle_phrase_query(query)
 
-        # Check if query contains basic boolean operators
-        if any(op in query.upper() for op in [" AND ", " OR ", " NOT "]):
+        # Boolean operators, per FTS5's rule: uppercase, and standing between operands.
+        if _FTS_BOOLEAN_OPERATOR.search(query):
             return FTSQuerySanitization.handle_boolean_query(query)
 
-        # Simple multi-term query - default to AND behavior for better relevance
-        terms = query.split()
-        if len(terms) == 1:
-            # Single term - clean and return
-            clean_term = FTSQuerySanitization.clean_term(terms[0])
-            return f'"{clean_term}"' if clean_term else ""
-        else:
-            # Multiple terms - use AND logic (all terms must be present)
-            clean_terms = []
-            for term in terms:
-                clean_term = FTSQuerySanitization.clean_term(term)
-                if clean_term:
-                    clean_terms.append(f'"{clean_term}"')
+        # Plain text: OR the terms and let BM25 rank the partial matches.
+        return " OR ".join(FTSQuerySanitization.quote_terms(query))
 
-            return " AND ".join(clean_terms) if clean_terms else ""
+    @staticmethod
+    def quote_terms(text: str) -> List[str]:
+        """Clean, filter and quote the whitespace-separated terms of ``text``.
+
+        Quoting each term as a single-token phrase is what makes injection impossible:
+        a cleaned term can never re-enter the expression as FTS5 syntax.
+        """
+        quoted = []
+        for word in text.split():
+            term = FTSQuerySanitization.clean_term(word)
+            if term and _HAS_ALPHANUMERIC.search(term):
+                quoted.append(f'"{term}"')
+        return quoted
 
     @staticmethod
     def is_safe_phrase(phrase: str) -> bool:
@@ -890,11 +921,7 @@ class FTSQuerySanitization:
                     # Start of phrase - first process any pending non-quoted content
                     if current_part.strip():
                         # Split into terms and add as AND
-                        terms = current_part.split()
-                        for term in terms:
-                            clean_term = FTSQuerySanitization.clean_term(term)
-                            if clean_term:
-                                parts.append(f'"{clean_term}"')
+                        parts.extend(FTSQuerySanitization.quote_terms(current_part))
                     current_part = ""
                     in_quote = True
             else:
@@ -910,53 +937,41 @@ class FTSQuerySanitization:
                     parts.append(f'"{clean_phrase}"')
             else:
                 # Regular terms
-                terms = current_part.split()
-                for term in terms:
-                    clean_term = FTSQuerySanitization.clean_term(term)
-                    if clean_term:
-                        parts.append(f'"{clean_term}"')
+                parts.extend(FTSQuerySanitization.quote_terms(current_part))
 
         return " AND ".join(parts) if parts else ""
 
     @staticmethod
     def handle_boolean_query(query: str) -> str:
-        """Handle queries with AND/OR/NOT operators"""
-        # For safety, we'll parse basic boolean queries but fall back to term-by-term
-        # if the query is too complex
+        """Handle queries with explicit uppercase AND/OR/NOT operators.
 
-        # Replace boolean operators with standardized versions
-        normalized = query.upper()
-        normalized = re.sub(r"\bAND\b", " AND ", normalized)
-        normalized = re.sub(r"\bOR\b", " OR ", normalized)
-        normalized = re.sub(r"\bNOT\b", " NOT ", normalized)
+        The query is split on the operators *without* changing its case. Each operand
+        keeps its own words as separate terms rather than being glued into a phrase,
+        and a multi-word operand is parenthesized so FTS5's precedence (NOT, then AND,
+        then OR) cannot silently regroup it.
 
-        # Split by operators while preserving them
-        tokens = re.split(r"(\s+(?:AND|OR|NOT)\s+)", normalized)
+        ``vitamin D AND calcium supplementation`` becomes
+        ``("vitamin" AND "D") AND ("calcium" AND "supplementation")`` --- not the phrase
+        pair ``"vitamin D" AND "calcium supplementation"``.
+        """
+        # Odd indices are the captured operators; even indices are the operands.
+        parts = _FTS_BOOLEAN_SPLIT.split(query.strip())
 
-        # Clean each non-operator token
-        cleaned_tokens = []
-        for token in tokens:
-            token = token.strip()
-            if token in ["AND", "OR", "NOT"]:
-                cleaned_tokens.append(token)
-            elif token:
-                # Regular term - clean it
-                clean_term = FTSQuerySanitization.clean_term(token)
-                if clean_term:
-                    cleaned_tokens.append(f'"{clean_term}"')
+        tokens: List[str] = []
+        for index, part in enumerate(parts):
+            if index % 2 == 1:
+                tokens.append(part)
+                continue
+            terms = FTSQuerySanitization.quote_terms(part)
+            if not terms:
+                # An operand cleaned away to nothing, so the boolean structure is broken.
+                # Drop the operators and fall back to ranking the surviving terms.
+                return " OR ".join(FTSQuerySanitization.quote_terms(" ".join(parts[::2])))
+            tokens.append(terms[0] if len(terms) == 1 else "(" + " AND ".join(terms) + ")")
 
-        # Validate the structure (operators should be between terms)
-        if FTSQuerySanitization.is_valid_boolean_structure(cleaned_tokens):
-            return " ".join(cleaned_tokens)
-        else:
-            # Fall back to simple AND of all terms
-            terms = re.split(r"\s+(?:AND|OR|NOT)\s+", query, flags=re.IGNORECASE)
-            clean_terms = []
-            for term in terms:
-                clean_term = FTSQuerySanitization.clean_term(term.strip())
-                if clean_term:
-                    clean_terms.append(f'"{clean_term}"')
-            return " AND ".join(clean_terms) if clean_terms else ""
+        if FTSQuerySanitization.is_valid_boolean_structure(tokens):
+            return " ".join(tokens)
+        return " OR ".join(FTSQuerySanitization.quote_terms(" ".join(parts[::2])))
 
     @staticmethod
     def is_valid_boolean_structure(tokens: List[str]) -> bool:
