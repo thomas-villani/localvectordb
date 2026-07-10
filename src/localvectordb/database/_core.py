@@ -462,6 +462,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # raises from remove_ids. Detected from the *concrete* base index so it is
         # correct for indices loaded from disk as well as freshly constructed ones.
         self.supports_deletion = self._index_supports_deletion(self.index)
+        # Whether ``index.search`` accepts a ``SearchParameters(sel=...)`` id
+        # selector, used to push a metadata filter into FAISS instead of
+        # post-filtering in Python. IndexLSH rejects search params ("search
+        # params not supported for this index"); the other three accept them.
+        # Detected from the concrete base index so it is right for loaded indices.
+        self.supports_id_selector = self._index_supports_id_selector(self.index)
         self.base_index_type = self._base_index_type_name(self.index)
 
         if enable_gpu:
@@ -511,6 +517,21 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if index is None:
             return False
         return not isinstance(cls._unwrap_base_index(index), faiss.IndexHNSW)
+
+    @classmethod
+    def _index_supports_id_selector(cls, index) -> bool:
+        """
+        Whether ``index.search(..., params=SearchParameters(sel=...))`` will work.
+
+        IndexLSH raises "search params not supported for this index" from its
+        ``search``; IndexFlatL2, IndexFlatIP and IndexHNSWFlat all accept a
+        selector through the IndexIDMap2 wrapper (verified against faiss 1.14.2).
+        Databases whose index cannot take a selector fall back to over-fetching
+        and post-filtering in Python.
+        """
+        if index is None:
+            return False
+        return not isinstance(cls._unwrap_base_index(index), faiss.IndexLSH)
 
     @classmethod
     def _base_index_type_name(cls, index) -> str:

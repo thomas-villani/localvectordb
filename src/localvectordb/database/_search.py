@@ -15,6 +15,7 @@ from abc import ABC
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple
 
+import faiss
 import numpy as np
 
 from localvectordb._filters import (
@@ -30,7 +31,7 @@ from localvectordb.cursor import (
     QueryCursor,
 )
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.exceptions import _RERANK_STREAMING_UNSUPPORTED
+from localvectordb.exceptions import _RERANK_STREAMING_UNSUPPORTED, DatabaseError
 
 if TYPE_CHECKING:
     from faiss import Index
@@ -67,6 +68,28 @@ def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
     """
     requested = rerank_k if rerank_k is not None else 5 * k
     return max(k, min(requested, _RERANK_K_MAX))
+
+
+def _faiss_search_with_selector(
+    index: Any,
+    query_embedding: np.ndarray,
+    k: int,
+    faiss_ids: "np.ndarray",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Search ``index`` for the top ``k`` vectors *restricted to* ``faiss_ids``.
+
+    Pushes a metadata filter into FAISS: only vectors whose id is in
+    ``faiss_ids`` are considered, so the top ``k`` returned are the ``k``
+    best-scoring *matching* vectors -- never starved by a fixed pre-filter pool.
+    The caller must have verified ``supports_id_selector`` (IndexLSH rejects the
+    selector). ``faiss_ids`` is kept referenced for the duration of the search
+    because ``IDSelectorBatch`` reads from it.
+    """
+    selector = faiss.IDSelectorBatch(faiss_ids)
+    params = faiss.SearchParameters()
+    params.sel = selector
+    distances, indices = index.search(query_embedding, k, params=params)
+    return distances, indices
 
 
 _token_encoder: Any = None
@@ -229,6 +252,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
             self, distances: "np.ndarray", metric_type: Optional[str] = None
         ) -> "np.ndarray": ...
 
+        # Implemented on LocalVectorDBCore; declared here so mypy sees it without
+        # a runtime stub shadowing the real method via the MRO.
+        @classmethod
+        def _index_supports_id_selector(cls, index: Any) -> bool: ...
+
     # -----------------
     # Helper methods
     # -----------------
@@ -250,6 +278,138 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # Convert to similarity where higher values are better
         # Use exponential mapping: for negative ranks, exp(rank) < 1, so 1-exp(rank) > 0
         return 1.0 - min(1.0, math.exp(float(rank)))
+
+    # --------------------------------------
+    # Metadata-filter pushdown (T1.3)
+    # --------------------------------------
+    def _build_filter_where(self, filters: Optional[Dict[str, Any]]) -> Optional[Tuple[str, List[Any]]]:
+        """SQL ``(where_clause, params)`` for a metadata ``filters`` spec, or ``None``.
+
+        ``None`` signals the filter cannot be expressed in SQL -- a dot-notation
+        JSON path, or an operator the builder rejects -- so the caller keeps
+        post-filtering in Python. The clause references ``documents`` columns and
+        is parameterised; the Python matcher (``matches_metadata_filter``) stays
+        the authority, so a SQL clause that is *broader* than the Python match
+        (e.g. ``$like`` treating ``%`` as a wildcard) is harmless.
+        """
+        if not filters or not self.metadata_schema:
+            return None
+        builder = FilterQueryBuilder(self.metadata_schema)
+        try:
+            where_clause, params = builder.build_where_clause(filters)
+        except (DatabaseError, TypeError, ValueError):
+            # Not SQL-expressible (dotted JSON path, unsupported operator) or the
+            # builder cannot coerce the operand (e.g. ``$in`` against a typed
+            # column). Pushdown is an optimisation: decline it and let the caller
+            # post-filter in Python rather than fail the query.
+            return None
+        if not where_clause:
+            return None
+        return where_clause, params
+
+    def _matching_faiss_ids(
+        self,
+        filters: Optional[Dict[str, Any]],
+        *,
+        table: str = "chunks",
+        id_column: str = "faiss_id",
+        via_documents: bool = True,
+    ) -> Optional[np.ndarray]:
+        """FAISS ids in ``table`` whose owning document matches ``filters`` (SQL pushdown).
+
+        Returns a sorted ``int64`` array of the matching ids, or ``None`` when the
+        filter cannot be expressed in SQL (see :meth:`_build_filter_where`) -- the
+        caller then falls back to post-filtering in Python. The set may be broader
+        than the Python matcher but never narrower for supported operators, so
+        restricting the FAISS search to it cannot drop a result the caller keeps.
+        """
+        built = self._build_filter_where(filters)
+        if built is None:
+            return None
+        where_clause, params = built
+        # ``table`` and ``id_column`` are internal literals; ``where_clause`` is
+        # parameterised (``?`` placeholders bound from ``params``). No user text
+        # is interpolated. bandit B608 is skipped project-wide for this reason.
+        if via_documents:
+            sql = (
+                f"SELECT {id_column} FROM {table} "
+                f"WHERE {id_column} IS NOT NULL "
+                f"AND document_id IN (SELECT id FROM documents WHERE {where_clause})"
+            )
+        else:
+            sql = f"SELECT {id_column} FROM {table} " f"WHERE {id_column} IS NOT NULL AND ({where_clause})"
+        with self.connection_pool.get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        ids = np.fromiter((row[0] for row in rows), dtype=np.int64, count=len(rows))
+        ids.sort()
+        return ids
+
+    def _warn_filter_starved(self, survivors: int, k: int) -> None:
+        """Warn that a metadata filter could not be pushed into the index.
+
+        Only fires on the fallback path -- an IndexLSH index (which rejects a
+        FAISS id-selector) or a filter the SQL builder cannot express -- when
+        fewer than ``k`` results survived post-filtering a fixed candidate pool.
+        Matching results beyond that pool exist but were not searched. Flat
+        indices with SQL-expressible filters take the exact pushdown path and
+        never reach here.
+        """
+        logger.warning(
+            "Metadata filter matched only %d of %d requested results within the "
+            "candidate pool and could not be pushed into the index (IndexLSH or a "
+            "filter SQL cannot express); further matches were not searched. Use a "
+            "flat index (IndexFlatL2/IndexFlatIP) or a SQL-expressible filter for "
+            "exact filtered retrieval.",
+            survivors,
+            k,
+        )
+
+    def _filtered_index_search(
+        self,
+        index: Any,
+        query_embedding: np.ndarray,
+        initial_k: int,
+        filters: Optional[Dict[str, Any]],
+        *,
+        table: str = "chunks",
+        id_column: str = "faiss_id",
+        via_documents: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray, bool]:
+        """Search ``index`` for the top candidates, pushing ``filters`` into FAISS when possible.
+
+        Returns ``(distances_row, indices_row, exact)``. ``exact`` is ``True`` when
+        the returned pool is already restricted to the filter (an id-selector
+        search, or no filter at all); ``False`` when the filter could not be
+        pushed down and the caller must post-filter a fixed pool that may be
+        starved -- the caller should warn if fewer than ``k`` survive.
+
+        When a filter is pushed down, the pool is capped at the number of matching
+        ids, so a selective filter returns *all* its matches (bounded by
+        ``initial_k`` of the best-scoring ones) instead of whatever survived a
+        fixed pre-filter budget.
+        """
+        if not filters:
+            with self._faiss_lock.read_lock():
+                distances, indices = index.search(query_embedding, initial_k)
+            return distances[0], indices[0], True
+
+        matching = self._matching_faiss_ids(filters, table=table, id_column=id_column, via_documents=via_documents)
+        # Capability is per-index: the main index may be LSH (no selector) while
+        # the hardcoded-flat section/document indices accept one, or vice versa.
+        if matching is not None and self._index_supports_id_selector(index):
+            if matching.size == 0:
+                # Filter matches nothing: no candidates, and this is exact.
+                return np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int64), True
+            pool = min(int(matching.size), initial_k)
+            with self._faiss_lock.read_lock():
+                distances, indices = _faiss_search_with_selector(index, query_embedding, pool, matching)
+            return distances[0], indices[0], True
+
+        # Fallback: the index cannot take a selector (IndexLSH) or the filter is
+        # not SQL-expressible. Search the fixed pool and let the caller post-filter.
+        with self._faiss_lock.read_lock():
+            distances, indices = index.search(query_embedding, initial_k)
+        return distances[0], indices[0], False
 
     # Pure business logic helpers for DRY elimination
     def _build_metadata_field_search_sql(self, field_name: str) -> tuple[str, tuple[str]]:
@@ -522,14 +682,22 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_embedding: np.ndarray,
         initial_k: int,
         score_threshold: float,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[CursorCandidate]:
-        """Run FAISS search and return scored candidates without SQLite hydration."""
+        """Run FAISS search and return scored candidates without SQLite hydration.
+
+        A SQL-expressible ``filters`` spec is pushed into the index (id-selector)
+        so a selective filter is not starved by the fixed ``initial_k`` pool
+        before the cursor ever hydrates it (T1.3). The cursor still applies the
+        filter as the authority during hydration.
+        """
         assert self.index is not None
-        with self._faiss_lock.read_lock():
-            distances, indices = self.index.search(query_embedding, initial_k)
+        distances_row, indices_row, _exact = self._filtered_index_search(
+            self.index, query_embedding, initial_k, filters
+        )
 
         candidates: List[CursorCandidate] = []
-        for dist, idx in zip(distances[0], indices[0], strict=False):
+        for dist, idx in zip(distances_row, indices_row, strict=False):
             if idx == -1:
                 continue
             score = self._distance_to_similarity(float(dist))
@@ -543,26 +711,40 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query: str,
         initial_k: int,
         score_threshold: float,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[CursorCandidate]:
-        """Run FTS search and return scored candidates without SQLite hydration."""
+        """Run FTS search and return scored candidates without SQLite hydration.
+
+        A SQL-expressible ``filters`` spec is pushed into the FTS query so the
+        ``LIMIT`` applies after filtering (T1.3).
+        """
         if not self.fts_enabled:
             return []
         sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
         if not sanitized_query:
             return []
 
+        built = self._build_filter_where(filters)
+        if built is not None:
+            where_clause, filter_params = built
+            fts_sql = (
+                "SELECT rowid, bm25(chunks_fts) AS rank FROM chunks_fts "
+                "WHERE chunks_fts MATCH ? "
+                "AND rowid IN (SELECT id FROM chunks WHERE document_id IN "
+                f"(SELECT id FROM documents WHERE {where_clause})) "
+                "ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params: Tuple[Any, ...] = (sanitized_query, *filter_params, initial_k)
+        else:
+            fts_sql = (
+                "SELECT rowid, bm25(chunks_fts) AS rank FROM chunks_fts "
+                "WHERE chunks_fts MATCH ? ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params = (sanitized_query, initial_k)
+
         candidates: List[CursorCandidate] = []
         with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute(
-                """
-                SELECT rowid, bm25(chunks_fts) AS rank
-                FROM chunks_fts
-                WHERE chunks_fts MATCH ?
-                ORDER BY rank ASC
-                LIMIT ?
-                """,
-                (sanitized_query, initial_k),
-            )
+            cursor = conn.execute(fts_sql, fts_params)
             for row in cursor.fetchall():
                 score = self._fts_rank_to_similarity(row["rank"])
                 if score < score_threshold:
@@ -584,13 +766,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         initial_k: int,
         score_threshold: float,
         vector_weight: float,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[CursorCandidate]:
         """Run hybrid search and return merged/scored candidates."""
         if not self.fts_enabled:
-            return self._collect_vector_candidates(query_embedding, initial_k, score_threshold)
+            return self._collect_vector_candidates(query_embedding, initial_k, score_threshold, filters)
 
-        vector_candidates = self._collect_vector_candidates(query_embedding, initial_k, 0.0)
-        keyword_candidates = self._collect_keyword_candidates(query, initial_k, 0.0)
+        vector_candidates = self._collect_vector_candidates(query_embedding, initial_k, 0.0, filters)
+        keyword_candidates = self._collect_keyword_candidates(query, initial_k, 0.0, filters)
 
         if not vector_candidates and not keyword_candidates:
             return []
@@ -654,18 +837,20 @@ class SearchMixin(LocalVectorDBBase, ABC):
             effective_return_type = return_type if return_type != "sections" else "chunks"
             initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
-            # Collect raw candidates
+            # Collect raw candidates. Push the filter down so a selective filter
+            # is not starved before the cursor hydrates (T1.3); hydration still
+            # applies the filter as the authority.
             if search_type == "vector":
                 query_embeddings = self.embedding_provider.embed_sync([query])
                 query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
-                candidates = self._collect_vector_candidates(query_embedding, initial_k, score_threshold)
+                candidates = self._collect_vector_candidates(query_embedding, initial_k, score_threshold, filters)
             elif search_type == "keyword":
-                candidates = self._collect_keyword_candidates(query, initial_k, score_threshold)
+                candidates = self._collect_keyword_candidates(query, initial_k, score_threshold, filters)
             elif search_type == "hybrid":
                 query_embeddings = self.embedding_provider.embed_sync([query])
                 query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
                 candidates = self._collect_hybrid_candidates(
-                    query, query_embedding, initial_k, score_threshold, vector_weight
+                    query, query_embedding, initial_k, score_threshold, vector_weight, filters
                 )
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
@@ -755,18 +940,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
         effective_return_type = return_type if return_type != "sections" else "chunks"
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
-        # Collect raw candidates (FAISS/FTS search)
+        # Collect raw candidates (FAISS/FTS search). A SQL-expressible filter is
+        # pushed into the index/FTS so a selective filter is not starved before
+        # the cursor hydrates (T1.3); hydration remains the filter authority.
         if search_type == "vector":
             query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
             query_embedding_np = np.array(query_embedding).reshape(1, -1)
 
             def protected_vector_search():
-                with self._faiss_lock.read_lock():
-                    return self.index.search(query_embedding_np, initial_k)
+                return self._filtered_index_search(self.index, query_embedding_np, initial_k, filters)
 
-            distances, indices = await loop.run_in_executor(None, protected_vector_search)
+            distances_row, indices_row, _exact = await loop.run_in_executor(None, protected_vector_search)
             candidates: List[CursorCandidate] = []
-            for dist, idx in zip(distances[0], indices[0], strict=False):
+            for dist, idx in zip(distances_row, indices_row, strict=False):
                 if idx == -1:
                     continue
                 score = self._distance_to_similarity(float(dist))
@@ -775,7 +961,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 candidates.append(CursorCandidate(score=score, source="vector", faiss_id=int(idx)))
 
         elif search_type == "keyword":
-            candidates = self._collect_keyword_candidates(query, initial_k, score_threshold)
+            candidates = self._collect_keyword_candidates(query, initial_k, score_threshold, filters)
 
         elif search_type == "hybrid":
             # Run vector and keyword in parallel
@@ -783,18 +969,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
             query_embedding_np = np.array(query_embedding).reshape(1, -1)
 
             def protected_vector_search():
-                with self._faiss_lock.read_lock():
-                    return self.index.search(query_embedding_np, initial_k)
+                return self._filtered_index_search(self.index, query_embedding_np, initial_k, filters)
 
-            distances, indices = await loop.run_in_executor(None, protected_vector_search)
+            distances_row, indices_row, _exact = await loop.run_in_executor(None, protected_vector_search)
             vector_candidates: List[CursorCandidate] = []
-            for dist, idx in zip(distances[0], indices[0], strict=False):
+            for dist, idx in zip(distances_row, indices_row, strict=False):
                 if idx == -1:
                     continue
                 score = self._distance_to_similarity(float(dist))
                 vector_candidates.append(CursorCandidate(score=score, source="vector", faiss_id=int(idx)))
 
-            keyword_candidates = self._collect_keyword_candidates(query, initial_k, 0.0)
+            keyword_candidates = self._collect_keyword_candidates(query, initial_k, 0.0, filters)
 
             # Merge using lightweight lookup
             candidates = self._merge_hybrid_candidates(
@@ -1022,12 +1207,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
         assert self.index is not None
-        with self._faiss_lock.read_lock():
-            distances, indices = self.index.search(query_embedding, initial_k)
+        # Push the metadata filter into FAISS (id-selector) when the index and
+        # filter allow it, so a selective filter returns its best matches rather
+        # than whatever survives a fixed pre-filter pool (T1.3).
+        distances_row, idx_row, exact = self._filtered_index_search(self.index, query_embedding, initial_k, filters)
         # Convert the whole result row at once, then filter with a numpy mask,
         # rather than calling _distance_to_similarity per candidate.
-        idx_row = indices[0]
-        sims = self._distances_to_similarities(distances[0])
+        sims = self._distances_to_similarities(distances_row)
         mask = (idx_row != -1) & (sims >= score_threshold)
         valid_faiss_ids = idx_row[mask].astype(int).tolist()
         valid_results = list(zip(valid_faiss_ids, sims[mask].tolist(), strict=False))
@@ -1075,6 +1261,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     position=position,
                 )
                 chunk_results.append(result)
+        if not exact and filters and len(chunk_results) < k:
+            self._warn_filter_starved(len(chunk_results), k)
         if semantic_dedup_threshold is not None:
             chunk_results.sort(key=lambda x: x.score, reverse=True)
             chunk_results = self._apply_semantic_deduplication(chunk_results, semantic_dedup_threshold)
@@ -1156,19 +1344,34 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not sanitized_query:
             return [], {}
 
+        # Push a SQL-expressible metadata filter into the FTS query so ``LIMIT``
+        # applies *after* filtering -- otherwise a selective filter starves the
+        # fixed pool before the Python matcher ever sees the matches (T1.3). FTS
+        # is pure SQL, so this works for any index type; only unpushable filters
+        # (dot-notation JSON) fall through to the Python post-filter below.
+        built = self._build_filter_where(filters)
+        if built is not None:
+            where_clause, filter_params = built
+            # chunks_fts is contentless over chunks, so rowid == chunks.id.
+            fts_sql = (
+                "SELECT rowid, bm25(chunks_fts) AS rank FROM chunks_fts "
+                "WHERE chunks_fts MATCH ? "
+                "AND rowid IN (SELECT id FROM chunks WHERE document_id IN "
+                f"(SELECT id FROM documents WHERE {where_clause})) "
+                "ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params: Tuple[Any, ...] = (sanitized_query, *filter_params, limit)
+        else:
+            fts_sql = (
+                "SELECT rowid, bm25(chunks_fts) AS rank FROM chunks_fts "
+                "WHERE chunks_fts MATCH ? ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params = (sanitized_query, limit)
+
         chunk_results: List[QueryResult] = []
         raw_ranks: Dict[str, float] = {}
         with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute(
-                """
-                SELECT rowid, bm25(chunks_fts) AS rank
-                FROM chunks_fts
-                WHERE chunks_fts MATCH ?
-                ORDER BY rank ASC
-                LIMIT ?
-            """,
-                (sanitized_query, limit),
-            )
+            cursor = conn.execute(fts_sql, fts_params)
             valid_chunk_data, valid_chunk_ids = [], []
             for row in cursor.fetchall():
                 score = self._fts_rank_to_similarity(row["rank"])
@@ -1377,11 +1580,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
             return []
 
         initial_k = min(k * 2, self.section_index.ntotal)
-        with self._faiss_lock.read_lock():
-            distances, indices = self.section_index.search(query_embedding, initial_k)
+        # Push the document-metadata filter into the section index (T1.3).
+        distances_row, indices_row, exact = self._filtered_index_search(
+            self.section_index, query_embedding, initial_k, filters, table="sections"
+        )
 
         valid_results = []
-        for dist, idx in zip(distances[0], indices[0], strict=False):
+        for dist, idx in zip(distances_row, indices_row, strict=False):
             if idx == -1:
                 continue
             score = self._distance_to_similarity(float(dist))
@@ -1456,6 +1661,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 )
                 results.append(result)
 
+        if not exact and filters and len(results) < k:
+            self._warn_filter_starved(len(results), k)
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:k]
 
@@ -1472,11 +1679,20 @@ class SearchMixin(LocalVectorDBBase, ABC):
             return []
 
         initial_k = min(k * 2, self.document_index.ntotal)
-        with self._faiss_lock.read_lock():
-            distances, indices = self.document_index.search(query_embedding, initial_k)
+        # Push the metadata filter into the document index. The filter is on the
+        # documents table directly, so via_documents=False (T1.3).
+        distances_row, indices_row, exact = self._filtered_index_search(
+            self.document_index,
+            query_embedding,
+            initial_k,
+            filters,
+            table="documents",
+            id_column="doc_faiss_id",
+            via_documents=False,
+        )
 
         valid_results = []
-        for dist, idx in zip(distances[0], indices[0], strict=False):
+        for dist, idx in zip(distances_row, indices_row, strict=False):
             if idx == -1:
                 continue
             score = self._distance_to_similarity(float(dist))
@@ -1524,6 +1740,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 )
                 results.append(result)
 
+        if not exact and filters and len(results) < k:
+            self._warn_filter_starved(len(results), k)
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:k]
 
@@ -2609,9 +2827,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         # Use shared business logic for SQL construction
         sql, params = self._build_metadata_field_search_sql(field_name)
+        # Restrict the scored field embeddings to filter-matching documents before
+        # the top-k truncation below, so a selective filter is not starved (T1.3).
+        # Unpushable filters (dot-notation) fall through to the Python matcher.
+        query_params: Tuple[Any, ...] = params
+        built = self._build_filter_where(filters)
+        if built is not None:
+            where_clause, filter_params = built
+            sql = sql + f" AND ce.document_id IN (SELECT id FROM documents WHERE {where_clause})"
+            query_params = (*params, *filter_params)
 
         with self.connection_pool.get_connection() as conn:
-            cursor = conn.execute(sql, params)
+            cursor = conn.execute(sql, query_params)
             field_embedding_data = cursor.fetchall()
 
             if not field_embedding_data:
@@ -2924,13 +3151,16 @@ class SearchMixin(LocalVectorDBBase, ABC):
         loop = asyncio.get_event_loop()
         search_k = min(k * 2, 100)
 
+        # Push the metadata filter into FAISS (id-selector) when the index and
+        # filter allow it, so a selective filter is not starved by the fixed
+        # ``search_k`` pool (T1.3). The id lookup and FAISS search both run off
+        # the event loop. The Python matcher below remains the authority.
         def protected_search():
-            with self._faiss_lock.read_lock():
-                return self.index.search(query_embedding.reshape(1, -1), search_k)
+            return self._filtered_index_search(self.index, query_embedding.reshape(1, -1), search_k, filters)
 
-        distances, indices = await loop.run_in_executor(None, protected_search)
-        distances = distances[0].tolist()
-        indices = indices[0].tolist()
+        distances_row, idx_row, exact = await loop.run_in_executor(None, protected_search)
+        distances = distances_row.tolist()
+        indices = idx_row.tolist()
         valid_results = [(dist, idx) for dist, idx in zip(distances, indices, strict=False) if idx != -1]
         if not valid_results:
             return []
@@ -2957,6 +3187,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                             position=chunk_data.get("position"),
                         )
                     )
+        if not exact and filters and len(query_results) < k:
+            self._warn_filter_starved(len(query_results), k)
         query_results.sort(key=lambda x: x.score, reverse=True)
         if semantic_dedup_threshold is not None:
             query_results = await self._apply_semantic_deduplication_async(query_results, semantic_dedup_threshold)
@@ -3804,11 +4036,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         # Use shared business logic for SQL construction
         sql, params = self._build_metadata_field_search_sql(field_name)
+        # Restrict the scored field embeddings to filter-matching documents before
+        # the top-k truncation below, so a selective filter is not starved (T1.3).
+        query_params: Tuple[Any, ...] = params
+        built = self._build_filter_where(filters)
+        if built is not None:
+            where_clause, filter_params = built
+            sql = sql + f" AND ce.document_id IN (SELECT id FROM documents WHERE {where_clause})"
+            query_params = (*params, *filter_params)
 
         assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
             # Get all metadata field embeddings
-            cursor = await conn.execute(sql, params)
+            cursor = await conn.execute(sql, query_params)
             field_embedding_data_rows = list(await cursor.fetchall())
 
             if not field_embedding_data_rows:

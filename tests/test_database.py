@@ -21,11 +21,14 @@ def configure_faiss_module_double(mock_faiss, mock_index):
     """
     Make a whole-module ``faiss`` double faithful enough to construct a LocalVectorDB.
 
-    ``_index_supports_deletion`` does ``isinstance(base, faiss.IndexHNSW)``, so that
-    attribute has to be a real class rather than a Mock. And ``_live_faiss_ids`` only
-    skips ``faiss.vector_to_array`` when the index reports ``ntotal == 0``.
+    ``_index_supports_deletion`` does ``isinstance(base, faiss.IndexHNSW)`` and
+    ``_index_supports_id_selector`` does ``isinstance(base, faiss.IndexLSH)``, so
+    those attributes have to be real classes rather than Mocks. And
+    ``_live_faiss_ids`` only skips ``faiss.vector_to_array`` when the index reports
+    ``ntotal == 0``.
     """
     mock_faiss.IndexHNSW = faiss.IndexHNSW
+    mock_faiss.IndexLSH = faiss.IndexLSH
     mock_index.ntotal = 0
 
 
@@ -887,7 +890,11 @@ class TestLocalVectorDBQuery:
         with patch.object(mock_db, "_vector_search") as mock_vector_search:
             mock_vector_search.return_value = []
 
-            mock_db.query("test", filters=filters)
+            # search_type="vector" so only the (patched) vector leg runs. The real
+            # keyword leg would push the filter into SQL (T1.3) against this mock's
+            # documents table, which has no author/category columns -- an artefact
+            # of injecting _metadata_schema without the matching columns.
+            mock_db.query("test", search_type="vector", filters=filters)
 
             # Check filters were passed
             args = mock_vector_search.call_args[0]

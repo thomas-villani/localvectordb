@@ -113,6 +113,26 @@ Combining Search with Filters
        .execute()
    )
 
+.. note::
+
+   **Filters are pushed into the search, not applied afterwards.** When you
+   combine a metadata filter with a search, the filter is evaluated *inside* the
+   vector and keyword search (a FAISS id-selector over the matching documents, or
+   a subquery on the full-text index) so that a filter matching only a small
+   fraction of the corpus still returns a full page of matches. A selective
+   filter -- say one that matches 0.1% of documents -- therefore returns its best
+   matches rather than only whatever happened to fall in the first candidate
+   window.
+
+   This applies to ``query()``, ``query_async()``, the streaming cursor, and the
+   section/document hierarchical searches. Two cases fall back to post-filtering a
+   fixed candidate pool and log a warning if fewer than ``k`` results survive: a
+   database built with ``faiss_index_type="IndexLSH"`` (which cannot take a
+   selector -- prefer a flat index for filtered search) and a filter that SQL
+   cannot express, such as dot-notation into a JSON field (``"author.name"``).
+   Results are always correct; only these two cases may under-return on a very
+   selective filter.
+
 Limiting and Pagination
 ^^^^^^^^^^^^^^^^^^^^^^^
 
