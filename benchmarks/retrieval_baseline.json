@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "generated": "2026-07-09T23:22:22+00:00",
+  "git_commit": "41b824a",
+  "dataset": {
+    "name": "scifact",
+    "documents": 5183,
+    "queries": 300
+  },
+  "embedding": {
+    "provider": "sentence_transformers",
+    "model": "all-MiniLM-L6-v2"
+  },
+  "index": {
+    "faiss_index_type": "IndexFlatL2"
+  },
+  "chunking": {
+    "chunking_method": "sentences",
+    "chunk_size": 500,
+    "chunk_overlap": 1
+  },
+  "k": 10,
+  "primary_metric": "ndcg@10",
+  "default_config": "hybrid vw=0.7 \u00b7 frequency_boost",
+  "results": {
+    "vector \u00b7 best": {
+      "recall@1": 0.48,
+      "recall@5": 0.7406111111111111,
+      "recall@10": 0.786,
+      "ndcg@10": 0.644655856328234
+    },
+    "vector \u00b7 average": {
+      "recall@1": 0.4756666666666666,
+      "recall@5": 0.7381111111111112,
+      "recall@10": 0.7858333333333334,
+      "ndcg@10": 0.644059537347172
+    },
+    "vector \u00b7 frequency_boost": {
+      "recall@1": 0.44555555555555554,
+      "recall@5": 0.7195,
+      "recall@10": 0.7871111111111111,
+      "ndcg@10": 0.6221100721310897
+    },
+    "keyword \u00b7 best": {
+      "recall@1": 0.016666666666666666,
+      "recall@5": 0.02,
+      "recall@10": 0.02,
+      "ndcg@10": 0.018769765845238193
+    },
+    "keyword \u00b7 average": {
+      "recall@1": 0.016666666666666666,
+      "recall@5": 0.02,
+      "recall@10": 0.02,
+      "ndcg@10": 0.018333333333333333
+    },
+    "keyword \u00b7 frequency_boost": {
+      "recall@1": 0.016666666666666666,
+      "recall@5": 0.02,
+      "recall@10": 0.02,
+      "ndcg@10": 0.018769765845238193
+    },
+    "hybrid vw=0.3 \u00b7 best": {
+      "recall@1": 0.48333333333333334,
+      "recall@5": 0.7406111111111111,
+      "recall@10": 0.786,
+      "ndcg@10": 0.6461171686227511
+    },
+    "hybrid vw=0.3 \u00b7 average": {
+      "recall@1": 0.47816666666666663,
+      "recall@5": 0.7381111111111112,
+      "recall@10": 0.7858333333333334,
+      "ndcg@10": 0.6449836761506532
+    },
+    "hybrid vw=0.3 \u00b7 frequency_boost": {
+      "recall@1": 0.44638888888888884,
+      "recall@5": 0.7161666666666666,
+      "recall@10": 0.7871111111111111,
+      "ndcg@10": 0.6205425358842547
+    },
+    "hybrid vw=0.5 \u00b7 best": {
+      "recall@1": 0.48333333333333334,
+      "recall@5": 0.7406111111111111,
+      "recall@10": 0.786,
+      "ndcg@10": 0.6461171686227511
+    },
+    "hybrid vw=0.5 \u00b7 average": {
+      "recall@1": 0.47816666666666663,
+      "recall@5": 0.7381111111111112,
+      "recall@10": 0.7858333333333334,
+      "ndcg@10": 0.6449836761506532
+    },
+    "hybrid vw=0.5 \u00b7 frequency_boost": {
+      "recall@1": 0.44638888888888884,
+      "recall@5": 0.7161666666666666,
+      "recall@10": 0.7871111111111111,
+      "ndcg@10": 0.6205425358842547
+    },
+    "hybrid vw=0.7 \u00b7 best": {
+      "recall@1": 0.48333333333333334,
+      "recall@5": 0.7406111111111111,
+      "recall@10": 0.786,
+      "ndcg@10": 0.6461171686227511
+    },
+    "hybrid vw=0.7 \u00b7 average": {
+      "recall@1": 0.47816666666666663,
+      "recall@5": 0.7381111111111112,
+      "recall@10": 0.7858333333333334,
+      "ndcg@10": 0.6449836761506532
+    },
+    "hybrid vw=0.7 \u00b7 frequency_boost": {
+      "recall@1": 0.44305555555555554,
+      "recall@5": 0.7161666666666666,
+      "recall@10": 0.7871111111111111,
+      "ndcg@10": 0.6193123017294929
+    },
+    "hybrid vw=0.9 \u00b7 best": {
+      "recall@1": 0.48333333333333334,
+      "recall@5": 0.7406111111111111,
+      "recall@10": 0.786,
+      "ndcg@10": 0.6465536011346561
+    },
+    "hybrid vw=0.9 \u00b7 average": {
+      "recall@1": 0.47816666666666663,
+      "recall@5": 0.7381111111111112,
+      "recall@10": 0.7858333333333334,
+      "ndcg@10": 0.6454201086625581
+    },
+    "hybrid vw=0.9 \u00b7 frequency_boost": {
+      "recall@1": 0.44305555555555554,
+      "recall@5": 0.7161666666666666,
+      "recall@10": 0.7871111111111111,
+      "ndcg@10": 0.6197487342413978
+    }
+  }
+}

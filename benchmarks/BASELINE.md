@@ -3,6 +3,11 @@
 Captured with `uv run python -m benchmarks.profile_baseline --scale 5000 --queries 150`
 **before** any optimization work, so later changes can be measured against it.
 
+> This file measures **speed**, and (below) geometric recall — whether FAISS finds
+> the true nearest *vector*. It says nothing about whether the right *document*
+> comes back. For relevance (nDCG@10, recall@k on BEIR), see
+> [`RETRIEVAL_BASELINE.md`](RETRIEVAL_BASELINE.md).
+
 - Platform: `Windows-11-10.0.26200-SP0`, Python 3.12.2
 - numpy 2.4.6, faiss 1.14.2
 - Corpus: 5,000 generated docs (~100 words each), 187 queries/phase

@@ -27,6 +27,9 @@ htmlcov/
 # Benchmarks
 benchmarks/.cache/
 benchmarks/results/
+# Downloaded BEIR corpora + the evaluation database built from them.
+# benchmarks/retrieval_baseline.json is deliberately NOT here: it is tracked.
+benchmarks/data/
 
 # Project notes / scratch (kept local, never published)
 # NOTE: the sdist relies on these being gitignored — hatchling honours VCS
