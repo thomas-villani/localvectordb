@@ -431,6 +431,42 @@ Cross-encoder reranking can also be applied directly via the ``query()`` method:
    reranker = create_reranker("sentence_transformers")
    results = db.query("machine learning", reranker=reranker)
 
+Over-fetching for reranking (``rerank_k``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A reranker can only improve results it actually sees. When a reranker is
+configured, ``query()`` fetches a larger candidate pool -- ``rerank_k``, default
+``5 * k`` -- re-scores that pool, and returns the top ``k``. Without this
+over-fetch the reranker would only ever reorder the ``k`` results the search
+already selected, so it could never pull a stronger match up from just below the
+cutoff.
+
+.. code-block:: python
+
+   # Fetch 100 candidates, rerank them, return the best 10.
+   results = db.query(
+       "machine learning",
+       k=10,
+       rerank_k=100,
+       reranker_config={"provider": "jina", "model": "jina-reranker-v2-base-multilingual"},
+   )
+
+``rerank_k`` is clamped to at most 200 (a cross-encoder pass costs one model call
+per candidate) and is never smaller than ``k``. It has no effect when no reranker
+is supplied. The same parameter is accepted by ``query_async()`` and by the HTTP
+API. Reranking is **not** available on the streaming/cursor path -- use
+``query()``/``query_async()`` when a reranker is configured.
+
+.. note::
+
+   Each reranker leaves ``result.score`` as an **absolute** value in ``[0, 1]``
+   (comparable across queries and usable with ``score_threshold``), and preserves
+   the model's raw output in ``result.metadata["rerank_raw_score"]`` and the
+   pre-rerank search score in ``result.metadata["original_score"]``. Jina uses its
+   API's native relevance score; the SentenceTransformers and HuggingFace
+   cross-encoders squash their logits with a logistic sigmoid. None uses a
+   per-batch min-max, which would be pool-relative rather than absolute.
+
 Reranker Provider Options
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

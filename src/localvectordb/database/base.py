@@ -113,6 +113,7 @@ class BaseVectorDB(ABC):
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """Unified query interface for all search types."""
         pass
@@ -503,6 +504,7 @@ class BaseVectorDB(ABC):
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List["QueryResult"]:
         """Unified query interface for all search types asynchronously."""
         pass

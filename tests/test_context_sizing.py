@@ -319,3 +319,19 @@ class TestServerModelValidation:
         body = QueryBody(query="x")
         assert body.context_unit == "chunks"
         assert body.context_truncate is False
+        assert body.rerank_k is None
+
+    def test_rerank_k_accepted_and_serialized(self):
+        from localvectordb_server.routers._models import QueryBody
+
+        body = QueryBody(query="x", rerank_k=50)
+        assert body.rerank_k == 50
+        assert body.model_dump()["rerank_k"] == 50
+
+    def test_rerank_k_rejects_non_positive(self):
+        from pydantic import ValidationError
+
+        from localvectordb_server.routers._models import QueryBody
+
+        with pytest.raises(ValidationError):
+            QueryBody(query="x", rerank_k=0)

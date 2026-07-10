@@ -1808,6 +1808,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -1871,6 +1872,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if reranker_config is not None:
             payload["reranker_config"] = reranker_config
+
+        if rerank_k is not None:
+            payload["rerank_k"] = rerank_k
 
         url = self._build_url(f"/api/v1/databases/{self.name}/query")
         response = self._make_request_with_retry("POST", url, json=payload)
@@ -3229,6 +3233,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Unified query interface for all search types
@@ -3291,6 +3296,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if reranker_config is not None:
             payload["reranker_config"] = reranker_config
+
+        if rerank_k is not None:
+            payload["rerank_k"] = rerank_k
 
         url = self._build_url(f"/api/v1/databases/{self.name}/query")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
