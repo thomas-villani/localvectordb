@@ -177,6 +177,9 @@ class BuiltVectors:
     centroid_doc: LevelIndex
     rawspan_section: LevelIndex
     rawspan_doc: LevelIndex
+    # Present only when --summary was requested (directed-summary arm, H2).
+    summary_section: Optional[LevelIndex] = None
+    summary_doc: Optional[LevelIndex] = None
 
 
 def _chunker():
@@ -191,13 +194,19 @@ def _detect_sections(text: str):
     return SectionDetector().detect_sections(text)
 
 
-def build_vectors(bench: SyntheticBenchmark, encoder: CachedEncoder) -> BuiltVectors:
+def build_vectors(
+    bench: SyntheticBenchmark, encoder: CachedEncoder, summarizer: "Optional[object]" = None
+) -> BuiltVectors:
     """Chunk every super-doc, then build all five level indices for the sweep.
 
     Chunk vectors come from the real chunker (matching the DB). Centroids are the
     mean of a span's raw chunk vectors, then unit-normalised (T1.5 semantics).
     Raw-span vectors are the embedding of the span's own text. Queries embedded
     once and shared by every arm.
+
+    If ``summarizer`` is given (a ``benchmarks.summarize.CachedSummarizer``), also
+    build the directed-summary section/doc levels (H2): each span is summarised,
+    then the summary is embedded with the same encoder.
     """
     chunker = _chunker()
 
@@ -268,6 +277,15 @@ def build_vectors(bench: SyntheticBenchmark, encoder: CachedEncoder) -> BuiltVec
             centroid_section_vecs[si] = raw_chunk[member_rows].mean(axis=0)
     centroid_section_vecs = _unit(centroid_section_vecs)
 
+    summary_section = summary_doc = None
+    if summarizer is not None:
+        # Summarise the same section/doc texts, then embed the summaries in the
+        # shared vector space. Order is preserved, so the unit->doc maps are reused.
+        sec_summaries = summarizer.summarize_all(section_texts)
+        doc_summaries = summarizer.summarize_all(doc_texts)
+        summary_section = LevelIndex("summary-section", encoder.encode(sec_summaries), section_doc)
+        summary_doc = LevelIndex("summary-doc", encoder.encode(doc_summaries), doc_ids)
+
     return BuiltVectors(
         query_ids=query_ids,
         query_vecs=query_vecs,
@@ -276,6 +294,8 @@ def build_vectors(bench: SyntheticBenchmark, encoder: CachedEncoder) -> BuiltVec
         centroid_doc=LevelIndex("centroid-doc", centroid_doc_vecs, doc_ids),
         rawspan_section=LevelIndex("rawspan-section", _unit(raw_section), section_doc),
         rawspan_doc=LevelIndex("rawspan-doc", _unit(raw_doc), doc_ids),
+        summary_section=summary_section,
+        summary_doc=summary_doc,
     )
 
 
@@ -357,6 +377,9 @@ def run_experiment(bench: SyntheticBenchmark, built: BuiltVectors) -> Dict[str, 
         "rawspan-section": rank_docs(built.query_vecs, qids, built.rawspan_section),
         "rawspan-doc": rank_docs(built.query_vecs, qids, built.rawspan_doc),
     }
+    if built.summary_section is not None and built.summary_doc is not None:
+        single["summary-section"] = rank_docs(built.query_vecs, qids, built.summary_section)
+        single["summary-doc"] = rank_docs(built.query_vecs, qids, built.summary_doc)
     single_ids = {name: ids_only(run) for name, run in single.items()}
 
     fusion_centroid = fuse([single["chunk"], single["centroid-section"], single["centroid-doc"]], qids)
@@ -366,31 +389,46 @@ def run_experiment(bench: SyntheticBenchmark, built: BuiltVectors) -> Dict[str, 
     runs["fusion-centroid"] = fusion_centroid
     runs["fusion-rawspan"] = fusion_rawspan
 
-    results = {name: evaluate(run, qrels, k_values=RECALL_K_VALUES) for name, run in runs.items()}
+    oracle: Dict[str, object] = {}
+    gaps: Dict[str, float] = {}
 
     oracle_centroid_arms = {a: single_ids[a] for a in ("chunk", "centroid-section", "centroid-doc")}
     oracle_rawspan_arms = {a: single_ids[a] for a in ("chunk", "rawspan-section", "rawspan-doc")}
     oc_score, oc_choice = oracle_over(oracle_centroid_arms, qids, qrels, PRIMARY_K)
     or_score, or_choice = oracle_over(oracle_rawspan_arms, qids, qrels, PRIMARY_K)
+    oracle["centroid"] = {"ndcg@10": oc_score, "level_usage": dict(oc_choice)}
+    oracle["rawspan"] = {"ndcg@10": or_score, "level_usage": dict(or_choice)}
 
-    return {
-        "results": results,
-        "oracle": {
-            "centroid": {"ndcg@10": oc_score, "level_usage": dict(oc_choice)},
-            "rawspan": {"ndcg@10": or_score, "level_usage": dict(or_choice)},
-        },
-        "gaps": {
-            "oracle_rawspan_minus_fusion_rawspan": or_score - results["fusion-rawspan"][PRIMARY_METRIC],
-            "oracle_centroid_minus_fusion_centroid": oc_score - results["fusion-centroid"][PRIMARY_METRIC],
-            "fusion_rawspan_minus_chunk": results["fusion-rawspan"][PRIMARY_METRIC] - results["chunk"][PRIMARY_METRIC],
-            "rawspan_section_minus_centroid_section": (
-                results["rawspan-section"][PRIMARY_METRIC] - results["centroid-section"][PRIMARY_METRIC]
-            ),
-            "rawspan_doc_minus_centroid_doc": (
-                results["rawspan-doc"][PRIMARY_METRIC] - results["centroid-doc"][PRIMARY_METRIC]
-            ),
-        },
-    }
+    if "summary-section" in single_ids:
+        fusion_summary = fuse([single["chunk"], single["summary-section"], single["summary-doc"]], qids)
+        runs["fusion-summary"] = fusion_summary
+        oracle_summary_arms = {a: single_ids[a] for a in ("chunk", "summary-section", "summary-doc")}
+        os_score, os_choice = oracle_over(oracle_summary_arms, qids, qrels, PRIMARY_K)
+        oracle["summary"] = {"ndcg@10": os_score, "level_usage": dict(os_choice)}
+
+    results = {name: evaluate(run, qrels, k_values=RECALL_K_VALUES) for name, run in runs.items()}
+
+    gaps["oracle_rawspan_minus_fusion_rawspan"] = or_score - results["fusion-rawspan"][PRIMARY_METRIC]
+    gaps["oracle_centroid_minus_fusion_centroid"] = oc_score - results["fusion-centroid"][PRIMARY_METRIC]
+    gaps["fusion_rawspan_minus_chunk"] = results["fusion-rawspan"][PRIMARY_METRIC] - results["chunk"][PRIMARY_METRIC]
+    gaps["rawspan_section_minus_centroid_section"] = (
+        results["rawspan-section"][PRIMARY_METRIC] - results["centroid-section"][PRIMARY_METRIC]
+    )
+    gaps["rawspan_doc_minus_centroid_doc"] = (
+        results["rawspan-doc"][PRIMARY_METRIC] - results["centroid-doc"][PRIMARY_METRIC]
+    )
+    if "summary-section" in single_ids:
+        gaps["summary_section_minus_rawspan_section"] = (
+            results["summary-section"][PRIMARY_METRIC] - results["rawspan-section"][PRIMARY_METRIC]
+        )
+        gaps["summary_doc_minus_rawspan_doc"] = (
+            results["summary-doc"][PRIMARY_METRIC] - results["rawspan-doc"][PRIMARY_METRIC]
+        )
+        gaps["fusion_summary_minus_fusion_rawspan"] = (
+            results["fusion-summary"][PRIMARY_METRIC] - results["fusion-rawspan"][PRIMARY_METRIC]
+        )
+
+    return {"results": results, "oracle": oracle, "gaps": gaps}
 
 
 def format_table(results: Dict[str, Dict[str, float]]) -> str:
@@ -417,6 +455,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--passages", type=int, default=3, help="Passages per section (P).")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-queries", type=int, default=None, help="Cap placed queries (smaller run).")
+    p.add_argument(
+        "--summary",
+        action="store_true",
+        help="Add the directed-summary arm (H2): LLM-summarise each span, then embed. Costs LLM tokens.",
+    )
+    p.add_argument("--summary-model", default="gpt-5.4-nano", help="OpenAI chat model for --summary.")
+    p.add_argument("--directive", default="retrieval", help="Summary directive key (benchmarks/summarize.py).")
     return p.parse_args(argv)
 
 
@@ -439,28 +484,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     logger.info("%r", bench)
 
+    summarizer = None
+    if args.summary:
+        from benchmarks.summarize import CachedSummarizer
+
+        summarizer = CachedSummarizer(args.summary_model, directive=args.directive)
+        logger.info("Directed-summary arm on: model=%s directive=%s", args.summary_model, args.directive)
+
     encoder = CachedEncoder(args.provider, args.model)
-    built = build_vectors(bench, encoder)
+    built = build_vectors(bench, encoder, summarizer)
     logger.info("Encoded: %d new, %d cached (dim=%s)", encoder.n_embedded, encoder.n_cached, encoder.dim)
+    if summarizer is not None:
+        logger.info("Summarised: %d new, %d cached", summarizer.n_called, summarizer.n_cached)
 
     report = run_experiment(bench, built)
     results = report["results"]  # type: ignore[assignment]
+    oracle = report["oracle"]  # type: ignore[assignment]
 
     print()
     print(format_table(results))  # type: ignore[arg-type]
     print()
-    print(
-        f"Oracle (rawspan levels)  {PRIMARY_METRIC}={report['oracle']['rawspan']['ndcg@10']:.4f}  "  # type: ignore[index]
-        f"usage={report['oracle']['rawspan']['level_usage']}"
-    )  # type: ignore[index]
-    print(
-        f"Oracle (centroid levels) {PRIMARY_METRIC}={report['oracle']['centroid']['ndcg@10']:.4f}  "  # type: ignore[index]
-        f"usage={report['oracle']['centroid']['level_usage']}"
-    )  # type: ignore[index]
+    for family in ("rawspan", "centroid", "summary"):
+        if family in oracle:  # type: ignore[operator]
+            entry = oracle[family]  # type: ignore[index]
+            print(f"Oracle ({family:<8} levels) {PRIMARY_METRIC}={entry['ndcg@10']:.4f}  usage={entry['level_usage']}")
     print("\nKey gaps (positive = the first beats the second):")
     for name, val in report["gaps"].items():  # type: ignore[union-attr]
-        print(f"  {name:<42} {val:+.4f}")
+        print(f"  {name:<44} {val:+.4f}")
 
+    cost: Dict[str, object] = {"embedded": encoder.n_embedded, "cached": encoder.n_cached, "dim": encoder.dim}
+    if summarizer is not None:
+        cost["summaries_called"] = summarizer.n_called
+        cost["summaries_cached"] = summarizer.n_cached
+        cost["summary_model"] = args.summary_model
+        cost["directive"] = args.directive
     full = {
         "schema": 1,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -468,7 +525,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "embedding": {"provider": args.provider, "model": args.model},
         "synthetic": bench.params | {"super_docs": len(bench.corpus), "queries": len(bench.queries)},
         "primary_metric": PRIMARY_METRIC,
-        "cost": {"embedded": encoder.n_embedded, "cached": encoder.n_cached, "dim": encoder.dim},
+        "cost": cost,
         **report,
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
