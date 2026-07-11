@@ -738,6 +738,10 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
+    def _normalize_for_index(self, vectors: np.ndarray, index: Any) -> np.ndarray:
+        pass
+
+    @abstractmethod
     def _discard_faiss_ids_best_effort(self, faiss_ids: List[int]) -> None:
         pass
 

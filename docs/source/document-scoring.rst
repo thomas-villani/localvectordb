@@ -129,7 +129,12 @@ FAISS returns raw distances which are converted to similarity scores by
 ``_distance_to_similarity``:
 
 * **Inner Product (IP) index**: ``similarity = (distance + 1) / 2``, clamped to [0, 1].
-  Assumes normalized embeddings where inner product ranges from -1 to 1.
+  This mapping assumes an inner product in ``[-1, 1]``, i.e. unit-norm vectors. The
+  library guarantees that by L2-normalizing at the write and query boundary whenever
+  the index metric is inner product, so IP scoring is correct regardless of whether
+  the embedding provider's own ``normalize`` option is set. (No normalization is
+  applied to an L2 index, so its geometry -- and the ``normalize`` option's effect on
+  it -- is unchanged.)
 * **L2 index**: ``similarity = 1 / (1 + distance)``. Larger distances map to lower
   similarity, approaching 0 for very distant vectors.
 
