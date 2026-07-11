@@ -37,6 +37,7 @@ benchmarks/data/
 etc/
 todo.md
 remote-layer-streaming.md
+hierarchical-test-plan.md
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
