@@ -571,3 +571,124 @@ class TestHierarchicalIntegration:
             results = db2.query("neural", search_level="sections", k=3)
             assert len(results) >= 1
             db2.close()
+
+
+class TestT15CentroidNormalizationAndMetric:
+    """T1.5: unit-normalized centroids + per-index metric for hierarchical search.
+
+    Two independent defects lived in the same scoring boundary:
+
+    1. Section/document centroids were raw ``np.mean`` of chunk vectors. Averaging
+       shrinks the norm below unit, so a centroid no longer sat on the unit sphere
+       the query occupies. Fixed by :meth:`_unit_normalize_centroids` at the write.
+    2. Section/document indices are ``IndexFlatL2``, but the search converted their
+       distances with :meth:`_distance_to_similarity` auto-detecting the metric off
+       the *main* index. On an ``IndexFlatIP`` database that applies the IP formula
+       ``(d + 1) / 2`` -- which *increases* with L2 distance -- to L2 distances,
+       inverting the ranking (T1.4's correct IP detection is what exposed this).
+       Fixed by passing the searched index's own metric explicitly.
+    """
+
+    def _build(self, tmpdir, faiss_index_type):
+        from localvectordb.database import LocalVectorDB
+
+        db = LocalVectorDB(
+            name="t15",
+            base_path=tmpdir,
+            embedding_provider="mock",
+            embedding_model="mock",
+            hierarchical_embeddings=True,
+            faiss_index_type=faiss_index_type,
+            chunk_size=50,
+            chunk_overlap=0,
+            enable_fts=True,
+        )
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        return db
+
+    def test_unit_normalize_centroids(self):
+        """The helper unit-normalizes each row, leaves zero rows, copies input."""
+        import numpy as np
+
+        from localvectordb.database import LocalVectorDB
+
+        raw = np.array(
+            [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+            dtype=np.float32,
+        )
+        original = raw.copy()
+        out = LocalVectorDB._unit_normalize_centroids(raw)
+
+        # Non-zero rows are unit norm; the all-zero row is untouched.
+        assert np.linalg.norm(out[0]) == pytest.approx(1.0, abs=1e-6)
+        assert np.linalg.norm(out[2]) == pytest.approx(1.0, abs=1e-6)
+        assert np.array_equal(out[1], np.zeros(3, dtype=np.float32))
+        # Caller's buffer is never mutated in place.
+        assert np.array_equal(raw, original)
+
+    @pytest.mark.parametrize("faiss_index_type", ["IndexFlatL2", "IndexFlatIP"])
+    def test_stored_centroids_are_unit_norm(self, faiss_index_type):
+        """Every non-empty section/document centroid is stored at unit norm.
+
+        An empty section (no chunks mapped) has an all-zero centroid with no
+        direction; the helper leaves those untouched, so they stay at norm 0.
+        """
+        import faiss
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._build(tmpdir, faiss_index_type)
+            try:
+                unit_seen = 0
+                for index in (db.section_index, db.document_index):
+                    assert index is not None and index.ntotal > 0
+                    ids = faiss.vector_to_array(index.id_map)
+                    for fid in ids:
+                        vec = np.asarray(index.reconstruct(int(fid)), dtype=np.float32)
+                        norm = float(np.linalg.norm(vec))
+                        assert norm == pytest.approx(1.0, abs=1e-4) or norm == pytest.approx(0.0, abs=1e-6)
+                        if norm > 0.5:
+                            unit_seen += 1
+                assert unit_seen > 0, "expected at least one non-empty centroid"
+            finally:
+                db.close()
+
+    @pytest.mark.parametrize("faiss_index_type", ["IndexFlatL2", "IndexFlatIP"])
+    def test_section_scores_use_section_index_metric(self, faiss_index_type):
+        """Section scores follow the L2 index's own formula, not the main metric.
+
+        Pre-fix on ``IndexFlatIP`` this asserted-value differs: the search applied
+        ``(d + 1) / 2`` to the L2 section distances, so this equality fails and the
+        ranking inverts.
+        """
+        import numpy as np
+
+        query = "neural networks"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._build(tmpdir, faiss_index_type)
+            try:
+                # Mock embeddings are already unit norm; the section index is
+                # IndexFlatL2, so the query is used as-is (no IP boundary norm).
+                qvec = np.asarray(db.embedding_provider.embed_sync([query])[0], dtype=np.float32)
+
+                results = db.query(query, search_level="sections", k=10)
+                assert len(results) >= 2, "need multiple sections to test ranking"
+
+                with db.connection_pool.get_connection() as conn:
+                    for r in results:
+                        doc_id, sec_idx = r.id.split(":section:")
+                        row = conn.execute(
+                            "SELECT faiss_id FROM sections WHERE document_id = ? AND section_index = ?",
+                            (doc_id, int(sec_idx)),
+                        ).fetchone()
+                        centroid = np.asarray(db.section_index.reconstruct(int(row["faiss_id"])), dtype=np.float32)
+                        l2_sq = float(np.sum((qvec - centroid) ** 2))
+                        expected = 1.0 / (1.0 + l2_sq)
+                        assert r.score == pytest.approx(expected, abs=1e-4)
+
+                # Scores are a valid similarity and ranking is by descending score.
+                scores = [r.score for r in results]
+                assert all(0.0 <= s <= 1.0 for s in scores)
+                assert scores == sorted(scores, reverse=True)
+            finally:
+                db.close()
