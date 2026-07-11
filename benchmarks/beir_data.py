@@ -13,6 +13,12 @@ zip from the BEIR mirror and cached under ``benchmarks/data/`` (gitignored).
     precisely because it exercises the graded-gain path in ``metrics.ndcg_at_k``
     that SciFact's binary qrels leave untested.
 
+``fiqa``
+    57,638 passages, 648 test queries, binary relevance. Financial-QA passages;
+    many passages per topic, which is what the hierarchical synthetic super-doc
+    builder (``benchmarks/superdocs.py``) needs to seed a gold passage and fill
+    the rest of a document with genuinely-related distractors.
+
 Only the ``test`` split is loaded. BEIR's ``queries.jsonl`` holds every split's
 queries, so the qrels file -- not the queries file -- decides which queries are
 evaluated.
@@ -31,7 +37,7 @@ from .config import BEIR_BASE_URL, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-DATASETS = ("scifact", "nfcorpus")
+DATASETS = ("scifact", "nfcorpus", "fiqa")
 
 
 @dataclass(frozen=True)
