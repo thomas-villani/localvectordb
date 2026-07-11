@@ -615,15 +615,17 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """Add vectors to the section FAISS index."""
         if self.section_index is None or len(embeddings) == 0:
             return
+        embeddings = self._normalize_for_index(embeddings.astype(np.float32), self.section_index)
         with self._faiss_lock.write_lock():
-            self.section_index.add_with_ids(embeddings.astype(np.float32), faiss_ids.astype(np.int64))
+            self.section_index.add_with_ids(embeddings, faiss_ids.astype(np.int64))
 
     def _add_vectors_to_document_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
         """Add vectors to the document FAISS index."""
         if self.document_index is None or len(embeddings) == 0:
             return
+        embeddings = self._normalize_for_index(embeddings.astype(np.float32), self.document_index)
         with self._faiss_lock.write_lock():
-            self.document_index.add_with_ids(embeddings.astype(np.float32), faiss_ids.astype(np.int64))
+            self.document_index.add_with_ids(embeddings, faiss_ids.astype(np.int64))
 
     def _remove_vectors(self, index, faiss_ids: List[int], what: str) -> None:
         """
@@ -663,6 +665,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if self.index is None:
             raise RuntimeError("FAISS index is not initialized")
         new_faiss_ids = self._allocate_faiss_ids("main", len(embeddings))
+        embeddings = self._normalize_for_index(embeddings, self.index)
         with self._faiss_lock.write_lock():
             self.index.add_with_ids(embeddings, new_faiss_ids)
             for i, chunk in enumerate(chunks):
@@ -1118,31 +1121,51 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     @staticmethod
     def _detect_faiss_metric_type(index: Any) -> str:
-        """Inspect a FAISS index object and return its metric type ('L2'/'IP')."""
+        """Inspect a FAISS index object and return its metric type ('L2'/'IP').
+
+        Read ``metric_type`` directly: the ``IndexIDMap``/``IndexIDMap2`` wrapper
+        (and every base index) exposes it, and it is the only reliable signal.
+        Unwrapping via ``index.index`` returns a *downcast-less* generic
+        ``faiss.Index`` whose class name is just ``"Index"`` -- it matches neither
+        "IP" nor "L2", so a name-based check silently fell through to the L2
+        default and scored an ``IndexFlatIP`` with the L2 formula ``1/(1+ip)``,
+        which inverts the ranking. The name check is kept only as a fallback for
+        objects (e.g. test doubles) that do not expose ``metric_type``.
+        """
         if index is None:
             return "L2"  # Default
 
-        # Check if it's an IndexIDMap wrapper
-        if hasattr(index, "index"):
-            base_index = index.index
-        else:
-            base_index = index
+        metric = getattr(index, "metric_type", None)
+        if isinstance(metric, (int, np.integer)):
+            return "IP" if metric == faiss.METRIC_INNER_PRODUCT else "L2"
 
-        # Check the index type name
+        # Fallback: inspect the (possibly wrapped) index type name.
+        base_index = index.index if hasattr(index, "index") else index
         index_type = str(type(base_index).__name__)
         if "IP" in index_type or "InnerProduct" in index_type:
             return "IP"
-        elif "L2" in index_type:
-            return "L2"
-        elif "HNSW" in index_type:
-            # HNSW can use different metrics, check if it's HNSW with IP
-            if hasattr(base_index, "metric_type"):
-                if base_index.metric_type == faiss.METRIC_INNER_PRODUCT:
-                    return "IP"
-            return "L2"  # Default for HNSW
-        else:
-            # LSH and others default to L2-like behavior
-            return "L2"
+        return "L2"
+
+    def _normalize_for_index(self, vectors: "np.ndarray", index: Any) -> "np.ndarray":
+        """L2-normalize a copy of ``vectors`` when ``index`` uses the IP metric.
+
+        Inner-product scoring assumes unit vectors: ``_distance_to_similarity``
+        maps ``ip`` to ``(ip + 1) / 2`` and clamps to ``[0, 1]``. With
+        unnormalized vectors the raw inner product exceeds 1, so a pile of
+        unrelated documents all clamp to a tied ``1.0`` and ranking collapses.
+        Normalizing at both the write and the query boundary makes IP scoring
+        correct regardless of the embedding provider's ``normalize`` setting.
+
+        This is a no-op for L2 (and every non-IP) index, so L2 rankings -- and
+        the retrieval baseline, which runs on the default ``IndexFlatL2`` -- are
+        byte-for-byte unchanged. Returns a fresh array on the IP path so the
+        caller's buffer is never mutated in place by ``faiss.normalize_L2``.
+        """
+        if index is None or self._detect_faiss_metric_type(index) != "IP":
+            return vectors
+        normalized = np.array(vectors, dtype=np.float32, copy=True)
+        faiss.normalize_L2(normalized)
+        return normalized
 
     def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float:
         """Convert FAISS distance to similarity score based on metric type.

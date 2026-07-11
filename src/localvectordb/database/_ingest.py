@@ -926,23 +926,22 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if index.ntotal == 0 or similarity_threshold is None or similarity_threshold <= 0:
             return filtered_chunks, filtered_embeddings, filtered_mappings
 
-        # Get the metric type and convert similarity to distance threshold
+        # Get the metric type and convert similarity to distance threshold. The
+        # search vectors must be normalized the same way the stored ones are, or
+        # an IP index (which now stores unit vectors) is probed with raw ones and
+        # the threshold comparison is meaningless. No-op for L2.
         metric_type = self._get_faiss_metric_type()
+        search_vectors = self._normalize_for_index(filtered_embeddings, index)
+        distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
+        with self._faiss_lock.read_lock():
+            distances, indices = index.search(search_vectors, k=1)
+        valid_matches = indices[:, 0] != -1
         if metric_type == "IP":
-            # For inner product, higher values mean more similar
-            # We want to filter out chunks that are TOO similar (above threshold)
-            distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
-            with self._faiss_lock.read_lock():
-                distances, indices = index.search(filtered_embeddings, k=1)
-            valid_matches = indices[:, 0] != -1
+            # For inner product, higher values mean more similar: drop chunks
+            # whose nearest neighbour is TOO similar (above the threshold).
             too_similar = (distances[:, 0] > distance_threshold) & valid_matches
         else:
-            # For L2, lower distances mean more similar
-            # We want to filter out chunks that are TOO similar (below threshold)
-            distance_threshold = self._similarity_to_distance(similarity_threshold, metric_type)
-            with self._faiss_lock.read_lock():
-                distances, indices = index.search(filtered_embeddings, k=1)
-            valid_matches = indices[:, 0] != -1
+            # For L2, lower distances mean more similar.
             too_similar = (distances[:, 0] < distance_threshold) & valid_matches
         keep_mask = ~too_similar
         final_chunks = [filtered_chunks[i] for i in range(len(filtered_chunks)) if keep_mask[i]]

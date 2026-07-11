@@ -208,7 +208,8 @@ class RepairMixin(LocalVectorDBBase, ABC):
             report.dropped += len(report.orphan_vectors)
 
             if vectors:
-                new_index.add_with_ids(np.vstack(vectors), np.array(new_ids, dtype=np.int64))
+                stacked = self._normalize_for_index(np.vstack(vectors), new_index)
+                new_index.add_with_ids(stacked, np.array(new_ids, dtype=np.int64))
 
             conn.execute("BEGIN")
             try:
@@ -281,7 +282,8 @@ class RepairMixin(LocalVectorDBBase, ABC):
                 updates.append((new_id, row["key"]))
 
             if vectors:
-                new_index.add_with_ids(np.vstack(vectors), np.array(new_ids, dtype=np.int64))
+                stacked = self._normalize_for_index(np.vstack(vectors), new_index)
+                new_index.add_with_ids(stacked, np.array(new_ids, dtype=np.int64))
 
             conn.execute("BEGIN")
             try:

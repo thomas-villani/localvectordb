@@ -43,10 +43,11 @@ pytestmark = pytest.mark.integration
 # unreachable there. It has its own failure mode, covered separately below.
 DELETING_INDEX_TYPES = ["IndexFlatL2", "IndexFlatIP", "IndexLSH"]
 
-# Index types that also rank correctly, and so can carry the retrieval assertions.
-# IndexFlatIP is excluded: its scores saturate (see TestInnerProductScoresSaturate),
-# which is a separate, pre-existing scoring bug -- not an id-integrity problem.
-RANKING_INDEX_TYPES = ["IndexFlatL2", "IndexLSH"]
+# Index types that rank correctly, and so can carry the retrieval assertions.
+# IndexFlatIP is included as of T1.4: its metric is now detected correctly and its
+# vectors are normalized at the boundary (see TestInnerProductScoring), so it no
+# longer inverts the ranking.
+RANKING_INDEX_TYPES = ["IndexFlatL2", "IndexFlatIP", "IndexLSH"]
 
 
 def make_db(tmp_path, name="invariant_test", **kwargs):
@@ -236,35 +237,74 @@ class TestRetrievalCorrectnessAfterMutation:
             db.close()
 
 
-class TestInnerProductScoresSaturate:
+class TestInnerProductScoring:
     """
-    A pre-existing scoring bug, unrelated to id integrity, pinned here so the
-    retrieval assertions above can honestly exclude IndexFlatIP.
+    T1.4 regression: an ``IndexFlatIP`` index must rank correctly.
 
-    ``_distance_to_similarity`` maps an inner product to ``(ip + 1) / 2`` and clamps
-    to [0, 1], on the stated assumption that embeddings are normalized. Nothing in
-    the codebase ever calls ``faiss.normalize_L2``, and providers disagree on their
-    ``normalize`` default. With unnormalized vectors the raw inner products exceed 1
-    and a pile of unrelated documents all clamp to a tied 1.0.
+    Two defects in the same scoring boundary conspired here, and neither was an
+    id-integrity problem (they reproduce on a pristine database with ids [0, 1, 2]
+    and no mutation at all):
 
-    This reproduces on a pristine database with ids [0, 1, 2] and no mutation at all,
-    which is what proves it is not the duplicate-id bug.
+    1. **Metric misdetection.** ``_detect_faiss_metric_type`` unwrapped the
+       ``IndexIDMap2`` via ``.index``, which returns a downcast-less generic
+       ``faiss.Index`` whose class name is just ``"Index"``. That matched neither
+       "IP" nor "L2", so it fell through to the L2 default and scored the inner
+       products with ``1/(1+ip)`` -- which *inverts* the ranking, handing the top
+       score to the least similar document. Fixed by reading ``metric_type``.
 
-    Fix belongs to T1.4 (consistent embedding normalization). Remove the xfail then.
+    2. **No normalization.** ``(ip + 1) / 2`` assumes unit vectors, but nothing
+       called ``faiss.normalize_L2`` and providers disagree on their ``normalize``
+       default. Fixed by normalizing at the write and query boundary for IP
+       indices. (``MockEmbeddings`` already returns unit vectors, so the direct
+       proof of this half is ``test_normalize_for_index_*`` below, which feeds a
+       genuinely unnormalized vector through the helper.)
     """
 
-    @pytest.mark.xfail(strict=True, reason="T1.4: IP scores saturate; embeddings are never L2-normalized")
+    def test_ip_metric_type_is_detected(self, tmp_path):
+        ip = make_db(tmp_path, name="ip_metric", faiss_index_type="IndexFlatIP")
+        l2 = make_db(tmp_path, name="l2_metric", faiss_index_type="IndexFlatL2")
+        try:
+            assert ip._get_faiss_metric_type() == "IP"
+            assert l2._get_faiss_metric_type() == "L2"
+        finally:
+            ip.close()
+            l2.close()
+
     def test_ip_index_ranks_the_matching_document_first(self, tmp_path):
-        db = make_db(tmp_path, name="ip_saturation", faiss_index_type="IndexFlatIP")
+        db = make_db(tmp_path, name="ip_ranking", faiss_index_type="IndexFlatIP")
         try:
             db.upsert(
                 ["alpha alpha alpha.", "bravo bravo bravo.", "charlie charlie charlie."],
                 ids=["docA", "docB", "docC"],
             )
-            assert_invariant(db, "pristine upsert")  # ids are clean; only the scores are wrong
+            assert_invariant(db, "pristine upsert")
 
             results = db.query("charlie charlie charlie.", search_type="vector", k=3)
             assert results[0].id == "docC", f"got {[(r.id, round(r.score, 4)) for r in results]}"
+        finally:
+            db.close()
+
+    def test_normalize_for_index_makes_ip_vectors_unit_norm(self, tmp_path):
+        # Direct test of the boundary helper against a genuinely unnormalized
+        # vector (mock embeddings are already unit-norm, so this is the only way
+        # to prove the normalization half actually does something).
+        db = make_db(tmp_path, name="ip_normhelper", faiss_index_type="IndexFlatIP")
+        try:
+            raw = np.array([[3.0, 4.0] + [0.0] * (db.embedding_dimension - 2)], dtype=np.float32)
+            out = db._normalize_for_index(raw, db.index)
+            assert np.linalg.norm(out[0]) == pytest.approx(1.0, abs=1e-6)
+            assert raw[0, 0] == pytest.approx(3.0), "helper must not mutate the caller's buffer"
+        finally:
+            db.close()
+
+    def test_normalize_for_index_is_a_noop_on_l2(self, tmp_path):
+        # The IP-gated normalization must not touch L2, or L2 rankings (and the
+        # retrieval baseline, which runs on IndexFlatL2) would silently shift.
+        db = make_db(tmp_path, name="l2_normhelper", faiss_index_type="IndexFlatL2")
+        try:
+            raw = np.array([[3.0, 4.0] + [0.0] * (db.embedding_dimension - 2)], dtype=np.float32)
+            out = db._normalize_for_index(raw, db.index)
+            assert np.linalg.norm(out[0]) == pytest.approx(5.0, abs=1e-6)
         finally:
             db.close()
 

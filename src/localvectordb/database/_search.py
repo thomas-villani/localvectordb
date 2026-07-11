@@ -388,6 +388,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         ``initial_k`` of the best-scoring ones) instead of whatever survived a
         fixed pre-filter budget.
         """
+        # Normalize the query vector to match the stored vectors when ``index``
+        # scores by inner product; a no-op for L2, so the baseline is unmoved.
+        query_embedding = self._normalize_for_index(query_embedding, index)
         if not filters:
             with self._faiss_lock.read_lock():
                 distances, indices = index.search(query_embedding, initial_k)

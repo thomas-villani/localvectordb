@@ -67,6 +67,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         """
         assert self.index is not None
         ids = self._allocate_faiss_ids("main", len(embeddings))
+        embeddings = self._normalize_for_index(embeddings, self.index)
         with self._faiss_lock.write_lock():
             self.index.add_with_ids(embeddings, ids)
         return ids
