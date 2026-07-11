@@ -50,7 +50,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 
 def _fix_sys_path() -> None:
@@ -100,6 +100,40 @@ def _unit(arr: np.ndarray) -> np.ndarray:
     return arr / norms
 
 
+# OpenAI caps one embeddings request at 300k tokens and 2048 inputs, and
+# ``embed_sync`` batches by input *count* only -- so a single batch of long
+# section/doc spans (e.g. ~970 sections x ~700 tokens) sails past the token cap.
+# Batch here by an estimated-token budget (~3.5 chars/token) with margin.
+_MAX_TOKENS_PER_REQUEST = 200_000
+_MAX_INPUTS_PER_REQUEST = 2000
+_CHARS_PER_TOKEN = 3.5
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, int(len(text) / _CHARS_PER_TOKEN))
+
+
+def _batch_by_budget(texts: Sequence[str]) -> Iterator[List[str]]:
+    """Split ``texts`` into request-sized batches under the token and input caps.
+
+    Order is preserved and every text appears exactly once, so concatenating the
+    per-batch embeddings reproduces the single-call result. A lone text over the
+    token budget is still emitted alone (our spans are <= the encoder window, so
+    this cannot exceed the hard cap in practice).
+    """
+    batch: List[str] = []
+    tokens = 0
+    for text in texts:
+        cost = _estimate_tokens(text)
+        if batch and (len(batch) >= _MAX_INPUTS_PER_REQUEST or tokens + cost > _MAX_TOKENS_PER_REQUEST):
+            yield batch
+            batch, tokens = [], 0
+        batch.append(text)
+        tokens += cost
+    if batch:
+        yield batch
+
+
 class CachedEncoder:
     """Batch-embed with a persistent per-text disk cache keyed on (model, text).
 
@@ -141,7 +175,10 @@ class CachedEncoder:
                 miss_idx.append(i)
 
         if miss_texts:
-            fresh = np.asarray(self.provider.embed_sync(miss_texts), dtype=np.float32)
+            parts = [
+                np.asarray(self.provider.embed_sync(batch), dtype=np.float32) for batch in _batch_by_budget(miss_texts)
+            ]
+            fresh = np.vstack(parts)
             for j, i in enumerate(miss_idx):
                 v = fresh[j].astype(np.float32)
                 np.save(self._path(texts[i]), v)
