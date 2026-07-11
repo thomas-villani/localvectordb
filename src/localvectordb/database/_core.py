@@ -612,18 +612,20 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         return self._hierarchical_embeddings
 
     def _add_vectors_to_section_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
-        """Add vectors to the section FAISS index."""
+        """Add section centroid vectors to the section FAISS index."""
         if self.section_index is None or len(embeddings) == 0:
             return
-        embeddings = self._normalize_for_index(embeddings.astype(np.float32), self.section_index)
+        embeddings = self._unit_normalize_centroids(embeddings)
+        embeddings = self._normalize_for_index(embeddings, self.section_index)
         with self._faiss_lock.write_lock():
             self.section_index.add_with_ids(embeddings, faiss_ids.astype(np.int64))
 
     def _add_vectors_to_document_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
-        """Add vectors to the document FAISS index."""
+        """Add document centroid vectors to the document FAISS index."""
         if self.document_index is None or len(embeddings) == 0:
             return
-        embeddings = self._normalize_for_index(embeddings.astype(np.float32), self.document_index)
+        embeddings = self._unit_normalize_centroids(embeddings)
+        embeddings = self._normalize_for_index(embeddings, self.document_index)
         with self._faiss_lock.write_lock():
             self.document_index.add_with_ids(embeddings, faiss_ids.astype(np.int64))
 
@@ -1166,6 +1168,31 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         normalized = np.array(vectors, dtype=np.float32, copy=True)
         faiss.normalize_L2(normalized)
         return normalized
+
+    @staticmethod
+    def _unit_normalize_centroids(vectors: "np.ndarray") -> "np.ndarray":
+        """Scale each centroid row to unit L2 norm, leaving all-zero rows unchanged.
+
+        Section and document vectors are means of their chunk embeddings.
+        Averaging shrinks a centroid's norm below the scale of its constituents,
+        so a raw centroid no longer sits on the unit sphere that normalized chunk
+        and query vectors occupy -- ``_distance_to_similarity`` then reads its
+        distance off a mismatched scale. Re-normalizing removes that averaging
+        artifact so section/document scoring is well-behaved under both L2 and IP
+        indices. This runs at every centroid write, independent of the index
+        metric (unlike :meth:`_normalize_for_index`, which is IP-only), because
+        the shrink is a property of averaging, not of the metric. Empty sections
+        have an all-zero centroid with no direction and are left untouched.
+
+        Returns a fresh ``float32`` array; the caller's buffer is never mutated.
+        """
+        arr = np.array(vectors, dtype=np.float32, copy=True)
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        nonzero = norms[:, 0] > 0.0
+        arr[nonzero] /= norms[nonzero]
+        return arr
 
     def _distance_to_similarity(self, distance: float, metric_type: Optional[str] = None) -> float:
         """Convert FAISS distance to similarity score based on metric type.

@@ -252,6 +252,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
             self, distances: "np.ndarray", metric_type: Optional[str] = None
         ) -> "np.ndarray": ...
 
+        @staticmethod
+        def _detect_faiss_metric_type(index: Any) -> str: ...
+
         # Implemented on LocalVectorDBCore; declared here so mypy sees it without
         # a runtime stub shadowing the real method via the MRO.
         @classmethod
@@ -1588,11 +1591,16 @@ class SearchMixin(LocalVectorDBBase, ABC):
             self.section_index, query_embedding, initial_k, filters, table="sections"
         )
 
+        # Convert with the section index's OWN metric, not the main chunk index's
+        # (T1.5). The section index is built independently -- historically always
+        # IndexFlatL2 -- so auto-detecting off the main index applies the wrong
+        # formula whenever the main index is IP.
+        section_metric = self._detect_faiss_metric_type(self.section_index)
         valid_results = []
         for dist, idx in zip(distances_row, indices_row, strict=False):
             if idx == -1:
                 continue
-            score = self._distance_to_similarity(float(dist))
+            score = self._distance_to_similarity(float(dist), section_metric)
             if score < score_threshold:
                 continue
             valid_results.append((int(idx), score))
@@ -1694,11 +1702,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
             via_documents=False,
         )
 
+        # Convert with the document index's OWN metric, not the main chunk
+        # index's (T1.5). See _section_level_search for the rationale.
+        document_metric = self._detect_faiss_metric_type(self.document_index)
         valid_results = []
         for dist, idx in zip(distances_row, indices_row, strict=False):
             if idx == -1:
                 continue
-            score = self._distance_to_similarity(float(dist))
+            score = self._distance_to_similarity(float(dist), document_metric)
             if score < score_threshold:
                 continue
             valid_results.append((int(idx), score))
