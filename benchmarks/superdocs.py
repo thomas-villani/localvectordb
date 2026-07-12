@@ -119,11 +119,7 @@ class SyntheticBenchmark:
     gold_locations: Dict[str, List[GoldLocation]] = field(default_factory=dict)
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
-        return (
-            f"SyntheticBenchmark({self.name!r}: {len(self.corpus)} super-docs of "
-            f"{self.params['sections']}x{self.params['passages']} passages, "
-            f"{len(self.queries)} queries)"
-        )
+        return f"Benchmark({self.name!r}: {len(self.corpus)} docs, {len(self.queries)} queries, params={self.params})"
 
 
 def section_qrel_id(doc_id: str, section_index: int) -> str:
