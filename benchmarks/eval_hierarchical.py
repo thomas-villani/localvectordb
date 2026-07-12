@@ -192,15 +192,19 @@ class CachedEncoder:
 
 @dataclass
 class LevelIndex:
-    """A set of retrieval units at one level, each mapping up to a document.
+    """A set of retrieval units at one level, each mapping up to a target unit.
 
-    ``vectors`` are unit-normalised; ``unit_docs[i]`` is the document id that
-    unit ``i`` is scored against (chunk/section -> its parent, doc -> itself).
+    ``vectors`` are unit-normalised. ``unit_docs[i]`` is the document a unit is
+    scored against at the *doc* target (chunk/section -> its parent, doc ->
+    itself). ``unit_sections[i]`` is the section id at the *section* target
+    (chunk -> its containing section, section -> itself); ``None`` for a level
+    with no section (the doc arms), which is then skipped at the section target.
     """
 
     name: str
     vectors: np.ndarray
     unit_docs: List[str]
+    unit_sections: Optional[List[str]] = None
 
 
 @dataclass
@@ -250,6 +254,7 @@ def build_vectors(
     # Flat registries, filled per document, embedded in bulk afterwards.
     chunk_texts: List[str] = []
     chunk_doc: List[str] = []
+    chunk_section: List[str] = []  # section id containing each chunk, for section-target scoring
     chunk_span: List[Tuple[int, int]] = []  # char span of each chunk, for section grouping
 
     section_texts: List[str] = []
@@ -285,6 +290,9 @@ def build_vectors(
             rows.append(len(chunk_texts))
             chunk_texts.append(ch.content)
             chunk_doc.append(doc_id)
+            mid = (ch.position.start + ch.position.end) // 2
+            owner = next((s for s in sections if s.start_pos <= mid < s.end_pos), sections[-1])
+            chunk_section.append(section_qrel_id(doc_id, owner.index))
             chunk_span.append((ch.position.start, ch.position.end))
         per_doc_chunk_rows[doc_id] = rows
 
@@ -317,43 +325,50 @@ def build_vectors(
     summary_section = summary_doc = None
     if summarizer is not None:
         # Summarise the same section/doc texts, then embed the summaries in the
-        # shared vector space. Order is preserved, so the unit->doc maps are reused.
+        # shared vector space. Order is preserved, so the unit maps are reused.
         sec_summaries = summarizer.summarize_all(section_texts)
         doc_summaries = summarizer.summarize_all(doc_texts)
-        summary_section = LevelIndex("summary-section", encoder.encode(sec_summaries), section_doc)
-        summary_doc = LevelIndex("summary-doc", encoder.encode(doc_summaries), doc_ids)
+        summary_section = LevelIndex("summary-section", encoder.encode(sec_summaries), section_doc, section_units)
+        summary_doc = LevelIndex("summary-doc", encoder.encode(doc_summaries), doc_ids, None)
 
     return BuiltVectors(
         query_ids=query_ids,
         query_vecs=query_vecs,
-        chunk=LevelIndex("chunk", chunk_unit, chunk_doc),
-        centroid_section=LevelIndex("centroid-section", centroid_section_vecs, section_doc),
-        centroid_doc=LevelIndex("centroid-doc", centroid_doc_vecs, doc_ids),
-        rawspan_section=LevelIndex("rawspan-section", _unit(raw_section), section_doc),
-        rawspan_doc=LevelIndex("rawspan-doc", _unit(raw_doc), doc_ids),
+        chunk=LevelIndex("chunk", chunk_unit, chunk_doc, chunk_section),
+        centroid_section=LevelIndex("centroid-section", centroid_section_vecs, section_doc, section_units),
+        centroid_doc=LevelIndex("centroid-doc", centroid_doc_vecs, doc_ids, None),
+        rawspan_section=LevelIndex("rawspan-section", _unit(raw_section), section_doc, section_units),
+        rawspan_doc=LevelIndex("rawspan-doc", _unit(raw_doc), doc_ids, None),
         summary_section=summary_section,
         summary_doc=summary_doc,
     )
 
 
-def rank_docs(query_vecs: np.ndarray, query_ids: List[str], level: LevelIndex) -> Dict[str, List[Tuple[str, float]]]:
-    """Per query, score each document by its best-matching unit at this level.
+def rank_units(
+    query_vecs: np.ndarray, query_ids: List[str], level: LevelIndex, target: str
+) -> Optional[Dict[str, List[Tuple[str, float]]]]:
+    """Per query, score each *target unit* by its best-matching vector at this level.
 
-    A document's score is the max cosine over its units (chunks/sections), so a
-    section or chunk hit is credited to its parent. Returns ``qid -> [(doc,
-    score)]`` ranked descending.
+    ``target`` is ``"doc"`` or ``"section"``. A target's score is the max cosine
+    over the vectors that map to it, so a chunk/section hit is credited to its
+    parent doc (or containing section). Returns ``qid -> [(unit, score)]`` ranked
+    descending, or ``None`` if this level has no mapping for ``target`` (the doc
+    arms have no section, so they are absent from the section target).
     """
-    docs_unique = sorted(set(level.unit_docs))
-    doc_index = {d: i for i, d in enumerate(docs_unique)}
-    col_doc = np.fromiter((doc_index[d] for d in level.unit_docs), count=len(level.unit_docs), dtype=np.int64)
+    unit_ids = level.unit_docs if target == "doc" else level.unit_sections
+    if unit_ids is None:
+        return None
+    units_unique = sorted(set(unit_ids))
+    unit_index = {u: i for i, u in enumerate(units_unique)}
+    col = np.fromiter((unit_index[u] for u in unit_ids), count=len(unit_ids), dtype=np.int64)
     sims = query_vecs @ level.vectors.T  # (nq, N)
 
     run: Dict[str, List[Tuple[str, float]]] = {}
     for qi, qid in enumerate(query_ids):
-        acc = np.full(len(docs_unique), -np.inf, dtype=np.float64)
-        np.maximum.at(acc, col_doc, sims[qi])
+        acc = np.full(len(units_unique), -np.inf, dtype=np.float64)
+        np.maximum.at(acc, col, sims[qi])
         order = np.argsort(-acc)
-        run[qid] = [(docs_unique[k], float(acc[k])) for k in order if acc[k] > -np.inf]
+        run[qid] = [(units_unique[k], float(acc[k])) for k in order if acc[k] > -np.inf]
     return run
 
 
@@ -402,70 +417,68 @@ def oracle_over(
     return total / len(query_ids), chosen
 
 
-def run_experiment(bench: SyntheticBenchmark, built: BuiltVectors) -> Dict[str, object]:
-    """Score every arm on document-level qrels; compute fusion and oracles."""
-    qrels = bench.doc_qrels
-    qids = built.query_ids
-
-    single = {
-        "chunk": rank_docs(built.query_vecs, qids, built.chunk),
-        "centroid-section": rank_docs(built.query_vecs, qids, built.centroid_section),
-        "centroid-doc": rank_docs(built.query_vecs, qids, built.centroid_doc),
-        "rawspan-section": rank_docs(built.query_vecs, qids, built.rawspan_section),
-        "rawspan-doc": rank_docs(built.query_vecs, qids, built.rawspan_doc),
+def _level_map(built: BuiltVectors) -> Dict[str, LevelIndex]:
+    levels = {
+        "chunk": built.chunk,
+        "centroid-section": built.centroid_section,
+        "centroid-doc": built.centroid_doc,
+        "rawspan-section": built.rawspan_section,
+        "rawspan-doc": built.rawspan_doc,
     }
     if built.summary_section is not None and built.summary_doc is not None:
-        single["summary-section"] = rank_docs(built.query_vecs, qids, built.summary_section)
-        single["summary-doc"] = rank_docs(built.query_vecs, qids, built.summary_doc)
+        levels["summary-section"] = built.summary_section
+        levels["summary-doc"] = built.summary_doc
+    return levels
+
+
+def _score_target(
+    built: BuiltVectors, qids: List[str], qrels: Dict[str, Dict[str, int]], target: str
+) -> Dict[str, object]:
+    """Score every arm supporting ``target`` (doc/section): singles, fusion, oracle.
+
+    Arms without a mapping for ``target`` (the doc arms at the section target) are
+    absent, and each fusion/oracle family uses whichever of its levels are
+    present. Every arm is scored against the same ``qrels`` for this target, so a
+    hit is credited to its target unit before scoring.
+    """
+    single = {}
+    for name, level in _level_map(built).items():
+        run = rank_units(built.query_vecs, qids, level, target)
+        if run is not None:
+            single[name] = run
     single_ids = {name: ids_only(run) for name, run in single.items()}
+    all_runs: Dict[str, Dict[str, List[str]]] = dict(single_ids)
 
-    fusion_centroid = fuse([single["chunk"], single["centroid-section"], single["centroid-doc"]], qids)
-    fusion_rawspan = fuse([single["chunk"], single["rawspan-section"], single["rawspan-doc"]], qids)
-
-    runs: Dict[str, Dict[str, List[str]]] = dict(single_ids)
-    runs["fusion-centroid"] = fusion_centroid
-    runs["fusion-rawspan"] = fusion_rawspan
-
+    families = {
+        "centroid": ["chunk", "centroid-section", "centroid-doc"],
+        "rawspan": ["chunk", "rawspan-section", "rawspan-doc"],
+        "summary": ["chunk", "summary-section", "summary-doc"],
+    }
     oracle: Dict[str, object] = {}
-    gaps: Dict[str, float] = {}
+    for fam, arms in families.items():
+        present = [a for a in arms if a in single]
+        if len(present) < 2:  # need chunk + at least one coarse level to be meaningful
+            continue
+        all_runs[f"fusion-{fam}"] = fuse([single[a] for a in present], qids)
+        score, usage = oracle_over({a: single_ids[a] for a in present}, qids, qrels, PRIMARY_K)
+        oracle[fam] = {"ndcg@10": score, "level_usage": dict(usage)}
 
-    oracle_centroid_arms = {a: single_ids[a] for a in ("chunk", "centroid-section", "centroid-doc")}
-    oracle_rawspan_arms = {a: single_ids[a] for a in ("chunk", "rawspan-section", "rawspan-doc")}
-    oc_score, oc_choice = oracle_over(oracle_centroid_arms, qids, qrels, PRIMARY_K)
-    or_score, or_choice = oracle_over(oracle_rawspan_arms, qids, qrels, PRIMARY_K)
-    oracle["centroid"] = {"ndcg@10": oc_score, "level_usage": dict(oc_choice)}
-    oracle["rawspan"] = {"ndcg@10": or_score, "level_usage": dict(or_choice)}
+    results = {name: evaluate(run, qrels, k_values=RECALL_K_VALUES) for name, run in all_runs.items()}
+    return {"results": results, "oracle": oracle}
 
-    if "summary-section" in single_ids:
-        fusion_summary = fuse([single["chunk"], single["summary-section"], single["summary-doc"]], qids)
-        runs["fusion-summary"] = fusion_summary
-        oracle_summary_arms = {a: single_ids[a] for a in ("chunk", "summary-section", "summary-doc")}
-        os_score, os_choice = oracle_over(oracle_summary_arms, qids, qrels, PRIMARY_K)
-        oracle["summary"] = {"ndcg@10": os_score, "level_usage": dict(os_choice)}
 
-    results = {name: evaluate(run, qrels, k_values=RECALL_K_VALUES) for name, run in runs.items()}
+def run_experiment(bench: SyntheticBenchmark, built: BuiltVectors) -> Dict[str, object]:
+    """Score every arm at both the document and section targets.
 
-    gaps["oracle_rawspan_minus_fusion_rawspan"] = or_score - results["fusion-rawspan"][PRIMARY_METRIC]
-    gaps["oracle_centroid_minus_fusion_centroid"] = oc_score - results["fusion-centroid"][PRIMARY_METRIC]
-    gaps["fusion_rawspan_minus_chunk"] = results["fusion-rawspan"][PRIMARY_METRIC] - results["chunk"][PRIMARY_METRIC]
-    gaps["rawspan_section_minus_centroid_section"] = (
-        results["rawspan-section"][PRIMARY_METRIC] - results["centroid-section"][PRIMARY_METRIC]
-    )
-    gaps["rawspan_doc_minus_centroid_doc"] = (
-        results["rawspan-doc"][PRIMARY_METRIC] - results["centroid-doc"][PRIMARY_METRIC]
-    )
-    if "summary-section" in single_ids:
-        gaps["summary_section_minus_rawspan_section"] = (
-            results["summary-section"][PRIMARY_METRIC] - results["rawspan-section"][PRIMARY_METRIC]
-        )
-        gaps["summary_doc_minus_rawspan_doc"] = (
-            results["summary-doc"][PRIMARY_METRIC] - results["rawspan-doc"][PRIMARY_METRIC]
-        )
-        gaps["fusion_summary_minus_fusion_rawspan"] = (
-            results["fusion-summary"][PRIMARY_METRIC] - results["fusion-rawspan"][PRIMARY_METRIC]
-        )
-
-    return {"results": results, "oracle": oracle, "gaps": gaps}
+    Doc target: does the right super-document come back. Section target: does the
+    right section come back -- the metric that isolates the hierarchy premise,
+    especially under ``mode="section"`` where the answer *is* a section.
+    """
+    qids = built.query_ids
+    return {
+        "doc": _score_target(built, qids, bench.doc_qrels, "doc"),
+        "section": _score_target(built, qids, bench.section_qrels, "section"),
+    }
 
 
 def format_table(results: Dict[str, Dict[str, float]]) -> str:
@@ -493,6 +506,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-queries", type=int, default=None, help="Cap placed queries (smaller run).")
     p.add_argument(
+        "--mode",
+        default="point",
+        choices=("point", "section"),
+        help="point: one gold passage per doc (favours chunk). section: cluster a query's golds "
+        "into one gold-dense section (the fair test of the hierarchy premise).",
+    )
+    p.add_argument("--min-section-gold", type=int, default=2, help="section mode: min in-corpus golds per query.")
+    p.add_argument(
         "--summary",
         action="store_true",
         help="Add the directed-summary arm (H2): LLM-summarise each span, then embed. Costs LLM tokens.",
@@ -518,6 +539,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         passages_per_section=args.passages,
         seed=args.seed,
         max_queries=args.max_queries,
+        mode=args.mode,
+        min_section_gold=args.min_section_gold,
     )
     logger.info("%r", bench)
 
@@ -535,19 +558,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.info("Summarised: %d new, %d cached", summarizer.n_called, summarizer.n_cached)
 
     report = run_experiment(bench, built)
-    results = report["results"]  # type: ignore[assignment]
-    oracle = report["oracle"]  # type: ignore[assignment]
 
-    print()
-    print(format_table(results))  # type: ignore[arg-type]
-    print()
-    for family in ("rawspan", "centroid", "summary"):
-        if family in oracle:  # type: ignore[operator]
-            entry = oracle[family]  # type: ignore[index]
-            print(f"Oracle ({family:<8} levels) {PRIMARY_METRIC}={entry['ndcg@10']:.4f}  usage={entry['level_usage']}")
-    print("\nKey gaps (positive = the first beats the second):")
-    for name, val in report["gaps"].items():  # type: ignore[union-attr]
-        print(f"  {name:<44} {val:+.4f}")
+    for target in ("doc", "section"):
+        block = report[target]  # type: ignore[index]
+        results = block["results"]
+        oracle = block["oracle"]
+        chunk_ndcg = results["chunk"][PRIMARY_METRIC]
+        print(f"\n===== target: {target.upper()} (qrels = {target}) =====")
+        print(format_table(results))
+        print()
+        for family in ("rawspan", "centroid", "summary"):
+            if family in oracle:
+                entry = oracle[family]
+                gap = entry["ndcg@10"] - chunk_ndcg
+                print(
+                    f"Oracle ({family:<8} levels) {PRIMARY_METRIC}={entry['ndcg@10']:.4f}  "
+                    f"(vs chunk {gap:+.4f})  usage={entry['level_usage']}"
+                )
 
     cost: Dict[str, object] = {"embedded": encoder.n_embedded, "cached": encoder.n_cached, "dim": encoder.dim}
     if summarizer is not None:
@@ -563,7 +590,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "synthetic": bench.params | {"super_docs": len(bench.corpus), "queries": len(bench.queries)},
         "primary_metric": PRIMARY_METRIC,
         "cost": cost,
-        **report,
+        "results_by_target": report,
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
