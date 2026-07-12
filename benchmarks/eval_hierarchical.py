@@ -107,6 +107,12 @@ def _unit(arr: np.ndarray) -> np.ndarray:
 _MAX_TOKENS_PER_REQUEST = 200_000
 _MAX_INPUTS_PER_REQUEST = 2000
 _CHARS_PER_TOKEN = 3.5
+# A single input over the model's ~8191-token window is a hard 400 from OpenAI.
+# Real long docs (Qasper papers, long sections) exceed it, so cap each input to a
+# conservative char bound (worst-case ~3 chars/token). Truncation is honest for a
+# doc-level raw-span vector -- a single embedding cannot see an entire long paper,
+# which is exactly why the doc arm is the weak one. No-op for the short BEIR spans.
+_MAX_EMBED_CHARS = 24_000
 
 
 def _estimate_tokens(text: str) -> int:
@@ -162,6 +168,9 @@ class CachedEncoder:
         """Return an ``(n, dim)`` array for ``texts`` (unit-normalised by default)."""
         if not texts:
             raise ValueError("encode() called with no texts")
+        # Truncate over-long inputs to stay under the encoder's context window.
+        # Done before hashing so the cache key matches what is actually embedded.
+        texts = [t if len(t) <= _MAX_EMBED_CHARS else t[:_MAX_EMBED_CHARS] for t in texts]
         vectors: List[Optional[np.ndarray]] = [None] * len(texts)
         miss_texts: List[str] = []
         miss_idx: List[int] = []
@@ -498,7 +507,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         description="Hierarchical retrieval experiment (raw-span vs centroid, fusion, oracle).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--dataset", default="nfcorpus", choices=("fiqa", "nfcorpus", "scifact"))
+    p.add_argument("--dataset", default="nfcorpus", choices=("fiqa", "nfcorpus", "scifact", "qasper"))
+    p.add_argument("--split", default="dev", help="qasper only: dev (~280 papers) or train (~880).")
+    p.add_argument("--max-papers", type=int, default=None, help="qasper only: cap the number of papers.")
     p.add_argument("--provider", default=DEFAULT_PROVIDER, help="Embedding provider (default: openai).")
     p.add_argument("--model", default=DEFAULT_MODEL, help="Embedding model (default: text-embedding-3-small).")
     p.add_argument("--sections", type=int, default=3, help="Sections per super-document (S).")
@@ -531,17 +542,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("Refusing to run on mock embeddings: they cannot measure relevance.", file=sys.stderr)
         return 1
 
-    source = beir_data.load(args.dataset)
-    logger.info("Source: %r", source)
-    bench = build_synthetic_benchmark(
-        source,
-        sections_per_doc=args.sections,
-        passages_per_section=args.passages,
-        seed=args.seed,
-        max_queries=args.max_queries,
-        mode=args.mode,
-        min_section_gold=args.min_section_gold,
-    )
+    if args.dataset == "qasper":
+        from benchmarks.qasper_data import load_qasper
+
+        bench = load_qasper(split=args.split, max_papers=args.max_papers, seed=args.seed)
+    else:
+        source = beir_data.load(args.dataset)
+        logger.info("Source: %r", source)
+        bench = build_synthetic_benchmark(
+            source,
+            sections_per_doc=args.sections,
+            passages_per_section=args.passages,
+            seed=args.seed,
+            max_queries=args.max_queries,
+            mode=args.mode,
+            min_section_gold=args.min_section_gold,
+        )
     logger.info("%r", bench)
 
     summarizer = None
@@ -594,7 +610,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
-    out = RESULTS_DIR / f"hierarchical_{args.dataset}_s{args.sections}p{args.passages}_{stamp}.json"
+    if args.dataset == "qasper":
+        tag = f"qasper_{args.split}"
+    else:
+        tag = f"{args.dataset}_s{args.sections}p{args.passages}_{args.mode}"
+    out = RESULTS_DIR / f"hierarchical_{tag}_{stamp}.json"
     out.write_text(json.dumps(full, indent=2), encoding="utf-8")
     logger.info("Wrote %s", out)
     return 0
