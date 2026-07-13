@@ -80,21 +80,12 @@ PRIMARY_METRIC = f"ndcg@{EVAL_K}"
 DEFAULT_INDEX_TYPE = "IndexFlatL2"
 DEFAULT_CHUNKING = {"chunking_method": "sentences", "chunk_size": 500, "chunk_overlap": 1}
 
-ALL_SCORING_METHODS = (
-    "best",
-    "average",
-    "worst",
-    "weighted_average",
-    "frequency_boost",
-    "harmonic_mean",
-    "diminishing_returns",
-    "statistical",
-    "robust_mean",
-    "percentile",
-    "geometric_mean",
-)
-# The three T1.6 proposes keeping.
+# T1.6 pruned document scoring to these three (see benchmarks/RETRIEVAL_BASELINE.md). The
+# other eight were measured on NFCorpus and none beat these; they are gone from the library,
+# so requesting one now raises ValueError. ALL_SCORING_METHODS == CORE_SCORING_METHODS is kept
+# so the historical --all-scoring flag still runs (it is now a no-op alias for the core sweep).
 CORE_SCORING_METHODS = ("best", "average", "frequency_boost")
+ALL_SCORING_METHODS = CORE_SCORING_METHODS
 
 # (search_type, vector_weight). vector_weight is ignored unless search_type is hybrid.
 SEARCH_VARIANTS = (
@@ -390,7 +381,11 @@ examples:
     p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
     p.add_argument("--index-type", default=DEFAULT_INDEX_TYPE)
     p.add_argument("--k", type=int, default=EVAL_K)
-    p.add_argument("--all-scoring", action="store_true", help="Sweep all 11 document scoring methods (T1.6).")
+    p.add_argument(
+        "--all-scoring",
+        action="store_true",
+        help="Deprecated no-op since T1.6 pruned scoring to 3 methods; sweeps the same core methods.",
+    )
     p.add_argument("--rerank", action="store_true", help="Add cross-encoder reranked variants (T1.2). Slow on CPU.")
     p.add_argument("--rebuild", action="store_true", help="Discard the cached database and re-ingest.")
     p.add_argument("--download-only", action="store_true")

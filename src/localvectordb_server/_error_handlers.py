@@ -268,15 +268,7 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
     valid_methods = [
         "best",
         "average",
-        "worst",
-        "weighted_average",
         "frequency_boost",
-        "harmonic_mean",
-        "diminishing_returns",
-        "statistical",
-        "robust_mean",
-        "percentile",
-        "geometric_mean",
     ]
     if document_scoring_method not in valid_methods:
         raise ValidationError(
