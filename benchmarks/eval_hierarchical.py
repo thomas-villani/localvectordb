@@ -108,11 +108,12 @@ _MAX_TOKENS_PER_REQUEST = 200_000
 _MAX_INPUTS_PER_REQUEST = 2000
 _CHARS_PER_TOKEN = 3.5
 # A single input over the model's ~8191-token window is a hard 400 from OpenAI.
-# Real long docs (Qasper papers, long sections) exceed it, so cap each input to a
-# conservative char bound (worst-case ~3 chars/token). Truncation is honest for a
-# doc-level raw-span vector -- a single embedding cannot see an entire long paper,
-# which is exactly why the doc arm is the weak one. No-op for the short BEIR spans.
-_MAX_EMBED_CHARS = 24_000
+# Real long docs (Qasper papers, long sections) exceed it. Rather than truncate
+# (which silently drops a long section's tail -- and section is our key arm), a
+# span over this bound is embedded in windows and mean-pooled, so the whole span
+# is represented. Conservative char bound (worst-case ~3 chars/token). No-op for
+# the short BEIR spans, so their cache entries stay valid.
+_EMBED_WINDOW_CHARS = 24_000
 
 
 def _estimate_tokens(text: str) -> int:
@@ -158,19 +159,32 @@ class CachedEncoder:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.n_embedded = 0
         self.n_cached = 0
+        self.n_pooled = 0  # inputs that exceeded the window and were window-mean-pooled
         self.dim: Optional[int] = None
 
     def _path(self, text: str) -> Path:
         h = hashlib.sha256(f"{self.model}\x00{text}".encode("utf-8")).hexdigest()
         return self.cache_dir / f"{h}.npy"
 
-    def encode(self, texts: Sequence[str], *, normalize: bool = True) -> np.ndarray:
-        """Return an ``(n, dim)`` array for ``texts`` (unit-normalised by default)."""
-        if not texts:
-            raise ValueError("encode() called with no texts")
-        # Truncate over-long inputs to stay under the encoder's context window.
-        # Done before hashing so the cache key matches what is actually embedded.
-        texts = [t if len(t) <= _MAX_EMBED_CHARS else t[:_MAX_EMBED_CHARS] for t in texts]
+    @staticmethod
+    def _windows(text: str) -> List[str]:
+        """Split ``text`` into <= window-sized pieces, breaking on whitespace when possible."""
+        if len(text) <= _EMBED_WINDOW_CHARS:
+            return [text]
+        out: List[str] = []
+        i = 0
+        while i < len(text):
+            end = min(i + _EMBED_WINDOW_CHARS, len(text))
+            if end < len(text):
+                cut = text.rfind(" ", i + _EMBED_WINDOW_CHARS // 2, end)
+                if cut > i:
+                    end = cut
+            out.append(text[i:end])
+            i = end
+        return out
+
+    def _embed_raw(self, texts: List[str]) -> np.ndarray:
+        """Embed each text (<= one window) with the disk cache; return raw ``(n, dim)``."""
         vectors: List[Optional[np.ndarray]] = [None] * len(texts)
         miss_texts: List[str] = []
         miss_idx: List[int] = []
@@ -193,8 +207,27 @@ class CachedEncoder:
                 np.save(self._path(texts[i]), v)
                 vectors[i] = v
                 self.n_embedded += 1
+        return np.vstack(vectors).astype(np.float32)
 
-        out = np.vstack(vectors).astype(np.float32)
+    def encode(self, texts: Sequence[str], *, normalize: bool = True) -> np.ndarray:
+        """Return an ``(n, dim)`` array for ``texts`` (unit-normalised by default).
+
+        A text over the encoder window is embedded in windows and mean-pooled, so
+        a long section/document is represented in full rather than truncated.
+        """
+        if not texts:
+            raise ValueError("encode() called with no texts")
+        windows_per_text = [self._windows(t) for t in texts]
+        flat_raw = self._embed_raw([w for ws in windows_per_text for w in ws])
+
+        out = np.zeros((len(texts), flat_raw.shape[1]), dtype=np.float32)
+        cursor = 0
+        for i, ws in enumerate(windows_per_text):
+            n = len(ws)
+            out[i] = flat_raw[cursor : cursor + n].mean(axis=0)
+            cursor += n
+            if n > 1:
+                self.n_pooled += 1
         self.dim = out.shape[1]
         return _unit(out) if normalize else out
 
@@ -278,13 +311,11 @@ def build_vectors(
     # section without a second pass over the text.
     per_doc_chunk_rows: Dict[str, List[int]] = {}
 
-    max_chars = 8191 * 4  # rough token->char; warn if a span likely exceeds the encoder window
     for doc_id, text in bench.corpus.items():
         doc_ids.append(doc_id)
         doc_texts.append(text)
-        if len(text) > max_chars:
-            logger.warning("Doc %s is ~%d chars; may exceed the encoder context window", doc_id, len(text))
-
+        # Over-long doc/section spans are window-mean-pooled by the encoder, not
+        # truncated (see CachedEncoder.encode), so no length guard is needed here.
         sections = _detect_sections(text)
         for sec in sections:
             if sec.heading is None:
@@ -536,6 +567,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+    # The sentence chunker warns per over-long sentence it char-splits ("501 > 500");
+    # benign and noisy on real prose, so quiet it to errors only.
+    logging.getLogger("localvectordb.chunking").setLevel(logging.ERROR)
     args = parse_args(argv)
 
     if args.provider == "mock":
@@ -569,7 +603,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     encoder = CachedEncoder(args.provider, args.model)
     built = build_vectors(bench, encoder, summarizer)
-    logger.info("Encoded: %d new, %d cached (dim=%s)", encoder.n_embedded, encoder.n_cached, encoder.dim)
+    logger.info(
+        "Encoded: %d new, %d cached, %d pooled (dim=%s)",
+        encoder.n_embedded,
+        encoder.n_cached,
+        encoder.n_pooled,
+        encoder.dim,
+    )
     if summarizer is not None:
         logger.info("Summarised: %d new, %d cached", summarizer.n_called, summarizer.n_cached)
 
@@ -592,7 +632,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     f"(vs chunk {gap:+.4f})  usage={entry['level_usage']}"
                 )
 
-    cost: Dict[str, object] = {"embedded": encoder.n_embedded, "cached": encoder.n_cached, "dim": encoder.dim}
+    cost: Dict[str, object] = {
+        "embedded": encoder.n_embedded,
+        "cached": encoder.n_cached,
+        "pooled": encoder.n_pooled,
+        "dim": encoder.dim,
+    }
     if summarizer is not None:
         cost["summaries_called"] = summarizer.n_called
         cost["summaries_cached"] = summarizer.n_cached
