@@ -110,24 +110,6 @@ class TestDocumentScoringMethods:
             assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
-    def test_scoring_method_worst(self, search_db):
-        """
-        Test 'worst' scoring method - should use lowest chunk score.
-        """
-        results = search_db.query(
-            "database vector search",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="worst",
-        )
-
-        assert len(results) > 0
-        # Worst method should pick the lowest scoring chunk
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-
     def test_scoring_method_average(self, search_db):
         """
         Test 'average' scoring method - should average all chunk scores.
@@ -144,27 +126,6 @@ class TestDocumentScoringMethods:
         for result in results:
             assert result.type == "document"
             assert 0 <= result.score <= 1.0
-
-    def test_scoring_method_weighted_average(self, search_db):
-        """
-        Test 'weighted_average' scoring method with score-based weights.
-        """
-        results = search_db.query(
-            "data science visualization",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="weighted_average",
-        )
-
-        assert len(results) > 0
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-            # Weighted average should have weights in metadata
-            if hasattr(result, "metadata") and result.metadata:
-                if "method_metadata" in result.metadata:
-                    assert "weights" in result.metadata["method_metadata"]
 
     def test_scoring_method_frequency_boost(self, search_db):
         """
@@ -185,118 +146,19 @@ class TestDocumentScoringMethods:
             assert result.type == "document"
             assert 0 <= result.score <= 1.0
 
-    def test_scoring_method_harmonic_mean(self, search_db):
+    def test_scoring_method_unknown_raises(self, search_db):
         """
-        Test 'harmonic_mean' scoring with coverage bonus.
+        T1.6 removed the eight heuristic scoring methods. A removed/unknown method must
+        now fail loudly rather than silently falling back to 'best'.
         """
-        results = search_db.query(
-            "vector database FAISS",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="harmonic_mean",
-            document_scoring_options={"max_chunks": 3, "coverage_threshold": 0.6},
-        )
-
-        assert len(results) > 0
-        # All results should be valid documents
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-
-    def test_scoring_method_diminishing_returns(self, search_db):
-        """
-        Test 'diminishing_returns' scoring with decay factor.
-        """
-        results = search_db.query(
-            "cloud computing kubernetes",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="diminishing_returns",
-            document_scoring_options={"decay_factor": 0.7},
-        )
-
-        assert len(results) > 0
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-
-    def test_scoring_method_statistical(self, search_db):
-        """
-        Test 'statistical' scoring with multiple weight components.
-        """
-        results = search_db.query(
-            "machine learning AI",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="statistical",
-            document_scoring_options={
-                "best_weight": 0.5,
-                "mean_weight": 0.3,
-                "consistency_weight": 0.1,
-                "coverage_weight": 0.1,
-            },
-        )
-
-        assert len(results) > 0
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-
-    def test_scoring_method_robust_mean(self, search_db):
-        """
-        Test 'robust_mean' scoring with outlier filtering.
-        """
-        results = search_db.query(
-            "data science statistics",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="robust_mean",
-            document_scoring_options={"outlier_threshold": 1.5, "position_decay": 0.85},
-        )
-
-        assert len(results) > 0
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-
-    def test_scoring_method_percentile(self, search_db):
-        """
-        Test 'percentile' scoring with configurable percentiles.
-        """
-        results = search_db.query(
-            "natural language NLP",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="percentile",
-            document_scoring_options={"primary_percentile": 0.8, "secondary_percentile": 0.6, "primary_weight": 0.6},
-        )
-
-        assert len(results) > 0
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
-
-    def test_scoring_method_geometric_mean(self, search_db):
-        """
-        Test 'geometric_mean' scoring with stabilization.
-        """
-        results = search_db.query(
-            "DevOps deployment cloud",
-            search_type="vector",
-            return_type="documents",
-            k=3,
-            document_scoring_method="geometric_mean",
-        )
-
-        assert len(results) > 0
-        for result in results:
-            assert result.type == "document"
-            assert 0 <= result.score <= 1.0
+        with pytest.raises(ValueError, match="Unknown document_scoring_method"):
+            search_db.query(
+                "machine learning",
+                search_type="vector",
+                return_type="documents",
+                k=3,
+                document_scoring_method="statistical",
+            )
 
 
 @pytest.mark.unit

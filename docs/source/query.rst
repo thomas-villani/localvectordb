@@ -390,16 +390,13 @@ Adaptive Scoring
 
 .. code-block:: python
 
-    # For research/comprehensive search
+    # For research/comprehensive search: reward documents with several relevant chunks
     scholarly_results = db.query(
         "climate change impacts",
         return_type="documents",
-        document_scoring_method="statistical",
+        document_scoring_method="frequency_boost",
         document_scoring_options={
-            "best_weight": 0.4,
-            "mean_weight": 0.3,
-            "consistency_weight": 0.2,
-            "coverage_weight": 0.1
+            "frequency_bias": 0.4
         }
     )
     

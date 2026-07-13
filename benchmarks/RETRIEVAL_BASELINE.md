@@ -16,6 +16,26 @@ reverted, not shipped.
 The machine-readable copy is `benchmarks/retrieval_baseline.json` (tracked).
 `--check` diffs against it with a tolerance of 0.005 on `ndcg@10`.
 
+### T1.6 — document scoring pruned to 3 methods (NFCorpus baseline)
+
+Document scoring was reduced from 11 methods to `best`, `average`, `frequency_boost`.
+The other eight (`worst`, `weighted_average`, `harmonic_mean`, `diminishing_returns`,
+`statistical`, `robust_mean`, `percentile`, `geometric_mean`) were **measured on
+NFCorpus** — the right dataset for this, since SciFact averages 1.09 chunks/document and
+barely aggregates — across every search leg and `vector_weight`. None beat the three
+keepers by more than 0.0010 (below the 0.005 tolerance), none beat them at the library
+default, and `weighted_average` additionally crashes (`ZeroDivisionError`) on any hybrid
+document whose chunk scores are all zero-filled. So the deletion cost nothing measurable.
+
+Because `--check` diffs config labels without keying on the dataset, NFCorpus has its own
+baseline file, **`benchmarks/retrieval_baseline_nfcorpus.json`** (tracked, 3,633 docs /
+323 queries, graded relevance). Gate an NFCorpus change with:
+
+```bash
+./.venv/Scripts/python.exe benchmarks/eval_retrieval.py --dataset nfcorpus \
+    --check --baseline benchmarks/retrieval_baseline_nfcorpus.json
+```
+
 Regenerate with `--save-baseline` **from a clean tree**. The harness stamps the
 baseline with `git rev-parse HEAD`, suffixed `-dirty` if the tree is not clean; a
 `-dirty` stamp in the committed file means the numbers describe code that was
@@ -120,7 +140,11 @@ was asking "did the keyword leg find this at all?" rather than "how well?". The
 optimum now sits at `vw=0.5` (0.7090) rather than the default 0.7 (0.6940). **The
 default was deliberately left at 0.7.** The dense-versus-lexical tradeoff is
 corpus-dependent, SciFact is unusually lexical, and tuning a global default on one
-dataset is how you overfit a benchmark. Recheck on NFCorpus before moving it.
+dataset is how you overfit a benchmark. **NFCorpus (measured under T1.6) shows the
+same shape** — `frequency_boost` scores 0.3367 at `vw=0.5` versus 0.3298 at the
+default `vw=0.7` (full 323 queries) — so `vw=0.5` beats `vw=0.7` on both datasets.
+Still deliberately not moved: retuning a global default is a separate, measurable
+change and is tracked as its own open item, not folded into the scoring-method pruning.
 
 **3. Hybrid scores are now pool-relative.** They are comparable within one result
 set, but not across queries, and not across different `k` (which changes the

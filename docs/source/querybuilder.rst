@@ -235,7 +235,7 @@ Return Type Customization
    results = (
        db.query_builder()
        .search("machine learning")
-       .documents(scoring_method="weighted_average")  # Use weighted average of chunk scores
+       .documents(scoring_method="average")  # Use the mean of the matching chunk scores
        .execute()
    )
 

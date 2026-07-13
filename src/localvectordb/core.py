@@ -26,38 +26,16 @@ logger = logging.getLogger(__name__)
 DocumentScoringMethod = Literal[
     "best",
     "average",
-    "worst",
-    "weighted_average",
     "frequency_boost",
-    "harmonic_mean",
-    "diminishing_returns",
-    "statistical",
-    "robust_mean",
-    "percentile",
-    "geometric_mean",
 ]
 """
-Document scoring methods for aggregating chunk scores:
+Document scoring methods for aggregating chunk scores into a document score:
 
 - "best": Highest chunk score (single best passage matters)
-- "worst": Lowest chunk score (all content must meet threshold)
 - "average": Mean of all chunk scores (overall quality)
-- "weighted_average": Score-weighted average (emphasizes top chunks)
-- "frequency_boost": Boosts score by number of quality chunks (default, good for comprehensive docs)
+- "frequency_boost": Boosts the best chunk score by the number of quality chunks
+  (default, good for comprehensive docs)
   - frequency_bias (0.3): How much to boost based on chunk count
-- "harmonic_mean": Conservative mean with coverage bonus
-  - max_chunks (5): Top chunks for calculation
-  - coverage_threshold (0.7): Quality threshold for bonus
-- "diminishing_returns": Exponential decay for later chunks
-  - decay_factor (0.8): How quickly impact decreases
-- "statistical": Multi-factor scoring (best + mean + consistency + coverage)
-  - best_weight (0.6), mean_weight (0.2), consistency_weight (0.1), coverage_weight (0.1)
-- "robust_mean": Outlier-resistant with position weighting
-  - outlier_threshold (2.0): Z-score for outlier removal
-  - position_decay (0.9): Penalty for lower-ranked chunks
-- "percentile": Combines high/low percentiles for balanced scoring
-  - primary_percentile (0.9), secondary_percentile (0.7), primary_weight (0.7)
-- "geometric_mean": Conservative mean (all chunks contribute meaningfully)
 """
 
 

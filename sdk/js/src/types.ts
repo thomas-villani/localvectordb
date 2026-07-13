@@ -24,15 +24,7 @@ export type ReturnType =
 export type DocumentScoringMethod =
   | "best"
   | "average"
-  | "worst"
-  | "weighted_average"
-  | "frequency_boost"
-  | "harmonic_mean"
-  | "diminishing_returns"
-  | "statistical"
-  | "robust_mean"
-  | "percentile"
-  | "geometric_mean";
+  | "frequency_boost";
 
 export type QueryResultType =
   | "document"

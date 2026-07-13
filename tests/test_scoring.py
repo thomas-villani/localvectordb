@@ -109,23 +109,27 @@ class TestComputeDocumentScores:
         assert len(results) == 1
         return results[0]
 
-    def test_best_worst_average(self):
+    def test_best_and_average(self):
         assert self._score_for("best").score == pytest.approx(0.9)
-        assert self._score_for("worst").score == pytest.approx(0.1)
         assert self._score_for("average").score == pytest.approx(0.5)
 
-    def test_best_ge_average_ge_worst(self):
+    def test_best_ge_average(self):
         best = self._score_for("best").score
         avg = self._score_for("average").score
-        worst = self._score_for("worst").score
-        assert best >= avg >= worst
+        assert best >= avg
 
-    def test_weighted_average_records_weights(self):
-        result = self._score_for("weighted_average")
-        # Fix #2 regression guard: the key is spelled "weights" (was "primary_wieght"
-        # elsewhere); weighted_average records normalized weights in _scoring.
-        assert "weights" in result.metadata["_scoring"]
-        assert result.metadata["_scoring"]["_aggregation_method"] == "weighted_average"
+    def test_frequency_boost_records_metadata(self):
+        result = self._score_for("frequency_boost")
+        scoring = result.metadata["_scoring"]
+        assert scoring["_aggregation_method"] == "frequency_boost"
+        assert "effective_chunk_count" in scoring
+        assert "frequency_multiplier" in scoring
+
+    def test_unknown_method_raises(self):
+        # T1.6 removed the eight heuristic methods; a removed/unknown name must raise
+        # rather than silently fall back to 'best'.
+        with pytest.raises(ValueError, match="Unknown document_scoring_method"):
+            self._score_for("weighted_average")
 
     def test_results_sorted_by_score_desc(self):
         doc_groups = {
