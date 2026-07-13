@@ -151,9 +151,12 @@ class CachedEncoder:
     """
 
     def __init__(self, provider_name: str, model: str) -> None:
-        from localvectordb.embeddings import EmbeddingRegistry
-
-        self.provider = EmbeddingRegistry.create_provider(provider_name, model)
+        # The provider is constructed lazily, on the first cache miss only. A
+        # fully-cached sweep (every span seen on a prior run) then needs no live
+        # provider and no API key -- which is what lets the offline analysis
+        # harness re-score cached vectors for free.
+        self.provider_name = provider_name
+        self._provider = None
         self.model = model
         self.cache_dir = CACHE_DIR / "hier_embed" / f"{provider_name}__{model.replace('/', '_')}"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -161,6 +164,14 @@ class CachedEncoder:
         self.n_cached = 0
         self.n_pooled = 0  # inputs that exceeded the window and were window-mean-pooled
         self.dim: Optional[int] = None
+
+    @property
+    def provider(self):
+        if self._provider is None:
+            from localvectordb.embeddings import EmbeddingRegistry
+
+            self._provider = EmbeddingRegistry.create_provider(self.provider_name, self.model)
+        return self._provider
 
     def _path(self, text: str) -> Path:
         h = hashlib.sha256(f"{self.model}\x00{text}".encode("utf-8")).hexdigest()
