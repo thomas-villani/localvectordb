@@ -378,6 +378,19 @@ Perfect reconstruction capabilities:
    if found_chunk:
        print(f"Character {target_position} is in chunk {found_chunk.index}")
 
+.. note::
+
+   Reconstruction is byte-exact for the general-purpose chunkers
+   (``sentences`` -- the default -- ``paragraphs``, ``words``, ``lines``,
+   ``characters``, ``tokens``, ``sections``): their chunk spans cover the whole
+   document with no gaps, so ``reconstruct_document`` returns the original text
+   character-for-character. The ``code-blocks`` chunker is specialised for
+   splitting source code; its multi-chunk path is line-oriented and guarantees
+   exact reconstruction only when the whole input fits a single chunk.
+
+   Note also that this is a property of the *chunker's own* output. A chunk list
+   assembled by hand with gaps between spans will leave those positions blank.
+
 Section Detection (Hierarchical)
 --------------------------------
 

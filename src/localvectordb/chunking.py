@@ -86,7 +86,13 @@ class PositionTrackingChunker(ABC):
         """
         result = []
         for chunk in chunks:
-            if chunk.tokens <= self.max_tokens:
+            # A chunk is over-limit only if its *meaningful* content is: chunkers
+            # fold inter-unit separators onto a chunk's span (so reconstruction is
+            # exact), and a trailing/leading whitespace token must never trigger a
+            # fragmenting CharChunker split. Re-tokenize the stripped content only
+            # for the rare chunk that already looks oversized, so the common path
+            # keeps using the precomputed count.
+            if chunk.tokens <= self.max_tokens or self.count_tokens(chunk.content.strip()) <= self.max_tokens:
                 result.append(chunk)
             else:
                 # Split oversized chunk using CharChunker
@@ -145,7 +151,11 @@ class SentenceChunker(PositionTrackingChunker):
         # result is identical to the loop below when everything fits in one chunk
         # (single chunk spanning sentences[0].start .. sentences[-1].end).
         single = self._create_chunk(text, sentences[0][0], sentences[-1][1], 0)
-        if single.tokens <= self.max_tokens:
+        # The span now runs to len(text), so `single.tokens` can include a
+        # trailing separator; a whitespace-only overflow should still take the
+        # single-chunk fast path rather than fragmenting. Check the stripped
+        # content only when the raw count looks over the limit.
+        if single.tokens <= self.max_tokens or self.count_tokens(single.content.strip()) <= self.max_tokens:
             return [single]
 
         # Slow path: the span exceeds the limit and must be split. Pre-count
@@ -204,26 +214,45 @@ class SentenceChunker(PositionTrackingChunker):
         return self._ensure_chunks_within_limit(chunks, text)
 
     def _split_into_sentences(self, text: str) -> List[Tuple[int, int, str]]:
-        """Split text into sentences with positions"""
-        sentences = []
-        last_end = 0
+        """Split text into sentences with positions.
+
+        Spans are contiguous and cover the whole text: each sentence's ``end``
+        is the next sentence's ``start`` (the boundary is the *end* of the
+        separator match), so the whitespace between two sentences is owned by
+        the sentence before it, and the final span runs to ``len(text)``. This
+        is what makes ``reconstruct_document`` exact -- with spans that stopped
+        before the separator, those separator characters belonged to no chunk
+        and were dropped on reconstruction. The stripped text in the third
+        field is used only for token counting; the ``[start, end)`` span is
+        authoritative for a chunk's content.
+        """
+        sentences: List[Tuple[int, int, str]] = []
+        start = 0
 
         for match in self.sentence_pattern.finditer(text):
-            start = last_end
-            end = match.start()
+            cut = match.end()
+            if cut <= start:
+                # Zero-width or out-of-order boundary (e.g. the lookahead
+                # alternative in the pattern). Skip so spans stay strictly
+                # forward and contiguous.
+                continue
 
-            if start < end:
-                sentence_text = text[start:end].strip()
-                if sentence_text:
-                    sentences.append((start, end, sentence_text))
+            sentence_text = text[start:cut].strip()
+            if sentence_text:
+                sentences.append((start, cut, sentence_text))
+                start = cut
+            # A whitespace-only region leaves `start` untouched so it folds
+            # into the next non-empty sentence, preserving full coverage.
 
-            last_end = match.end()
-
-        # Add final sentence if any
-        if last_end < len(text):
-            final_text = text[last_end:].strip()
-            if final_text:
-                sentences.append((last_end, len(text), final_text))
+        # Trailing remainder. A non-empty tail becomes the final sentence; pure
+        # trailing whitespace is folded onto the last span so nothing is lost.
+        if start < len(text):
+            tail = text[start:].strip()
+            if tail:
+                sentences.append((start, len(text), tail))
+            elif sentences:
+                prev_start, _, prev_text = sentences[-1]
+                sentences[-1] = (prev_start, len(text), prev_text)
 
         return sentences
 
@@ -247,7 +276,7 @@ class SentenceChunker(PositionTrackingChunker):
             # No words found, return the sentence as-is
             return [self._create_chunk(text, start, end, base_index)]
 
-        chunks = []
+        chunks: List[Chunk] = []
         chunk_index = base_index
         i = 0
 
@@ -283,7 +312,11 @@ class SentenceChunker(PositionTrackingChunker):
 
             # Create chunk if we have words
             if chunk_words:
-                chunk_start = chunk_words[0][0]  # Start of first word
+                # First sub-chunk begins at the sentence start so it stays
+                # contiguous with the preceding chunk even when the sentence
+                # has leading whitespace; later sub-chunks begin at their first
+                # word (which is the previous sub-chunk's end).
+                chunk_start = start if not chunks else chunk_words[0][0]
 
                 # Determine end position: either start of next word or end of sentence
                 if i < len(words):
@@ -368,7 +401,7 @@ class WordChunker(PositionTrackingChunker):
         if not words:
             return [self._create_chunk(text, 0, len(text), 0)]
 
-        chunks = []
+        chunks: List[Chunk] = []
         chunk_index = 0
         i = 0
 
@@ -406,7 +439,13 @@ class WordChunker(PositionTrackingChunker):
 
             # Create chunk if we have words
             if chunk_words:
-                start_pos = chunk_words[0][0]  # Start of first word
+                # The first chunk starts at position 0 so any leading whitespace
+                # is kept (words are \S+ matches, so words[0][0] can be > 0);
+                # otherwise start at the first word of this chunk. Trailing
+                # whitespace is already carried by ending at the next word's
+                # start. Together these make word chunks cover the whole text,
+                # so reconstruct_document is exact.
+                start_pos = 0 if not chunks else chunk_words[0][0]
 
                 # Determine end position: either start of next word or end of text
                 if i < len(words):
@@ -624,26 +663,38 @@ class ParagraphChunker(PositionTrackingChunker):
         return self._ensure_chunks_within_limit(chunks, text)
 
     def _split_into_paragraphs(self, text: str) -> List[Tuple[int, int, str]]:
-        """Split text into paragraphs with positions"""
-        paragraphs = []
-        last_end = 0
+        """Split text into paragraphs with positions.
+
+        Spans are contiguous and cover the whole text: each paragraph owns the
+        blank-line separator that follows it (the boundary is the *end* of the
+        ``\\n\\s*\\n`` match), and the final span runs to ``len(text)``. As with
+        :meth:`SentenceChunker._split_into_sentences`, this is what makes
+        ``reconstruct_document`` exact -- inter-paragraph separators otherwise
+        belong to no chunk and are lost. The stripped text in the third field
+        is used only for token counting; ``[start, end)`` is authoritative for
+        content.
+        """
+        paragraphs: List[Tuple[int, int, str]] = []
+        start = 0
 
         for match in self.paragraph_pattern.finditer(text):
-            start = last_end
-            end = match.start()
+            cut = match.end()
+            if cut <= start:
+                continue
 
-            if start < end:
-                para_text = text[start:end].strip()
-                if para_text:
-                    paragraphs.append((start, end, para_text))
+            para_text = text[start:cut].strip()
+            if para_text:
+                paragraphs.append((start, cut, para_text))
+                start = cut
+            # Whitespace-only region folds into the next non-empty paragraph.
 
-            last_end = match.end()
-
-        # Add final paragraph if any
-        if last_end < len(text):
-            final_text = text[last_end:].strip()
-            if final_text:
-                paragraphs.append((last_end, len(text), final_text))
+        if start < len(text):
+            tail = text[start:].strip()
+            if tail:
+                paragraphs.append((start, len(text), tail))
+            elif paragraphs:
+                prev_start, _, prev_text = paragraphs[-1]
+                paragraphs[-1] = (prev_start, len(text), prev_text)
 
         return paragraphs
 
@@ -1412,7 +1463,23 @@ class ChunkerFactory:
 
 
 def reconstruct_document(chunks: List[Chunk], original_length: int) -> str:
-    """Perfectly reconstruct a document from its chunks"""
+    """Reconstruct a document exactly from the chunks a chunker produced.
+
+    The general-purpose chunkers (``sentences`` -- the default -- ``paragraphs``,
+    ``words``, ``lines``, ``characters``, ``tokens``, ``sections``) emit chunks
+    whose ``[start, end)`` spans cover ``[0, original_length)`` with no gaps
+    (overlap is fine -- an overlapped position is simply filled twice with the
+    same character), so the return value equals the original text
+    character-for-character. ``sentences`` and ``paragraphs`` achieve this by
+    folding each inter-unit separator onto the preceding chunk's span rather than
+    leaving it uncovered.
+
+    The ``code-blocks`` chunker is the exception: it is specialised for splitting
+    source code and its multi-chunk path is line-oriented, so it guarantees exact
+    reconstruction only when the whole input fits a single chunk. A chunk list
+    assembled by hand with gaps between spans will likewise leave those positions
+    blank.
+    """
     if not chunks:
         return ""
 
