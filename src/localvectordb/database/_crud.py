@@ -416,6 +416,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Number of documents deleted
         """
         with self._read_write_lock.write_lock():
+            self._require_writable("Deleting a document")
             if isinstance(ids, str):
                 ids = [ids]
             # Refuse before touching SQLite: on an index that cannot remove vectors,
@@ -522,6 +523,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             Raised if `doc_id` does not exist.
         """
         with self._read_write_lock.write_lock():
+            self._require_writable("Updating a document")
             existing_doc: Any = self.get(doc_id)
             if not existing_doc:
                 raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found")
@@ -755,6 +757,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             ids = [ids]
         if not ids:
             return 0
+        self._require_writable("Deleting a document")
         self._require_deletable("Deleting a document")
         deleted_count = 0
         async with self.async_connection_pool.get_connection_context() as conn:
@@ -948,6 +951,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
         - Uses async database operations for better performance
         """
         self._ensure_async_pool()
+        self._require_writable("Updating a document")
         existing_doc: Any = await self.get_async(doc_id)
         if not existing_doc:
             raise DocumentNotFoundError(f"Document {doc_id} not found for update")

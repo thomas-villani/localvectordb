@@ -124,6 +124,7 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
             "faiss_index_type",
             "faiss_index_hnsw_flat_neighbors",
             "faiss_index_lsh_bits",
+            "mmap_index",
             "connection_pool_size",
             "pipeline_worker_timeout",
             "hierarchical_embeddings",

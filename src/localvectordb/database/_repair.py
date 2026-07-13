@@ -241,6 +241,9 @@ class RepairMixin(LocalVectorDBBase, ABC):
 
         self._save_internal()
         self._save_faiss_counters()
+        # Repair rebuilds the index and persists it directly via _save_internal (which
+        # bypasses save()'s dirty gate), so the on-disk file now matches memory.
+        self._index_dirty = False
         logger.info(f"Repair complete: {report.summary()}")
         return report
 

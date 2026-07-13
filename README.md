@@ -606,16 +606,35 @@ EXPOSE 8000
 CMD ["lvdb", "--config", "config.toml", "serve"]
 ```
 
-### Multi-Worker Setup
+### Scaling reads across workers
+
+LocalVectorDB is **single-writer**. One process owns writes to a database; to scale
+query throughput you fan out **read-only** replicas across many workers.
+
+Build (or update) the database from a single writer, then serve reads from N
+workers. Set `database.mmap_index = true` on the readers so every worker shares one
+memory-mapped copy of the FAISS index through the OS page cache, instead of each
+loading a private, RAM-resident copy:
 
 ```bash
-# Configure Redis registry
+# On the reader deployment: memory-map the index (read-only, shared page cache)
+lvdb config set database.mmap_index true
+
+# Optional: coordinate the set of database names across workers via a shared registry
 lvdb config set server.db_registry_type "RedisCache"
 lvdb config set server.db_registry_settings '{"host": "redis", "port": 6379, "db": 1}'
 
-# Start with multiple uvicorn workers
+# Fan out read-only workers
 uvicorn "localvectordb_server.app:create_app" --factory --host 0.0.0.0 --port 8000 --workers 4
 ```
+
+> **⚠️ Single-writer only.** Do not send writes (upsert / insert / update / delete)
+> through a multi-worker deployment. Each worker holds an independent in-memory FAISS
+> index and does not observe another worker's writes, and two writers racing the
+> index file will diverge or corrupt it. A database opened with `mmap_index = true`
+> refuses writes outright. Route all writes to one writer process
+> (`mmap_index = false`); readers observe a writer's updates only after they reload
+> the index (on restart or idle-eviction).
 
 ### Environment Variables
 

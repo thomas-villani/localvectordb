@@ -92,6 +92,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
         faiss_index_hnsw_flat_neighbors: Optional[int] = None,
         faiss_index_lsh_bits: Optional[int] = None,
+        mmap_index: bool = False,
         enable_gpu: bool = False,
         enable_fts: bool = True,
         connection_pool_size: int = 10,
@@ -248,6 +249,16 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     if not self._embedding_provider.validate_model():
                         raise ValueError(f"Embedding model '{embedding_model}' is not available")
                     self._embedding_dimension = self._embedding_provider.get_dimension()
+
+        # Read-only, memory-mapped index. An mmap'd FAISS index shares one copy of
+        # the file across processes via the OS page cache (many read-only workers) and
+        # cannot be mutated in place -- so a database opened this way refuses writes.
+        # Route writes to a single writer process opened with mmap_index=False.
+        self._mmap_index = mmap_index
+        # Whether the in-RAM index has diverged from the on-disk file. A clean database
+        # skips the rewrite (and its os.replace) on save()/close(), so idle-eviction or
+        # shutdown of a read-only worker never touches -- or races on -- the file.
+        self._index_dirty = False
 
         # FTS
         self._fts_enabled = False
@@ -431,7 +442,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     ):
         if self.index_path and self.index_path.exists():
             try:
-                loaded_index = faiss.read_index(str(self.index_path))
+                loaded_index = faiss.read_index(str(self.index_path), self._faiss_read_flags())
             except RuntimeError as e:
                 raise DatabaseError(f"Error loading faiss index: {str(e)}") from e
             if hasattr(loaded_index, "id_map"):
@@ -457,6 +468,9 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     "Must be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH"
                 )
             self.index = faiss.IndexIDMap2(base_index)
+            # A freshly created (empty) index has no on-disk file yet; mark dirty so the
+            # first save() persists it rather than short-circuiting on the clean flag.
+            self._index_dirty = True
             logger.info(f"Created new FAISS IndexIDMap2 with dimension {self.embedding_dimension}")
         # Whether this index type can remove vectors. IndexHNSWFlat cannot: faiss
         # raises from remove_ids. Detected from the *concrete* base index so it is
@@ -540,6 +554,33 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             return "IndexFlatL2"
         return type(cls._unwrap_base_index(index)).__name__
 
+    def _faiss_read_flags(self) -> int:
+        """
+        IO flags for ``faiss.read_index``.
+
+        Memory-map the file (``IO_FLAG_MMAP``) when ``mmap_index`` is set, so many
+        read-only workers share one copy through the OS page cache instead of each
+        loading a private, RAM-resident float32 copy. An mmap'd index is read-only.
+        """
+        return faiss.IO_FLAG_MMAP if self._mmap_index else 0
+
+    def _require_writable(self, operation: str) -> None:
+        """
+        Refuse writes to a memory-mapped (read-only) database.
+
+        A FAISS index opened with ``IO_FLAG_MMAP`` cannot be mutated in place, so
+        every vector-mutating path funnels through this guard. Refusing here (rather
+        than letting faiss fail unpredictably) leaves at worst an orphan vector, never
+        a dangling row -- consistent with the dual-store governing rule.
+        """
+        if self._mmap_index:
+            raise UnsupportedIndexOperationError(
+                f"{operation} is not supported on a memory-mapped database. mmap_index=True "
+                f"opens the FAISS index read-only for shared multi-worker reads, and an mmap'd "
+                f"index cannot be mutated in place. Route writes to a single writer process "
+                f"opened with mmap_index=False."
+            )
+
     def _require_deletable(self, operation: str) -> None:
         """Refuse operations that would silently fail to remove vectors."""
         if not self.supports_deletion:
@@ -581,25 +622,29 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Load or create section index
         if self.section_index_path and self.section_index_path.exists():
             try:
-                self.section_index = faiss.read_index(str(self.section_index_path))
+                self.section_index = faiss.read_index(str(self.section_index_path), self._faiss_read_flags())
                 logger.info(f"Loaded section FAISS index with {self.section_index.ntotal} vectors")
             except Exception as e:
                 logger.warning(f"Failed to load section FAISS index: {e}, creating new")
                 self.section_index = self._create_flat_index()
+                self._index_dirty = True
         else:
             self.section_index = self._create_flat_index()
+            self._index_dirty = True
             logger.info("Created new section FAISS index")
 
         # Load or create document index
         if self.document_index_path and self.document_index_path.exists():
             try:
-                self.document_index = faiss.read_index(str(self.document_index_path))
+                self.document_index = faiss.read_index(str(self.document_index_path), self._faiss_read_flags())
                 logger.info(f"Loaded document FAISS index with {self.document_index.ntotal} vectors")
             except Exception as e:
                 logger.warning(f"Failed to load document FAISS index: {e}, creating new")
                 self.document_index = self._create_flat_index()
+                self._index_dirty = True
         else:
             self.document_index = self._create_flat_index()
+            self._index_dirty = True
             logger.info("Created new document FAISS index")
 
     def _create_flat_index(self) -> faiss.IndexIDMap2:
@@ -615,19 +660,23 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """Add section centroid vectors to the section FAISS index."""
         if self.section_index is None or len(embeddings) == 0:
             return
+        self._require_writable("Adding section vectors")
         embeddings = self._unit_normalize_centroids(embeddings)
         embeddings = self._normalize_for_index(embeddings, self.section_index)
         with self._faiss_lock.write_lock():
             self.section_index.add_with_ids(embeddings, faiss_ids.astype(np.int64))
+        self._index_dirty = True
 
     def _add_vectors_to_document_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
         """Add document centroid vectors to the document FAISS index."""
         if self.document_index is None or len(embeddings) == 0:
             return
+        self._require_writable("Adding document vectors")
         embeddings = self._unit_normalize_centroids(embeddings)
         embeddings = self._normalize_for_index(embeddings, self.document_index)
         with self._faiss_lock.write_lock():
             self.document_index.add_with_ids(embeddings, faiss_ids.astype(np.int64))
+        self._index_dirty = True
 
     def _remove_vectors(self, index, faiss_ids: List[int], what: str) -> None:
         """
@@ -640,6 +689,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         """
         if not faiss_ids or index is None:
             return
+        self._require_writable(f"Removing {what} vectors")
         try:
             with self._faiss_lock.write_lock():
                 ids_array = np.array(faiss_ids, dtype=np.int64)
@@ -647,6 +697,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 # IDSelectorBatch.
                 index.remove_ids(ids_array)
                 logger.debug(f"Removed {len(faiss_ids)} {what} vectors from FAISS")
+            self._index_dirty = True
         except Exception as e:
             raise IndexIntegrityError(
                 f"Failed to remove {len(faiss_ids)} {what} vector(s) from the FAISS index: {e}. "
@@ -666,12 +717,14 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             return
         if self.index is None:
             raise RuntimeError("FAISS index is not initialized")
+        self._require_writable("Adding documents")
         new_faiss_ids = self._allocate_faiss_ids("main", len(embeddings))
         embeddings = self._normalize_for_index(embeddings, self.index)
         with self._faiss_lock.write_lock():
             self.index.add_with_ids(embeddings, new_faiss_ids)
             for i, chunk in enumerate(chunks):
                 chunk.faiss_id = int(new_faiss_ids[i])
+        self._index_dirty = True
 
     def _remove_old_vectors_bulk(self, faiss_ids: List[int]) -> None:
         if self.index is None:
@@ -694,6 +747,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         try:
             with self._faiss_lock.write_lock():
                 self.index.remove_ids(np.array(faiss_ids, dtype=np.int64))  # type: ignore[arg-type]
+            self._index_dirty = True
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"Could not roll back {len(faiss_ids)} FAISS vector(s) after a failed transaction: {e}")
 
@@ -1340,8 +1394,17 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 self._write_index_to_disk(self.document_index, self.document_index_path)
 
     def save(self):
+        # Skip the rewrite (and its os.replace) when the in-RAM index matches disk.
+        # This makes save()/close() a no-op for a database that only served reads, so
+        # idle-eviction or shutdown of a read-only worker never rewrites -- or races
+        # another worker on -- the shared index file. Mutations set _index_dirty; both
+        # this method and any mutating op hold _read_write_lock.write_lock(), so the
+        # flag transitions are serialized and no write can be lost.
         with self._read_write_lock.write_lock():
+            if not self._index_dirty:
+                return
             self._save_internal()
+            self._index_dirty = False
         self._save_faiss_counters()
 
     def close(self):

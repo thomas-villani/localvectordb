@@ -25,6 +25,7 @@ Full Configuration File
    faiss_index_type = "IndexFlatL2"       # Can be one of: IndexFlatL2, IndexFlatIP, IndexHNSWFlat, IndexLSH
    # faiss_index_hnsw_flat_neighbors = 0  # Only used for IndexHNSWFlat, set the number of neighbors for the graph
    # faiss_index_lsh_bits = 1536          # Only used for IndexLSH Typically set to twice the embedding dimension
+   # mmap_index = false                   # Read-only: memory-map the index so many workers share one page-cached copy
 
    [database.default_metadata_schema]
    file_path = { type = "text", indexed = true, required = false }
@@ -163,6 +164,10 @@ Database Settings
      - int
      - ``null``
      - The number of bits to use for the binary hashing, defaults to 2x the number of embedding dimensions if not provided and using ``IndexLSH``, ignored otherwise.
+   * - ``mmap_index``
+     - bool
+     - ``false``
+     - Memory-map the FAISS index (``IO_FLAG_MMAP``) instead of loading a private, RAM-resident copy. Lets many read-only workers share one page-cached copy of the index for read fan-out. A memory-mapped database is **read-only** and refuses writes, so set this only on reader processes and route all writes to a single writer process with ``mmap_index = false``.
    * - ``chunk_size``
      - int
      - ``500``

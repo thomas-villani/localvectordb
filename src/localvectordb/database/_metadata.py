@@ -66,10 +66,12 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         ``chunks``.
         """
         assert self.index is not None
+        self._require_writable("Adding metadata-field embeddings")
         ids = self._allocate_faiss_ids("main", len(embeddings))
         embeddings = self._normalize_for_index(embeddings, self.index)
         with self._faiss_lock.write_lock():
             self.index.add_with_ids(embeddings, ids)
+        self._index_dirty = True
         return ids
 
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]):
@@ -241,6 +243,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 raise ValueError(f"Field definition for '{field_name}' must be a MetadataField instance")
         try:
             with self._read_write_lock.write_lock():
+                self._require_writable("Updating the metadata schema")
                 with self.connection_pool.get_connection() as conn:
                     changes = self.schema.update_metadata_schema(new_schema, conn, drop_columns, column_mapping)
                 self._metadata_schema = new_schema.copy()
@@ -353,6 +356,7 @@ class MetadataMixin(LocalVectorDBBase, ABC):
             if not isinstance(field_def, MetadataField):
                 raise ValueError(f"Field definition for '{field_name}' must be a MetadataField instance")
         try:
+            self._require_writable("Updating the metadata schema")
             if self.async_connection_pool is None:
                 self.async_connection_pool = AsyncConnectionPool(self.db_path, self.async_max_connections)
             async with self.async_connection_pool.get_connection_context() as conn:
