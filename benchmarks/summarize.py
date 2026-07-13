@@ -76,9 +76,11 @@ class CachedSummarizer:
         self.model = model
         self.directive = directive
         self.system_prompt = DIRECTIVES[directive]
+        # No key required at construction: a fully-cached set of summaries (every
+        # span seen on a prior run) needs no live API, which lets the offline
+        # analysis harness re-use cached summaries for free. The key is demanded
+        # in _run only when there is a genuine cache miss.
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY is required for the summariser")
         self.timeout = timeout
         self.max_retries = max_retries
         self.max_concurrent = max_concurrent
@@ -140,6 +142,11 @@ class CachedSummarizer:
                 miss_idx.append(i)
 
         if miss_idx:
+            if not self.api_key:
+                raise ValueError(
+                    f"OPENAI_API_KEY is required: {len(miss_idx)} summaries are not cached. "
+                    "Run with the same params as the cached run, or set the key."
+                )
             sem = asyncio.Semaphore(self.max_concurrent)
             async with httpx.AsyncClient() as client:
                 summaries = await asyncio.gather(*(self._summarize_one(client, sem, texts[i]) for i in miss_idx))
