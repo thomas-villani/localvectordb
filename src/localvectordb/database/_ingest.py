@@ -1019,6 +1019,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         # queue_size: int = 3,
         mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
+        # Fail fast and synchronously: the write below happens in a worker thread whose
+        # exception would not reach the caller, so guard before the pipeline spawns.
+        self._require_writable("Ingesting documents")
         # Normalize mode for database operations
         db_mode = "replace" if mode == "upsert" else mode
 
@@ -1363,6 +1366,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         similarity_threshold: Optional[float],
         mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
+        # Fail fast and synchronously: the write below happens in a worker thread whose
+        # exception would not reach the caller, so guard before the pipeline spawns.
+        self._require_writable("Ingesting documents")
         # Normalize mode for database operations
         db_mode = "replace" if mode == "upsert" else mode
 
@@ -2402,6 +2408,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         max_concurrent_embeddings: int,
         mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
+        self._require_writable("Ingesting documents")
         existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(ids)
 
         # Use asyncio.Queue for proper async pipeline communication
@@ -2571,6 +2578,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         max_concurrent_embeddings: int,
         mode: Literal["upsert", "insert"] = "upsert",
     ) -> List[str]:
+        self._require_writable("Ingesting documents")
         doc_ids = list(chunks_by_document.keys())
         existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(doc_ids)
 

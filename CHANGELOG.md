@@ -42,7 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite tuning profiles for different workloads
 - MCP (Model Context Protocol) server integration
 - CLI tool (`lvdb`) for database management, server control, and configuration
-- Redis integration for distributed multi-worker deployments
+- Read-only multi-worker read fan-out: a `mmap_index` setting memory-maps the
+  FAISS index (`IO_FLAG_MMAP`) so many workers share one page-cached copy instead
+  of each loading a private, RAM-resident copy. A memory-mapped database is
+  read-only and refuses writes. A shared cachelib/Redis registry coordinates the
+  set of database names across workers. The deployment model is single-writer:
+  route all writes to one writer process (`mmap_index = false`).
+- The FAISS index file is rewritten only when the in-memory index has actually
+  changed, so a database that only served reads is never re-persisted (and, under
+  read fan-out, never races another worker on the shared index file) on close or
+  idle-eviction.
 - Comprehensive test suite with 85%+ coverage requirement
 - End-to-end release-qualification suite (`scripts/e2e/`) exercising real
   embedding backends (Ollama, Sentence Transformers) and real PDF/DOCX/XLSX/

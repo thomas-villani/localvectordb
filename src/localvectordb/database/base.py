@@ -750,6 +750,10 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
+    def _require_writable(self, operation: str) -> None:
+        pass
+
+    @abstractmethod
     def _save_faiss_counters(self) -> None:
         pass
 

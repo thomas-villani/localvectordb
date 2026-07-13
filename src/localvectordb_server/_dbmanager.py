@@ -824,7 +824,12 @@ class DatabaseManager:
                     db_logger.log_query("load_database", database_name=name)
 
                     db_path = Path(self.config.database.root_dir)
-                    db = LocalVectorDB(name=name, base_path=db_path, create_if_not_exists=False)
+                    db = LocalVectorDB(
+                        name=name,
+                        base_path=db_path,
+                        create_if_not_exists=False,
+                        mmap_index=self.config.database.mmap_index,
+                    )
 
                     # Verify database is functional
                     if not self._check_database_health(db):

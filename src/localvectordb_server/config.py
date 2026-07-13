@@ -116,6 +116,12 @@ class DatabaseSettings(BaseSettings):
     faiss_index_hnsw_flat_neighbors: Optional[int] = None  # Only used for IndexHNSWFlat
     faiss_index_lsh_bits: Optional[int] = None  # Only used for IndexLSH, number of bits for the index.
 
+    # Memory-map the FAISS index (read-only). Lets N read-only workers share one copy
+    # of the index via the OS page cache instead of each loading a private RAM copy.
+    # A memory-mapped database refuses writes, so set this only on reader processes and
+    # route all writes to a single writer process with mmap_index=False.
+    mmap_index: bool = False
+
     # Default database parameters when creating new ones
     chunk_size: int = 500  # Renamed from chunk_tokens for v1.0
     chunk_overlap: int = 1
