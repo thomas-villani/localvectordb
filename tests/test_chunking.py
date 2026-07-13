@@ -956,3 +956,91 @@ class TestUtilityFunctions:
 
         result = reconstruct_document(chunks, 11)
         assert result == "Hello world"
+
+
+# Text variants that exercise the reconstruction guarantee. The required matrix
+# (trailing newline, trailing spaces, no trailing newline, multi-chunk, unicode)
+# plus the leading-whitespace and inter-unit-separator cases that a measurement
+# pass showed were silently lossy before T1.7.
+_ROUNDTRIP_TEXTS = {
+    "trailing_newline": "First sentence here. Second one follows.\n",
+    "trailing_spaces": "First sentence here. Second one follows.   ",
+    "no_trailing_newline": "Alpha beta gamma. Delta epsilon zeta. Eta theta iota",
+    "leading_whitespace": "   Leading whitespace here. And a second sentence follows.",
+    "unicode": "Café résumé naïve. 日本語 のテスト。 Emoji 🎉 done here now.",
+    "multi_paragraph": "Para one line one.\nline two.\n\nPara two here.\n\n\nPara three last.",
+    "blank_lines": "One.\n\n\nTwo.\n\n\n\nThree here.",
+    "tabs": "Col1\tCol2\tCol3.\tAnother\tsentence here now.",
+    # Long enough to force multiple chunks at a small max_tokens (see below), so
+    # the inter-chunk separators are exercised, not just the single-chunk path.
+    "multi_chunk": " ".join(f"This is sentence number {i} in a longer document." for i in range(40)),
+    "multi_chunk_trailing": " ".join(f"Paragraph {i} has content." for i in range(30)) + "\n\n\n",
+}
+
+
+# Every chunker except ``code-blocks`` guarantees byte-exact reconstruction of
+# arbitrary text. ``code-blocks`` is specialised for splitting source code: its
+# multi-chunk path is line-oriented (splitlines + reconstructed positions) and
+# remaps sub-chunks by content search, so it only guarantees reconstruction when
+# the whole input fits a single chunk (its fast path). See TestCodeBlockReconstruction.
+_RECONSTRUCTING_METHODS = [m for m in ChunkerFactory.CHUNKERS if m != "code-blocks"]
+
+
+@pytest.mark.unit
+@pytest.mark.chunking
+class TestReconstructionFidelity:
+    """T1.7: ``reconstruct_document`` must rebuild the source verbatim for every
+    general-purpose chunker, across trailing/leading whitespace, unicode, and
+    multi-chunk docs.
+
+    Before T1.7 the ``sentences`` (the default) and ``paragraphs`` chunkers ended
+    each span before its separator (so inter-unit separators belonged to no
+    chunk), and ``words`` dropped leading whitespace -- all silently lossy on
+    reconstruction even though the module advertised "perfect" reconstruction.
+    """
+
+    @pytest.mark.parametrize("method", _RECONSTRUCTING_METHODS)
+    @pytest.mark.parametrize("variant", list(_ROUNDTRIP_TEXTS.keys()))
+    def test_roundtrip_default_size(self, method, variant):
+        """Round-trip at the library default chunk size (mostly single-chunk)."""
+        text = _ROUNDTRIP_TEXTS[variant]
+        chunker = ChunkerFactory.create_chunker(method, max_tokens=500, overlap=0)
+        chunks = chunker.chunk(text)
+        assert reconstruct_document(chunks, len(text)) == text
+
+    @pytest.mark.parametrize("method", _RECONSTRUCTING_METHODS)
+    @pytest.mark.parametrize("variant", list(_ROUNDTRIP_TEXTS.keys()))
+    def test_roundtrip_small_size_forces_multichunk(self, method, variant):
+        """A small ``max_tokens`` forces multiple chunks, exercising every
+        inter-chunk separator on the split paths."""
+        text = _ROUNDTRIP_TEXTS[variant]
+        chunker = ChunkerFactory.create_chunker(method, max_tokens=8, overlap=0)
+        chunks = chunker.chunk(text)
+        assert reconstruct_document(chunks, len(text)) == text
+
+    @pytest.mark.parametrize("method", _RECONSTRUCTING_METHODS)
+    def test_roundtrip_with_overlap(self, method):
+        """Overlap re-covers positions but must never leave a gap."""
+        text = _ROUNDTRIP_TEXTS["multi_chunk"]
+        chunker = ChunkerFactory.create_chunker(method, max_tokens=8, overlap=1)
+        chunks = chunker.chunk(text)
+        assert reconstruct_document(chunks, len(text)) == text
+
+
+@pytest.mark.unit
+@pytest.mark.chunking
+class TestCodeBlockReconstruction:
+    """``code-blocks`` reconstructs exactly only on its single-chunk fast path
+    (the whole input fits ``max_tokens``). Its multi-chunk split path is
+    code-specialised and does not guarantee byte-exact reconstruction of
+    arbitrary text; this test pins that scoped guarantee so a future change that
+    silently widens or narrows it is caught.
+    """
+
+    @pytest.mark.parametrize("variant", list(_ROUNDTRIP_TEXTS.keys()))
+    def test_single_chunk_fast_path_is_exact(self, variant):
+        text = _ROUNDTRIP_TEXTS[variant]
+        chunker = ChunkerFactory.create_chunker("code-blocks", max_tokens=100000, overlap=0)
+        chunks = chunker.chunk(text)
+        assert len(chunks) == 1
+        assert reconstruct_document(chunks, len(text)) == text
