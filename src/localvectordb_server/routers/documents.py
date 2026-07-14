@@ -313,15 +313,22 @@ async def update_document(db_name: str, doc_id: str, body: UpdateDocumentBody, d
                 has_content=body.content is not None,
                 has_metadata=body.metadata is not None,
             )
+            # `update()` returns False for a *no-op* (content already matches the
+            # stored hash, nothing else to change) and raises for a missing
+            # document. Conflating the two would 404 a document that exists.
             was_updated = db.update(doc_id, content=body.content, metadata=body.metadata)
             if not was_updated:
-                raise APIError(
-                    message=f"Document '{doc_id}' not found in database '{db_name}'",
-                    error_code="DOCUMENT_NOT_FOUND",
-                    status_code=404,
-                    recoverable=True,
-                )
+                return {"updated": False, "message": f"Document {doc_id} already up to date; nothing to update"}
             return {"updated": True, "message": f"Successfully updated document {doc_id}"}
+        except DocumentNotFoundError as e:
+            # DocumentNotFoundError has no mapping in standardize_error_response,
+            # so without this it would fall through to the generic 500 branch.
+            raise APIError(
+                message=f"Document '{doc_id}' not found in database '{db_name}'",
+                error_code="DOCUMENT_NOT_FOUND",
+                status_code=404,
+                recoverable=True,
+            ) from e
         except Exception as e:
             db_logger.log_error("update_document", e, database_name=db_name, document_id=doc_id)
             raise

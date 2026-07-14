@@ -1765,7 +1765,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         bool
             True if document was updated, False if not found
         """
-        if not content and not metadata:
+        # Test against None, not falsiness: `content=""` (clear the document) and
+        # `metadata={}` are meaningful payloads that must reach the wire.
+        if content is None and metadata is None:
             return False
 
         payload: Dict[str, Any] = {}
@@ -3194,7 +3196,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             True if document was updated, False if not found
         """
 
-        if not content and not metadata:
+        # Test against None, not falsiness: `content=""` (clear the document) and
+        # `metadata={}` are meaningful payloads that must reach the wire.
+        if content is None and metadata is None:
             return False
 
         payload: Dict[str, Any] = {}

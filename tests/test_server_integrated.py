@@ -229,13 +229,21 @@ class DatabaseManagerMock:
             return len(db._documents)
 
         def mock_update(doc_id, content=None, metadata=None):
-            if doc_id in db._documents:
-                if content is not None:
-                    db._documents[doc_id]["content"] = content
-                if metadata is not None:
-                    db._documents[doc_id]["metadata"].update(metadata)
-                return True
-            return False
+            # Mirrors LocalVectorDB.update() (_crud.py): raises on a missing document,
+            # and returns False for a *no-op* (content already identical, nothing else
+            # to change). This double used to return False for "not found" instead,
+            # which is the assumption that let the route's 404-on-no-op bug survive.
+            if doc_id not in db._documents:
+                raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found", doc_id)
+
+            updated = False
+            if content is not None and content != db._documents[doc_id]["content"]:
+                db._documents[doc_id]["content"] = content
+                updated = True
+            if metadata:
+                db._documents[doc_id]["metadata"].update(metadata)
+                updated = True
+            return updated
 
         # Server search endpoints call the async query API.
         async def mock_query_async(query, **kwargs):
@@ -1004,6 +1012,79 @@ class TestHTTPContractRegressions:
         paths = {r.path for r in integration_app.routes}
         assert "/api/v1/databases/{db_name}/query-builder" in paths
         assert "/api/v1/databases/{db_name}/query_builder" not in paths
+
+
+@pytest.mark.integration
+@pytest.mark.client
+@pytest.mark.database
+@pytest.mark.embedding
+class TestPatchDocumentSemantics:
+    """PATCH must distinguish 'no-op' from 'not found'.
+
+    The route used to conflate the two: ``update() -> False`` (a no-op) was
+    reported as 404 DOCUMENT_NOT_FOUND, while a genuinely missing document
+    raised DocumentNotFoundError, which has no mapping in
+    ``standardize_error_response`` and so fell through to a 500.
+    """
+
+    @pytest.fixture
+    def patch_db(self, integration_app, integration_client, valid_auth_headers):
+        integration_app.state.db_manager.create_db(
+            "patch_semantics_db",
+            metadata_schema={"author": MetadataField(type=MetadataFieldType.TEXT, indexed=True)},
+        )
+        response = integration_client.post(
+            "/api/v1/databases/patch_semantics_db/documents",
+            json={"documents": ["The original content."], "metadata": [{"author": "Alice"}]},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        return "patch_semantics_db", response.json()["ids"][0]
+
+    def test_patch_with_changed_content_reports_updated(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"content": "Genuinely new content."},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is True
+
+    def test_patch_with_unchanged_content_is_a_200_noop_not_404(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"content": "The original content."},  # byte-identical to what is stored
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is False
+
+    def test_patch_missing_document_is_404_not_500(self, patch_db, integration_client, valid_auth_headers):
+        db_name, _ = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/no_such_doc",
+            json={"content": "anything"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
+
+    def test_patch_can_clear_document_content(self, patch_db, integration_client, valid_auth_headers):
+        # content="" is a meaningful edit (clear the document), not an absent field.
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"content": ""},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is True
+
+        get = integration_client.get(f"/api/v1/databases/{db_name}/documents/{doc_id}", headers=valid_auth_headers)
+        assert get.status_code == 200
+        assert get.json()["content"] == ""
 
 
 class TestRateLimitEnvelope:

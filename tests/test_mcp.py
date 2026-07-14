@@ -1095,6 +1095,32 @@ class TestUpdateDocumentTool:
         result = _run(update_document("testdb", "doc1", content="x"))
         assert result["error_code"] == "PERMISSION_DENIED"
 
+    def test_update_noop_is_reported_as_not_updated(self, mcp_manager_fixture):
+        # update() returns False when the document already matches. The tool used to
+        # discard the bool and always claim success, so an agent could not tell
+        # "my edit landed" from "nothing changed".
+        from localvectordb_server.mcp.server import update_document
+
+        mock_db = MagicMock()
+        mock_db.update.return_value = False
+        del mock_db.update_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(update_document("testdb", "doc1", content="identical text"))
+        assert result["updated"] is False
+        assert "error" not in result
+
+    def test_update_real_change_is_reported_as_updated(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import update_document
+
+        mock_db = MagicMock()
+        mock_db.update.return_value = True
+        del mock_db.update_async
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(update_document("testdb", "doc1", content="new text"))
+        assert result["updated"] is True
+
 
 @pytest.mark.unit
 class TestDeleteDocumentTool:

@@ -335,6 +335,34 @@ class TestRemoteVectorDBDocumentOperations:
 
         assert result is False
 
+    def test_update_with_empty_content_reaches_the_wire(self, mock_httpx_client, mock_db):
+        # content="" clears the document. Short-circuiting on falsiness (rather than
+        # on None) used to swallow it client-side, so the edit never happened.
+        mock_httpx_client.request.return_value.json.return_value = {"updated": True}
+
+        result = mock_db.update("doc_1", content="")
+
+        assert result is True
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert payload["content"] == ""
+
+    def test_update_with_empty_metadata_reaches_the_wire(self, mock_httpx_client, mock_db):
+        mock_httpx_client.request.return_value.json.return_value = {"updated": False}
+
+        mock_db.update("doc_1", metadata={})
+
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert payload["metadata"] == {}
+
+    def test_update_with_nothing_to_do_makes_no_request(self, mock_httpx_client, mock_db):
+        # `mock_db` construction already issues a GET /info, so reset before asserting.
+        mock_httpx_client.request.reset_mock()
+
+        result = mock_db.update("doc_1")
+
+        assert result is False
+        mock_httpx_client.request.assert_not_called()
+
 
 @pytest.mark.client
 class TestRemoteVectorDBQuery:
