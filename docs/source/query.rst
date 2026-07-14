@@ -88,7 +88,7 @@ Combines vector and keyword search with configurable weighting. Provides the bes
     results = db.query(
         "neural network architectures",
         search_type="hybrid",
-        vector_weight=0.7  # 70% vector, 30% keyword
+        vector_weight=0.5  # 50% vector, 50% keyword
     )
 
 Each leg is min-max normalized within the current query's candidate pool before the
@@ -317,7 +317,7 @@ Search Type Specific
 
 **Hybrid Search:**
 
-* ``vector_weight`` (float, default=0.7): Weight for vector vs keyword results (0.0-1.0)
+* ``vector_weight`` (float, default=0.5): Weight for vector vs keyword results (0.0-1.0)
 
 **Context and Enriched:**
 

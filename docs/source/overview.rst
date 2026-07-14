@@ -476,7 +476,7 @@ Searching Documents
        "neural networks",
        search_type="hybrid",
        k=5,
-       vector_weight=0.7,             # 70% vector, 30% keyword
+       vector_weight=0.5,             # 50% vector, 50% keyword
        return_type="context",         # Return chunks with surrounding context
        context_window=2               # 2 chunks before and after match
    )

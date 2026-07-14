@@ -78,12 +78,12 @@ from 0.645, suspect the harness before believing the result.
 | configuration | recall@1 | recall@5 | recall@10 | **ndcg@10** |
 |---|---|---|---|---|
 | hybrid vw=0.5 · best | 0.5621 | 0.7714 | 0.8410 | **0.7133** |
-| hybrid vw=0.5 · frequency_boost | 0.5529 | 0.7714 | 0.8410 | 0.7090 |
+| **hybrid vw=0.5 · frequency_boost** ← library default | 0.5529 | 0.7714 | 0.8410 | **0.7090** |
 | hybrid vw=0.5 · average | 0.5521 | 0.7679 | 0.8402 | 0.7086 |
 | hybrid vw=0.3 · frequency_boost | 0.5617 | 0.7539 | 0.8252 | 0.7004 |
 | hybrid vw=0.3 · best | 0.5592 | 0.7573 | 0.8252 | 0.6999 |
 | hybrid vw=0.3 · average | 0.5458 | 0.7509 | 0.8243 | 0.6942 |
-| **hybrid vw=0.7 · frequency_boost** ← library default | 0.5407 | 0.7596 | 0.8260 | **0.6940** |
+| hybrid vw=0.7 · frequency_boost (the *old* default) | 0.5407 | 0.7596 | 0.8260 | 0.6940 |
 | hybrid vw=0.7 · best | 0.5407 | 0.7596 | 0.8260 | 0.6935 |
 | hybrid vw=0.7 · average | 0.5357 | 0.7604 | 0.8218 | 0.6924 |
 | hybrid vw=0.9 · best | 0.5040 | 0.7417 | 0.8010 | 0.6617 |
@@ -107,7 +107,7 @@ and nothing else.
 | configuration | `26a92ce` | `a6d2e98` | Δ |
 |---|---|---|---|
 | hybrid vw=0.5 · best (best in sweep) | 0.6592 | 0.7133 | +0.0541 |
-| hybrid vw=0.7 · frequency_boost ← default | 0.6343 | 0.6940 | +0.0598 |
+| hybrid vw=0.7 · frequency_boost ← default at the time | 0.6343 | 0.6940 | +0.0598 |
 | hybrid vw=0.5 · frequency_boost | 0.6299 | 0.7090 | +0.0792 |
 | hybrid vw=0.9 · best | 0.6590 | 0.6617 | +0.0028 |
 | vector · best | 0.6447 | 0.6447 | **+0.0000** |
@@ -116,8 +116,9 @@ and nothing else.
 ## What this measurement shows
 
 **1. Normalizing the legs is worth ~0.06 nDCG. RRF is worth ~0.01.** The two
-candidate fixes were measured head to head before either was written. At the
-library default:
+candidate fixes were measured head to head before either was written. At the default
+as it stood then (`vw=0.7 · frequency_boost`; the default has since moved to `vw=0.5`
+— see point 2):
 
 | fusion | ndcg@10 | recall@1 |
 |---|---|---|
@@ -134,17 +135,27 @@ is a tuning knob that would be frozen at 1.0, and the canonical 60 is close to t
 worst value on this data; and it makes `frequency_boost`'s `min(1.0, …)` clamp
 unreachable, silently redefining that scoring method.
 
-**2. `vector_weight` finally behaves like a weight.** Under the old sum the keyword
-leg contributed a near-constant 1.0 to every chunk it retrieved, so `vector_weight`
-was asking "did the keyword leg find this at all?" rather than "how well?". The
-optimum now sits at `vw=0.5` (0.7090) rather than the default 0.7 (0.6940). **The
-default was deliberately left at 0.7.** The dense-versus-lexical tradeoff is
-corpus-dependent, SciFact is unusually lexical, and tuning a global default on one
-dataset is how you overfit a benchmark. **NFCorpus (measured under T1.6) shows the
-same shape** — `frequency_boost` scores 0.3367 at `vw=0.5` versus 0.3298 at the
-default `vw=0.7` (full 323 queries) — so `vw=0.5` beats `vw=0.7` on both datasets.
-Still deliberately not moved: retuning a global default is a separate, measurable
-change and is tracked as its own open item, not folded into the scoring-method pruning.
+**2. `vector_weight` finally behaves like a weight — and the default is now 0.5.**
+Under the old sum the keyword leg contributed a near-constant 1.0 to every chunk it
+retrieved, so `vector_weight` was asking "did the keyword leg find this at all?"
+rather than "how well?". Once fusion normalized the legs, the optimum moved to
+`vw=0.5`.
+
+The default was held at 0.7 through T1.1 and T1.6 on purpose: the dense-versus-lexical
+tradeoff is corpus-dependent, SciFact is unusually lexical, and tuning a global default
+on one dataset is how you overfit a benchmark. **The retune waited for a second
+dataset, and NFCorpus agreed** — so `vw=0.5` wins on both, and the default moved:
+
+| dataset | `vw=0.7` (old default) | `vw=0.5` (new default) | Δ |
+|---|---|---|---|
+| SciFact (`frequency_boost`, 300 q) | 0.6940 | **0.7090** | +0.0150 (+2.2%) |
+| NFCorpus (`frequency_boost`, 323 q) | 0.3298 | **0.3367** | +0.0069 (+2.1%) |
+
+On NFCorpus the new default is effectively the best row in the whole sweep (0.3367 vs
+0.3370 for the best). **Every baseline row moved `+0.0000` when the default changed** —
+the sweep passes `vector_weight` explicitly at each value, so nothing measured here
+depends on the default. That is the proof the change moved the default and nothing else;
+what it buys is ~2% relative nDCG for every user who never touches the knob.
 
 **3. Hybrid scores are now pool-relative.** They are comparable within one result
 set, but not across queries, and not across different `k` (which changes the

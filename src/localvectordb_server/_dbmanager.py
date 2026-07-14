@@ -951,7 +951,7 @@ class DatabaseManager:
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,

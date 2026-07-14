@@ -82,7 +82,7 @@ Unified search interface::
     results = db.query("python programming", search_type="keyword", k=5)
 
     # Hybrid search
-    results = db.query("python programming", search_type="hybrid", k=5, vector_weight=0.7)
+    results = db.query("python programming", search_type="hybrid", k=5, vector_weight=0.5)
 
     # Search with filters
     results = db.query(
@@ -215,7 +215,7 @@ class RemoteQueryBuilder:
         self._exact_filters: List[Dict[str, Any]] = []
         self._semantic_filters: List[Dict[str, Any]] = []
         self._search_type = "hybrid"
-        self._vector_weight = 0.7
+        self._vector_weight = 0.5
         self._return_type = "documents"
         self._order_by: List[Dict[str, str]] = []
         self._limit = 10
@@ -368,7 +368,7 @@ class RemoteQueryBuilder:
         return self.search(query, search_type="keyword", score_threshold=score_threshold)
 
     def hybrid(
-        self, query: str, vector_weight: float = 0.7, score_threshold: Optional[float] = None
+        self, query: str, vector_weight: float = 0.5, score_threshold: Optional[float] = None
     ) -> "RemoteQueryBuilder":
         """Use hybrid search with the specified vector weight."""
         return self.search(query, search_type="hybrid", vector_weight=vector_weight, score_threshold=score_threshold)
@@ -1798,7 +1798,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         # NEW PARAMETERS:
         context_window: int = 2,
         context_unit: str = "chunks",
@@ -1894,7 +1894,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
@@ -3224,7 +3224,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,
@@ -3318,7 +3318,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
@@ -3695,7 +3695,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         batch_size: int = 10,
         context_window: int = 2,
         context_unit: str = "chunks",
@@ -3793,7 +3793,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
-        vector_weight: float = 0.7,
+        vector_weight: float = 0.5,
         batch_size: int = 10,
         context_window: int = 2,
         context_unit: str = "chunks",

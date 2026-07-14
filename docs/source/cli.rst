@@ -1062,7 +1062,7 @@ Search Operations
 - ``--return-type, -r``: What to return (``documents``, ``chunks``, ``context``, ``enriched``, ``sections``) - defaults to ``documents``
 - ``--search-level``: Which index to search (``chunks``, ``sections``, ``documents``) - defaults to ``chunks``
 - ``--score-threshold``: Minimum score threshold (default: 0.0)
-- ``--vector-weight``: Weight for the vector component in hybrid search (default: 0.7)
+- ``--vector-weight``: Weight for the vector component in hybrid search (default: 0.5)
 - ``--context-window``: Context size for ``--return-type context``/``enriched``, measured in ``--context-unit`` (default: 2)
 - ``--context-unit``: Unit for ``--context-window`` (``chunks``, ``tokens``, ``words``, ``characters``) - defaults to ``chunks``
 - ``--context-truncate``: Hard-truncate assembled context to exactly the budget (non-chunk ``--context-unit`` only)

@@ -413,7 +413,7 @@ Search and Query Operations
         query="neural networks",
         search_type="hybrid",
         k=10,
-        vector_weight=0.7  # 70% vector, 30% keyword (keyword weight = 1 - vector_weight)
+        vector_weight=0.5  # 50% vector, 50% keyword (keyword weight = 1 - vector_weight)
     )
 
     # Async variants
@@ -766,7 +766,7 @@ Build a Retrieval-Augmented Generation system::
                 query=query,
                 search_type="hybrid",
                 k=max_docs,
-                vector_weight=0.7
+                vector_weight=0.5
             )
 
             contexts = []
@@ -785,7 +785,7 @@ Build a Retrieval-Augmented Generation system::
                 query=query,
                 search_type="hybrid",
                 k=max_docs,
-                vector_weight=0.7
+                vector_weight=0.5
             )
             # Process results...
             return contexts

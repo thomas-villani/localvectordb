@@ -94,7 +94,7 @@ The ``QueryBuilder`` also supports cursor-based streaming:
    # Or use the stream shorthand
    for batch in (
        db.query_builder()
-       .hybrid("deep learning", vector_weight=0.7)
+       .hybrid("deep learning", vector_weight=0.5)
        .limit(100)
        .stream(batch_size=20)
    ):

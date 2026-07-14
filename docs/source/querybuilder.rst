@@ -85,7 +85,7 @@ Search Operations
    # Combine vector and keyword search with custom weights
    results = (
        db.query_builder()
-       .hybrid("neural networks", vector_weight=0.7)  # 70% semantic similarity, 30% keyword matching
+       .hybrid("neural networks", vector_weight=0.5)  # 50% semantic similarity, 50% keyword matching
        .execute()
    )
 
@@ -776,7 +776,7 @@ For more control over the iteration lifecycle, create a ``QueryCursor`` directly
    # Create a cursor with explicit lifecycle management
    cursor = (
        db.query_builder()
-       .hybrid("neural networks", vector_weight=0.7)
+       .hybrid("neural networks", vector_weight=0.5)
        .filter("year", gte_=2023)
        .limit(100)
        .cursor(batch_size=25, cursor_ttl=600.0)
@@ -852,7 +852,7 @@ Combined Features
    # Complex multi-criteria search with filtering and ranking
    results = (
        db.query_builder()
-       .hybrid("deep learning applications", vector_weight=0.7)  # Use hybrid search (70% vector, 30% keyword)
+       .hybrid("deep learning applications", vector_weight=0.5)  # Use hybrid search (50% vector, 50% keyword)
        .filter(year=2024)  # Only from 2024
        .filter("citations", gte_=10)  # With at least 10 citations
        .semantic_filter("abstract", "supervised learning", threshold=0.8)  # Using supervised learning approaches

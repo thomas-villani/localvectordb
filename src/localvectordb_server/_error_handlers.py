@@ -244,7 +244,7 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
             "score_threshold must be between 0.0 and 1.0", field="score_threshold", value=score_threshold
         )
 
-    vector_weight = data.get("vector_weight", 0.7)
+    vector_weight = data.get("vector_weight", 0.5)
     validate_field_type(data, "vector_weight", (int, float))
     if vector_weight < 0.0 or vector_weight > 1.0:
         raise ValidationError("vector_weight must be between 0.0 and 1.0", field="vector_weight", value=vector_weight)

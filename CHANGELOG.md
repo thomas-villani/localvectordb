@@ -75,6 +75,14 @@ to anyone tracking the pre-release):
   now namespaced under `/databases/`, so no database names are reserved.
 - **Global search**: `POST /api/v1/search` now returns the per-database map under
   `results_by_database` (was `results`).
+- **Default `vector_weight` changed from `0.7` to `0.5`** for hybrid search (the default
+  `search_type`). This changes hybrid ranking for callers who do not pass `vector_weight`
+  explicitly. Once T1.1's relative-score fusion made `vector_weight` an actual blend, an
+  even weighting measured better on *both* evaluation corpora — SciFact `frequency_boost`
+  nDCG@10 0.6940 → 0.7090 (+2.2% relative) and NFCorpus 0.3298 → 0.3367 (+2.1%) — where it
+  is also the best configuration in the entire sweep. Pass `vector_weight=0.7` to restore
+  the previous behaviour. Applies to the Python API, HTTP API, MCP server, and the
+  `lvdb db <name> search --vector-weight` CLI default.
 - **Default server port** changed from `5000` to `8000` (5000 collides with the macOS
   AirPlay Receiver).
 - Single-document delete (`DELETE /api/v1/databases/{db_name}/documents/{doc_id}`) is
