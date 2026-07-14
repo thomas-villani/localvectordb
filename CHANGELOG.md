@@ -115,6 +115,19 @@ to anyone tracking the pre-release):
   a reader worker opening it). The error propagated out of `save()`/`close()`, leaving
   the index unwritten while SQLite had already committed. It is now retried with bounded
   exponential backoff.
+- `PATCH /databases/{db}/documents/{doc_id}` conflated "nothing to update" with
+  "document not found", inverting both outcomes. `update()` returns `False` for a no-op
+  and raises `DocumentNotFoundError` for a missing document, but the route reported the
+  no-op as `404 DOCUMENT_NOT_FOUND` — on a document that exists — while the missing
+  document raised past the route into the generic 500 branch (`DocumentNotFoundError`
+  has no mapping in `standardize_error_response`). A no-op is now `200 {"updated": false}`
+  and a missing document is `404 DOCUMENT_NOT_FOUND`.
+- `RemoteVectorDB.update()` / `update_async()` short-circuited on `if not content and not
+  metadata`, so `content=""` (clear a document) and `metadata={}` were silently dropped
+  client-side and never reached the server. They now test against `None`.
+- The `update_document` MCP tool discarded `update()`'s return value and always reported
+  success, so an agent could not distinguish "my edit landed" from "nothing changed". It
+  now returns an `updated` flag.
 
 Issues found during pre-release end-to-end qualification with real embedding
 providers (the mocked test suite could not catch these):

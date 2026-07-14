@@ -898,13 +898,25 @@ async def update_document(
 
         db = await manager.get_database(database_name)
 
-        # Update document
+        # Update document. A False return means the document already matched the
+        # requested content/metadata — report that rather than claiming an edit
+        # landed, so the caller can tell a no-op from a real change.
         if hasattr(db, "update_async"):
-            await db.update_async(doc_id=document_id, content=content, metadata=metadata)
+            updated = await db.update_async(doc_id=document_id, content=content, metadata=metadata)
         else:
-            db.update(doc_id=document_id, content=content, metadata=metadata)
+            updated = db.update(doc_id=document_id, content=content, metadata=metadata)
 
-        return {"message": f"Successfully updated document '{document_id}'", "status": "success"}
+        if not updated:
+            return {
+                "message": f"Document '{document_id}' already up to date; nothing to update",
+                "status": "success",
+                "updated": False,
+            }
+        return {
+            "message": f"Successfully updated document '{document_id}'",
+            "status": "success",
+            "updated": True,
+        }
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
