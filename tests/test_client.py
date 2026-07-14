@@ -324,16 +324,37 @@ class TestRemoteVectorDBDocumentOperations:
         assert payload["content"] == "New content"
         assert payload["metadata"] == {"author": "New Author"}
 
-    def test_update_nonexistent_document(self, mock_httpx_client, mock_db):
-        """Test updating nonexistent document."""
+    def test_update_nonexistent_document_raises(self, mock_httpx_client, mock_db):
+        """A missing document must raise, matching LocalVectorDB.update().
+
+        It used to be swallowed into a False return, which conflated "not found"
+        with "no updates needed" and diverged from the local backend.
+        """
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.json.return_value = {
+            "error": {"code": "document_not_found", "message": "Document not found: nonexistent"}
+        }
+        mock_httpx_client.request.return_value = mock_response
+
+        with pytest.raises(DocumentNotFoundError):
+            mock_db.update("nonexistent", content="New content")
+
+    def test_update_nonexistent_database_raises(self, mock_httpx_client, mock_db):
+        """A missing database must raise too; it used to be swallowed into False."""
         mock_response = Mock()
         mock_response.status_code = 404
         mock_response.json.return_value = {"error": {"code": "database_not_found", "message": "Not found"}}
         mock_httpx_client.request.return_value = mock_response
 
-        result = mock_db.update("nonexistent", content="New content")
+        with pytest.raises(DatabaseNotFoundError):
+            mock_db.update("doc_1", content="New content")
 
-        assert result is False
+    def test_update_noop_returns_false(self, mock_httpx_client, mock_db):
+        """False means 'no updates needed', never 'not found'."""
+        mock_httpx_client.request.return_value.json.return_value = {"updated": False}
+
+        assert mock_db.update("doc_1", content="identical content") is False
 
     def test_update_with_empty_content_reaches_the_wire(self, mock_httpx_client, mock_db):
         # content="" clears the document. Short-circuiting on falsiness (rather than

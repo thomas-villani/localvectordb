@@ -918,7 +918,8 @@ class CrudMixin(LocalVectorDBBase, ABC):
         Returns
         -------
         bool
-            True if document was updated, False if not found
+            True if document was updated, False if no updates needed (`content` and
+            `metadata` already match database)
 
         Raises
         ------

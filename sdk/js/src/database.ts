@@ -1,5 +1,4 @@
 import type { HttpClient } from "./http.js";
-import { DocumentNotFoundError } from "./errors.js";
 import { streamQuery } from "./sse.js";
 import { uploadFiles } from "./upload.js";
 import type {
@@ -131,25 +130,19 @@ export class DatabaseHandle {
   /**
    * Update a document's content and/or metadata.
    *
-   * Resolves with `updated: false` when the document does not exist (the server
-   * returns 404 `DOCUMENT_NOT_FOUND`), matching the Python client, rather than
-   * throwing.
+   * Throws `DocumentNotFoundError` when the document does not exist, matching the
+   * Python client. Resolves with `updated: false` only when no update was needed
+   * (the content and metadata already match what is stored) -- "no-op" and
+   * "not found" are distinct outcomes.
    */
   async update(
     id: string,
     options: { content?: string; metadata?: Record<string, unknown> },
   ): Promise<UpdateResponse> {
-    try {
-      return await this.http.patch<UpdateResponse>(
-        `${this.prefix}/documents/${encodeURIComponent(id)}`,
-        options,
-      );
-    } catch (err) {
-      if (err instanceof DocumentNotFoundError) {
-        return { message: err.message, updated: false };
-      }
-      throw err;
-    }
+    return await this.http.patch<UpdateResponse>(
+      `${this.prefix}/documents/${encodeURIComponent(id)}`,
+      options,
+    );
   }
 
   /**

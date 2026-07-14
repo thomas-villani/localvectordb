@@ -1763,7 +1763,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         Returns
         -------
         bool
-            True if document was updated, False if not found
+            True if document was updated, False if no updates needed (`content` and
+            `metadata` already match the database)
+
+        Raises
+        ------
+        DocumentNotFoundError
+            Raised if `doc_id` does not exist.
         """
         # Test against None, not falsiness: `content=""` (clear the document) and
         # `metadata={}` are meaningful payloads that must reach the wire.
@@ -1779,16 +1785,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
         response = self._make_request_with_retry("PATCH", url, json=payload)
 
-        try:
-            result = self._handle_response(response)
-            updated: bool = result.get("updated", False)
-            return updated
-        except (DatabaseNotFoundError, DocumentNotFoundError):
-            # A missing document is a "False" (not updated), matching the local
-            # backend's ``update() -> bool`` contract. DocumentNotFoundError is a
-            # sibling of DatabaseNotFoundError (not a subclass), so it must be
-            # named explicitly here or a 404 would escape as an exception.
-            return False
+        # A missing document raises DocumentNotFoundError, matching LocalVectorDB.update().
+        # False means "no updates needed", never "not found" -- the two are distinct, and
+        # conflating them is what let a no-op look like a missing document.
+        result = self._handle_response(response)
+        updated: bool = result.get("updated", False)
+        return updated
 
     def query(
         self,
@@ -3193,7 +3195,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         Returns
         -------
         bool
-            True if document was updated, False if not found
+            True if document was updated, False if no updates needed (`content` and
+            `metadata` already match the database)
+
+        Raises
+        ------
+        DocumentNotFoundError
+            Raised if `doc_id` does not exist.
         """
 
         # Test against None, not falsiness: `content=""` (clear the document) and
@@ -3209,14 +3217,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
 
-        try:
-            response = await self._make_request_with_retry_async("PATCH", url, json=payload)
-            result = self._handle_response(response)
-            updated: bool = result.get("updated", False)
-            return updated
-        except (DatabaseNotFoundError, DocumentNotFoundError):
-            # See update(): a missing document is False, not an exception.
-            return False
+        # See update(): a missing document raises, it is not a False return.
+        response = await self._make_request_with_retry_async("PATCH", url, json=payload)
+        result = self._handle_response(response)
+        updated: bool = result.get("updated", False)
+        return updated
 
     async def query_async(
         self,
