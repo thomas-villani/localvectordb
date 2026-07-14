@@ -1,0 +1,74 @@
+name: Docker
+
+# The Dockerfile is the one deployment artifact nothing else exercises, so build it
+# on every PR (and boot the container) rather than letting it rot untested the way
+# an inline README snippet did.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "src/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "src/**"
+      - ".github/workflows/docker.yml"
+
+jobs:
+  build:
+    name: Build image and verify it serves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: localvectordb:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A green build only proves it compiles. Boot it and hit the health endpoint so a
+      # broken entrypoint, a missing extra, or a non-root permission error fails the PR.
+      # Note the versioned prefix: /api/v1/health. Plain /health 404s.
+      - name: Run container
+        run: |
+          docker run -d --name lvdb -p 8000:8000 localvectordb:ci
+          echo "waiting for /api/v1/health ..."
+          for i in $(seq 1 90); do
+            if curl -fsS --max-time 10 http://127.0.0.1:8000/api/v1/health > /dev/null 2>&1; then
+              echo "healthy after ${i}s"
+              curl -fsS --max-time 10 http://127.0.0.1:8000/api/v1/health
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container did not become healthy within 90s"
+          docker logs lvdb
+          exit 1
+
+      - name: Assert the container does not run as root
+        run: |
+          uid="$(docker exec lvdb id -u)"
+          echo "container uid: $uid"
+          if [ "$uid" = "0" ]; then
+            echo "::error::container is running as root"
+            exit 1
+          fi
+
+      - name: Container logs
+        if: always()
+        run: docker logs lvdb || true

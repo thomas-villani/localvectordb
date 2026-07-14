@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changed, so a database that only served reads is never re-persisted (and, under
   read fan-out, never races another worker on the shared index file) on close or
   idle-eviction.
+- A hardened `Dockerfile` (pinned base image, dependencies isolated in a virtualenv,
+  non-root user, `HEALTHCHECK` against `/api/v1/health`), built and booted in CI on every
+  pull request so it cannot drift.
 - Comprehensive test suite with 85%+ coverage requirement
 - End-to-end release-qualification suite (`scripts/e2e/`) exercising real
   embedding backends (Ollama, Sentence Transformers) and real PDF/DOCX/XLSX/
@@ -85,6 +88,25 @@ to anyone tracking the pre-release):
   `LocalVectorDB`.
 
 ### Fixed
+
+- `server.rate_limit_storage_uri` was defined but never read, so slowapi silently fell
+  back to a per-process in-memory store and the effective limit was N× the configured
+  one under N workers. It is now passed to the limiter, and a shared store (e.g. Redis)
+  enforces one limit across all workers.
+- Backups could capture a mutually inconsistent pair of stores. SQLite and the FAISS
+  index are copied separately, so a write landing between the two could produce a backup
+  whose SQLite rows referenced vectors absent from the copied index (dangling rows,
+  which require re-embedding to recover). Passing the live database —
+  `BackupManager(path, db=db)` — now holds its write lock and flushes the index for the
+  duration of the snapshot. The path-only form is unchanged and is documented as safe
+  only for a quiescent or closed database.
+- Persisting the index could fail with `PermissionError` on Windows. `os.replace` is the
+  final step of writing the index, and it intermittently fails with `[WinError 5] Access
+  is denied` when any process holds a transient handle on the target — a virus scanner,
+  the search indexer, or simply another process reading the index (a backup copying it,
+  a reader worker opening it). The error propagated out of `save()`/`close()`, leaving
+  the index unwritten while SQLite had already committed. It is now retried with bounded
+  exponential backoff.
 
 Issues found during pre-release end-to-end qualification with real embedding
 providers (the mocked test suite could not catch these):

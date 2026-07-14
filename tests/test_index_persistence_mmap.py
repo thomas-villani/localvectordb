@@ -23,6 +23,7 @@ what lets the mmap-reader query assert an exact-match ranking).
 """
 
 import asyncio
+import os
 from pathlib import Path
 from unittest import mock
 
@@ -181,3 +182,72 @@ class TestMmapReadOnly:
             asyncio.run(_run())
         finally:
             reader.close()
+
+
+class TestAtomicReplaceRetry:
+    """
+    ``os.replace`` is the last step of persisting the index, and on Windows it fails
+    intermittently with ``PermissionError`` when *anything* holds a transient handle on
+    the target -- a virus scanner, the search indexer, or simply another process reading
+    the index (a backup copying it, a reader worker opening it).
+
+    Left unhandled it propagates out of ``save()``/``close()``: the index is never
+    written while SQLite has already committed, which is precisely the dangling-row
+    residue the dual-store rule forbids. It must retry, not surface.
+    """
+
+    def test_retries_a_transient_permission_error_and_succeeds(self, tmp_path):
+        src, dst = tmp_path / "a.tmp", tmp_path / "a.faiss"
+        src.write_bytes(b"payload")
+
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(a, b):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise PermissionError(5, "Access is denied")
+            return real_replace(a, b)
+
+        with mock.patch("localvectordb.database._core.os.replace", side_effect=flaky_replace):
+            LocalVectorDB._replace_with_retry(src, dst)
+
+        assert calls["n"] == 3, "should have retried past the transient failures"
+        assert dst.read_bytes() == b"payload"
+        assert not src.exists()
+
+    def test_gives_up_and_raises_when_the_error_persists(self, tmp_path):
+        src, dst = tmp_path / "b.tmp", tmp_path / "b.faiss"
+        src.write_bytes(b"payload")
+
+        with mock.patch(
+            "localvectordb.database._core.os.replace",
+            side_effect=PermissionError(5, "Access is denied"),
+        ):
+            # A permanently locked target is a real failure and must not be swallowed.
+            with pytest.raises(PermissionError):
+                LocalVectorDB._replace_with_retry(src, dst)
+
+    def test_a_save_survives_a_transient_lock_on_the_index(self, tmp_path):
+        """End to end: the retry keeps close() from raising and losing the index."""
+        build_populated_db(tmp_path)
+        db = make_db(tmp_path, create_if_not_exists=False)
+        db.upsert(documents=["written despite a flaky rename"], ids=["flaky"])
+
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(a, b):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise PermissionError(5, "Access is denied")
+            return real_replace(a, b)
+
+        with mock.patch("localvectordb.database._core.os.replace", side_effect=flaky_replace):
+            db.close()  # must not raise
+
+        reopened = make_db(tmp_path, create_if_not_exists=False)
+        try:
+            assert reopened.get("flaky") is not None
+        finally:
+            reopened.close()

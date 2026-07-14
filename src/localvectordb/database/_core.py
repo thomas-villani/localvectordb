@@ -19,8 +19,10 @@ import contextlib
 import json
 import logging
 import os
+import random
 import sqlite3
 import threading
+import time
 import uuid
 from abc import ABC
 from pathlib import Path
@@ -50,6 +52,14 @@ from localvectordb.sqlite_tuning import SqliteProfile, get_sqlite_pragma_profile
 from localvectordb.utils import get_system_version
 
 logger = logging.getLogger(__name__)
+
+# Bounded retry for os.replace when persisting the index. On Windows the rename can
+# fail with PermissionError even when our own writers are correctly serialized, because
+# an external process (virus scanner, search indexer) or a concurrent *reader* of the
+# index file may hold a transient handle. See _replace_with_retry.
+_REPLACE_MAX_RETRIES = 10
+_REPLACE_BASE_DELAY = 0.02  # seconds
+_REPLACE_MAX_DELAY = 0.5  # seconds (cap per backoff)
 
 
 class LocalVectorDBCore(LocalVectorDBBase, ABC):
@@ -1333,6 +1343,35 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     # Persistence
     @staticmethod
+    def _replace_with_retry(src: Union[str, Path], dst: Union[str, Path]) -> None:
+        """
+        ``os.replace`` with a bounded retry, because on Windows it is not reliably
+        available even when our own code is correctly serialized.
+
+        A virus scanner, the search indexer, or any process that merely *read* the
+        target (a backup copying the index, another worker opening it) can still hold a
+        transient handle on it, and the rename then fails with
+        ``PermissionError`` ``[WinError 5] Access is denied`` / ``[WinError 32]``.
+
+        This is not cosmetic. The rename is the last step of persisting the index, so a
+        failure propagates out of ``save()`` -> ``close()``: the index is never written,
+        while SQLite has already committed its rows. Reopening then yields **dangling
+        rows** -- exactly the residue the dual-store rule exists to prevent. Retrying a
+        rename is safe: it is idempotent, and the temp file is still intact.
+        """
+        delay = _REPLACE_BASE_DELAY
+        for attempt in range(_REPLACE_MAX_RETRIES):
+            try:
+                os.replace(str(src), str(dst))
+                return
+            except PermissionError:
+                if attempt == _REPLACE_MAX_RETRIES - 1:
+                    raise
+                # jitter to spread retries, not a security/crypto use
+                time.sleep(delay + random.uniform(0, delay))  # nosec B311
+                delay = min(delay * 2, _REPLACE_MAX_DELAY)
+
+    @staticmethod
     def _atomic_write_index(index, path: Union[str, Path]) -> None:
         """
         Serialize an index so that a crash can never leave a truncated file.
@@ -1350,7 +1389,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             with open(tmp, "rb+") as fh:
                 os.fsync(fh.fileno())
 
-            os.replace(str(tmp), str(path))
+            LocalVectorDBCore._replace_with_retry(tmp, path)
         except BaseException:
             # Leave no partial file behind; the previous index at `path` is untouched.
             with contextlib.suppress(OSError):

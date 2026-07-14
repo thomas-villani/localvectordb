@@ -1,0 +1,48 @@
+# Keep the build context small and the image reproducible: only pyproject.toml,
+# README.md, LICENSE and src/ are actually COPYed by the Dockerfile.
+
+.git
+.github
+.venv
+venv
+env
+
+# Local databases, caches and benchmark corpora (can be gigabytes)
+.lvdb
+benchmarks/data
+data
+*.sqlite
+*.sqlite3
+*.faiss
+
+# Working notes (never ship these)
+etc
+
+docs
+tests
+scripts
+sdk
+examples
+notebooks
+
+# Python build/test artifacts
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+.mypy_cache
+.pytest_cache
+.ruff_cache
+htmlcov
+.coverage
+.coverage.*
+
+# Node (JS SDK)
+node_modules
+
+# Editor / OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db

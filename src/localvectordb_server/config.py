@@ -423,9 +423,12 @@ class ServerSettings(BaseSettings):
     enable_structured_logging: Optional[bool] = None  # Computed in __post_init__ based on debug
     enable_performance_logging: bool = False
     enable_rate_limiting: bool = False
-    # Settings for Flask-Limiter
+    # Rate-limit settings (slowapi / limits)
     rate_limit: str = "100 per minute"
-    # Can also provide a redis url
+    # Backing store for rate-limit counters. The default "memory://" is per-process:
+    # under N workers the effective limit is N x `rate_limit`. Point this at a shared
+    # store (e.g. "redis://localhost:6379/0") to enforce one limit across all workers.
+    # Non-memory backends need the matching `limits` extra installed (e.g. redis).
     rate_limit_storage_uri: str = "memory://"
 
     # Cache settings
