@@ -205,7 +205,7 @@ for the full tool list, configuration reference, and security guidance.
 ## ✨ Features
 
 ### 🗃️ **Document-First Architecture**
-- **Smart Chunking**: Position-tracking chunking with perfect document reconstruction
+- **Smart Chunking**: Position-tracking chunking — the default chunker reconstructs documents byte-for-byte from their chunks
 - **Metadata Schema**: Structured, indexed metadata fields with validation
 - **Unified API**: Single interface for vector, keyword, and hybrid search
 
@@ -533,7 +533,7 @@ lvdb config set database.chunk_size 1000
 ```
 
 ### Chunking System
-- **Position Tracking**: Exact character positions for perfect reconstruction
+- **Position Tracking**: Exact character positions — every general-purpose chunker (`sentences`, `tokens`, `words`, `lines`, `characters`, `paragraphs`, `sections`) reconstructs the source byte-for-byte. The specialized `code-blocks` chunker is exact only when a document fits in a single chunk.
 - **Multiple Methods**: Sentences, tokens, paragraphs, sections, code blocks
 - **Overlap Support**: Configurable overlap between chunks
 - **Metadata Preservation**: Document metadata inherited by all chunks
@@ -592,19 +592,50 @@ response = requests.post(
 
 ## 🔧 Production Deployment
 
+### Scale and limits
+
+LocalVectorDB is built for **agent-native document memory**, not as a general-purpose
+vector store at web scale. Be deliberate about the ceiling:
+
+- **The index is exact, not approximate.** The default `IndexFlatL2` is a brute-force
+  flat index: every query scans every vector, so latency grows linearly with the
+  collection. You get exact recall in return — no ANN tuning, no recall cliff.
+- **Vectors are RAM-resident float32, unquantized.** Budget `dimensions × 4 bytes` per
+  vector: **1M × 768-dim ≈ 3.1 GB** (plus the SQLite store). Reader workers can share a
+  single page-cached copy via `database.mmap_index` (see below), which cuts *per-worker*
+  RAM but not the on-disk size.
+- **Practical ceiling: ~10⁵–10⁶ vectors** on a normal machine. Beyond that you want
+  quantization or an ANN index, which are deliberately out of scope for v0.1.
+
+**Bulk-load in one call.** Every `upsert`/`insert` rewrites the *entire* FAISS index file
+when it flushes, so ingesting N documents in N separate calls is N full-index rewrites.
+Pass the whole batch to a single `upsert(documents=[...])` instead — it is dramatically
+faster and rewrites the index once.
+
 ### Docker Deployment
 
-```dockerfile
-FROM python:3.12-slim
+A hardened [`Dockerfile`](Dockerfile) ships in the repo: pinned base image, dependencies
+isolated in a virtualenv, non-root user, and a `HEALTHCHECK` against `/health`. It builds
+from source, and CI builds it on every pull request so it cannot silently rot.
 
-RUN pip install "localvectordb[server,file-extraction]"
-
-COPY config.toml /app/config.toml
-WORKDIR /app
-
-EXPOSE 8000
-CMD ["lvdb", "--config", "config.toml", "serve"]
+```bash
+docker build -t localvectordb:local .
+docker run --rm -p 8000:8000 -v lvdb-data:/data localvectordb:local
 ```
+
+Databases persist in the `/data` volume (`LVDB_DATABASE_ROOT_DIR`). Configure with `LVDB_*`
+environment variables, or mount a TOML config file:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -v "$PWD/config.toml:/etc/lvdb/config.toml:ro" \
+  -v lvdb-data:/data \
+  localvectordb:local \
+  lvdb --config /etc/lvdb/config.toml serve --host 0.0.0.0 --port 8000
+```
+
+The image installs the `server` extra only. For file upload/extraction, add
+`file-extraction` to the `pip install` line in the `Dockerfile`.
 
 ### Scaling reads across workers
 

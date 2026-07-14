@@ -174,7 +174,7 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
 
 ### Key Design Patterns
 
-**Document-First API**: Users work with complete documents rather than chunks. Chunking is handled internally with position tracking for perfect reconstruction.
+**Document-First API**: Users work with complete documents rather than chunks. Chunking is handled internally with position tracking: every general-purpose chunker reconstructs the source document byte-for-byte (the specialized `code-blocks` chunker is exact only for single-chunk documents).
 
 **Factory Pattern**: `VectorDB()` function automatically chooses LocalVectorDB or RemoteVectorDB based on path/URL, enabling seamless local-to-remote migration.
 

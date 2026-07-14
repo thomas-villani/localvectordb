@@ -10,6 +10,7 @@ Classes:
     BackupConfig: Configuration for backup operations
 """
 
+import contextlib
 import gc
 import hashlib
 import json
@@ -24,7 +25,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 import faiss
 import numpy as np
@@ -214,14 +215,30 @@ class BackupManager:
         Path to the FAISS index file. If None, inferred from database_path.
     config : BackupConfig, optional
         Backup configuration. If None, uses default configuration.
+    db : LocalVectorDB, optional
+        The *live* database these paths belong to. Pass this to back up a database
+        that is open and may be written to concurrently: the backup then holds the
+        database's write lock and flushes the FAISS index to disk for the duration of
+        the snapshot, so the SQLite copy and the index copy are mutually consistent.
+
+        Without it (the path-only form) the two stores are copied without
+        coordination. A backup taken while a write is in flight can capture SQLite
+        rows whose vectors are not yet in the copied index -- i.e. **dangling rows**.
+        So the path-only form is safe only for a database that is closed, or that is
+        otherwise known to be quiescent.
 
     Examples
     --------
-    Create a full backup::
+    Create a full backup of a closed database::
 
         manager = BackupManager("/path/to/mydb.sqlite")
         backup_id = manager.create_backup(BackupType.FULL)
         print(f"Backup created: {backup_id}")
+
+    Create a consistent backup of a live, open database::
+
+        manager = BackupManager(db.db_path, db=db)
+        backup_id = manager.create_backup(BackupType.FULL)
 
     Restore from backup::
 
@@ -239,6 +256,7 @@ class BackupManager:
         database_path: Union[str, Path],
         faiss_index_path: Optional[Union[str, Path]] = None,
         config: Optional[BackupConfig] = None,
+        db: Optional[Any] = None,
     ):
         self.database_path = Path(database_path)
 
@@ -250,9 +268,43 @@ class BackupManager:
 
         self.config = config or BackupConfig()
         self.database_name = self.database_path.stem
+        # Optional live database, used to quiesce writes for a consistent snapshot.
+        self._db = db
 
         # Initialize version manager
         self.version_manager = VersionManager(self.database_path)
+
+    @contextlib.contextmanager
+    def _quiesced(self) -> Iterator[None]:
+        """
+        Hold the live database still for the duration of a snapshot.
+
+        The two stores are copied separately (SQLite via its online backup API, FAISS
+        as a file copy). A write landing between the two yields a mutually inconsistent
+        backup, and the dangerous direction is SQLite rows whose vectors are missing
+        from the copied index -- dangling rows, which need re-embedding to fix. (The
+        opposite skew, orphan vectors, is harmless and is swept by ``repair``.)
+
+        Taking the database's write lock excludes every mutating path, and flushing the
+        index first makes the ``.faiss`` on disk match what SQLite has committed.
+
+        ``db.save()`` is deliberately *not* called here: it re-acquires the same write
+        lock, which would deadlock. This drives the same internals directly.
+
+        A no-op when no live database was supplied -- the caller is then responsible
+        for not writing during the backup.
+        """
+        db = self._db
+        if db is None:
+            yield
+            return
+
+        with db._read_write_lock.write_lock():
+            if getattr(db, "_index_dirty", False):
+                db._save_internal()
+                db._save_faiss_counters()
+                db._index_dirty = False
+            yield
 
     def _calculate_file_checksum(self, file_path: Path) -> str:
         """Calculate SHA-256 checksum of a file."""
@@ -472,12 +524,16 @@ class BackupManager:
             temp_dir = Path(temp_dir_str)
 
             try:
-                # Backup SQLite database using SQLite's backup API
-                self._backup_sqlite_database(temp_dir)
+                # Copy both stores while the database is held still, so the SQLite
+                # snapshot and the index copy describe the same instant. A no-op unless
+                # a live `db` was supplied -- see _quiesced().
+                with self._quiesced():
+                    # Backup SQLite database using SQLite's backup API
+                    self._backup_sqlite_database(temp_dir)
 
-                # Backup FAISS index if configured and exists
-                if self.config.include_faiss_index and self.faiss_index_path.exists():
-                    self._backup_faiss_index(temp_dir)
+                    # Backup FAISS index if configured and exists
+                    if self.config.include_faiss_index and self.faiss_index_path.exists():
+                        self._backup_faiss_index(temp_dir)
 
                 # Create manifest
                 metadata = self._create_backup_manifest(backup_id, backup_type, temp_dir, parent_backup_id)
@@ -1499,12 +1555,16 @@ class IncrementalBackupManager:
             temp_dir = Path(temp_dir_str)
 
             try:
-                # Create incremental database with only changes
-                self._create_incremental_database(changes, temp_dir)
+                # Same consistency requirement as a full backup: hold the live database
+                # still so the incremental SQLite slice and the vectors it references
+                # are captured at one instant. A no-op for the path-only form.
+                with self.backup_manager._quiesced():
+                    # Create incremental database with only changes
+                    self._create_incremental_database(changes, temp_dir)
 
-                # Create incremental FAISS index if there are vector changes
-                if changes["faiss_changes"]:
-                    self._create_incremental_faiss_index(changes, temp_dir)
+                    # Create incremental FAISS index if there are vector changes
+                    if changes["faiss_changes"]:
+                        self._create_incremental_faiss_index(changes, temp_dir)
 
                 # Create change manifest
                 self._create_change_manifest(changes, temp_dir, parent_backup_id)

@@ -348,14 +348,23 @@ def create_app(
         if not _SLOWAPI_AVAILABLE:
             raise ConfigurationError("Rate limiting enabled but slowapi not installed")
 
-        limiter = Limiter(key_func=get_remote_address, default_limits=[_config.server.rate_limit])
+        # storage_uri must be passed through: without it slowapi silently falls back
+        # to a per-process in-memory store, so under N workers the effective limit is
+        # N x the configured one. Point it at Redis to share counters across workers.
+        limiter = Limiter(
+            key_func=get_remote_address,
+            default_limits=[_config.server.rate_limit],
+            storage_uri=_config.server.rate_limit_storage_uri,
+        )
         app.state.limiter = limiter
         # Use our own handler rather than slowapi's stock one: the stock handler
         # returns {"error": "<string>"}, which breaks the {"error": {...}} object
         # envelope every other response uses (and crashes clients that read
         # error["code"]). We still inject slowapi's rate-limit headers.
         app.add_exception_handler(RateLimitExceeded, _rate_limit_envelope_handler)
-        logger.info(f"Rate limiting enabled: {_config.server.rate_limit}")
+        logger.info(
+            f"Rate limiting enabled: {_config.server.rate_limit} (storage: {_config.server.rate_limit_storage_uri})"
+        )
 
     # --- Exception handlers (shared with tests via register_exception_handlers) ---
     register_exception_handlers(app, debug=debug)
