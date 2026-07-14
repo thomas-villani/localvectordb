@@ -158,7 +158,7 @@ The ``query()`` method supports vector, keyword, and hybrid search:
    // Hybrid search with tuned weighting
    const hybrid = await db.query("machine learning", {
      search_type: "hybrid",
-     vector_weight: 0.7,      // 70% vector, 30% keyword
+     vector_weight: 0.5,      // 50% vector, 50% keyword
      k: 10,
      score_threshold: 0.3,
    });

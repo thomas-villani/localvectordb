@@ -187,7 +187,10 @@ class TestLocalVectorDBInitialization:
 
             db = LocalVectorDB(name="test", base_path=temp_dir)
 
-            mock_faiss.read_index.assert_called_once_with(str(index_path))
+            # The index is loaded with explicit IO flags; 0 means "no flags", i.e.
+            # exactly the previous behaviour. faiss.IO_FLAG_MMAP is passed instead when
+            # the database is opened read-only with mmap_index=True.
+            mock_faiss.read_index.assert_called_once_with(str(index_path), 0)
             assert db.index == mock_index
 
 

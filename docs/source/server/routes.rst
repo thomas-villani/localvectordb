@@ -1146,7 +1146,7 @@ The main search endpoint supporting vector, keyword, and hybrid search.
      "k": 10,
      "score_threshold": 0.7,
      "filters": {"journal": "AI Research Quarterly"},
-     "vector_weight": 0.7
+     "vector_weight": 0.5
    }
 
 **Parameters**:
@@ -1393,7 +1393,7 @@ Query across the main content column plus embedding-enabled metadata columns.
      "search_type": "vector",
      "return_type": "documents",
      "k": 10,
-     "vector_weight": 0.7
+     "vector_weight": 0.5
    }
 
 ``query`` is required; ``columns`` defaults to all embedding-enabled columns when omitted.

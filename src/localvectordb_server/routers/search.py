@@ -164,7 +164,7 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
     k = search_params.get("k", 10)
     score_threshold = search_params.get("score_threshold", 0.0)
     filters = search_params.get("filters", search_params.get("metadata_filters"))
-    vector_weight = search_params.get("vector_weight", 0.7)
+    vector_weight = search_params.get("vector_weight", 0.5)
 
     context_window = search_params.get("context_window", 2)
     context_unit = search_params.get("context_unit", "chunks")
@@ -630,7 +630,7 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
             "k": 10,                             // number of documents to return from each database
             "score_threshold": 0.4,              // optionally limit results by similarity score
             "filters": { ... },                  // MongoDB-style filters
-            "vector_weight": 0.7,                // balance of vector:keyword for hybrid search
+            "vector_weight": 0.5,                // balance of vector:keyword for hybrid search
             "context_window": 2                  // for return_type="context"
         }
 

@@ -238,7 +238,7 @@ def _render_query_results(results, *, title, output_as_json, output, metadata, p
     "(sections/documents require a database created with hierarchical_embeddings=True)",
 )
 @click.option("--score-threshold", default=0.0, type=float, help="Minimum score threshold")
-@click.option("--vector-weight", default=0.7, type=float, help="Weight for vector search in hybrid mode")
+@click.option("--vector-weight", default=0.5, type=float, help="Weight for vector search in hybrid mode")
 @click.option(
     "--context-window",
     default=2,

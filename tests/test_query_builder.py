@@ -110,7 +110,7 @@ class TestQueryBuilderInitialization:
         assert builder._exact_filters == []
         assert builder._semantic_filters == []
         assert builder._search_type == "hybrid"
-        assert builder._vector_weight == 0.7
+        assert builder._vector_weight == 0.5
         assert builder._return_type == "documents"
         assert builder._limit == 10
         assert builder._offset == 0
@@ -1252,7 +1252,7 @@ class TestQueryExecutorExecution:
             k=10,  # limit + offset
             score_threshold=0.0,
             filters={},
-            vector_weight=0.7,
+            vector_weight=0.5,
             context_window=2,
             semantic_dedup_threshold=None,
             document_scoring_method="frequency_boost",
@@ -1289,7 +1289,7 @@ class TestQueryExecutorExecution:
             k=7,  # limit + offset
             score_threshold=0.0,
             filters=expected_filters,
-            vector_weight=0.7,
+            vector_weight=0.5,
             context_window=2,
             semantic_dedup_threshold=None,
             document_scoring_method="frequency_boost",

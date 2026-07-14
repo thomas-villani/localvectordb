@@ -314,7 +314,7 @@ async def query_database(
     k: int = 10,
     score_threshold: float = 0.0,
     filters: Optional[Dict] = None,
-    vector_weight: float = 0.7,
+    vector_weight: float = 0.5,
     context_window: int = 2,
     context_unit: Literal["chunks", "tokens", "words", "characters"] = "chunks",
     context_truncate: bool = False,

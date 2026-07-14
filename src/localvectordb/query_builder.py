@@ -316,7 +316,7 @@ class QueryBuilder:
         self._exact_filters: List[Dict[str, Any]] = []
         self._semantic_filters: List[SemanticFilter] = []
         self._search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
-        self._vector_weight: float = 0.7
+        self._vector_weight: float = 0.5
         self._return_type: Literal["documents", "chunks", "sections", "context"] = "documents"
         self._search_level: Literal["chunks", "sections", "documents"] = "chunks"
         self._limit: int = 10
@@ -552,7 +552,7 @@ class QueryBuilder:
         """Use keyword search."""
         return self.search(query, search_type="keyword", score_threshold=score_threshold)
 
-    def hybrid(self, query, vector_weight: float = 0.7, score_threshold=None) -> "QueryBuilder":
+    def hybrid(self, query, vector_weight: float = 0.5, score_threshold=None) -> "QueryBuilder":
         """Use hybrid search with specified vector weight."""
         return self.search(query, search_type="hybrid", vector_weight=vector_weight, score_threshold=score_threshold)
 

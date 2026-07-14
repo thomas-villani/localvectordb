@@ -104,7 +104,7 @@ current query's candidate pool, and the normalized values are blended:
 
    final_score = vector_weight * v + (1 - vector_weight) * k
 
-Normalizing first is what makes ``vector_weight`` (default 0.7) an actual blend. The
+Normalizing first is what makes ``vector_weight`` (default 0.5) an actual blend. The
 two legs are otherwise on incompatible, corpus-dependent scales -- a bounded
 similarity against raw BM25 -- and summing them directly lets whichever leg happens
 to span the wider range decide the ranking. Chunks appearing in only one result set
@@ -139,7 +139,7 @@ in the request body. These parameters are forwarded directly to the local databa
        "return_type": "documents",
        "k": 10,
        "score_threshold": 0.3,
-       "vector_weight": 0.7,
+       "vector_weight": 0.5,
        "document_scoring_method": "frequency_boost",
        "document_scoring_options": {
          "frequency_bias": 0.3

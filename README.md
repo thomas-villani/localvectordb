@@ -376,7 +376,7 @@ results = db.query("search text", search_type="vector", k=5)
 results = db.query(
     "machine learning",
     search_type="hybrid",
-    vector_weight=0.7,
+    vector_weight=0.5,
     filters={"category": "AI"}
 )
 

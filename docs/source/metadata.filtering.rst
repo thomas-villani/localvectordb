@@ -551,7 +551,7 @@ Hybrid Search with Complex Filtering
                {"rating": {"$gte": 4.0}}
            ]
        },
-       vector_weight=0.7
+       vector_weight=0.5
    )
 
 Search API with Filtering

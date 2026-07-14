@@ -102,7 +102,7 @@ results = db.query(
     "python machine learning",
     search_type="hybrid",
     k=10,
-    hybrid_weights=(0.7, 0.3),  # (vector_weight, keyword_weight)
+    vector_weight=0.5,  # 0.5 = even blend (default); keyword weight is 1 - vector_weight
 )
 ```
 

@@ -117,7 +117,7 @@ class EvalConfig:
     def is_library_default(self) -> bool:
         return (
             self.search_type == "hybrid"
-            and self.vector_weight == 0.7
+            and self.vector_weight == 0.5
             and self.document_scoring_method == "frequency_boost"
             and not self.rerank
         )

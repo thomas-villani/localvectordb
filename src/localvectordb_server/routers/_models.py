@@ -124,7 +124,7 @@ class QueryBody(StrictModel):
     filters: Optional[Dict[str, Any]] = Field(
         default=None, validation_alias=AliasChoices("filters", "metadata_filters")
     )
-    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    vector_weight: float = Field(default=0.5, ge=0.0, le=1.0)
     context_window: int = Field(default=2, ge=0, le=1_000_000)
     context_unit: Literal["chunks", "tokens", "words", "characters"] = "chunks"
     context_truncate: bool = False
