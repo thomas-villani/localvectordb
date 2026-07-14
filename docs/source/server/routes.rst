@@ -546,6 +546,15 @@ Update a document's content and/or metadata.
 
    print(response.json()["message"])
 
+**Response**: ``{"updated": true, "message": "..."}``.
+
+``updated`` is ``false`` — with a ``200`` — when no update was needed, i.e. the
+supplied ``content`` and ``metadata`` already match what is stored. A document
+that does not exist is a ``404`` with error code ``DOCUMENT_NOT_FOUND``; it is
+never reported as ``updated: false``. The Python and JavaScript clients mirror
+this: ``update()`` returns ``False``/``updated: false`` for a no-op and raises
+``DocumentNotFoundError`` for a missing document, matching ``LocalVectorDB``.
+
 Delete Document
 ^^^^^^^^^^^^^^^
 

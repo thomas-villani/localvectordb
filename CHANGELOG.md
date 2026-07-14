@@ -122,6 +122,13 @@ to anyone tracking the pre-release):
   document raised past the route into the generic 500 branch (`DocumentNotFoundError`
   has no mapping in `standardize_error_response`). A no-op is now `200 {"updated": false}`
   and a missing document is `404 DOCUMENT_NOT_FOUND`.
+- `RemoteVectorDB.update()` / `update_async()` swallowed a 404 into a `False` return, so a
+  missing document was indistinguishable from "no updates needed" and the remote backend
+  diverged from `LocalVectorDB.update()`, which raises `DocumentNotFoundError`. Both now
+  raise, and `False` means only "no updates needed". The JavaScript SDK's
+  `database.update()` is reconciled the same way (it now throws `DocumentNotFoundError`
+  instead of resolving `{updated: false}`). The `update()`/`update_async()` contract is
+  now stated on the abstract base so both backends are held to it.
 - `RemoteVectorDB.update()` / `update_async()` short-circuited on `if not content and not
   metadata`, so `content=""` (clear a document) and `metadata={}` were silently dropped
   client-side and never reached the server. They now test against `None`.

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { LocalVectorDBClient } from "../src/client.js";
+import { DocumentNotFoundError } from "../src/errors.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -140,7 +141,17 @@ describe("DatabaseHandle", () => {
     expect(init?.method).toBe("PATCH");
   });
 
-  it("update() resolves { updated: false } on 404 DOCUMENT_NOT_FOUND", async () => {
+  it("update() resolves { updated: false } on a no-op (document exists, nothing changed)", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ message: "already up to date", updated: false }),
+    );
+
+    const result = await db.update("doc1", { content: "identical" });
+    expect(result.updated).toBe(false);
+  });
+
+  it("update() throws DocumentNotFoundError on 404 DOCUMENT_NOT_FOUND", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
       jsonResponse(
@@ -158,8 +169,9 @@ describe("DatabaseHandle", () => {
       ),
     );
 
-    const result = await db.update("missing", { content: "x" });
-    expect(result.updated).toBe(false);
+    await expect(db.update("missing", { content: "x" })).rejects.toThrow(
+      DocumentNotFoundError,
+    );
   });
 
   // -----------------------------------------------------------------------

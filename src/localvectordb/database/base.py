@@ -89,7 +89,13 @@ class BaseVectorDB(ABC):
 
     @abstractmethod
     def update(self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """Update a document's content and/or metadata."""
+        """Update a document's content and/or metadata.
+
+        Returns True if the document was updated, False if no update was needed
+        (``content`` and ``metadata`` already match what is stored). Raises
+        DocumentNotFoundError if ``doc_id`` does not exist -- "no-op" and "not
+        found" are distinct outcomes and must not be collapsed into one another.
+        """
         pass
 
     # Query operations
@@ -481,7 +487,11 @@ class BaseVectorDB(ABC):
     async def update_async(
         self, doc_id: str, content: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """Update a document's content and/or metadata asynchronously."""
+        """Update a document's content and/or metadata asynchronously.
+
+        Same contract as :meth:`update`: False means "no update needed", and a
+        missing document raises DocumentNotFoundError.
+        """
         pass
 
     @abstractmethod
