@@ -43,7 +43,7 @@ class CursorConfig:
 
     search_type: Literal["vector", "keyword", "hybrid"]
     return_type: Literal["documents", "chunks", "sections", "context", "enriched"]
-    search_level: Literal["chunks", "sections", "documents"]
+    search_level: Literal["chunks", "sections", "documents", "fused"]
     score_threshold: float
     filters: Optional[Dict[str, Any]]
     vector_weight: float

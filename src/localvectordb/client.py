@@ -174,6 +174,11 @@ _REMOTE_RERANKER_INSTANCE_UNSUPPORTED = (
     "the server constructs the reranker from it."
 )
 
+_REMOTE_FUSED_UNSUPPORTED = (
+    "search_level='fused' is not yet supported for remote databases; the server "
+    "query route does not accept it. Use a local database for fused retrieval."
+)
+
 # Default HTTP connection-pool limits for the client. Override per-instance via the
 # `connection_pool_limits` constructor argument.
 DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 20
@@ -1798,11 +1803,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         # NEW PARAMETERS:
         context_window: int = 2,
         context_unit: str = "chunks",
@@ -1851,6 +1857,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         """
         if reranker is not None:
             raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
+        if search_level == "fused":
+            raise NotImplementedError(_REMOTE_FUSED_UNSUPPORTED)
 
         # Prepare request payload
         payload = {
@@ -3229,11 +3237,12 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,
@@ -3282,6 +3291,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if reranker is not None:
             raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
+        if search_level == "fused":
+            raise NotImplementedError(_REMOTE_FUSED_UNSUPPORTED)
 
         # Prepare request payload
         payload = {

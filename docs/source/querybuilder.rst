@@ -245,8 +245,10 @@ Hierarchical Search
 When the database was created with ``hierarchical_embeddings=True``, two extra
 builder methods select the retrieval granularity (see :doc:`hierarchical`):
 
-* ``.search_level(level)`` — which FAISS index to query: ``"chunks"`` (default),
-  ``"sections"``, or ``"documents"``.
+* ``.search_level(level, section_weight=None)`` — which retrieval level to query:
+  ``"chunks"`` (default), ``"sections"``, ``"documents"``, or ``"fused"``. For
+  ``"fused"``, ``section_weight`` (0–1) tunes the blend of chunk and section
+  signal. See :doc:`hierarchical`.
 * ``.sections()`` — return section-level results (``type="section"``).
 
 .. code-block:: python
