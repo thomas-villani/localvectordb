@@ -144,7 +144,10 @@ from localvectordb.exceptions import (
     DuplicateDocumentIDError,
     EmbeddingError,
     MetadataFilterError,
+    PatchConflictError,
+    PatchError,
 )
+from localvectordb.patching import PatchResult
 from localvectordb.query_builder import FILTER_OPERATOR_NAMES
 from localvectordb.sqlite_tuning import SqliteProfile
 
@@ -955,6 +958,8 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "embedding_error": EmbeddingError,
             "document_not_found": DocumentNotFoundError,
             "invalid_filter": MetadataFilterError,
+            "hash_conflict": PatchConflictError,
+            "patch_failed": PatchError,
         }
 
         # Raise the appropriate exception if we recognize the type
@@ -1796,6 +1801,36 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         result = self._handle_response(response)
         updated: bool = result.get("updated", False)
         return updated
+
+    def patch(
+        self,
+        doc_id: str,
+        ops: List[Dict[str, Any]],
+        *,
+        expect_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> PatchResult:
+        """
+        Patch a document's content with find/replace or span-splice ops.
+
+        See :class:`localvectordb.LocalVectorDB.patch` for the contract and op
+        shapes. Raises DocumentNotFoundError (missing), PatchConflictError (stale
+        ``expect_hash``), or PatchError (unmatched/ambiguous/overlapping op).
+        """
+        payload: Dict[str, Any] = {"ops": ops}
+        if expect_hash is not None:
+            payload["expect_hash"] = expect_hash
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
+        response = self._make_request_with_retry("PATCH", url, json=payload)
+        result = self._handle_response(response)
+        return PatchResult(
+            updated=result.get("updated", False),
+            new_hash=result.get("new_hash", ""),
+            ops_applied=result.get("ops_applied", len(ops)),
+        )
 
     def query(
         self,
@@ -3230,6 +3265,30 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         result = self._handle_response(response)
         updated: bool = result.get("updated", False)
         return updated
+
+    async def patch_async(
+        self,
+        doc_id: str,
+        ops: List[Dict[str, Any]],
+        *,
+        expect_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> PatchResult:
+        """Patch a document's content asynchronously. Same contract as :meth:`patch`."""
+        payload: Dict[str, Any] = {"ops": ops}
+        if expect_hash is not None:
+            payload["expect_hash"] = expect_hash
+        if metadata is not None:
+            payload["metadata"] = metadata
+
+        url = self._build_url(f"/api/v1/databases/{self.name}/documents/{doc_id}")
+        response = await self._make_request_with_retry_async("PATCH", url, json=payload)
+        result = self._handle_response(response)
+        return PatchResult(
+            updated=result.get("updated", False),
+            new_hash=result.get("new_hash", ""),
+            ops_applied=result.get("ops_applied", len(ops)),
+        )
 
     async def query_async(
         self,

@@ -988,6 +988,29 @@ Update Documents
    # Update metadata only
    lvdb db my_database update doc_1 --metadata '{"status": "revised"}'
 
+Patch Documents (in-place edit)
+"""""""""""""""""""""""""""""""
+
+Edit a document without re-sending its whole content. ``--find`` must match
+exactly ``--count`` times (default 1) or the patch fails; ``--append`` and
+``--prepend`` cover the no-anchor cases. Combine ops as long as they touch
+disjoint spans.
+
+.. code-block:: bash
+
+   # Exact find/replace
+   lvdb db my_database patch doc_1 --find "brown" --replace "red"
+
+   # Replace all N occurrences (fails unless exactly N match)
+   lvdb db my_database patch doc_1 --find "TODO" --replace "DONE" --count 3
+
+   # Append / prepend
+   lvdb db my_database patch doc_1 --append " (revised)"
+   lvdb db my_database patch doc_1 --prepend "DRAFT: "
+
+   # Optimistic concurrency: fail if the document changed since you read it
+   lvdb db my_database patch doc_1 --find "v1" --replace "v2" --expect-hash 9f2b...
+
 Delete Documents
 """"""""""""""""
 
@@ -2895,5 +2918,6 @@ Write tools (read-write mode only):
 - ``delete_database``: Delete a database and its data
 - ``upsert_documents``: Insert or update documents
 - ``update_document``: Update a document's content and/or metadata
+- ``patch_document``: Edit a document in place with find/replace (``old_string``/``new_string``)
 - ``delete_document``: Delete a document by ID
 - ``update_metadata_schema``: Add or modify metadata schema fields

@@ -52,6 +52,10 @@ class DeleteResponse(StrictModel):
 class UpdateResponse(StrictModel):
     updated: bool
     message: str
+    # Populated by content updates and by patch: SHA-256 of the resulting content.
+    new_hash: Optional[str] = None
+    # Populated by patch only: number of ops applied.
+    ops_applied: Optional[int] = None
 
 
 class BatchDeleteResponse(StrictModel):

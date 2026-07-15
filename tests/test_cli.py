@@ -975,6 +975,102 @@ class TestDbAdd:
 
 
 # ============================================================================
+# lvdb db <name> patch
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestDbPatch:
+    def _make_db_ctx(self, fake_config, config_file, tmp_db_folder, mock_db):
+        api_key_path = os.path.join(tmp_db_folder, "api_keys.db")
+        obj = {
+            "config": fake_config,
+            "config_path": config_file,
+            "api_key_db_path": api_key_path,
+            "db_folder": tmp_db_folder,
+            "db_name": "testdb",
+            "db": mock_db,
+        }
+
+        @click.pass_context
+        def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
+            ctx.ensure_object(dict)
+            ctx.obj = obj
+
+        @click.pass_context
+        def _patched_db_group_callback(ctx, name):
+            ctx.obj.update({"db_name": name, "db": mock_db})
+
+        from localvectordb_server.cli._db import db_group
+
+        return (
+            patch.object(cli, "callback", _patched_cli_callback),
+            patch.object(db_group, "callback", _patched_db_group_callback),
+        )
+
+    def _mock_db(self, updated=True):
+        from localvectordb.patching import PatchResult
+
+        mock_db = MagicMock()
+        mock_db.patch.return_value = PatchResult(updated=updated, new_hash="abc123def456", ops_applied=1)
+        return mock_db
+
+    def test_patch_find_replace(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = self._mock_db()
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "patch", "doc_1", "--find", "brown", "--replace", "red"])
+        assert result.exit_code == 0
+        assert "Successfully patched" in result.output
+        args, kwargs = mock_db.patch.call_args
+        assert args[0] == "doc_1"
+        assert args[1] == [{"op": "replace", "find": "brown", "replace": "red", "count": 1}]
+        assert kwargs["expect_hash"] is None
+
+    def test_patch_append(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = self._mock_db()
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "patch", "doc_1", "--append", "!"])
+        assert result.exit_code == 0
+        assert mock_db.patch.call_args[0][1] == [{"op": "append", "text": "!"}]
+
+    def test_patch_expect_hash_passed_through(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = self._mock_db()
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(
+                cli, ["db", "testdb", "patch", "doc_1", "--append", "!", "--expect-hash", "cafef00d"]
+            )
+        assert result.exit_code == 0
+        assert mock_db.patch.call_args[1]["expect_hash"] == "cafef00d"
+
+    def test_patch_noop_message(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = self._mock_db(updated=False)
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "patch", "doc_1", "--find", "x", "--replace", "x"])
+        assert result.exit_code == 0
+        assert "already up to date" in result.output
+
+    def test_patch_find_without_replace_errors(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = self._mock_db()
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "patch", "doc_1", "--find", "brown"])
+        assert result.exit_code != 0
+        mock_db.patch.assert_not_called()
+
+    def test_patch_no_ops_errors(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = self._mock_db()
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "patch", "doc_1"])
+        assert result.exit_code != 0
+        mock_db.patch.assert_not_called()
+
+
+# ============================================================================
 # Priority 2: lvdb db <name> search
 # ============================================================================
 

@@ -15,6 +15,8 @@ from localvectordb.exceptions import (
     EmbeddingError,
     MetadataFilterError,
     OllamaNotFoundError,
+    PatchConflictError,
+    PatchError,
 )
 from localvectordb_server._logcfg import request_id_var
 
@@ -107,6 +109,12 @@ def standardize_error_response(
         api_error = APIError(message=str(error), error_code="DATABASE_NOT_FOUND", status_code=404, recoverable=True)
     elif isinstance(error, DuplicateDocumentIDError):
         api_error = APIError(message=str(error), error_code="DUPLICATE_DOCUMENT_ID", status_code=409, recoverable=True)
+    elif isinstance(error, PatchConflictError):
+        # Stale expect_hash precondition on a patch -- the document changed under us.
+        api_error = APIError(message=str(error), error_code="HASH_CONFLICT", status_code=409, recoverable=True)
+    elif isinstance(error, PatchError):
+        # Unmatched/ambiguous/overlapping patch op -- a client error, not a fault.
+        api_error = APIError(message=str(error), error_code="PATCH_FAILED", status_code=422, recoverable=True)
     elif isinstance(error, MetadataFilterError):
         # Bad filter/order_by specs (unknown fields, unsupported operators, ...)
         # are client errors, not server faults.

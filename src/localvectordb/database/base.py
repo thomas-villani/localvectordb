@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 if TYPE_CHECKING:
     from localvectordb._interfaces import QueryBuilderInterface
     from localvectordb.cursor import QueryCursor
+    from localvectordb.patching import PatchResult
 
 import aiosqlite
 import numpy as np
@@ -95,6 +96,31 @@ class BaseVectorDB(ABC):
         (``content`` and ``metadata`` already match what is stored). Raises
         DocumentNotFoundError if ``doc_id`` does not exist -- "no-op" and "not
         found" are distinct outcomes and must not be collapsed into one another.
+        """
+        pass
+
+    @abstractmethod
+    def patch(
+        self,
+        doc_id: str,
+        ops: List[Dict[str, Any]],
+        *,
+        expect_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> "PatchResult":
+        """Patch a document's content with find/replace or span-splice ops.
+
+        ``ops`` resolve against the document's current content (character offsets)
+        and are applied atomically; ``metadata`` is merged as in :meth:`update`.
+        This shares :meth:`update`'s three-outcome contract and adds a fourth:
+
+        - Missing ``doc_id`` -> raises DocumentNotFoundError.
+        - Ops produce content identical to what is stored (and no metadata delta)
+          -> ``PatchResult.updated is False``.
+        - ``expect_hash`` given and it does not match the stored ``content_hash``
+          -> raises PatchConflictError (never collapsed into either of the above).
+        - Unmatched/ambiguous ``find`` or overlapping/out-of-range ops -> raises
+          PatchError.
         """
         pass
 
@@ -495,6 +521,18 @@ class BaseVectorDB(ABC):
         Same contract as :meth:`update`: False means "no update needed", and a
         missing document raises DocumentNotFoundError.
         """
+        pass
+
+    @abstractmethod
+    async def patch_async(
+        self,
+        doc_id: str,
+        ops: List[Dict[str, Any]],
+        *,
+        expect_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> "PatchResult":
+        """Patch a document's content asynchronously. Same contract as :meth:`patch`."""
         pass
 
     @abstractmethod

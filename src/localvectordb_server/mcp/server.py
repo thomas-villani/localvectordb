@@ -20,6 +20,8 @@ from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import (
     DatabaseNotFoundError,
     DocumentNotFoundError,
+    PatchConflictError,
+    PatchError,
 )
 from localvectordb.utils import get_system_version
 from localvectordb_server.mcp.config import MCPConfig
@@ -924,6 +926,74 @@ async def update_document(
         return {"error": str(e), "error_code": "DOCUMENT_NOT_FOUND"}
     except Exception as e:
         logger.error(f"Error updating document: {e}")
+        return {"error": str(e), "error_type": type(e).__name__}
+
+
+@register_tool("patch_document", read_only=False)
+async def patch_document(
+    database_name: str,
+    document_id: str,
+    old_string: str,
+    new_string: str,
+    count: int = 1,
+    expect_hash: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Edit a document in place by replacing exact text, without re-sending the whole
+    document. This mirrors the find/replace contract of a code-editing tool: the
+    ``old_string`` must occur exactly ``count`` times or the edit fails, so it is
+    unambiguous and never silently corrupts the untouched remainder.
+
+    Args:
+        database_name: Name of the database
+        document_id: ID of the document to patch
+        old_string: Exact text to find (must match `count` times)
+        new_string: Text to replace it with
+        count: Number of expected occurrences of `old_string` (default 1)
+        expect_hash: Optional content_hash precondition; if it does not match the
+            stored document the patch fails with a conflict instead of clobbering
+            a concurrent edit.
+
+    Returns:
+        Patch status including `new_hash` and `ops_applied`.
+    """
+    try:
+        manager = _get_manager()
+        manager.config.check_write_permission("patch_document")
+
+        db = await manager.get_database(database_name)
+        ops = [{"op": "replace", "find": old_string, "replace": new_string, "count": count}]
+
+        # A False `updated` means the replacement produced identical content —
+        # report the no-op rather than claiming an edit landed.
+        if hasattr(db, "patch_async"):
+            result = await db.patch_async(doc_id=document_id, ops=ops, expect_hash=expect_hash)
+        else:
+            result = db.patch(doc_id=document_id, ops=ops, expect_hash=expect_hash)
+
+        message = (
+            f"Successfully patched document '{document_id}'"
+            if result.updated
+            else f"Document '{document_id}' already up to date; nothing to update"
+        )
+        return {
+            "message": message,
+            "status": "success",
+            "updated": result.updated,
+            "new_hash": result.new_hash,
+            "ops_applied": result.ops_applied,
+        }
+
+    except PermissionError as e:
+        return {"error": str(e), "error_code": "PERMISSION_DENIED"}
+    except DocumentNotFoundError as e:
+        return {"error": str(e), "error_code": "DOCUMENT_NOT_FOUND"}
+    except PatchConflictError as e:
+        return {"error": str(e), "error_code": "HASH_CONFLICT"}
+    except PatchError as e:
+        return {"error": str(e), "error_code": "PATCH_FAILED"}
+    except Exception as e:
+        logger.error(f"Error patching document: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
 
 

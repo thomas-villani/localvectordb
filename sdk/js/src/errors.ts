@@ -131,6 +131,28 @@ export class DatabaseAlreadyExistsError extends ConflictError {
   }
 }
 
+/** A patch's `expectHash` precondition did not match the stored document (409). */
+export class PatchConflictError extends ConflictError {
+  constructor(
+    message: string,
+    options: ConstructorParameters<typeof LocalVectorDBError>[1] = {},
+  ) {
+    super(message, { code: "HASH_CONFLICT", ...options });
+    this.name = "PatchConflictError";
+  }
+}
+
+/** A patch op was unmatched, ambiguous, overlapping, or out of range (422). */
+export class PatchFailedError extends LocalVectorDBError {
+  constructor(
+    message: string,
+    options: ConstructorParameters<typeof LocalVectorDBError>[1] = {},
+  ) {
+    super(message, { code: "PATCH_FAILED", statusCode: 422, ...options });
+    this.name = "PatchFailedError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 5xx errors
 // ---------------------------------------------------------------------------
@@ -236,6 +258,8 @@ const CODE_TO_CLASS: Record<
   DATABASE_NOT_FOUND: DatabaseNotFoundError,
   DOCUMENT_NOT_FOUND: DocumentNotFoundError,
   DUPLICATE_DOCUMENT_ID: DuplicateDocumentError,
+  HASH_CONFLICT: PatchConflictError,
+  PATCH_FAILED: PatchFailedError,
   DATABASE_ALREADY_EXISTS: DatabaseAlreadyExistsError,
   EMBEDDING_ERROR: EmbeddingError,
   OLLAMA_NOT_AVAILABLE: OllamaNotAvailableError,

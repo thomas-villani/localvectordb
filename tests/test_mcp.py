@@ -269,6 +269,7 @@ class TestToolRegistry:
             "delete_database",
             "upsert_documents",
             "update_document",
+            "patch_document",
             "delete_document",
             "update_metadata_schema",
         ]
@@ -1120,6 +1121,102 @@ class TestUpdateDocumentTool:
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(update_document("testdb", "doc1", content="new text"))
         assert result["updated"] is True
+
+
+@pytest.mark.unit
+class TestPatchDocumentTool:
+    def _result(self, updated=True):
+        from localvectordb.patching import PatchResult
+
+        return PatchResult(updated=updated, new_hash="abc123", ops_applied=1)
+
+    def test_patch_success_builds_replace_op(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import patch_document
+
+        mock_db = MagicMock()
+        del mock_db.patch_async
+        mock_db.patch.return_value = self._result()
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(patch_document("testdb", "doc1", old_string="brown", new_string="red"))
+        assert result["status"] == "success"
+        assert result["updated"] is True
+        assert result["new_hash"] == "abc123"
+        assert result["ops_applied"] == 1
+        mock_db.patch.assert_called_once_with(
+            doc_id="doc1",
+            ops=[{"op": "replace", "find": "brown", "replace": "red", "count": 1}],
+            expect_hash=None,
+        )
+
+    def test_patch_async_path(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import patch_document
+
+        mock_db = MagicMock()
+        mock_db.patch_async = AsyncMock(return_value=self._result())
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(patch_document("testdb", "doc1", old_string="a", new_string="b", count=2))
+        assert result["status"] == "success"
+        mock_db.patch_async.assert_awaited_once_with(
+            doc_id="doc1",
+            ops=[{"op": "replace", "find": "a", "replace": "b", "count": 2}],
+            expect_hash=None,
+        )
+
+    def test_patch_noop_reported(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import patch_document
+
+        mock_db = MagicMock()
+        del mock_db.patch_async
+        mock_db.patch.return_value = self._result(updated=False)
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(patch_document("testdb", "doc1", old_string="x", new_string="x"))
+        assert result["updated"] is False
+        assert "error" not in result
+
+    def test_patch_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import patch_document
+
+        mock_db = MagicMock()
+        del mock_db.patch_async
+        mock_db.patch.side_effect = DocumentNotFoundError("not found", missing_ids=["doc1"])
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(patch_document("testdb", "doc1", old_string="a", new_string="b"))
+        assert result["error_code"] == "DOCUMENT_NOT_FOUND"
+
+    def test_patch_conflict(self, mcp_manager_fixture):
+        from localvectordb.exceptions import PatchConflictError
+        from localvectordb_server.mcp.server import patch_document
+
+        mock_db = MagicMock()
+        del mock_db.patch_async
+        mock_db.patch.side_effect = PatchConflictError("stale")
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(patch_document("testdb", "doc1", old_string="a", new_string="b", expect_hash="x"))
+        assert result["error_code"] == "HASH_CONFLICT"
+
+    def test_patch_failed(self, mcp_manager_fixture):
+        from localvectordb.exceptions import PatchError
+        from localvectordb_server.mcp.server import patch_document
+
+        mock_db = MagicMock()
+        del mock_db.patch_async
+        mock_db.patch.side_effect = PatchError("unmatched find")
+
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(patch_document("testdb", "doc1", old_string="zzz", new_string="b"))
+        assert result["error_code"] == "PATCH_FAILED"
+
+    def test_patch_readonly_denied(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import patch_document
+
+        mcp_manager_fixture.config.mode = "read-only"
+        result = _run(patch_document("testdb", "doc1", old_string="a", new_string="b"))
+        assert result["error_code"] == "PERMISSION_DENIED"
 
 
 @pytest.mark.unit

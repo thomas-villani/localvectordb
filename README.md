@@ -208,6 +208,7 @@ for the full tool list, configuration reference, and security guidance.
 - **Smart Chunking**: Position-tracking chunking — the default chunker reconstructs documents byte-for-byte from their chunks
 - **Metadata Schema**: Structured, indexed metadata fields with validation
 - **Unified API**: Single interface for vector, keyword, and hybrid search
+- **In-place Patch API**: Edit a stored document with exact find/replace (or span splice) instead of re-sending the whole content — with an optional `expect_hash` precondition to guard against lost updates. Available in the library, HTTP API, MCP tool, CLI, and JS SDK
 
 ### 🔍 **Advanced Search**
 - **Vector Search**: Semantic similarity via pluggable embedding providers — Ollama, OpenAI, Google, Jina, HuggingFace (Inference API + local), and Sentence Transformers
@@ -401,6 +402,25 @@ deleted_count = db.delete("doc_1")
 docs = db.get(["doc_1", "doc_2"])
 exist_flags = db.exists(["doc_1", "doc_2"])
 deleted_count = db.delete(["doc_1", "doc_2"])
+```
+
+#### `patch(doc_id, ops, *, expect_hash=None, metadata=None)`
+Edit a document in place without re-sending its whole content. Ops resolve
+against the current content, touch disjoint spans, and apply atomically.
+
+```python
+# Exact find/replace (must match exactly `count` times, default 1)
+result = db.patch("doc_1", [{"op": "replace", "find": "draft", "replace": "final"}])
+print(result.updated, result.new_hash, result.ops_applied)
+
+# Span splice + append/prepend
+db.patch("doc_1", [{"op": "splice", "start": 0, "end": 5, "text": "Hello"}])
+db.patch("doc_1", [{"op": "append", "text": " (revised)"}])
+
+# Optimistic concurrency — raises PatchConflictError if the doc changed
+doc = db.get("doc_1")
+db.patch("doc_1", [{"op": "replace", "find": "v1", "replace": "v2"}],
+         expect_hash=doc.content_hash)
 ```
 
 #### `filter(where=None, order_by=None, limit=None, offset=0)`

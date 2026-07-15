@@ -922,6 +922,68 @@ def update_document(ctx, doc_id, file_or_text, metadata):
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
 
 
+@db_group.command("patch")
+@click.argument("doc_id")
+@click.option("--find", "find_text", default=None, help="Exact text to find (requires --replace)")
+@click.option("--replace", "replace_text", default=None, help="Text to substitute for --find")
+@click.option("--count", default=1, show_default=True, help="Expected number of --find matches")
+@click.option("--append", "append_text", default=None, help="Text to append to the end of the document")
+@click.option("--prepend", "prepend_text", default=None, help="Text to prepend to the start of the document")
+@click.option(
+    "--expect-hash", "expect_hash", default=None, help="Fail if the stored content_hash differs (409-style conflict)"
+)
+@click.pass_context
+def patch_document(ctx, doc_id, find_text, replace_text, count, append_text, prepend_text, expect_hash):
+    """
+    Patch document DOC_ID in place with find/replace, append, or prepend.
+
+    Unlike `update`, this edits the document without re-sending its whole content.
+    A --find must match exactly --count times or the patch fails; combine ops
+    freely as long as they touch disjoint spans.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb patch doc_1 --find "brown" --replace "red"
+        lvdb db mydb patch doc_1 --append " (revised)"
+        lvdb db mydb patch doc_1 --find "TODO" --replace "DONE" --count 3
+    """
+    ops: list = []
+    if find_text is not None:
+        if replace_text is None:
+            click.secho("Error: --find requires --replace", fg="bright_red", err=True)
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+        ops.append({"op": "replace", "find": find_text, "replace": replace_text, "count": count})
+    elif replace_text is not None:
+        click.secho("Error: --replace requires --find", fg="bright_red", err=True)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    if prepend_text is not None:
+        ops.append({"op": "prepend", "text": prepend_text})
+    if append_text is not None:
+        ops.append({"op": "append", "text": append_text})
+
+    if not ops:
+        click.secho(
+            "Error: provide at least one of --find/--replace, --append, or --prepend", fg="bright_red", err=True
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
+    db = get_ctx_db(ctx)
+    try:
+        result = db.patch(doc_id, ops, expect_hash=expect_hash)
+        if result.updated:
+            click.echo(
+                f"Successfully patched document: {doc_id} ({result.ops_applied} op(s), new hash {result.new_hash[:12]})"
+            )
+        else:
+            click.echo(f"Document {doc_id} already up to date; nothing to change")
+    except click.exceptions.Exit:
+        raise
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+
+
 @db_group.command("delete")
 @click.argument("doc_id")
 @click.pass_context

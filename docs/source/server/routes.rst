@@ -57,7 +57,7 @@ Route Permissions
 * ``POST /api/v1/databases/<db_name>/documents/chunks`` - Upsert from pre-chunked data
 * ``POST /api/v1/databases/<db_name>/documents/chunks/insert`` - Insert from pre-chunked data
 * ``POST /api/v1/databases/<db_name>/documents/delete`` - Batch-delete documents by ID
-* ``PATCH /api/v1/databases/<db_name>/documents/<doc_id>`` - Update document
+* ``PATCH /api/v1/databases/<db_name>/documents/<doc_id>`` - Update (``content``) or in-place patch (``ops``) a document
 * ``DELETE /api/v1/databases/<db_name>/documents/<doc_id>`` - Delete document
 * ``POST /api/v1/databases/<db_name>/upload`` - Upload files
 * ``PUT /api/v1/databases/<db_name>/schema`` - Update metadata schema
@@ -554,6 +554,67 @@ that does not exist is a ``404`` with error code ``DOCUMENT_NOT_FOUND``; it is
 never reported as ``updated: false``. The Python and JavaScript clients mirror
 this: ``update()`` returns ``False``/``updated: false`` for a no-op and raises
 ``DocumentNotFoundError`` for a missing document, matching ``LocalVectorDB``.
+
+Patch Document (in-place edit)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The same ``PATCH`` endpoint also accepts ``ops`` instead of ``content`` to edit a
+document **in place** with find/replace or span-splice operations, without
+re-sending the whole document. ``ops`` and ``content`` are mutually exclusive.
+
+**Ops** (character offsets into the stored content, not bytes or tokens):
+
+- ``{"op": "replace", "find": "...", "replace": "...", "count": 1}`` — ``find``
+  must occur exactly ``count`` times or the whole patch fails.
+- ``{"op": "splice", "start": int, "end": int, "text": "..."}`` — replaces
+  ``content[start:end]`` with ``text``.
+- ``{"op": "append", "text": "..."}`` / ``{"op": "prepend", "text": "..."}``.
+
+All ops resolve against the **original** content, must touch disjoint spans, and
+are applied atomically — an unmatched/ambiguous/overlapping op fails the whole
+call with no partial write.
+
+**Request Body**:
+
+.. code-block:: json
+
+   {
+     "ops": [{"op": "replace", "find": "brown", "replace": "red"}],
+     "expect_hash": "9f2b...",
+     "metadata": {"status": "revised"}
+   }
+
+``expect_hash`` is an optional precondition: if it does not match the stored
+``content_hash``, the patch fails with ``409 HASH_CONFLICT`` instead of
+clobbering a concurrent write (only valid together with ``ops``).
+
+**curl Example**:
+
+.. code-block:: bash
+
+   curl -X PATCH http://localhost:8000/api/v1/databases/research_papers/documents/doc_1 \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer your_api_key" \
+     -d '{"ops": [{"op": "replace", "find": "draft", "replace": "final"}]}'
+
+**Response**: ``{"updated": true, "message": "...", "new_hash": "...", "ops_applied": 1}``.
+
+Outcomes:
+
+- ``200`` with ``updated: false`` — the ops produced content identical to what is
+  stored (and no metadata changed).
+- ``404 DOCUMENT_NOT_FOUND`` — the document does not exist.
+- ``409 HASH_CONFLICT`` — ``expect_hash`` did not match the stored content.
+- ``422 PATCH_FAILED`` — an op was unmatched, ambiguous, overlapping, or out of
+  range.
+- ``400 VALIDATION_ERROR`` — both ``content`` and ``ops`` were supplied.
+
+.. note::
+
+   In-place patching still re-chunks and re-embeds the document (unchanged chunks
+   reuse their vectors), so an append-only index (e.g. ``IndexHNSWFlat``) rejects
+   a content-changing patch with ``UnsupportedIndexOperationError``, just like
+   ``update`` and ``delete``.
 
 Delete Document
 ^^^^^^^^^^^^^^^

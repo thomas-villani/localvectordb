@@ -5,6 +5,7 @@ These tests verify end-to-end functionality including authentication,
 database operations, and multi-component interactions.
 """
 
+import hashlib
 import json
 import os
 import tempfile
@@ -17,9 +18,14 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from localvectordb.core import MetadataField, MetadataFieldType
-from localvectordb.exceptions import DocumentNotFoundError
+from localvectordb.exceptions import DocumentNotFoundError, PatchConflictError
+from localvectordb.patching import PatchResult, apply_ops
 from localvectordb_server.config import Config
 from localvectordb_server.keymanager import KeyManager
+
+
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @pytest.fixture(scope="function")
@@ -179,7 +185,10 @@ class DatabaseManagerMock:
 
                 doc_data = db._documents[doc_id]
                 return Document(
-                    id=doc_id, content=doc_data["content"], metadata=doc_data["metadata"], content_hash="mock_hash"
+                    id=doc_id,
+                    content=doc_data["content"],
+                    metadata=doc_data["metadata"],
+                    content_hash=_content_hash(doc_data["content"]),
                 )
             raise DocumentNotFoundError(f"Document '{doc_id}' cannot be found!", doc_id)
 
@@ -220,7 +229,10 @@ class DatabaseManagerMock:
             docs = list(db._documents.items())[offset : offset + limit]
             for doc_id, doc_data in docs:
                 doc = Document(
-                    id=doc_id, content=doc_data["content"], metadata=doc_data["metadata"], content_hash="mock_hash"
+                    id=doc_id,
+                    content=doc_data["content"],
+                    metadata=doc_data["metadata"],
+                    content_hash=_content_hash(doc_data["content"]),
                 )
                 results.append(doc)
             return results
@@ -245,6 +257,26 @@ class DatabaseManagerMock:
                 updated = True
             return updated
 
+        def mock_patch(doc_id, ops, expect_hash=None, metadata=None):
+            # Mirrors LocalVectorDB.patch(): raises on missing, 409 on stale
+            # expect_hash, applies ops atomically, returns a PatchResult with a
+            # no-op flagged as updated=False.
+            if doc_id not in db._documents:
+                raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found", doc_id)
+            current = db._documents[doc_id]["content"]
+            current_hash = _content_hash(current)
+            if expect_hash is not None and expect_hash != current_hash:
+                raise PatchConflictError("stale expect_hash", expected=expect_hash, actual=current_hash)
+            new_content = apply_ops(current, ops)  # raises PatchError on bad ops
+            new_hash = _content_hash(new_content)
+            updated = new_content != current
+            if updated:
+                db._documents[doc_id]["content"] = new_content
+            if metadata:
+                db._documents[doc_id]["metadata"].update(metadata)
+                updated = True
+            return PatchResult(updated=updated, new_hash=new_hash, ops_applied=len(ops))
+
         # Server search endpoints call the async query API.
         async def mock_query_async(query, **kwargs):
             return mock_query(query, **kwargs)
@@ -259,6 +291,7 @@ class DatabaseManagerMock:
         db.filter = mock_filter
         db.count = mock_count
         db.update = mock_update
+        db.patch = mock_patch
         db.close = Mock()
 
         return db
@@ -1085,6 +1118,89 @@ class TestPatchDocumentSemantics:
         get = integration_client.get(f"/api/v1/databases/{db_name}/documents/{doc_id}", headers=valid_auth_headers)
         assert get.status_code == 200
         assert get.json()["content"] == ""
+
+    # --- in-place patch via ops -------------------------------------------
+
+    def test_patch_ops_replace_edits_in_place(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"ops": [{"op": "replace", "find": "original", "replace": "revised"}]},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["updated"] is True
+        assert body["ops_applied"] == 1
+        assert body["new_hash"]
+
+        get = integration_client.get(f"/api/v1/databases/{db_name}/documents/{doc_id}", headers=valid_auth_headers)
+        assert get.json()["content"] == "The revised content."
+        assert get.json()["content_hash"] == body["new_hash"]
+
+    def test_patch_ops_noop_is_200_updated_false(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"ops": [{"op": "replace", "find": "original", "replace": "original"}]},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is False
+
+    def test_patch_ops_expect_hash_conflict_is_409(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"ops": [{"op": "append", "text": "!"}], "expect_hash": "deadbeef"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "HASH_CONFLICT"
+
+    def test_patch_ops_expect_hash_match_succeeds(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        current = integration_client.get(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}", headers=valid_auth_headers
+        ).json()["content_hash"]
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"ops": [{"op": "append", "text": " More."}], "expect_hash": current},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is True
+
+    def test_patch_ops_unmatched_find_is_422(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"ops": [{"op": "replace", "find": "nonexistent-text", "replace": "x"}]},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "PATCH_FAILED"
+
+    def test_patch_ops_and_content_together_is_rejected(self, patch_db, integration_client, valid_auth_headers):
+        db_name, doc_id = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/{doc_id}",
+            json={"content": "x", "ops": [{"op": "append", "text": "y"}]},
+            headers=valid_auth_headers,
+        )
+        # A pydantic model-validator rejection surfaces as the app's request
+        # validation error (400), not a handler-raised error.
+        assert response.status_code == 400
+
+    def test_patch_ops_missing_document_is_404(self, patch_db, integration_client, valid_auth_headers):
+        db_name, _ = patch_db
+        response = integration_client.patch(
+            f"/api/v1/databases/{db_name}/documents/no_such_doc",
+            json={"ops": [{"op": "append", "text": "x"}]},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
 
 
 class TestRateLimitEnvelope:
