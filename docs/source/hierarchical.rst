@@ -1,6 +1,12 @@
 Hierarchical Embeddings
 =======================
 
+.. note::
+
+   This page is the user-facing reference. For the technique explained from
+   first principles, plus a controlled evaluation across local embedding
+   encoders, see :doc:`hierarchical-evaluation`.
+
 By default LocalVectorDB embeds and indexes documents at a single granularity:
 each document is chunked, and every chunk is embedded and stored in one FAISS
 index. **Hierarchical embeddings** add two coarser levels on top of that, giving

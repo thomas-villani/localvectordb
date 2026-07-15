@@ -136,6 +136,7 @@ aggregation strategies. :doc:`performance` has the benchmark numbers.
    querybuilder
    document-scoring
    hierarchical
+   hierarchical-evaluation
 
 .. toctree::
    :caption: Advanced features
