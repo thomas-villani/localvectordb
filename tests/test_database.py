@@ -10,9 +10,16 @@ import numpy as np
 import pytest
 from conftest import make_faiss_index
 
-from localvectordb.core import Document, QueryResult
+from localvectordb.core import Document, MetadataField, MetadataFieldType, QueryResult
 from localvectordb.database import LocalVectorDB
-from localvectordb.exceptions import DatabaseNotFoundError, DocumentNotFoundError, DuplicateDocumentIDError
+from localvectordb.exceptions import (
+    DatabaseNotFoundError,
+    DocumentNotFoundError,
+    DuplicateDocumentIDError,
+    PatchConflictError,
+    PatchError,
+    UnsupportedIndexOperationError,
+)
 
 pytestmark = pytest.mark.usefixtures("mock_faiss_io")
 
@@ -788,6 +795,105 @@ class TestLocalVectorDBUpdate:
             result = mock_db.update("doc_1", content="Same content")
 
             assert result is False  # No update needed
+
+
+class TestLocalVectorDBPatch:
+    """Real-DB tests for patch() (find/replace + span splice, in place)."""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        return LocalVectorDB(
+            name="patch_test",
+            base_path=str(tmp_path / "db"),
+            embedding_provider="mock",
+            embedding_model="mock-model",
+        )
+
+    @pytest.fixture
+    def doc_id(self, db):
+        return db.upsert(["the quick brown fox jumps over the lazy dog"])[0]
+
+    def test_replace_edits_in_place(self, db, doc_id):
+        result = db.patch(doc_id, [{"op": "replace", "find": "brown", "replace": "red"}])
+        assert result.updated is True
+        assert result.ops_applied == 1
+        doc = db.get(doc_id)
+        assert doc.content == "the quick red fox jumps over the lazy dog"
+        assert result.new_hash == doc.content_hash
+
+    def test_append_and_prepend(self, db, doc_id):
+        result = db.patch(doc_id, [{"op": "prepend", "text": ">> "}, {"op": "append", "text": " <<"}])
+        assert result.updated is True
+        assert db.get(doc_id).content == ">> the quick brown fox jumps over the lazy dog <<"
+
+    def test_noop_returns_updated_false(self, db, doc_id):
+        result = db.patch(doc_id, [{"op": "replace", "find": "brown", "replace": "brown"}])
+        assert result.updated is False
+        # new_hash still reports the (unchanged) current hash.
+        assert result.new_hash == db.get(doc_id).content_hash
+
+    def test_missing_document_raises(self, db):
+        with pytest.raises(DocumentNotFoundError):
+            db.patch("no_such_doc", [{"op": "append", "text": "x"}])
+
+    def test_expect_hash_conflict_raises(self, db, doc_id):
+        with pytest.raises(PatchConflictError):
+            db.patch(doc_id, [{"op": "append", "text": "!"}], expect_hash="deadbeef")
+
+    def test_expect_hash_match_succeeds(self, db, doc_id):
+        current = db.get(doc_id).content_hash
+        result = db.patch(doc_id, [{"op": "append", "text": " RUN"}], expect_hash=current)
+        assert result.updated is True
+        assert db.get(doc_id).content.endswith(" RUN")
+
+    def test_unmatched_find_raises_patch_error(self, db, doc_id):
+        with pytest.raises(PatchError):
+            db.patch(doc_id, [{"op": "replace", "find": "nonexistent", "replace": "x"}])
+
+    def test_patch_preserves_metadata(self, tmp_path):
+        db = LocalVectorDB(
+            name="patch_meta",
+            base_path=str(tmp_path / "db"),
+            embedding_provider="mock",
+            embedding_model="mock-model",
+            metadata_schema={"author": MetadataField(type=MetadataFieldType.TEXT, indexed=True)},
+        )
+        doc_id = db.upsert(["hello world"], metadata=[{"author": "Alice"}])[0]
+        db.patch(doc_id, [{"op": "replace", "find": "world", "replace": "there"}])
+        doc = db.get(doc_id)
+        assert doc.content == "hello there"
+        assert doc.metadata["author"] == "Alice"
+
+    def test_patch_merges_metadata(self, tmp_path):
+        db = LocalVectorDB(
+            name="patch_meta2",
+            base_path=str(tmp_path / "db"),
+            embedding_provider="mock",
+            embedding_model="mock-model",
+            metadata_schema={"author": MetadataField(type=MetadataFieldType.TEXT, indexed=True)},
+        )
+        doc_id = db.upsert(["hello world"], metadata=[{"author": "Alice"}])[0]
+        db.patch(doc_id, [{"op": "append", "text": "!"}], metadata={"author": "Bob"})
+        assert db.get(doc_id).metadata["author"] == "Bob"
+
+    def test_hnsw_content_change_raises_unsupported(self, tmp_path):
+        db = LocalVectorDB(
+            name="patch_hnsw",
+            base_path=str(tmp_path / "db"),
+            embedding_provider="mock",
+            embedding_model="mock-model",
+            faiss_index_type="IndexHNSWFlat",
+        )
+        doc_id = db.upsert(["the quick brown fox"])[0]
+        with pytest.raises(UnsupportedIndexOperationError):
+            db.patch(doc_id, [{"op": "replace", "find": "brown", "replace": "red"}])
+
+    @pytest.mark.asyncio
+    async def test_patch_async(self, db, doc_id):
+        result = await db.patch_async(doc_id, [{"op": "replace", "find": "lazy", "replace": "sleepy"}])
+        assert result.updated is True
+        doc = await db.get_async(doc_id)
+        assert doc.content == "the quick brown fox jumps over the sleepy dog"
 
 
 class TestLocalVectorDBQuery:

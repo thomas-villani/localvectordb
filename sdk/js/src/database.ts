@@ -26,6 +26,9 @@ import type {
   MaintenanceResponse,
   MetadataFieldDefinition,
   NearestNeighborsResponse,
+  PatchOp,
+  PatchOptions,
+  PatchResponse,
   QueryMultiColumnOptions,
   QueryOptions,
   QueryResponse,
@@ -142,6 +145,35 @@ export class DatabaseHandle {
     return await this.http.patch<UpdateResponse>(
       `${this.prefix}/documents/${encodeURIComponent(id)}`,
       options,
+    );
+  }
+
+  /**
+   * Patch a document's content in place with find/replace or span-splice ops,
+   * without re-sending the whole document.
+   *
+   * Ops resolve against the document's current content (character offsets), must
+   * touch disjoint spans, and are applied atomically. Throws on an
+   * unmatched/ambiguous/overlapping op (HTTP 422) and, when `expectHash` is given
+   * and stale, on a conflict (HTTP 409). Resolves with `updated: false` only when
+   * the ops produced content identical to what is stored.
+   */
+  async patch(
+    id: string,
+    ops: PatchOp[],
+    options?: PatchOptions,
+  ): Promise<PatchResponse> {
+    return await this.http.patch<PatchResponse>(
+      `${this.prefix}/documents/${encodeURIComponent(id)}`,
+      {
+        ops,
+        ...(options?.expectHash !== undefined
+          ? { expect_hash: options.expectHash }
+          : {}),
+        ...(options?.metadata !== undefined
+          ? { metadata: options.metadata }
+          : {}),
+      },
     );
   }
 

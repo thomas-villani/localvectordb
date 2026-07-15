@@ -70,6 +70,7 @@ class MCPConfig:
             "delete_database",
             "upsert_documents",
             "update_document",
+            "patch_document",
             "delete_document",
             "update_metadata_schema",
         ]

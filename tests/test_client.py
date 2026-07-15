@@ -15,6 +15,8 @@ from localvectordb.exceptions import (
     DocumentNotFoundError,
     DuplicateDocumentIDError,
     EmbeddingError,
+    PatchConflictError,
+    PatchError,
 )
 
 
@@ -383,6 +385,70 @@ class TestRemoteVectorDBDocumentOperations:
 
         assert result is False
         mock_httpx_client.request.assert_not_called()
+
+    # --- patch ------------------------------------------------------------
+
+    def test_patch_document(self, mock_httpx_client, mock_db):
+        mock_httpx_client.request.return_value.json.return_value = {
+            "updated": True,
+            "new_hash": "abc123",
+            "ops_applied": 1,
+        }
+
+        result = mock_db.patch(
+            "doc_1",
+            [{"op": "replace", "find": "a", "replace": "b"}],
+            expect_hash="oldhash",
+            metadata={"x": 1},
+        )
+
+        assert result.updated is True
+        assert result.new_hash == "abc123"
+        assert result.ops_applied == 1
+
+        call_args = mock_httpx_client.request.call_args
+        assert "/documents/doc_1" in call_args[0][1]
+        assert call_args[0][0] == "PATCH"
+        payload = call_args[1]["json"]
+        assert payload["ops"] == [{"op": "replace", "find": "a", "replace": "b"}]
+        assert payload["expect_hash"] == "oldhash"
+        assert payload["metadata"] == {"x": 1}
+
+    def test_patch_omits_optional_fields_when_absent(self, mock_httpx_client, mock_db):
+        mock_httpx_client.request.return_value.json.return_value = {"updated": True}
+
+        mock_db.patch("doc_1", [{"op": "append", "text": "!"}])
+
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert "expect_hash" not in payload
+        assert "metadata" not in payload
+
+    def test_patch_conflict_raises(self, mock_httpx_client, mock_db):
+        mock_response = Mock()
+        mock_response.status_code = 409
+        mock_response.json.return_value = {"error": {"code": "HASH_CONFLICT", "message": "stale"}}
+        mock_httpx_client.request.return_value = mock_response
+
+        with pytest.raises(PatchConflictError):
+            mock_db.patch("doc_1", [{"op": "append", "text": "!"}], expect_hash="x")
+
+    def test_patch_failed_raises(self, mock_httpx_client, mock_db):
+        mock_response = Mock()
+        mock_response.status_code = 422
+        mock_response.json.return_value = {"error": {"code": "PATCH_FAILED", "message": "unmatched"}}
+        mock_httpx_client.request.return_value = mock_response
+
+        with pytest.raises(PatchError):
+            mock_db.patch("doc_1", [{"op": "replace", "find": "zzz", "replace": "q"}])
+
+    def test_patch_not_found_raises(self, mock_httpx_client, mock_db):
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.json.return_value = {"error": {"code": "document_not_found", "message": "nope"}}
+        mock_httpx_client.request.return_value = mock_response
+
+        with pytest.raises(DocumentNotFoundError):
+            mock_db.patch("missing", [{"op": "append", "text": "!"}])
 
 
 @pytest.mark.client

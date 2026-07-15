@@ -194,6 +194,7 @@ def tools():
         ("delete_database", "Delete a database"),
         ("upsert_documents", "Insert or update documents"),
         ("update_document", "Update document content/metadata"),
+        ("patch_document", "Patch document content (find/replace)"),
         ("delete_document", "Delete a document"),
         ("update_metadata_schema", "Update database schema"),
     ]

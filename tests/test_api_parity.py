@@ -65,10 +65,11 @@ SYNC_ASYNC_PAIRS = [
     ("query_cursor", "query_cursor_async"),
     ("query_stream", "query_stream_async"),
     ("query_multi_column", "query_multi_column_async"),
+    ("patch", "patch_async"),
 ]
 
 # Unified-query methods that must be call-compatible between local and remote.
-LOCAL_REMOTE_METHODS = ["query", "query_async"]
+LOCAL_REMOTE_METHODS = ["query", "query_async", "patch", "patch_async"]
 
 
 def _param_spec(cls, name):

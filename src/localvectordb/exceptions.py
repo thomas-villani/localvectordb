@@ -58,6 +58,34 @@ class DocumentNotFoundError(DatabaseError, KeyError):
         self.missing_ids = missing_ids if isinstance(missing_ids, list) else [missing_ids] if missing_ids else []
 
 
+class PatchConflictError(DatabaseError):
+    """
+    Raised when a document patch's ``expect_hash`` precondition does not match the
+    stored ``content_hash`` -- i.e. the document changed since the caller read it.
+
+    This is a distinct outcome from "document not found" and "no-op": the document
+    exists and the ops are valid, but applying them would clobber a concurrent
+    write. Surfaces as HTTP 409 on the server.
+    """
+
+    def __init__(self, message: str, expected: Union[str, None] = None, actual: Union[str, None] = None):
+        super().__init__(message)
+        self.expected = expected
+        self.actual = actual
+
+
+class PatchError(DatabaseError, ValueError):
+    """
+    Raised when a document patch's ops cannot be applied: an unmatched or
+    ambiguous ``find``, an out-of-range or overlapping splice, or a malformed op.
+
+    The whole patch fails atomically -- no partial write. Surfaces as HTTP 422 on
+    the server.
+    """
+
+    pass
+
+
 class EmbeddingError(BaseLocalVectorDBException, RuntimeError):
     """Raised when an embedding provider fails to generate embeddings."""
 

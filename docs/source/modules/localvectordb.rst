@@ -31,6 +31,7 @@ Submodules
    localvectordb.exceptions
    localvectordb.factory
    localvectordb.migration
+   localvectordb.patching
    localvectordb.query_builder
    localvectordb.reranking
    localvectordb.section_detection

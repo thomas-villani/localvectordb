@@ -19,7 +19,8 @@ from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Chunk, ChunkPosition, Document, MetadataFieldType
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError
+from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError, PatchConflictError
+from localvectordb.patching import PatchResult, apply_ops
 from localvectordb.query_builder import QueryBuilder
 
 logger = logging.getLogger(__name__)
@@ -573,6 +574,77 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 return True
             return False
 
+    def patch(
+        self,
+        doc_id: str,
+        ops: List[Dict[str, Any]],
+        *,
+        expect_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> PatchResult:
+        """
+        Patch a document's content with find/replace or span-splice ops.
+
+        Unlike :meth:`update` (which replaces the whole content string), ``patch``
+        applies targeted edits resolved against the document's *current* content,
+        so a caller need not re-send the untouched remainder. See
+        :mod:`localvectordb.patching` for the op shapes.
+
+        Parameters
+        ----------
+        doc_id : str
+            Document ID to patch.
+        ops : List[Dict[str, Any]]
+            Patch ops (``splice`` / ``replace`` / ``append`` / ``prepend``),
+            resolved against the original content, non-overlapping, applied
+            atomically.
+        expect_hash : Optional[str]
+            If given and it does not equal the stored ``content_hash``, the patch
+            fails with :class:`PatchConflictError` instead of clobbering a
+            concurrent write.
+        metadata : Optional[Dict[str, Any]]
+            Metadata merged with existing (same semantics as :meth:`update`).
+
+        Returns
+        -------
+        PatchResult
+            ``updated`` is False only when the ops produced content identical to
+            what is stored and no metadata changed.
+
+        Raises
+        ------
+        DocumentNotFoundError
+            If ``doc_id`` does not exist.
+        PatchConflictError
+            If ``expect_hash`` is given and does not match the stored hash.
+        PatchError
+            If an op is unmatched, ambiguous, overlapping, or out of range.
+        """
+        # write_lock is re-entrant for the same thread, so delegating to update()
+        # (which re-locks and calls upsert) is safe and reuses its no-op detection,
+        # metadata merge, and chunk-vector reuse.
+        with self._read_write_lock.write_lock():
+            self._require_writable("Patching a document")
+            existing_doc: Any = self.get(doc_id)
+            if not existing_doc:
+                raise DocumentNotFoundError(f"Document with ID '{doc_id}' not found")
+            if expect_hash is not None and expect_hash != existing_doc.content_hash:
+                raise PatchConflictError(
+                    f"Patch precondition failed for document '{doc_id}': expected content_hash "
+                    f"{expect_hash} but the stored content is {existing_doc.content_hash}; "
+                    f"re-read the document and retry.",
+                    expected=expect_hash,
+                    actual=existing_doc.content_hash,
+                )
+            new_content = apply_ops(existing_doc.content, ops)
+            new_hash = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
+            if new_hash != existing_doc.content_hash:
+                # Surface an intelligible error before upsert tries (and fails) to
+                # remove the changed chunks' vectors on an append-only index.
+                self._require_deletable("Patching a document's content")
+            updated = self.update(doc_id, content=new_content, metadata=metadata)
+            return PatchResult(updated=updated, new_hash=new_hash, ops_applied=len(ops))
+
     # --------
     # Filter
     # --------
@@ -1016,3 +1088,32 @@ class CrudMixin(LocalVectorDBBase, ABC):
         if not changes_made:
             logger.debug(f"No changes made to document {doc_id}")
         return changes_made
+
+    async def patch_async(
+        self,
+        doc_id: str,
+        ops: List[Dict[str, Any]],
+        *,
+        expect_hash: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> PatchResult:
+        """Patch a document's content asynchronously. Same contract as :meth:`patch`."""
+        self._ensure_async_pool()
+        self._require_writable("Patching a document")
+        existing_doc: Any = await self.get_async(doc_id)
+        if not existing_doc:
+            raise DocumentNotFoundError(f"Document {doc_id} not found for patch")
+        if expect_hash is not None and expect_hash != existing_doc.content_hash:
+            raise PatchConflictError(
+                f"Patch precondition failed for document '{doc_id}': expected content_hash "
+                f"{expect_hash} but the stored content is {existing_doc.content_hash}; "
+                f"re-read the document and retry.",
+                expected=expect_hash,
+                actual=existing_doc.content_hash,
+            )
+        new_content = apply_ops(existing_doc.content, ops)
+        new_hash = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
+        if new_hash != existing_doc.content_hash:
+            self._require_deletable("Patching a document's content")
+        updated = await self.update_async(doc_id, content=new_content, metadata=metadata)
+        return PatchResult(updated=updated, new_hash=new_hash, ops_applied=len(ops))

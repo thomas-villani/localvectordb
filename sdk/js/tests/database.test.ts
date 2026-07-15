@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { LocalVectorDBClient } from "../src/client.js";
-import { DocumentNotFoundError } from "../src/errors.js";
+import {
+  DocumentNotFoundError,
+  PatchConflictError,
+  PatchFailedError,
+} from "../src/errors.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,6 +176,102 @@ describe("DatabaseHandle", () => {
     await expect(db.update("missing", { content: "x" })).rejects.toThrow(
       DocumentNotFoundError,
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // Patch
+  // -----------------------------------------------------------------------
+
+  it("patch() PATCHes /documents/{id} with ops and returns new_hash/ops_applied", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({
+        message: "patched",
+        updated: true,
+        new_hash: "abc123",
+        ops_applied: 1,
+      }),
+    );
+
+    const result = await db.patch("doc1", [
+      { op: "replace", find: "brown", replace: "red" },
+    ]);
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(url).toBe(
+      "http://localhost:5000/api/v1/databases/testdb/documents/doc1",
+    );
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      ops: [{ op: "replace", find: "brown", replace: "red" }],
+    });
+    expect(result.new_hash).toBe("abc123");
+    expect(result.ops_applied).toBe(1);
+  });
+
+  it("patch() serializes expectHash as expect_hash and includes metadata", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ message: "patched", updated: true }),
+    );
+
+    await db.patch("doc1", [{ op: "append", text: "!" }], {
+      expectHash: "deadbeef",
+      metadata: { status: "edited" },
+    });
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(JSON.parse(init?.body as string)).toEqual({
+      ops: [{ op: "append", text: "!" }],
+      expect_hash: "deadbeef",
+      metadata: { status: "edited" },
+    });
+  });
+
+  it("patch() throws PatchConflictError on 409 HASH_CONFLICT", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: "HASH_CONFLICT",
+            message: "stale expect_hash",
+            timestamp: "2026-01-01T00:00:00Z",
+            request_id: "req-1",
+            details: {},
+            recoverable: true,
+          },
+        },
+        409,
+      ),
+    );
+
+    await expect(
+      db.patch("doc1", [{ op: "append", text: "!" }], { expectHash: "x" }),
+    ).rejects.toThrow(PatchConflictError);
+  });
+
+  it("patch() throws PatchFailedError on 422 PATCH_FAILED", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: "PATCH_FAILED",
+            message: "unmatched find",
+            timestamp: "2026-01-01T00:00:00Z",
+            request_id: "req-1",
+            details: {},
+            recoverable: true,
+          },
+        },
+        422,
+      ),
+    );
+
+    await expect(
+      db.patch("doc1", [{ op: "replace", find: "zzz", replace: "q" }]),
+    ).rejects.toThrow(PatchFailedError);
   });
 
   // -----------------------------------------------------------------------

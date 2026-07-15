@@ -43,6 +43,8 @@ export type ErrorCode =
   | "DATABASE_NOT_FOUND"
   | "DOCUMENT_NOT_FOUND"
   | "DUPLICATE_DOCUMENT_ID"
+  | "HASH_CONFLICT"
+  | "PATCH_FAILED"
   | "DATABASE_ALREADY_EXISTS"
   | "EMBEDDING_ERROR"
   | "OLLAMA_NOT_AVAILABLE"
@@ -374,6 +376,39 @@ export interface InsertResponse {
 export interface UpdateResponse {
   message: string;
   updated: boolean;
+  /** SHA-256 of the resulting content (populated by content updates and patches). */
+  new_hash?: string | null;
+  /** Number of ops applied (patch only). */
+  ops_applied?: number | null;
+}
+
+/**
+ * A single patch op. Character offsets, not bytes/tokens. All ops in one call
+ * resolve against the original content, must touch disjoint spans, and are
+ * applied atomically.
+ */
+export type PatchOp =
+  | { op: "splice"; start: number; end: number; text: string }
+  | { op: "replace"; find: string; replace: string; count?: number }
+  | { op: "append"; text: string }
+  | { op: "prepend"; text: string };
+
+export interface PatchOptions {
+  /**
+   * Optional content_hash precondition. If it does not match the stored
+   * document, the patch fails with a conflict (HTTP 409) instead of clobbering
+   * a concurrent write.
+   */
+  expectHash?: string;
+  /** Metadata merged with existing (same semantics as {@link update}). */
+  metadata?: Record<string, unknown>;
+}
+
+export interface PatchResponse {
+  message: string;
+  updated: boolean;
+  new_hash?: string | null;
+  ops_applied?: number | null;
 }
 
 export interface DeleteResponse {

@@ -277,6 +277,34 @@ Document Operations
     # Async variant
     await db.update_async(id, content, metadata)
 
+**Patch Documents (in-place edit)**::
+
+    # Edit a document without re-sending its whole content. Ops resolve against
+    # the current content (character offsets), touch disjoint spans, and apply
+    # atomically. Returns a PatchResult(updated, new_hash, ops_applied).
+    result = db.patch("doc1", [{"op": "replace", "find": "draft", "replace": "final"}])
+
+    # Span splice + append/prepend
+    db.patch("doc1", [{"op": "splice", "start": 0, "end": 5, "text": "Hello"}])
+    db.patch("doc1", [{"op": "append", "text": " (revised)"}])
+
+    # Optimistic concurrency: fail with PatchConflictError if the stored content
+    # changed since you read it. An unmatched/ambiguous find raises PatchError.
+    doc = db.get("doc1")
+    db.patch("doc1", [{"op": "replace", "find": "v1", "replace": "v2"}],
+             expect_hash=doc.content_hash)
+
+    # Async variant
+    result = await db.patch_async("doc1", [{"op": "append", "text": "!"}])
+
+.. note::
+
+   ``patch`` is an *interface* win, not a compute win: it re-embeds the document
+   through the normal upsert path (unchanged chunks reuse their vectors). Its
+   value is that an agent need not regenerate — and risk corrupting — the whole
+   document to change one line, and can guard against lost updates with
+   ``expect_hash``.
+
 **Delete Documents**::
 
     # Delete single or multiple documents

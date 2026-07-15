@@ -418,7 +418,24 @@ Available only in read-write mode:
    * Similarity threshold for duplicate detection
 
 **update_document**
-   Update a document's content and/or metadata by ID.
+   Update a document's content and/or metadata by ID (full-content replace).
+
+**patch_document**
+   Edit a document **in place** with an exact find/replace, without re-sending
+   the whole document. Mirrors the ``old_string``/``new_string`` contract of a
+   code-editing tool:
+
+   * ``old_string`` must occur exactly ``count`` times (default 1) or the edit
+     fails — no silent, ambiguous replacement.
+   * Optional ``expect_hash`` precondition: if it does not match the stored
+     document, the patch fails with a conflict instead of clobbering a concurrent
+     edit.
+   * Returns ``updated``, ``new_hash``, and ``ops_applied`` so an agent can
+     confirm the edit landed and distinguish a real change from a no-op.
+
+   Prefer this over ``update_document`` when editing a long stored document: it
+   avoids the token cost of regenerating the whole document and the risk of
+   corrupting the parts you did not mean to touch.
 
 **delete_document**
    Delete a specific document by ID.

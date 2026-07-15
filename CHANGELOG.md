@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Document **patch API** for in-place edits — change part of a stored document
+  without re-sending the whole content. Exact find/replace with a uniqueness
+  requirement (the contract coding agents already handle), plus `splice` /
+  `append` / `prepend` ops resolved against the original content, validated
+  non-overlapping, and applied atomically. Surfaced across every layer:
+  - `LocalVectorDB.patch()` / `patch_async()` and `RemoteVectorDB` equivalents,
+    returning `PatchResult(updated, new_hash, ops_applied)`.
+  - `PATCH /databases/{db}/documents/{doc_id}` gains additive `ops` +
+    `expect_hash` fields (mutually exclusive with `content`); `409 HASH_CONFLICT`
+    on a stale precondition, `422 PATCH_FAILED` on an unmatched/ambiguous/
+    overlapping op.
+  - `patch_document` MCP tool exposing the `old_string`/`new_string` edit
+    contract for agents.
+  - `lvdb db <name> patch <doc_id> --find/--replace/--append/--prepend/--expect-hash`.
+  - JavaScript SDK `database.patch()` with typed `PatchOp` / `PatchOptions`.
+- Optional `expect_hash` precondition on patches for optimistic concurrency:
+  fail instead of clobbering a concurrent write. New `PatchConflictError` and
+  `PatchError` exceptions (mirrored in the JS SDK as `PatchConflictError` /
+  `PatchFailedError`).
+
 ## [0.1.0] - 2026-07-09
 
 ### Added

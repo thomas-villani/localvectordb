@@ -5,9 +5,9 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 
-from localvectordb.exceptions import DocumentNotFoundError
+from localvectordb.exceptions import DocumentNotFoundError, PatchConflictError, PatchError
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context, sanitize_log_value
@@ -70,6 +70,21 @@ class InsertChunksBody(UpsertChunksBody):
 class UpdateDocumentBody(StrictModel):
     content: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    # Patch ops (find/replace + span splice). Mutually exclusive with `content`:
+    # `content` replaces the whole document; `ops` edit it in place. See
+    # localvectordb.patching for op shapes. Character offsets, not bytes/tokens.
+    ops: Optional[List[Dict[str, Any]]] = None
+    # Optional precondition: if it does not match the stored content_hash, the
+    # patch fails with 409 instead of clobbering a concurrent write.
+    expect_hash: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _content_ops_exclusive(self) -> "UpdateDocumentBody":
+        if self.content is not None and self.ops is not None:
+            raise ValueError("Provide either 'content' (full replace) or 'ops' (patch), not both")
+        if self.expect_hash is not None and self.ops is None:
+            raise ValueError("'expect_hash' is only valid together with 'ops'")
+        return self
 
 
 class BatchDeleteBody(StrictModel):
@@ -300,12 +315,35 @@ def get_document(db_name: str, doc_id: str, db=Depends(get_db)):
 )
 @log_performance("update_document")
 async def update_document(db_name: str, doc_id: str, body: UpdateDocumentBody, db=Depends(get_db)):
-    """Partially update a document's content and/or metadata."""
+    """Partially update a document.
+
+    Two mutually-exclusive modes on the same route:
+
+    - ``content`` (and/or ``metadata``) -> full-content replace via ``update()``.
+    - ``ops`` (+ optional ``expect_hash``, ``metadata``) -> in-place patch via
+      ``patch()``. Returns 409 on a stale ``expect_hash`` and 422 on an
+      unmatched/ambiguous/overlapping op.
+    """
     with request_context("update_document"):
-        if body.content is None and body.metadata is None:
-            raise ValidationError("Either content or metadata must be provided")
+        if body.content is None and body.metadata is None and body.ops is None:
+            raise ValidationError("Either content, ops, or metadata must be provided")
 
         try:
+            if body.ops is not None:
+                db_logger.log_query("patch_document", database_name=db_name, document_id=doc_id, op_count=len(body.ops))
+                result = db.patch(doc_id, body.ops, expect_hash=body.expect_hash, metadata=body.metadata)
+                message = (
+                    f"Successfully patched document {doc_id}"
+                    if result.updated
+                    else f"Document {doc_id} already up to date; nothing to update"
+                )
+                return {
+                    "updated": result.updated,
+                    "message": message,
+                    "new_hash": result.new_hash,
+                    "ops_applied": result.ops_applied,
+                }
+
             db_logger.log_query(
                 "update_document",
                 database_name=db_name,
@@ -327,6 +365,20 @@ async def update_document(db_name: str, doc_id: str, body: UpdateDocumentBody, d
                 message=f"Document '{doc_id}' not found in database '{db_name}'",
                 error_code="DOCUMENT_NOT_FOUND",
                 status_code=404,
+                recoverable=True,
+            ) from e
+        except PatchConflictError as e:
+            raise APIError(
+                message=str(e),
+                error_code="HASH_CONFLICT",
+                status_code=409,
+                recoverable=True,
+            ) from e
+        except PatchError as e:
+            raise APIError(
+                message=str(e),
+                error_code="PATCH_FAILED",
+                status_code=422,
                 recoverable=True,
             ) from e
         except Exception as e:
