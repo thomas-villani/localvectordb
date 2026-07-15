@@ -8,7 +8,9 @@ Ollama encoders**, and is the win an artefact of small chunks?
 **Answer (short).** Yes on all counts. Raw-span sections beat the chunk baseline
 on every local encoder tested, at both chunk sizes, on both relevance targets —
 and the advantage *grows* with larger chunks, so it is not a small-chunk
-artefact. Full tables and caveats below.
+artefact. The `bge-m3` 2k-vs-8k context axis resolves cleanly: its lead is
+**model quality, not context** — 2k ≈ 8k once over-long spans are window-pooled.
+Full tables and caveats below.
 
 This file is the reproducibility record for the run. The reader-facing writeup
 is `docs/source/hierarchical-evaluation.rst`.
@@ -58,35 +60,42 @@ the 2k arm.
 
 ### DOC target (which paper holds the answer)
 
-| arm | nomic·500 | nomic·1000 | egemma·500 | egemma·1000 | bge8k·500 | bge8k·1000 |
-|---|---|---|---|---|---|---|
-| **rawspan-section** | **0.763** | **0.763** | 0.756 | 0.756 | **0.784** | **0.784** |
-| fusion-rawspan | 0.760 | 0.737 | **0.780** | **0.764** | 0.742 | 0.750 |
-| fusion-centroid | 0.708 | 0.691 | 0.697 | 0.711 | 0.721 | 0.720 |
-| chunk (baseline) | 0.707 | 0.683 | 0.678 | 0.723 | 0.741 | 0.719 |
-| centroid-section | 0.693 | 0.690 | 0.661 | 0.722 | 0.718 | 0.725 |
-| rawspan-doc | 0.664 | 0.664 | 0.703 | 0.703 | 0.686 | 0.686 |
-| centroid-doc | 0.654 | 0.649 | 0.648 | 0.682 | 0.678 | 0.704 |
+| arm | nomic·500 | nomic·1000 | egemma·500 | egemma·1000 | bge2k·500 | bge2k·1000 | bge8k·500 | bge8k·1000 |
+|---|---|---|---|---|---|---|---|---|
+| **rawspan-section** | **0.763** | **0.763** | 0.756 | 0.756 | **0.796** | **0.796** | **0.784** | **0.784** |
+| fusion-rawspan | 0.760 | 0.737 | **0.780** | **0.764** | 0.768 | 0.752 | 0.742 | 0.750 |
+| fusion-centroid | 0.708 | 0.691 | 0.697 | 0.711 | 0.721 | 0.720 | 0.721 | 0.720 |
+| chunk (baseline) | 0.707 | 0.683 | 0.678 | 0.723 | 0.741 | 0.719 | 0.741 | 0.719 |
+| centroid-section | 0.693 | 0.690 | 0.661 | 0.722 | 0.718 | 0.725 | 0.718 | 0.725 |
+| rawspan-doc | 0.664 | 0.664 | 0.703 | 0.703 | 0.711 | 0.711 | 0.686 | 0.686 |
+| centroid-doc | 0.654 | 0.649 | 0.648 | 0.682 | 0.678 | 0.704 | 0.678 | 0.704 |
 
 ### SECTION target (which section holds the answer)
 
-| arm | nomic·500 | nomic·1000 | egemma·500 | egemma·1000 | bge8k·500 | bge8k·1000 |
-|---|---|---|---|---|---|---|
-| **rawspan-section** | **0.367** | **0.367** | **0.315** | **0.315** | **0.415** | **0.415** |
-| fusion-rawspan | 0.294 | 0.259 | 0.304 | 0.243 | 0.315 | 0.334 |
-| chunk (baseline) | 0.256 | 0.198 | 0.246 | 0.211 | 0.267 | 0.259 |
-| fusion-centroid | 0.254 | 0.198 | 0.256 | 0.211 | 0.267 | 0.266 |
-| centroid-section | 0.238 | 0.200 | 0.236 | 0.203 | 0.285 | 0.275 |
+| arm | nomic·500 | nomic·1000 | egemma·500 | egemma·1000 | bge2k·500 | bge2k·1000 | bge8k·500 | bge8k·1000 |
+|---|---|---|---|---|---|---|---|---|
+| **rawspan-section** | **0.367** | **0.367** | **0.315** | **0.315** | **0.419** | **0.419** | **0.415** | **0.415** |
+| fusion-rawspan | 0.294 | 0.259 | 0.304 | 0.243 | 0.312 | 0.335 | 0.315 | 0.334 |
+| chunk (baseline) | 0.256 | 0.198 | 0.246 | 0.211 | 0.267 | 0.259 | 0.267 | 0.259 |
+| fusion-centroid | 0.254 | 0.198 | 0.256 | 0.211 | 0.267 | 0.266 | 0.267 | 0.266 |
+| centroid-section | 0.238 | 0.200 | 0.236 | 0.203 | 0.285 | 0.275 | 0.285 | 0.275 |
+
+**Context axis (same model, two contexts).** `chunk` and `centroid-section`
+embed sub-window text and are **bit-identical** across 2k/8k (sanity check). The
+raw-span arms are the only ones context can move — and they barely move:
+`rawspan-section` is **0.796 (2k) vs 0.784 (8k)** on DOC and **0.419 vs 0.415** on
+SECTION, i.e. 2k is marginally *higher* despite pooling 20 over-long spans vs 5 at
+8k. Raising context did not help; window-mean-pooling at 2k already suffices.
 
 `rawspan-doc` / `centroid-doc` omitted from the SECTION table — the document
 level does not target sections.
 
 ### rawspan-section lead over chunk baseline (Δ nDCG@10)
 
-| | nomic·500 | nomic·1000 | egemma·500 | egemma·1000 | bge8k·500 | bge8k·1000 |
-|---|---|---|---|---|---|---|
-| **DOC** | +0.056 | +0.079 | +0.078 | +0.033 | +0.043 | +0.065 |
-| **SECTION** | +0.110 | +0.168 | +0.070 | +0.105 | +0.148 | +0.156 |
+| | nomic·500 | nomic·1000 | egemma·500 | egemma·1000 | bge2k·500 | bge2k·1000 | bge8k·500 | bge8k·1000 |
+|---|---|---|---|---|---|---|---|---|
+| **DOC** | +0.056 | +0.079 | +0.078 | +0.033 | +0.055 | +0.077 | +0.043 | +0.065 |
+| **SECTION** | +0.110 | +0.168 | +0.070 | +0.105 | +0.152 | +0.160 | +0.148 | +0.156 |
 
 ---
 
@@ -116,31 +125,34 @@ level does not target sections.
    compromise; a router that knew the target could do better, but the target is
    unknown at query time.
 
-5. **`bge-m3@8192` is strongest overall (0.415 SECTION) — but confounded.** It
-   also pooled only **5** over-window spans vs **20** on the 2k arms, so its
-   section vectors are cleaner. We can't separate "8k context → fewer pooling
-   passes" from "bge-m3 is simply a better encoder", because the arm that would
-   isolate it (`bge-m3@2048`) timed out.
+5. **`bge-m3` wins on model quality, not context — pooling is enough.** Running
+   `bge-m3` at *both* 2k and 8k isolates it: `rawspan-section` is **0.796 (2k) vs
+   0.784 (8k)** DOC and **0.419 vs 0.415** SECTION — flat, even marginally lower
+   at 8k, despite pooling dropping from 20 over-long spans to 5. So `bge-m3`'s
+   lead over `nomic`/`embeddinggemma` is the encoder, not the context.
+   `bge-m3@2048` is the single best section arm in the whole study (0.419). The
+   `num_batch` fix is *validated* (8k genuinely embeds 8k, pooling → 5) but its
+   retrieval **payoff on Qasper is nil**: window-mean-pooling at 2k already
+   captures a section. (The short end still bites — a 512-tok encoder pools too
+   hard and raw-span degrades — but 2k→8k is not the lever.)
 
 ---
 
-## The gap: `bge-m3@2048` (both chunk sizes)
+## The `bge-m3@2048` cell (context axis) — completed
 
 `bge-m3` is a 1.2 GB / 1024-dim model; on this CPU-only box a single embedding
-batch takes **>300 s** at *any* context, so the 300 s provider-default timeout
-flakily fired and the arm crashed (`httpx.ReadTimeout` → `EmbeddingError`). This
-is a hardware/timeout limit, **not** a harness or product bug — the 8k arm, with
-1800 s, completed.
+batch takes **>300 s** at *any* context, so at the 300 s provider default the arm
+flakily timed out (`httpx.ReadTimeout` → `EmbeddingError`) — a hardware/timeout
+limit, **not** a harness or product bug. Fixed by giving every `bge-m3` arm
+`--timeout 1800`; the cell then completed (results folded into the tables above,
+finding #5). The warm embed cache meant only the unfinished spans re-embedded.
 
-Fixed for the rerun: every `bge-m3` arm now gets `--timeout 1800` in
-`run_hier_ollama.sh`. The embed cache is warm from the partial run, so the rerun
-only re-embeds the spans that didn't finish.
+**Result:** context is not the driver. `bge-m3@2048` ≈ `bge-m3@8192` on every
+raw-span arm (2k marginally higher), so the confound is resolved in favour of
+"model quality, not context". One irreducible confound remains: `bge-m3` is both
+a stronger encoder *and* higher-dimensional (1024 vs 768) than nomic/egemma.
 
-Filling this cell gives the **clean context axis on a fixed model** — `bge-m3` at
-2k vs 8k — which is the only way to attribute finding #5 to context vs model
-quality, and the payoff measurement for the whole `num_batch` fix.
-
-### Reproduce just the missing arm
+### Reproduce the (now-completed) context-axis arm
 
 ```bash
 # Ollama must be running: `ollama serve` (+ `ollama pull bge-m3`)

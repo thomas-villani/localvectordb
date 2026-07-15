@@ -160,6 +160,9 @@ technique tuned on OpenAI generalizes:
      - 2048
      - architecture-capped at 2048
    * - ``bge-m3``
+     - 2048
+     - 2k baseline for the context axis (finding #5)
+   * - ``bge-m3``
      - 8192
      - true 8k, reachable only via the ``num_batch`` fix
 
@@ -245,13 +248,15 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
 
 .. list-table::
    :header-rows: 1
-   :widths: 26 12 12 13 13 12 12
+   :widths: 20 10 10 10 10 10 10 10 10
 
    * - arm
      - nomic·500
      - nomic·1000
      - egemma·500
      - egemma·1000
+     - bge2k·500
+     - bge2k·1000
      - bge8k·500
      - bge8k·1000
    * - **rawspan-section**
@@ -259,6 +264,8 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - **0.763**
      - 0.756
      - 0.756
+     - **0.796**
+     - **0.796**
      - **0.784**
      - **0.784**
    * - fusion-rawspan
@@ -266,6 +273,8 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - 0.737
      - **0.780**
      - **0.764**
+     - 0.768
+     - 0.752
      - 0.742
      - 0.750
    * - chunk (baseline)
@@ -275,6 +284,8 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - 0.723
      - 0.741
      - 0.719
+     - 0.741
+     - 0.719
    * - centroid-section
      - 0.693
      - 0.690
@@ -282,11 +293,15 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - 0.722
      - 0.718
      - 0.725
+     - 0.718
+     - 0.725
    * - rawspan-doc
      - 0.664
      - 0.664
      - 0.703
      - 0.703
+     - 0.711
+     - 0.711
      - 0.686
      - 0.686
 
@@ -294,13 +309,15 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
 
 .. list-table::
    :header-rows: 1
-   :widths: 26 12 12 13 13 12 12
+   :widths: 20 10 10 10 10 10 10 10 10
 
    * - arm
      - nomic·500
      - nomic·1000
      - egemma·500
      - egemma·1000
+     - bge2k·500
+     - bge2k·1000
      - bge8k·500
      - bge8k·1000
    * - **rawspan-section**
@@ -308,6 +325,8 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - **0.367**
      - **0.315**
      - **0.315**
+     - **0.419**
+     - **0.419**
      - **0.415**
      - **0.415**
    * - fusion-rawspan
@@ -315,6 +334,8 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - 0.259
      - 0.304
      - 0.243
+     - 0.312
+     - 0.335
      - 0.315
      - 0.334
    * - chunk (baseline)
@@ -324,11 +345,15 @@ nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
      - 0.211
      - 0.267
      - 0.259
+     - 0.267
+     - 0.259
    * - centroid-section
      - 0.238
      - 0.200
      - 0.236
      - 0.203
+     - 0.285
+     - 0.275
      - 0.285
      - 0.275
 
@@ -367,13 +392,44 @@ a query-adaptive weight, but the target is unknown at query time, so a fixed lea
 toward the section leg is the pragmatic choice. Match the level to your data (see
 :doc:`hierarchical`).
 
-**5. The best encoder is also the one that pools least.** ``bge-m3`` at 8k
-context is the strongest arm overall (0.415 on SECTION) — and it window-pooled
-only 5 over-long spans, against 20 on the 2k encoders. Fewer pooling passes means
-cleaner section vectors, exactly as the method predicts. This is both a
-validation of the ``num_batch`` fix (without it, ``bge-m3`` could not reach 8k
-and would pool like a 2k model) and a practical recommendation: **prefer a
-long-context encoder for raw-span**, so sections are embedded whole.
+**5. The winner is the encoder, not the context — and pooling is enough.**
+``bge-m3`` is the strongest arm overall, but running it at **both** 2k and 8k
+context isolates *why*. Only the raw-span arms embed spans long enough to feel
+the context window; ``chunk`` and ``centroid-section`` embed sub-window text and
+are context-invariant — and indeed their 2k and 8k numbers match to the digit, a
+built-in sanity check that the two runs differ only where they should.
+
+.. list-table:: ``bge-m3`` ``rawspan-section`` nDCG@10, same model at two contexts
+   :header-rows: 1
+   :widths: 30 20 20 30
+
+   * - target
+     - 2k context
+     - 8k context
+     - over-long spans pooled
+   * - DOC
+     - **0.796**
+     - 0.784
+     - 20 → 5
+   * - SECTION
+     - **0.419**
+     - 0.415
+     - 20 → 5
+
+Raising context from 2k to 8k did **not** improve retrieval — it is flat, even a
+hair lower — despite cutting window-pooling from 20 over-long spans to 5.
+Window-mean-pooling at 2k already represents a Qasper section well enough that the
+extra context buys nothing here; ``bge-m3@2048`` is in fact the single best
+section arm in the whole study (0.419). So ``bge-m3``'s lead over ``nomic`` and
+``embeddinggemma`` is **model quality**, not context length.
+
+Two consequences. The ``num_batch`` fix is *validated* — the 8k arm genuinely
+embeds 8k tokens (pooling drops to 5) — but on this corpus its retrieval **payoff
+is nil**, which is good news: you do not need to chase a long-context encoder (or
+fight Ollama's batch ceiling) for good section retrieval, because pooling covers
+the overflow. The earlier limitation still holds at the *short* end — a 512-token
+encoder pools so aggressively that raw-span degrades — but between 2k and 8k, on
+this data, context is not the lever.
 
 Threats to validity
 --------------------
@@ -381,14 +437,15 @@ Threats to validity
 - **Sample size.** 48 queries is small; treat every single cell as noisy. The
   confidence here comes from the *consistency* of the pattern across three
   encoders, two chunk sizes, and two targets — not from any one number.
-- **One confound is unresolved.** Finding #5 credits the 8k context, but
-  ``bge-m3`` is also simply a stronger encoder than ``nomic`` or
-  ``embeddinggemma``. Isolating "context" from "encoder quality" needs the same
-  model at two contexts — a ``bge-m3@2048`` arm. That arm did not complete in
-  this run (``bge-m3`` is a 1.2 GB model and exceeded the client's embedding
-  timeout on a CPU-only box; a subsequent run with a longer timeout fills the
-  cell). Until then, read #5 as "long-context *and* strong encoder wins",
-  jointly.
+- **Context vs encoder-quality confound: resolved.** An earlier draft could not
+  separate "8k context" from "``bge-m3`` is a stronger encoder", because the
+  ``bge-m3@2048`` arm had not completed (``bge-m3`` is a 1.2 GB model and exceeded
+  the client's embedding timeout on a CPU-only box; a longer timeout fixed it).
+  That arm is now in, and finding #5 reports the controlled result: context is not
+  the driver — the same model at 2k and 8k retrieves within noise, so the lead is
+  encoder quality. One confound remains that this design cannot break: ``bge-m3``
+  is both stronger *and* higher-dimensional (1024 vs 768), so "encoder quality"
+  bundles capacity with dimensionality.
 - **Corpus.** The local-encoder study is Qasper-only. The reference-encoder
   baseline above additionally covers synthetic BEIR section corpora, where the
   effect is larger.
