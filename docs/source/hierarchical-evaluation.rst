@@ -125,8 +125,8 @@ Experimental design
 **Dataset.** Qasper ``dev`` — real NLP papers with natural section structure and
 evidence-paragraph relevance judgments. This study uses a 15-paper slice
 (48 queries; 48/50 questions kept, 107/110 evidence spans located). The
-original OpenAI baseline in :doc:`hierarchical` used the full set (275 papers,
-882 questions) plus synthetic section corpora built from BEIR (FiQA, NFCorpus).
+reference-encoder baseline above used the full set (275 papers, 882 questions)
+plus synthetic section corpora built from BEIR (FiQA, NFCorpus).
 
 **Metric.** nDCG@10.
 
@@ -175,8 +175,69 @@ by exact cosine in NumPy — no FAISS, no database — so the numbers isolate th
 representation, not index or fusion plumbing. The full reproducibility record,
 including the exact commands, is ``benchmarks/HIERARCHICAL_LOCAL_ENCODERS.md``.
 
-Results
--------
+The reference-encoder baseline (OpenAI)
+---------------------------------------
+
+Raw-span shipped as the default because a *first* evaluation — on OpenAI
+``text-embedding-3-small`` (an 8k-token encoder) — measured it beating both the
+chunk baseline and the centroid. That evaluation scored nDCG@10 on two kinds of
+corpus: **synthetic multi-section super-documents** built from judged BEIR
+passage corpora (FiQA, NFCorpus — which give aligned relevance labels at
+document, section, and passage granularity), and **Qasper** at full size
+(275 papers, 882 questions).
+
+On Qasper, the raw-span section beat both the chunk baseline and the centroid at
+every target:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 28 28
+
+   * - arm
+     - doc nDCG
+     - sec nDCG
+   * - chunk (baseline)
+     - 0.375
+     - 0.177
+   * - centroid-section
+     - 0.371
+     - 0.173
+   * - **rawspan-section**
+     - **0.398**
+     - **0.200**
+
+Fusing raw-span sections with chunks lifted the document target further still:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 28 28
+
+   * - arm
+     - doc nDCG
+     - sec nDCG
+   * - chunk (baseline)
+     - 0.375
+     - 0.177
+   * - rawspan-section
+     - 0.398
+     - 0.200
+   * - **fusion (chunk+sec)**
+     - **0.404**
+     - 0.196
+
+The absolute gains on real long documents are **modest** — low single-digit
+nDCG@10 (~0.02–0.03) — a genuine quality-per-cost judgement, not a slam dunk. The
+effect is far larger on section-dense corpora: on the synthetic FiQA section set
+both fusion and the raw-span section cleared ~0.79 against a chunk baseline of
+~0.67. And averaging really does throw away signal — on some corpora the
+*centroid* section scored *below* chunk-only while the raw-span section scored
+well above it.
+
+The study below asks the obvious next question: does this hold on encoders other
+than OpenAI?
+
+Local-encoder results
+---------------------
 
 nDCG@10, Qasper dev, 15 papers / 48 queries. Best arm per column in **bold**.
 
@@ -275,8 +336,8 @@ What the numbers say
 --------------------
 
 **1. Raw-span sections win on every local encoder, both chunk sizes, both
-targets.** The technique was validated only on OpenAI before this study; it now
-holds on three local encoders, with ``rawspan-section`` leading the chunk
+targets.** The reference-encoder baseline established the effect on OpenAI; it now
+holds on three local encoders too, with ``rawspan-section`` leading the chunk
 baseline by **+0.03–0.08 on DOC** and **+0.07–0.17 on SECTION**. The premise —
 that a section's own embedding is a better retrieval unit than its chunks'
 average, or than the chunks alone — is encoder-independent.
@@ -328,8 +389,9 @@ Threats to validity
   timeout on a CPU-only box; a subsequent run with a longer timeout fills the
   cell). Until then, read #5 as "long-context *and* strong encoder wins",
   jointly.
-- **Corpus.** This study is Qasper-only. The OpenAI baseline in :doc:`hierarchical`
-  additionally covers synthetic BEIR section corpora, where the effect is larger.
+- **Corpus.** The local-encoder study is Qasper-only. The reference-encoder
+  baseline above additionally covers synthetic BEIR section corpora, where the
+  effect is larger.
 - **Hardware.** Timings are from a memory-constrained CPU box and are not
   representative; only the relative nDCG numbers transfer.
 
