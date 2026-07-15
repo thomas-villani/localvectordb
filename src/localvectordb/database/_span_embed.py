@@ -23,10 +23,16 @@ from typing import Iterator, List, Optional, Sequence
 import numpy as np
 
 # One embeddings request is bounded by a token budget and an input count; a
-# single input over the model's context window is a hard error from hosted
-# providers. Conservative char bounds (worst-case ~3 chars/token) keep short
-# spans a no-op while windowing only genuinely over-long spans.
-_EMBED_WINDOW_CHARS = 24_000
+# single input over the model's context window is truncated (silently, by most
+# providers) or a hard error (hosted). We window over-long spans instead, so the
+# window must be sized to the *encoder's* context, not a fixed guess: a fixed
+# 24k-char (~8k-token) window overflows a 2k-context model ~3.4x, and each window
+# is then truncated -- defeating the whole point of windowing. The window is
+# derived from the provider's context (``num_ctx`` / ``max_input_tokens``) at a
+# conservative ~3 chars/token so a window reliably fits, falling back to the 8k
+# assumption only when the context is unknown.
+_DEFAULT_WINDOW_CHARS = 24_000
+_WINDOW_CHARS_PER_TOKEN = 3.0
 _MAX_TOKENS_PER_REQUEST = 200_000
 _MAX_INPUTS_PER_REQUEST = 2000
 _CHARS_PER_TOKEN = 3.5
@@ -36,16 +42,38 @@ def _estimate_tokens(text: str) -> int:
     return max(1, int(len(text) / _CHARS_PER_TOKEN))
 
 
-def _windows(text: str) -> List[str]:
+def _provider_context_tokens(provider: object) -> Optional[int]:
+    """The encoder's usable context window in tokens, if the provider exposes one.
+
+    Prefers an explicit ``num_ctx`` (e.g. an Ollama provider told to load a larger
+    window) over the generic ``max_input_tokens`` per-text cap. Returns None when
+    neither is a positive int, so the caller falls back to the fixed default.
+    """
+    for attr in ("num_ctx", "max_input_tokens"):
+        value = getattr(provider, attr, None)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
+
+
+def _window_chars_for(provider: object) -> int:
+    """Char budget per embedding window, sized to the provider's context window."""
+    tokens = _provider_context_tokens(provider)
+    if tokens is None:
+        return _DEFAULT_WINDOW_CHARS
+    return max(1, int(tokens * _WINDOW_CHARS_PER_TOKEN))
+
+
+def _windows(text: str, window_chars: int) -> List[str]:
     """Split ``text`` into <= window-sized pieces, breaking on whitespace when possible."""
-    if len(text) <= _EMBED_WINDOW_CHARS:
+    if len(text) <= window_chars:
         return [text]
     out: List[str] = []
     i = 0
     while i < len(text):
-        end = min(i + _EMBED_WINDOW_CHARS, len(text))
+        end = min(i + window_chars, len(text))
         if end < len(text):
-            cut = text.rfind(" ", i + _EMBED_WINDOW_CHARS // 2, end)
+            cut = text.rfind(" ", i + window_chars // 2, end)
             if cut > i:
                 end = cut
         out.append(text[i:end])
@@ -92,13 +120,14 @@ def embed_spans_pooled(provider: object, texts: Sequence[str], dim: int) -> np.n
     if n == 0:
         return np.zeros((0, dim), dtype=np.float32)
 
+    window_chars = _window_chars_for(provider)
     windows_per_text: List[Optional[List[str]]] = []
     flat: List[str] = []
     for t in texts:
         if not t:
             windows_per_text.append(None)  # zero-row marker; no windows to embed
             continue
-        ws = _windows(t)
+        ws = _windows(t, window_chars)
         windows_per_text.append(ws)
         flat.extend(ws)
 

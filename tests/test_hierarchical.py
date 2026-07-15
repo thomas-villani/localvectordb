@@ -840,18 +840,45 @@ class TestSectionVectorStrategy:
         from localvectordb.database import _span_embed
         from localvectordb.embeddings import EmbeddingRegistry
 
-        monkeypatch.setattr(_span_embed, "_EMBED_WINDOW_CHARS", 20)
+        # The mock provider exposes no context window, so the pooler uses the
+        # fallback default; shrink it so a short text actually windows.
+        monkeypatch.setattr(_span_embed, "_DEFAULT_WINDOW_CHARS", 20)
         provider = EmbeddingRegistry.create_provider("mock", "mock")
         dim = provider.get_dimension()
 
         text = " ".join(f"token{i}" for i in range(40))  # well over 20 chars
-        windows = _span_embed._windows(text)
+        windows = _span_embed._windows(text, 20)
         assert len(windows) > 1  # actually windowed
 
         pooled = _span_embed.embed_spans_pooled(provider, [text], dim)
         assert pooled.shape == (1, dim)
         expected = np.asarray(provider.embed_sync(windows), dtype=np.float32).mean(axis=0)
         assert np.allclose(pooled[0], expected, atol=1e-5)
+
+    def test_window_size_derives_from_provider_context(self):
+        """The window is sized to the provider's context window, not a fixed guess."""
+        from localvectordb.database import _span_embed
+
+        class Ctx2k:
+            num_ctx = 2048
+
+        class Ctx8k:
+            max_input_tokens = 8192
+
+        class BoolCtx:
+            num_ctx = True  # a bool is not a real context window
+
+        class NoCtx:
+            pass
+
+        # num_ctx preferred, then max_input_tokens; conservative ~3 chars/token.
+        assert _span_embed._window_chars_for(Ctx2k()) == int(2048 * _span_embed._WINDOW_CHARS_PER_TOKEN)
+        assert _span_embed._window_chars_for(Ctx8k()) == int(8192 * _span_embed._WINDOW_CHARS_PER_TOKEN)
+        # bool / missing context fall back to the fixed default.
+        assert _span_embed._window_chars_for(BoolCtx()) == _span_embed._DEFAULT_WINDOW_CHARS
+        assert _span_embed._window_chars_for(NoCtx()) == _span_embed._DEFAULT_WINDOW_CHARS
+        # A small-context model gets a smaller window than an 8k one.
+        assert _span_embed._window_chars_for(Ctx2k()) < _span_embed._window_chars_for(Ctx8k())
 
     def test_empty_span_is_zero_row(self):
         import numpy as np
