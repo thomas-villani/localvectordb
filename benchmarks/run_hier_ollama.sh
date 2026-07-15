@@ -42,12 +42,16 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 LOG="benchmarks/results/hier_ollama_${STAMP}.log"
 mkdir -p benchmarks/results
 
-# "model num_ctx" per arm.
+# "model num_ctx timeout" per arm. TIMEOUT is the per-request read timeout in
+# seconds. bge-m3 is a 1.2GB / 1024-dim model and on this CPU-only box a single
+# batch takes >300s (the provider default) at ANY context -- the 15-paper run
+# proved bge-m3@2048 flakily times out at 300s, not just the 8k arm -- so every
+# bge-m3 arm gets 1800s. nomic/embeddinggemma (smaller) finish inside 300s.
 ARMS=(
-  "nomic-embed-text 2048"
-  "embeddinggemma:300m 2048"
-  "bge-m3 2048"
-  "bge-m3 8192"
+  "nomic-embed-text 2048 300"
+  "embeddinggemma:300m 2048 300"
+  "bge-m3 2048 1800"
+  "bge-m3 8192 1800"
 )
 
 log() { echo "$@" | tee -a "$LOG"; }
@@ -69,17 +73,18 @@ unload_all() {
 log "=== hierarchical Ollama sweep | papers=$PAPERS split=$SPLIT chunks='$CHUNKS' | $STAMP ==="
 declare -a STATUS=()
 for arm in "${ARMS[@]}"; do
-  set -- $arm; MODEL="$1"; CTX="$2"
+  set -- $arm; MODEL="$1"; CTX="$2"; TIMEOUT="$3"
   # Evict everything once per arm; the model then loads fresh at this arm's
   # num_ctx/num_batch and stays warm across the chunk sizes (chunk size doesn't
   # change the loaded model, so no reload is needed between them).
   unload_all
   for CK in $CHUNKS; do
     log ""
-    log "########## ARM: $MODEL  num_ctx=$CTX  chunk_tokens=$CK ##########"
+    log "########## ARM: $MODEL  num_ctx=$CTX  chunk_tokens=$CK  timeout=${TIMEOUT}s ##########"
     "$PY" benchmarks/eval_hierarchical.py --dataset qasper --split "$SPLIT" \
       --max-papers "$PAPERS" --mode section \
-      --provider ollama --model "$MODEL" --num-ctx "$CTX" --chunk-tokens "$CK" 2>&1 | tee -a "$LOG"
+      --provider ollama --model "$MODEL" --num-ctx "$CTX" --chunk-tokens "$CK" \
+      --timeout "$TIMEOUT" 2>&1 | tee -a "$LOG"
     rc=${PIPESTATUS[0]}
     STATUS+=("$MODEL@${CTX} ck=$CK -> exit $rc")
   done
