@@ -19,7 +19,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _common import make_parser
 
 E2E_DIR = Path(__file__).parent
-SCRIPTS = ["e2e_local.py", "e2e_files.py", "e2e_server.py", "e2e_cli.py"]
+SCRIPTS = [
+    "e2e_local.py",
+    "e2e_files.py",
+    "e2e_hier.py",
+    "e2e_patch.py",
+    "e2e_server.py",
+    "e2e_cli.py",
+]
 
 
 def main() -> int:
