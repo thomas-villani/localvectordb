@@ -283,6 +283,50 @@ class TestOllamaEmbeddings:
         # Should call sync method
         mock_get_dimension.assert_called_once()
 
+    def test_embed_payload_default_omits_options(self):
+        """Without num_ctx the request body carries no options block (Ollama picks the default)."""
+        provider = OllamaEmbeddings("test-model")
+        payload = provider._embed_payload(["a", "b"])
+        assert payload == {"model": "test-model", "input": ["a", "b"], "truncate": True}
+        assert "options" not in payload
+
+    def test_embed_payload_includes_num_ctx(self):
+        """num_ctx passes through, and num_batch defaults to it (the embed input ceiling)."""
+        provider = OllamaEmbeddings("test-model", num_ctx=8192)
+        payload = provider._embed_payload(["x"])
+        # num_batch defaults to num_ctx: for an encoder model n_batch is the real
+        # input ceiling, so raising num_ctx alone would silently cap at 2048.
+        assert payload["options"] == {"num_ctx": 8192, "num_batch": 8192}
+        assert provider.num_ctx == 8192
+        assert provider.num_batch == 8192
+
+    def test_num_batch_can_be_set_independently(self):
+        """num_batch is overridable and validated; may be set without num_ctx."""
+        assert OllamaEmbeddings("m", num_ctx=8192, num_batch=4096)._embed_payload(["x"])["options"] == {
+            "num_ctx": 8192,
+            "num_batch": 4096,
+        }
+        assert OllamaEmbeddings("m", num_batch=4096)._embed_payload(["x"])["options"] == {"num_batch": 4096}
+        with pytest.raises(ValueError, match="num_batch must be a positive integer"):
+            OllamaEmbeddings("m", num_batch=0)
+
+    def test_embed_payload_truncate_flag(self):
+        """truncate defaults True (Ollama's default) and is overridable to fail loudly."""
+        assert OllamaEmbeddings("m")._embed_payload(["x"])["truncate"] is True
+        assert OllamaEmbeddings("m", truncate=False)._embed_payload(["x"])["truncate"] is False
+
+    def test_dimension_probe_uses_num_ctx(self):
+        """The dimension-probe request also honours num_ctx (same payload builder)."""
+        provider = OllamaEmbeddings("test-model", num_ctx=4096)
+        assert provider._embed_payload(["dimension_test"])["options"] == {"num_ctx": 4096, "num_batch": 4096}
+
+    def test_num_ctx_rejects_non_positive(self):
+        """A non-positive num_ctx is a configuration error, caught at construction."""
+        with pytest.raises(ValueError, match="num_ctx must be a positive integer"):
+            OllamaEmbeddings("test-model", num_ctx=0)
+        with pytest.raises(ValueError, match="num_ctx must be a positive integer"):
+            OllamaEmbeddings("test-model", num_ctx=-5)
+
 
 @pytest.mark.unit
 @pytest.mark.embedding

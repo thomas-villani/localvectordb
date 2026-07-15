@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fail instead of clobbering a concurrent write. New `PatchConflictError` and
   `PatchError` exceptions (mirrored in the JS SDK as `PatchConflictError` /
   `PatchFailedError`).
+- `OllamaEmbeddings` gains `num_ctx`, `num_batch`, and `truncate` options
+  (settable via `embedding_config`). Ollama's `/api/embed` caps input at
+  `n_batch` (default **2048**) regardless of `num_ctx`, silently truncating
+  longer inputs — so raising `num_ctx` alone does nothing for embeddings past
+  2048. `num_batch` auto-defaults to `num_ctx` so a raised context actually
+  takes effect (e.g. embed full 8192-token inputs with a long-context encoder).
+
+### Fixed
+
+- Raw-span section/document embeddings now size their pooling window to the
+  encoder's own context (`num_ctx` / `max_input_tokens`) instead of a fixed
+  ~24k-char (~8k-token) window. On a small-context encoder (e.g. a 2k-context
+  local model) an over-long section is windowed and mean-pooled to represent it
+  in full, rather than each 24k window overflowing and being silently truncated.
 
 ## [0.1.0] - 2026-07-09
 

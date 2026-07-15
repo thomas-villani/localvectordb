@@ -445,6 +445,25 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         How long to delay after a failed request (the backoff is exponential)
     max_concurrent_requests : int, default = 3
         How many requests to make concurrently to the ollama server.
+    num_ctx : int, optional
+        Context window (``options.num_ctx``) to request from Ollama. Ollama
+        loads each model at a default ``num_ctx`` (often 2048) regardless of the
+        model's nominal maximum, and silently truncates longer inputs; set this
+        to embed longer inputs in full (e.g. 8192 for ``bge-m3``). When None,
+        Ollama's per-model default applies.
+    num_batch : int, optional
+        Batch size (``options.num_batch`` -> llama.cpp ``n_batch``). This is the
+        real ceiling for embeddings: an encoder (non-causal) model embeds the
+        whole input in a single batch, so an input longer than ``n_batch``
+        (default **2048**) is silently truncated *regardless of* ``num_ctx``.
+        Raising ``num_ctx`` alone therefore does nothing for embeddings past
+        2048 -- ``n_batch`` (undocumented for ``/api/embed``) must move too. When
+        None but ``num_ctx`` is set, this defaults to ``num_ctx`` so a raised
+        context actually takes effect; pass an explicit value to decouple them.
+    truncate : bool, default = True
+        Whether Ollama truncates an input that exceeds the batch/context window.
+        The default (True) matches Ollama's own default and avoids a hard error
+        on an over-long input; set False to make an over-long input fail loudly.
     """
 
     _model_info_cache: Dict[str, List[Dict]] = {}
@@ -460,6 +479,9 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         base_url: Optional[str] = None,
         requested_dimensions: Optional[int] = None,
         normalize: bool = False,
+        num_ctx: Optional[int] = None,
+        num_batch: Optional[int] = None,
+        truncate: bool = True,
     ) -> None:
         super().__init__(
             model,
@@ -476,7 +498,34 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         self.base_url = (effective_base_url or "http://127.0.0.1:11434").rstrip("/")
         self.requested_dimensions = requested_dimensions
         self.normalize = normalize
+        if num_ctx is not None and int(num_ctx) <= 0:
+            raise ValueError(f"num_ctx must be a positive integer, got {num_ctx!r}")
+        if num_batch is not None and int(num_batch) <= 0:
+            raise ValueError(f"num_batch must be a positive integer, got {num_batch!r}")
+        self.num_ctx = int(num_ctx) if num_ctx is not None else None
+        # Embeddings encode the whole input in one batch, so n_batch is the true
+        # input ceiling; default it to num_ctx so a raised context isn't silently
+        # capped at the 2048 batch default (see the class docstring).
+        if num_batch is not None:
+            self.num_batch: Optional[int] = int(num_batch)
+        elif self.num_ctx is not None:
+            self.num_batch = self.num_ctx
+        else:
+            self.num_batch = None
+        self.truncate = truncate
         self._validated = False
+
+    def _embed_payload(self, texts: List[str]) -> Dict[str, Any]:
+        """Build the ``/api/embed`` request body, adding ``options`` (num_ctx/num_batch) when set."""
+        payload: Dict[str, Any] = {"model": self.model, "input": texts, "truncate": self.truncate}
+        options: Dict[str, Any] = {}
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        if self.num_batch is not None:
+            options["num_batch"] = self.num_batch
+        if options:
+            payload["options"] = options
+        return payload
 
     @property
     def provider_name(self) -> str:
@@ -538,7 +587,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             try:
                 response = client.post(
                     f"{self.base_url}/api/embed",
-                    json={"model": self.model, "input": ["dimension_test"], "truncate": True},
+                    json=self._embed_payload(["dimension_test"]),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -588,11 +637,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
     ) -> List[List[float]]:
         """Gets the embeddings for a single batch, called from '_embed_batch_impl' with a single batch of texts."""
-        request_json: Dict[str, Any] = {
-            "model": self.model,
-            "input": texts,
-            "truncate": True,
-        }
+        request_json: Dict[str, Any] = self._embed_payload(texts)
 
         if client is None:
             async with httpx.AsyncClient() as client:
