@@ -130,6 +130,7 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
             "hierarchical_embeddings",
             "section_pattern",
             "section_metadata_extractors",
+            "section_vector_strategy",
         ]
         remote_kwargs = {k: v for k, v in kwargs.items() if k not in local_only}
 

@@ -22,6 +22,7 @@ import numpy as np
 
 from localvectordb._sqlite_retry import retry_on_locked_async
 from localvectordb.core import Chunk, ChunkPosition
+from localvectordb.database._span_embed import embed_spans_pooled
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import (
     DuplicateDocumentIDError,
@@ -202,6 +203,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     _faiss_lock: "ReadWriteLock"
     _section_detector: Optional[SectionDetector]
     _section_metadata_extractors: List[Any]
+    _section_vector_strategy: Optional[str]
     pipeline_worker_timeout: float
     _batch_size: int
 
@@ -1124,16 +1126,26 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     if not chunk_embeddings:
                         return
 
-                    # Compute section centroids
-                    section_embeddings = []
-                    for section in section_boundaries:
-                        chunk_indices = chunk_to_section_map.get(section.index, [])
-                        vecs = [chunk_embeddings[ci] for ci in chunk_indices if ci in chunk_embeddings]
-                        if vecs:
-                            section_embeddings.append(np.mean(vecs, axis=0))
-                        else:
-                            section_embeddings.append(np.zeros(self.embedding_dimension))
-                    doc_data["section_embeddings"] = np.array(section_embeddings, dtype=np.float32)
+                    # Section vectors: raw-span (embed the section's own text) or
+                    # centroid (mean of the section's chunk vectors). The document
+                    # vector is always a centroid (the doc level is dead per F6 and
+                    # unused by fusion, so it is not worth an extra embedding call).
+                    if self._section_vector_strategy == "rawspan":
+                        doc_text = doc_data["doc_text"]
+                        section_texts = [doc_text[s.start_pos : s.end_pos] for s in section_boundaries]
+                        doc_data["section_embeddings"] = embed_spans_pooled(
+                            self.embedding_provider, section_texts, self.embedding_dimension
+                        )
+                    else:
+                        section_embeddings = []
+                        for section in section_boundaries:
+                            chunk_indices = chunk_to_section_map.get(section.index, [])
+                            vecs = [chunk_embeddings[ci] for ci in chunk_indices if ci in chunk_embeddings]
+                            if vecs:
+                                section_embeddings.append(np.mean(vecs, axis=0))
+                            else:
+                                section_embeddings.append(np.zeros(self.embedding_dimension))
+                        doc_data["section_embeddings"] = np.array(section_embeddings, dtype=np.float32)
 
                     # Compute document centroid
                     all_vecs = list(chunk_embeddings.values())
@@ -1806,15 +1818,24 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     if chunk.faiss_id in fid_to_emb:
                         chunk_idx_to_emb[chunk.index] = fid_to_emb[chunk.faiss_id]
 
-                # Build chunk_data dict for _store_hierarchical_data
-                section_embeddings = []
-                for section in section_boundaries:
-                    c_indices = chunk_to_section_map.get(section.index, [])
-                    vecs = [chunk_idx_to_emb[ci] for ci in c_indices if ci in chunk_idx_to_emb]
-                    if vecs:
-                        section_embeddings.append(np.mean(vecs, axis=0))
-                    else:
-                        section_embeddings.append(np.zeros(self.embedding_dimension))
+                # Build chunk_data dict for _store_hierarchical_data. Section
+                # vectors follow the DB's strategy (raw-span or centroid); the
+                # document vector is always a centroid (see F6).
+                if self._section_vector_strategy == "rawspan":
+                    section_texts = [doc_text[s.start_pos : s.end_pos] for s in section_boundaries]
+                    section_embeddings_arr = embed_spans_pooled(
+                        self.embedding_provider, section_texts, self.embedding_dimension
+                    )
+                else:
+                    section_embeddings = []
+                    for section in section_boundaries:
+                        c_indices = chunk_to_section_map.get(section.index, [])
+                        vecs = [chunk_idx_to_emb[ci] for ci in c_indices if ci in chunk_idx_to_emb]
+                        if vecs:
+                            section_embeddings.append(np.mean(vecs, axis=0))
+                        else:
+                            section_embeddings.append(np.zeros(self.embedding_dimension))
+                    section_embeddings_arr = np.array(section_embeddings, dtype=np.float32)
 
                 all_vecs = list(chunk_idx_to_emb.values())
                 doc_embedding = np.mean(all_vecs, axis=0).reshape(1, -1).astype(np.float32) if all_vecs else None
@@ -1824,7 +1845,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     "doc_text": doc_text,
                     "section_boundaries": section_boundaries,
                     "chunk_to_section_map": chunk_to_section_map,
-                    "section_embeddings": np.array(section_embeddings, dtype=np.float32),
+                    "section_embeddings": section_embeddings_arr,
                     "document_embedding": doc_embedding,
                 }
 

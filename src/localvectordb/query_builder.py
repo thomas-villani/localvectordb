@@ -317,8 +317,9 @@ class QueryBuilder:
         self._semantic_filters: List[SemanticFilter] = []
         self._search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
         self._vector_weight: float = 0.5
+        self._section_weight: float = 0.65
         self._return_type: Literal["documents", "chunks", "sections", "context"] = "documents"
-        self._search_level: Literal["chunks", "sections", "documents"] = "chunks"
+        self._search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks"
         self._limit: int = 10
         self._offset: int = 0
         self._order_by: List[tuple[str, str]] = []  # (field, direction)
@@ -340,6 +341,7 @@ class QueryBuilder:
         new_builder._semantic_filters = self._semantic_filters.copy()
         new_builder._search_type = self._search_type
         new_builder._vector_weight = self._vector_weight
+        new_builder._section_weight = self._section_weight
         new_builder._return_type = self._return_type
         new_builder._search_level = self._search_level
         new_builder._limit = self._limit
@@ -587,18 +589,27 @@ class QueryBuilder:
         builder._return_type = "sections"
         return builder
 
-    def search_level(self, level: Literal["chunks", "sections", "documents"]) -> "QueryBuilder":
-        """Set the FAISS index to search ('chunks', 'sections', or 'documents').
+    def search_level(
+        self,
+        level: Literal["chunks", "sections", "documents", "fused"],
+        section_weight: Optional[float] = None,
+    ) -> "QueryBuilder":
+        """Set the retrieval level ('chunks', 'sections', 'documents', or 'fused').
 
         Parameters
         ----------
         level : str
-            Which FAISS index to search.
+            Which level to search. 'fused' blends chunk retrieval with section
+            (raw-span) retrieval and requires a hierarchical database.
+        section_weight : float, optional
+            Weight on the section leg for ``level='fused'`` (0-1). Ignored otherwise.
         """
-        if level not in ("chunks", "sections", "documents"):
-            raise ValueError("`level` must be 'chunks', 'sections', or 'documents'")
+        if level not in ("chunks", "sections", "documents", "fused"):
+            raise ValueError("`level` must be 'chunks', 'sections', 'documents', or 'fused'")
         builder = self.clone()
         builder._search_level = level
+        if section_weight is not None:
+            builder._section_weight = section_weight
         return builder
 
     def context(self, window_size: int = 2) -> "QueryBuilder":
@@ -1411,6 +1422,7 @@ class QueryExecutor(_QueryExecutorBase):
             score_threshold=clause.score_threshold or 0.0,
             filters=filters,
             vector_weight=self.builder._vector_weight,
+            section_weight=self.builder._section_weight,
             context_window=self.builder._context_window,
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
@@ -1513,6 +1525,7 @@ class QueryExecutor(_QueryExecutorBase):
             score_threshold=clause.score_threshold or 0.0,
             filters=filters,
             vector_weight=self.builder._vector_weight,
+            section_weight=self.builder._section_weight,
             context_window=self.builder._context_window,
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
@@ -1687,6 +1700,7 @@ class AsyncQueryExecutor(_QueryExecutorBase):
             score_threshold=clause.score_threshold or 0.0,
             filters=filters,
             vector_weight=self.builder._vector_weight,
+            section_weight=self.builder._section_weight,
             context_window=self.builder._context_window,
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
@@ -1787,6 +1801,7 @@ class AsyncQueryExecutor(_QueryExecutorBase):
             score_threshold=clause.score_threshold or 0.0,
             filters=filters,
             vector_weight=self.builder._vector_weight,
+            section_weight=self.builder._section_weight,
             context_window=self.builder._context_window,
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,

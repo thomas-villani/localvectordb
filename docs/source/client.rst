@@ -427,10 +427,17 @@ Search and Query Operations
     # ...or section-grouped results from the chunk index:
     results = db.query(query="billing", return_type="sections")
 
-``RemoteVectorDB.query`` accepts the same ``search_level`` and
-``return_type="sections"`` options as the local database; see
+``RemoteVectorDB.query`` accepts the same ``search_level="sections"``/
+``"documents"`` and ``return_type="sections"`` options as the local database; see
 :doc:`hierarchical`. The options are forwarded to the server, which must host a
 database created with ``hierarchical_embeddings=True``.
+
+.. note::
+
+   ``search_level="fused"`` is **not** available on remote databases — a fused
+   query on ``RemoteVectorDB`` raises ``NotImplementedError`` (the server query
+   route does not accept it). Use a local :class:`~localvectordb.database.LocalVectorDB`
+   for fused retrieval.
 
 **Multi-Column Search**::
 

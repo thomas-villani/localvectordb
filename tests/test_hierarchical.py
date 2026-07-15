@@ -598,6 +598,10 @@ class TestT15CentroidNormalizationAndMetric:
             embedding_provider="mock",
             embedding_model="mock",
             hierarchical_embeddings=True,
+            # This suite is about the centroid write path; pin it so the default
+            # flip to raw-span (which builds section vectors differently) does not
+            # quietly stop exercising centroid normalization.
+            section_vector_strategy="centroid",
             faiss_index_type=faiss_index_type,
             chunk_size=50,
             chunk_overlap=0,
@@ -690,5 +694,324 @@ class TestT15CentroidNormalizationAndMetric:
                 scores = [r.score for r in results]
                 assert all(0.0 <= s <= 1.0 for s in scores)
                 assert scores == sorted(scores, reverse=True)
+            finally:
+                db.close()
+
+
+def _make_hier_db(tmpdir, name="hier", strategy=None):
+    """A hierarchical MockEmbeddings DB (raw-span by default) ingested with MARKDOWN_DOC."""
+    from localvectordb.database import LocalVectorDB
+
+    db = LocalVectorDB(
+        name=name,
+        base_path=tmpdir,
+        embedding_provider="mock",
+        embedding_model="mock",
+        hierarchical_embeddings=True,
+        section_vector_strategy=strategy,
+        chunk_size=50,
+        chunk_overlap=0,
+        enable_fts=True,
+    )
+    db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+    return db
+
+
+def _section_vec(db, heading):
+    """Reconstruct the section-index vector for the section with ``heading``."""
+    import numpy as np
+
+    with db.connection_pool.get_connection() as conn:
+        row = conn.execute("SELECT faiss_id FROM sections WHERE heading = ?", (heading,)).fetchone()
+    assert row is not None and row["faiss_id"] is not None
+    return np.asarray(db.section_index.reconstruct(int(row["faiss_id"])), dtype=np.float32)
+
+
+class TestSectionVectorStrategy:
+    """The section_vector_strategy knob: default, persistence, back-compat, pooling."""
+
+    def test_section_vector_strategy_defaults_rawspan_for_new_db(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                assert db.section_vector_strategy == "rawspan"
+            finally:
+                db.close()
+
+    def test_get_stats_reports_strategy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                assert db.get_stats()["section_vector_strategy"] == "rawspan"
+            finally:
+                db.close()
+
+    def test_rawspan_section_vector_differs_from_centroid(self):
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as td_raw, tempfile.TemporaryDirectory() as td_cen:
+            raw_db = _make_hier_db(td_raw, name="raw", strategy="rawspan")
+            cen_db = _make_hier_db(td_cen, name="cen", strategy="centroid")
+            try:
+                # Same section, two representations: embedding the section's text
+                # vs averaging its chunk vectors. They must not coincide.
+                raw_vec = _section_vec(raw_db, "Introduction")
+                cen_vec = _section_vec(cen_db, "Introduction")
+                assert not np.allclose(raw_vec, cen_vec, atol=1e-4)
+            finally:
+                raw_db.close()
+                cen_db.close()
+
+    def test_section_vector_strategy_persists_across_reopen(self):
+        from localvectordb.database import LocalVectorDB
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir, name="persist", strategy="rawspan")
+            n_vectors = db.get_stats()["section_index_vectors"]
+            db.close()
+
+            # Reopen WITHOUT passing the kwarg; the persisted value must win.
+            db2 = LocalVectorDB(
+                name="persist",
+                base_path=tmpdir,
+                embedding_provider="mock",
+                embedding_model="mock",
+                hierarchical_embeddings=True,
+                chunk_size=50,
+                chunk_overlap=0,
+            )
+            try:
+                assert db2.section_vector_strategy == "rawspan"
+                assert db2.get_stats()["section_index_vectors"] == n_vectors
+            finally:
+                db2.close()
+
+    def test_legacy_hierarchical_db_defaults_centroid(self):
+        """A hierarchical DB created before the knob existed resolves to centroid.
+
+        Its stored section vectors are centroids; defaulting a keyless legacy DB to
+        rawspan would silently reinterpret them under a different geometry.
+        """
+        from localvectordb.database import LocalVectorDB
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir, name="legacy", strategy="rawspan")
+            # Simulate the pre-knob on-disk state: drop the strategy key, keep the
+            # hierarchical flag.
+            with db.connection_pool.get_connection() as conn:
+                conn.execute("DELETE FROM config WHERE key = 'section_vector_strategy'")
+                conn.commit()
+            db.close()
+
+            db2 = LocalVectorDB(
+                name="legacy",
+                base_path=tmpdir,
+                embedding_provider="mock",
+                embedding_model="mock",
+                hierarchical_embeddings=True,
+                chunk_size=50,
+                chunk_overlap=0,
+            )
+            try:
+                assert db2.section_vector_strategy == "centroid"
+            finally:
+                db2.close()
+
+    def test_invalid_strategy_raises(self):
+        from localvectordb.database import LocalVectorDB
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with pytest.raises(ValueError, match="section_vector_strategy"):
+                LocalVectorDB(
+                    name="bad",
+                    base_path=tmpdir,
+                    embedding_provider="mock",
+                    embedding_model="mock",
+                    hierarchical_embeddings=True,
+                    section_vector_strategy="bogus",  # type: ignore[arg-type]
+                    chunk_size=50,
+                    chunk_overlap=0,
+                )
+
+    def test_over_window_section_pooling(self, monkeypatch):
+        """A span over the encoder window is embedded in windows and mean-pooled."""
+        import numpy as np
+
+        from localvectordb.database import _span_embed
+        from localvectordb.embeddings import EmbeddingRegistry
+
+        monkeypatch.setattr(_span_embed, "_EMBED_WINDOW_CHARS", 20)
+        provider = EmbeddingRegistry.create_provider("mock", "mock")
+        dim = provider.get_dimension()
+
+        text = " ".join(f"token{i}" for i in range(40))  # well over 20 chars
+        windows = _span_embed._windows(text)
+        assert len(windows) > 1  # actually windowed
+
+        pooled = _span_embed.embed_spans_pooled(provider, [text], dim)
+        assert pooled.shape == (1, dim)
+        expected = np.asarray(provider.embed_sync(windows), dtype=np.float32).mean(axis=0)
+        assert np.allclose(pooled[0], expected, atol=1e-5)
+
+    def test_empty_span_is_zero_row(self):
+        import numpy as np
+
+        from localvectordb.database._span_embed import embed_spans_pooled
+        from localvectordb.embeddings import EmbeddingRegistry
+
+        provider = EmbeddingRegistry.create_provider("mock", "mock")
+        dim = provider.get_dimension()
+        out = embed_spans_pooled(provider, ["", "hello"], dim)
+        assert out.shape == (2, dim)
+        assert np.array_equal(out[0], np.zeros(dim, dtype=np.float32))
+        assert np.linalg.norm(out[1]) > 0
+
+
+class TestTwoLegFusion:
+    """The _two_leg_minmax_fuse primitive (pure, no DB)."""
+
+    def test_two_leg_minmax_fuse_combines_legs(self):
+        from localvectordb.database._search import _two_leg_minmax_fuse
+
+        # primary min-max: a=1, b=0 ; secondary min-max: a=0, c=1
+        fused = _two_leg_minmax_fuse({"a": 0.9, "b": 0.1}, {"a": 0.2, "c": 0.8}, 0.65)
+        assert fused["a"] == pytest.approx(0.35)
+        assert fused["b"] == pytest.approx(0.0)
+        assert fused["c"] == pytest.approx(0.65)
+
+    def test_two_leg_fuse_weight_extremes(self):
+        from localvectordb.database._search import _two_leg_minmax_fuse
+
+        primary = {"a": 0.9, "b": 0.1}
+        secondary = {"a": 0.1, "b": 0.9}
+        # secondary_weight=0 -> primary ranking (a > b); =1 -> secondary (b > a).
+        f0 = _two_leg_minmax_fuse(primary, secondary, 0.0)
+        assert f0["a"] > f0["b"]
+        f1 = _two_leg_minmax_fuse(primary, secondary, 1.0)
+        assert f1["b"] > f1["a"]
+
+    def test_two_leg_fuse_single_leg_scores_zero_on_other(self):
+        from localvectordb.database._search import _two_leg_minmax_fuse
+
+        fused = _two_leg_minmax_fuse({"only_p": 0.5}, {"only_s": 0.5}, 0.5)
+        # A key in one leg only gets 0 from the other; a lone value min-maxes to 1.0.
+        assert fused["only_p"] == pytest.approx(0.5)
+        assert fused["only_s"] == pytest.approx(0.5)
+
+
+class TestFusedSearch:
+    """search_level='fused' dispatch (relevance is validated by the eval harness)."""
+
+    def test_query_search_level_fused_documents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = db.query("neural networks", search_level="fused", return_type="documents", k=3)
+                assert len(results) >= 1
+                assert all(r.type == "document" for r in results)
+                assert results == sorted(results, key=lambda r: r.score, reverse=True)
+            finally:
+                db.close()
+
+    def test_query_search_level_fused_sections(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = db.query("neural networks", search_level="fused", return_type="sections", k=5)
+                assert len(results) >= 1
+                assert all(r.type == "section" for r in results)
+                assert all(":section:" in r.id for r in results)
+            finally:
+                db.close()
+
+    def test_fused_requires_hierarchical(self):
+        from localvectordb.database import LocalVectorDB
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = LocalVectorDB(
+                name="plain",
+                base_path=tmpdir,
+                embedding_provider="mock",
+                embedding_model="mock",
+                hierarchical_embeddings=False,
+                chunk_size=50,
+                chunk_overlap=0,
+            )
+            db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+            try:
+                with pytest.raises(ValueError, match="hierarchical"):
+                    db.query("neural networks", search_level="fused")
+            finally:
+                db.close()
+
+    def test_fused_bad_return_type_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                with pytest.raises(ValueError, match="return_type"):
+                    db.query("neural networks", search_level="fused", return_type="chunks")
+            finally:
+                db.close()
+
+    def test_fused_streaming_unsupported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                with pytest.raises(ValueError, match="fused"):
+                    db.query_cursor("neural networks", search_level="fused")
+            finally:
+                db.close()
+
+    def test_fused_async(self):
+        import asyncio
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = asyncio.run(
+                    db.query_async("neural networks", search_level="fused", return_type="documents", k=3)
+                )
+                assert len(results) >= 1
+                assert all(r.type == "document" for r in results)
+            finally:
+                db.close()
+
+    def test_fused_weight_extremes_change_ranking(self):
+        """section_weight=0 is chunk-only; =1 is section-only -- the knob has effect."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                chunk_only = db.query(
+                    "neural networks", search_level="fused", return_type="documents", section_weight=0.0, k=5
+                )
+                section_only = db.query(
+                    "neural networks", search_level="fused", return_type="documents", section_weight=1.0, k=5
+                )
+                # Both return documents; the knob is accepted end-to-end.
+                assert all(r.type == "document" for r in chunk_only)
+                assert all(r.type == "document" for r in section_only)
+            finally:
+                db.close()
+
+    def test_query_default_unchanged_with_rawspan(self):
+        """A default query on a raw-span hierarchical DB still returns documents."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = db.query("neural networks", k=3)
+                assert len(results) >= 1
+                assert results[0].type == "document"
+            finally:
+                db.close()
+
+    def test_query_builder_search_level_fused(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = (
+                    db.query_builder().search("neural networks").search_level("fused", section_weight=0.65).execute()
+                )
+                assert len(results) >= 1
+                assert all(r.type == "document" for r in results)
             finally:
                 db.close()

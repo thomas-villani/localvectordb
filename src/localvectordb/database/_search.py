@@ -156,6 +156,39 @@ def _relative_score_fusion(
     return fused
 
 
+def _two_leg_minmax_fuse(
+    primary: Dict[str, float],
+    secondary: Dict[str, float],
+    secondary_weight: float,
+) -> Dict[str, float]:
+    """Fuse two bounded-similarity legs after min-max normalizing each within its own pool.
+
+    Both legs arrive as ``{key: similarity}`` on possibly different scales -- a chunk
+    cosine against a section cosine that comes from a different index/metric. Min-max
+    within each leg's own candidate pool puts them on a common ``[0, 1]`` scale, then
+    they are blended:
+    ``(1 - secondary_weight) * primary + secondary_weight * secondary``.
+    ``secondary_weight`` is the weight on the *secondary* (section) leg: ``0.0`` is
+    primary-only, ``1.0`` is secondary-only.
+
+    This mirrors the measured harness fusion (``benchmarks/eval_hierarchical.fuse``).
+    Unlike ``_relative_score_fusion``, both legs are higher-is-better similarities with
+    no BM25 negation. A key in only one leg scores ``0.0`` on the other -- the same
+    value that leg's worst candidate normalizes to. Primary-leg-first insertion order
+    breaks ties toward the primary (chunk) ranking under a later stable sort.
+    """
+    norm_primary = dict(zip(primary, _minmax_normalize(list(primary.values())), strict=True))
+    norm_secondary = dict(zip(secondary, _minmax_normalize(list(secondary.values())), strict=True))
+    fused: Dict[str, float] = {}
+    for key in (*primary, *secondary):
+        if key in fused:
+            continue
+        fused[key] = (1.0 - secondary_weight) * norm_primary.get(key, 0.0) + secondary_weight * norm_secondary.get(
+            key, 0.0
+        )
+    return fused
+
+
 def _get_token_encoder() -> Any:
     """Lazily build (and cache) the tiktoken encoder used for token budgets.
 
@@ -468,11 +501,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
@@ -505,6 +539,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
             unknown fields or unsupported operators raise ``DatabaseError``.
         vector_weight : float
             Weight for vector search in hybrid mode (0-1)
+        search_level : Literal['chunks', 'sections', 'documents', 'fused']
+            Which retrieval level to search. 'chunks' (default) is the normal path.
+            'sections'/'documents' search the hierarchical indices directly. 'fused'
+            blends chunk retrieval with section (raw-span) retrieval and supports
+            return_type 'documents' or 'sections'; requires ``hierarchical_embeddings``.
+        section_weight : float
+            Weight on the section leg when ``search_level='fused'`` (0-1): 0.0 is
+            chunk-only, 1.0 is section-only. Default 0.65 (tuned on real long docs).
+            Ignored for other search levels.
         context_window : int
             Size of the context to assemble for return_type='context'/'enriched'.
             Interpreted in the units given by ``context_unit``. When
@@ -560,6 +603,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
+            # Fused level: blend chunk retrieval with section (raw-span) retrieval.
+            if search_level == "fused":
+                if not self._hierarchical_embeddings:
+                    raise ValueError("search_level='fused' requires hierarchical_embeddings=True")
+                return self._fused_search(
+                    query,
+                    return_type=return_type,
+                    k=k,
+                    score_threshold=score_threshold,
+                    filters=filters,
+                    section_weight=section_weight,
+                    document_scoring_method=document_scoring_method,
+                    document_scoring_options=document_scoring_options,
+                )
+
             # Hierarchical search levels
             if search_level in ("sections", "documents") and self._hierarchical_embeddings:
                 return self._hierarchical_search(
@@ -761,11 +819,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
@@ -806,6 +865,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         if reranker is not None or reranker_config:
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
+        if search_level == "fused":
+            raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
         _validate_context_unit(context_unit)
 
         with self._read_write_lock.read_lock():
@@ -883,11 +944,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
@@ -906,6 +968,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         if reranker is not None or reranker_config:
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
+        if search_level == "fused":
+            raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
         _validate_context_unit(context_unit)
 
         self._ensure_async_pool()
@@ -1071,11 +1135,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
@@ -1118,11 +1183,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
@@ -1176,9 +1242,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_options: Optional[dict] = None,
         context_unit: str = "chunks",
         context_truncate: bool = False,
+        query_embedding: Optional[np.ndarray] = None,
     ) -> List[QueryResult]:
-        query_embeddings = self.embedding_provider.embed_sync([query])
-        query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
+        # A caller (the fused path) may pass a pre-computed query embedding to avoid
+        # embedding the query twice; None preserves the default path byte-for-byte.
+        if query_embedding is None:
+            query_embeddings = self.embedding_provider.embed_sync([query])
+            query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
         assert self.index is not None
@@ -1791,6 +1861,141 @@ class SearchMixin(LocalVectorDBBase, ABC):
         results = list(section_results.values())
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:k]
+
+    def _fused_search(
+        self,
+        query: str,
+        *,
+        return_type: str,
+        k: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]],
+        section_weight: float,
+        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_options: Optional[dict] = None,
+    ) -> List[QueryResult]:
+        """Fuse chunk retrieval with section (raw-span) retrieval.
+
+        Runs a chunk vector search and a section-level search over the same query,
+        maps each hit up to its target unit (document or section), and blends the two
+        legs with ``_two_leg_minmax_fuse`` weighted by ``section_weight`` (the weight
+        on the section leg). This is the shippable result of the hierarchical
+        experiment (findings F3): fusing a section raw-span representation with chunk
+        retrieval beats chunk-only on real, section-structured documents.
+
+        Like hybrid search, fused scores are relative to this query's candidate pool,
+        so ``score_threshold`` acts as a rank-position threshold, not an absolute
+        match-quality gate.
+        """
+        # Embed once and share the vector across both legs.
+        query_embedding = np.array(self.embedding_provider.embed_sync([query])[0]).reshape(1, -1)
+        pool_k = k * 2
+
+        chunk_hits = self._vector_search(
+            query,
+            "chunks",
+            pool_k,
+            0.0,
+            filters,
+            0,
+            None,
+            document_scoring_method,
+            document_scoring_options,
+            "chunks",
+            False,
+            query_embedding=query_embedding,
+        )
+        section_hits = self._section_level_search(query_embedding, "sections", pool_k, 0.0, filters)
+
+        if return_type == "documents":
+            return self._fuse_to_documents(chunk_hits, section_hits, k, score_threshold, section_weight)
+        if return_type == "sections":
+            return self._fuse_to_sections(chunk_hits, section_hits, pool_k, k, score_threshold, section_weight)
+        raise ValueError(f"search_level='fused' supports return_type 'documents' or 'sections', got {return_type!r}")
+
+    @staticmethod
+    def _reduce_to_best_per_key(results: List[QueryResult], key_of: Any) -> Dict[str, float]:
+        """Reduce hits to the max score per target key (a hit credits its parent unit)."""
+        best: Dict[str, float] = {}
+        for r in results:
+            key = key_of(r)
+            prev = best.get(key)
+            if prev is None or r.score > prev:
+                best[key] = r.score
+        return best
+
+    def _fuse_to_documents(
+        self,
+        chunk_hits: List[QueryResult],
+        section_hits: List[QueryResult],
+        k: int,
+        score_threshold: float,
+        section_weight: float,
+    ) -> List[QueryResult]:
+        """Fuse the two legs at the document target and return ``type="document"`` results."""
+        chunk_by_doc = self._reduce_to_best_per_key(chunk_hits, lambda r: r.document_id or r.id)
+        section_by_doc = self._reduce_to_best_per_key(section_hits, lambda r: r.document_id or r.id)
+        fused = _two_leg_minmax_fuse(chunk_by_doc, section_by_doc, section_weight)
+
+        ranked = [(d, s) for d, s in sorted(fused.items(), key=lambda kv: -kv[1]) if s >= score_threshold][:k]
+        if not ranked:
+            return []
+        doc_ids = [d for d, _ in ranked]
+        with self.connection_pool.get_connection() as conn:
+            placeholders = ",".join(["?"] * len(doc_ids))
+            cursor = conn.execute(f"SELECT id, content FROM documents WHERE id IN ({placeholders})", doc_ids)
+            content_by_id = {row["id"]: row["content"] for row in cursor.fetchall()}
+            metadata_batch = self._get_documents_metadata_batch(conn, doc_ids)
+
+        results = []
+        for doc_id, score in ranked:
+            if doc_id not in content_by_id:
+                continue
+            results.append(
+                QueryResult(
+                    id=doc_id,
+                    score=score,
+                    type="document",
+                    content=content_by_id[doc_id],
+                    metadata=metadata_batch.get(doc_id, {}),
+                )
+            )
+        return results
+
+    def _fuse_to_sections(
+        self,
+        chunk_hits: List[QueryResult],
+        section_hits: List[QueryResult],
+        pool_k: int,
+        k: int,
+        score_threshold: float,
+        section_weight: float,
+    ) -> List[QueryResult]:
+        """Fuse the two legs at the section target and return ``type="section"`` results."""
+        # Chunk leg rolled up to sections (max chunk score per containing section).
+        assembled = self._assemble_section_results(chunk_hits, pool_k)
+        chunk_by_section = {r.id: r.score for r in assembled}
+        section_by_section = {r.id: r.score for r in section_hits}
+        fused = _two_leg_minmax_fuse(chunk_by_section, section_by_section, section_weight)
+
+        # One representative object per section id; prefer the section-leg object
+        # (raw-span content + section metadata), falling back to the chunk rollup.
+        objs: Dict[str, QueryResult] = {r.id: r for r in assembled}
+        for r in section_hits:
+            objs[r.id] = r
+
+        results = []
+        for sid, score in sorted(fused.items(), key=lambda kv: -kv[1]):
+            if score < score_threshold:
+                continue
+            obj = objs.get(sid)
+            if obj is None:
+                continue
+            obj.score = score
+            results.append(obj)
+            if len(results) >= k:
+                break
+        return results
 
     def get_chunk_embeddings(self, chunk_ids: str | List[str]) -> np.ndarray:
         """Returns embeddings for chunks given by `chunk_ids`"
@@ -2806,11 +3011,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
         return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
-        search_level: Literal["chunks", "sections", "documents"] = "chunks",
+        search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
+        section_weight: float = 0.65,
         context_window: int = 2,
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
@@ -2880,8 +3086,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
 
-        # Hierarchical search levels: delegate to sync for now
-        if search_level in ("sections", "documents") and self._hierarchical_embeddings:
+        # Hierarchical + fused search levels: delegate to sync for now. 'fused'
+        # always delegates so the sync path raises if the DB is not hierarchical.
+        if search_level == "fused" or (search_level in ("sections", "documents") and self._hierarchical_embeddings):
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 None,
@@ -2894,6 +3101,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     score_threshold=score_threshold,
                     filters=filters,
                     vector_weight=vector_weight,
+                    section_weight=section_weight,
                     context_window=context_window,
                     context_unit=context_unit,
                     context_truncate=context_truncate,

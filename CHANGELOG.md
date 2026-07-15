@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `file-extraction-ocr` extra for OCR of scanned PDFs (Tesseract).
 - Section detection and the `sections` chunking strategy ignore Markdown headers
   inside fenced code blocks, so code snippets don't create spurious sections.
+- Raw-span section vectors for hierarchical databases: a new
+  `section_vector_strategy` option (`"rawspan"` | `"centroid"`) controls how a
+  section is represented in the section index. `"rawspan"` embeds the section's
+  actual text (window-mean-pooled for over-long spans) instead of averaging its
+  chunk vectors, which retrieves better on real, section-structured documents.
+  New hierarchical databases default to `"rawspan"`; databases created before this
+  option existed keep `"centroid"`, and the resolved value is persisted per
+  database. Off by default (requires `hierarchical_embeddings=True`).
+- `search_level="fused"` retrieval: blends chunk retrieval with section (raw-span)
+  retrieval via relative-score fusion, tunable with a `section_weight` scalar
+  (0 = chunk-only, 1 = section-only; default 0.65). Supports `return_type`
+  `"documents"` (the measured win) and `"sections"`. Local databases only for now;
+  remote/streaming raise a clear error. The default chunk-only retrieval path is
+  unchanged.
 - Document comparison and nearest-neighbor endpoints
 - LLM-based fact-checking module
 - Cursor-based pagination for async query results

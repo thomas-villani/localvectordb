@@ -114,6 +114,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         hierarchical_embeddings: bool = False,
         section_pattern: str = r"^(#{1,6})\s+(.+)$",
         section_metadata_extractors: Optional[List[Union[str, SectionMetadataExtractor]]] = None,
+        section_vector_strategy: Optional[Literal["centroid", "rawspan"]] = None,
         # Internal: bypass the on-open integrity check. Only ``repair`` sets this,
         # because it must open exactly the databases the check refuses.
         _skip_integrity_check: bool = False,
@@ -145,6 +146,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Hierarchical embeddings
         self._hierarchical_embeddings = hierarchical_embeddings
         self._section_pattern = section_pattern
+        # How a section is represented in the section index: "centroid" (mean of
+        # its chunk vectors, the legacy behaviour) or "rawspan" (embedding of the
+        # section's own text). Resolved in _init_hierarchical against saved config;
+        # the raw request here only seeds a brand-new hierarchical DB.
+        self._section_vector_strategy: Optional[str] = None
+        self._section_vector_strategy_requested = section_vector_strategy
         self._section_detector: Optional[SectionDetector] = None
         self._section_metadata_extractors: List[SectionMetadataExtractor] = []
         self.section_index: Optional[faiss.Index] = None
@@ -621,6 +628,23 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if not self._hierarchical_embeddings:
             return
 
+        # Resolve the section-vector strategy (see the ctor note). Precedence:
+        #  1. a persisted value wins on reopen;
+        #  2. a hierarchical DB saved before this knob existed is centroid -- its
+        #     stored section vectors are centroids and must never be silently
+        #     reinterpreted under the raw-span geometry;
+        #  3. a brand-new hierarchical DB (or an existing non-hierarchical DB turned
+        #     hierarchical here) takes the requested value, defaulting to "rawspan".
+        if "section_vector_strategy" in loaded:
+            strategy = loaded["section_vector_strategy"]
+        elif loaded and str(loaded.get("hierarchical_embeddings", "")).lower() == "true":
+            strategy = "centroid"
+        else:
+            strategy = self._section_vector_strategy_requested or "rawspan"
+        if strategy not in ("centroid", "rawspan"):
+            raise ValueError(f"Invalid section_vector_strategy {strategy!r}; must be 'centroid' or 'rawspan'")
+        self._section_vector_strategy = strategy
+
         self._section_detector = SectionDetector(self._section_pattern)
         self._section_metadata_extractors = resolve_extractors(section_metadata_extractors)
 
@@ -665,6 +689,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     @property
     def hierarchical_embeddings(self) -> bool:
         return self._hierarchical_embeddings
+
+    @property
+    def section_vector_strategy(self) -> Optional[str]:
+        """How sections are represented: ``"centroid"`` | ``"rawspan"`` (None if not hierarchical)."""
+        return self._section_vector_strategy
 
     def _add_vectors_to_section_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
         """Add section centroid vectors to the section FAISS index."""
@@ -1140,6 +1169,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             "hierarchical_embeddings": str(self._hierarchical_embeddings),
             "section_pattern": self._section_pattern,
         }
+        # Persist the strategy only for a hierarchical DB, so an existing
+        # non-hierarchical DB later turned hierarchical still defaults to rawspan.
+        if self._hierarchical_embeddings and self._section_vector_strategy:
+            config["section_vector_strategy"] = self._section_vector_strategy
         with self.connection_pool.get_connection() as conn:
             for key, value in config.items():
                 conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, str(value)))
@@ -1503,6 +1536,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             if self._hierarchical_embeddings:
                 stats["section_index_vectors"] = self.section_index.ntotal if self.section_index else 0
                 stats["document_index_vectors"] = self.document_index.ntotal if self.document_index else 0
+                stats["section_vector_strategy"] = self._section_vector_strategy
             return stats
 
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:

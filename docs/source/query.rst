@@ -338,9 +338,15 @@ Search Type Specific
 
 **Hierarchical Search:**
 
-* ``search_level`` (str, default="chunks"): Which FAISS index to query — ``"chunks"``,
-  ``"sections"``, or ``"documents"``. The ``"sections"`` and ``"documents"`` levels
-  require ``hierarchical_embeddings=True``. See :doc:`hierarchical`.
+* ``search_level`` (str, default="chunks"): Which retrieval level to query —
+  ``"chunks"``, ``"sections"``, ``"documents"``, or ``"fused"``. The
+  ``"sections"``, ``"documents"``, and ``"fused"`` levels require
+  ``hierarchical_embeddings=True``. ``"fused"`` blends chunk and section (raw-span)
+  retrieval and is the mode that improves quality on long, structured documents.
+  See :doc:`hierarchical`.
+* ``section_weight`` (float, default=0.65): Weight on the section leg when
+  ``search_level="fused"`` (0 = chunk-only, 1 = section-only). Ignored for other
+  levels.
 
 **Advanced Options:**
 
