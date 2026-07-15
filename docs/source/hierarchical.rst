@@ -63,31 +63,13 @@ interaction — coreference, topic composition, the way an argument builds acros
 paragraphs — and leaves only a mean direction. Embedding the section's actual
 text keeps that structure.
 
-We measured this before changing the default. The evaluation used real
-embeddings (OpenAI ``text-embedding-3-small``, an 8k-token encoder) and scored
-nDCG@10 on two kinds of corpus:
-
-- **Synthetic multi-section super-documents** built from judged BEIR passage
-  corpora (FiQA, NFCorpus), which give aligned relevance labels at document,
-  section, and passage granularity.
-- **Qasper** — real NLP papers with natural section structure and
-  evidence-paragraph relevance judgments (275 papers, 882 questions).
-
-On Qasper the raw-span section beats both the chunk baseline and the centroid at
-every target:
-
-======================  =========  =========
-arm                     doc nDCG   sec nDCG
-======================  =========  =========
-chunk (baseline)        0.375      0.177
-centroid-section        0.371      0.173
-**rawspan-section**     **0.398**  **0.200**
-======================  =========  =========
-
-The pattern held on the section-structured synthetic set (on FiQA the raw-span
-section reached ≈0.79 against a chunk baseline of ≈0.67). Averaging genuinely
-discards signal the span embedding keeps: on some corpora the centroid section
-scored *below* chunk-only while the raw-span section scored well above it.
+We measured this before changing the default, on real embeddings across Qasper
+(real NLP papers) and synthetic section corpora built from BEIR — and again
+across several local encoders. Raw-span sections beat both the chunk baseline and
+the centroid at every meaningful target; averaging genuinely discards signal the
+span embedding keeps, and on some corpora the centroid section scored *below*
+chunk-only while the raw-span section scored well above it. The full tables,
+encoders, and methodology are in :doc:`hierarchical-evaluation`.
 
 Cost and back-compatibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -313,21 +295,12 @@ Why fusion beats either level alone
 The two levels make different mistakes. A chunk match is precise but narrow — it
 can miss a document whose relevance is spread thinly across a section rather than
 concentrated in one passage. A section match captures that diffuse relevance but
-is coarse. Fusing them recovers documents that neither level ranks well alone. On
-Qasper, fusing raw-span sections with chunks beat chunk-only retrieval:
-
-======================  =========  =========
-arm                     doc nDCG   sec nDCG
-======================  =========  =========
-chunk (baseline)        0.375      0.177
-rawspan-section         0.398      0.200
-**fusion (chunk+sec)**  **0.404**  0.196
-======================  =========  =========
-
-The absolute gains on real documents are **modest** (~0.02–0.03 nDCG@10) — this
-is a genuine quality-per-cost judgement, not a slam dunk. The effect is much
-larger on section-dense corpora (on the synthetic FiQA section set, fusion and
-the raw-span section both cleared 0.75 against a 0.67–0.73 chunk baseline).
+is coarse. Fusing them recovers documents that neither level ranks well alone, and
+on real long documents fusing raw-span sections with chunks beat chunk-only
+retrieval at the document target. The absolute gains on real documents are
+**modest** — a genuine quality-per-cost judgement, not a slam dunk — and much
+larger on section-dense corpora. See :doc:`hierarchical-evaluation` for the
+per-corpus numbers.
 
 The fusion itself is **relative-score fusion**: each leg's scores are min-max
 normalised within that query's own candidate pool (putting the chunk cosine and
@@ -399,8 +372,8 @@ represented. But a **short-context encoder is a poor fit**: on a 512-token model
 long sections are dominated by pooling artefacts and raw-span can lose to the
 centroid. Use a long-context embedding model (e.g. OpenAI ``text-embedding-3-*``
 at 8k tokens, ``nomic-embed-text``, or another 8k+ encoder) when you enable
-``"rawspan"``. The reference encoder for all the numbers above was OpenAI
-``text-embedding-3-small`` (8191-token context).
+``"rawspan"``. :doc:`hierarchical-evaluation` reports results across OpenAI
+``text-embedding-3-small`` and several local encoders.
 
 **The document level carries little signal.** Whole-document-centroid retrieval
 (``search_level="documents"``) was the weakest arm in every experiment — a single
@@ -422,8 +395,9 @@ streaming/cursor query paths do not support it — use a materialised
 :meth:`~localvectordb.database.LocalVectorDB.query` instead.
 
 **Gains are real but modest, and corpus-dependent.** On real long documents the
-improvement is ~0.02–0.03 nDCG@10. Measure on your own data before committing to
-a ``section_weight`` far from the default, and keep chunk-only retrieval for
+improvement is a low single-digit nDCG@10 gain (see :doc:`hierarchical-evaluation`
+for exact figures). Measure on your own data before committing to a
+``section_weight`` far from the default, and keep chunk-only retrieval for
 short-passage corpora.
 
 Rebuilding indices for existing databases
