@@ -28,6 +28,8 @@ Force a backend with `--provider ollama|sentence_transformers` on any script.
 # Individual suites
 ./.venv/Scripts/python.exe scripts/e2e/e2e_local.py    # library: CRUD/search/filters/backup/hierarchical/rerank
 ./.venv/Scripts/python.exe scripts/e2e/e2e_files.py    # real PDF/DOCX/XLSX/HTML/MD/py ingestion + retrieval
+./.venv/Scripts/python.exe scripts/e2e/e2e_hier.py     # raw-span section vectors + search_level="fused" retrieval
+./.venv/Scripts/python.exe scripts/e2e/e2e_patch.py    # document patch API (find/replace + splice, expect_hash)
 ./.venv/Scripts/python.exe scripts/e2e/e2e_server.py   # lvdb serve + RemoteVectorDB + REST + auth + upload + SSE
 ./.venv/Scripts/python.exe scripts/e2e/e2e_cli.py      # lvdb CLI workflow
 ```
@@ -43,6 +45,8 @@ All state lives in temp directories that are cleaned up afterwards.
 | `_common.py` | Provider auto-detection, check runner, temp dirs. |
 | `e2e_local.py` | Local `LocalVectorDB` flow with a typed metadata schema: upsert/get/exists/update/delete, vector/keyword/hybrid search with filters, query builder, chunk position tracking, comparison + nearest neighbours, backup/restore, hierarchical (section-level) retrieval, cross-encoder reranking. |
 | `e2e_files.py` | `upsert_from_file` across six real formats, extraction sanity, cross-format semantic + keyword retrieval, filters, idempotent re-ingest. |
+| `e2e_hier.py` | Hierarchical retrieval: raw-span section vectors (the default strategy) vs legacy centroids, direct section-level search, `search_level="fused"` blending chunk + section legs into fused documents and fused sections, the `section_weight` sweep (chunk-only .. section-only), fused rejection for streaming/cursor, and fused via `query_async`. |
+| `e2e_patch.py` | Document patch API through the real re-embedding path: replace/splice/append/prepend, `expect_hash` optimistic concurrency, the no-op vs not-found vs conflict contract, error contracts (unmatched find / overlapping ops), metadata merge, and that a patched doc stays retrievable by its new vector + keyword content. |
 | `e2e_server.py` | Boots a real `lvdb serve` subprocess with API-key auth + upload enabled; exercises RemoteVectorDB parity, raw REST (list, multipart upload), SSE streaming, and read-only-key permission enforcement. |
 | `e2e_cli.py` | Full `lvdb` CLI workflow: create/list, add (files + inline text), search (hybrid/keyword, JSON output), get/related/stats/info, delete document + database. |
 | `run_all.py` | Runs everything and prints a summary table. |
