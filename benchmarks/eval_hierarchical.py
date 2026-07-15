@@ -155,7 +155,13 @@ class CachedEncoder:
     cache. Cache lives under ``benchmarks/.cache/`` (gitignored).
     """
 
-    def __init__(self, provider_name: str, model: str, num_ctx: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        provider_name: str,
+        model: str,
+        num_ctx: Optional[int] = None,
+        timeout: Optional[int] = None,
+    ) -> None:
         # The provider is constructed lazily, on the first cache miss only. A
         # fully-cached sweep (every span seen on a prior run) then needs no live
         # provider and no API key -- which is what lets the offline analysis
@@ -164,6 +170,10 @@ class CachedEncoder:
         self._provider = None
         self.model = model
         self.num_ctx = num_ctx
+        # Per-request read timeout. A full-document embed at a large num_ctx/
+        # num_batch (e.g. bge-m3@8192) can exceed the 300s provider default on a
+        # CPU-only box and die with httpx.ReadTimeout -> raise it for the 8k arm.
+        self.timeout = timeout
         # Window sized to the encoder's context; unknown context -> 8k default.
         self.window_chars = int(num_ctx * _WINDOW_CHARS_PER_TOKEN) if num_ctx else _DEFAULT_WINDOW_CHARS
         # num_ctx changes the encoder's effective input (and so the vectors of any
@@ -185,6 +195,8 @@ class CachedEncoder:
             from localvectordb.embeddings import EmbeddingRegistry
 
             kwargs = {"num_ctx": self.num_ctx} if self.num_ctx else {}
+            if self.timeout is not None:
+                kwargs["timeout"] = self.timeout
             self._provider = EmbeddingRegistry.create_provider(self.provider_name, self.model, **kwargs)
         return self._provider
 
@@ -594,6 +606,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "per chunk and test whether the section/fusion arms still beat a large-chunk baseline "
         "(diminishing-returns axis). Keys the result file.",
     )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Ollama only: per-request read timeout in seconds (provider default 300). A full-document "
+        "embed at a large num_ctx/num_batch (e.g. bge-m3@8192) on a CPU-only box can exceed 300s and "
+        "die with ReadTimeout; raise this (e.g. 1200) for the 8k arm.",
+    )
     p.add_argument("--sections", type=int, default=3, help="Sections per super-document (S).")
     p.add_argument("--passages", type=int, default=3, help="Passages per section (P).")
     p.add_argument("--seed", type=int, default=0)
@@ -652,7 +672,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         summarizer = CachedSummarizer(args.summary_model, directive=args.directive)
         logger.info("Directed-summary arm on: model=%s directive=%s", args.summary_model, args.directive)
 
-    encoder = CachedEncoder(args.provider, args.model, num_ctx=args.num_ctx)
+    encoder = CachedEncoder(args.provider, args.model, num_ctx=args.num_ctx, timeout=args.timeout)
     if args.num_ctx:
         logger.info("Ollama num_ctx=%d (window=%d chars)", args.num_ctx, encoder.window_chars)
     built = build_vectors(bench, encoder, summarizer, chunk_tokens=args.chunk_tokens)
