@@ -107,13 +107,18 @@ def _unit(arr: np.ndarray) -> np.ndarray:
 _MAX_TOKENS_PER_REQUEST = 200_000
 _MAX_INPUTS_PER_REQUEST = 2000
 _CHARS_PER_TOKEN = 3.5
-# A single input over the model's ~8191-token window is a hard 400 from OpenAI.
-# Real long docs (Qasper papers, long sections) exceed it. Rather than truncate
-# (which silently drops a long section's tail -- and section is our key arm), a
-# span over this bound is embedded in windows and mean-pooled, so the whole span
-# is represented. Conservative char bound (worst-case ~3 chars/token). No-op for
-# the short BEIR spans, so their cache entries stay valid.
-_EMBED_WINDOW_CHARS = 24_000
+# A single input over the model's context window is a hard 400 from OpenAI and a
+# silent server-side truncation from Ollama. Real long docs (Qasper papers, long
+# sections) exceed it. Rather than truncate (which silently drops a long
+# section's tail -- and section is our key arm), a span over the window is
+# embedded in windows and mean-pooled, so the whole span is represented. The
+# window is sized to the *encoder's* context: a fixed 24k-char (~8k-token) window
+# overflows a 2k-context model ~3.4x and each window is then truncated, defeating
+# the point. With --num-ctx set the window is num_ctx * ~3 chars/token
+# (conservative so a window reliably fits); otherwise the 8k default is assumed.
+# Mirrors src/localvectordb/database/_span_embed.py.
+_DEFAULT_WINDOW_CHARS = 24_000
+_WINDOW_CHARS_PER_TOKEN = 3.0
 
 
 def _estimate_tokens(text: str) -> int:
@@ -150,7 +155,7 @@ class CachedEncoder:
     cache. Cache lives under ``benchmarks/.cache/`` (gitignored).
     """
 
-    def __init__(self, provider_name: str, model: str) -> None:
+    def __init__(self, provider_name: str, model: str, num_ctx: Optional[int] = None) -> None:
         # The provider is constructed lazily, on the first cache miss only. A
         # fully-cached sweep (every span seen on a prior run) then needs no live
         # provider and no API key -- which is what lets the offline analysis
@@ -158,7 +163,16 @@ class CachedEncoder:
         self.provider_name = provider_name
         self._provider = None
         self.model = model
-        self.cache_dir = CACHE_DIR / "hier_embed" / f"{provider_name}__{model.replace('/', '_')}"
+        self.num_ctx = num_ctx
+        # Window sized to the encoder's context; unknown context -> 8k default.
+        self.window_chars = int(num_ctx * _WINDOW_CHARS_PER_TOKEN) if num_ctx else _DEFAULT_WINDOW_CHARS
+        # num_ctx changes the encoder's effective input (and so the vectors of any
+        # over-long span), so it MUST key the cache -- otherwise a nomic@2k and a
+        # nomic@8k run silently share vectors and the two arms are indistinguishable.
+        ctx_suffix = f"__ctx{num_ctx}" if num_ctx else ""
+        # ':' (e.g. "embeddinggemma:300m") and '/' are illegal in Windows paths.
+        safe_model = model.replace("/", "_").replace(":", "-")
+        self.cache_dir = CACHE_DIR / "hier_embed" / f"{provider_name}__{safe_model}{ctx_suffix}"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.n_embedded = 0
         self.n_cached = 0
@@ -170,24 +184,25 @@ class CachedEncoder:
         if self._provider is None:
             from localvectordb.embeddings import EmbeddingRegistry
 
-            self._provider = EmbeddingRegistry.create_provider(self.provider_name, self.model)
+            kwargs = {"num_ctx": self.num_ctx} if self.num_ctx else {}
+            self._provider = EmbeddingRegistry.create_provider(self.provider_name, self.model, **kwargs)
         return self._provider
 
     def _path(self, text: str) -> Path:
         h = hashlib.sha256(f"{self.model}\x00{text}".encode("utf-8")).hexdigest()
         return self.cache_dir / f"{h}.npy"
 
-    @staticmethod
-    def _windows(text: str) -> List[str]:
+    def _windows(self, text: str) -> List[str]:
         """Split ``text`` into <= window-sized pieces, breaking on whitespace when possible."""
-        if len(text) <= _EMBED_WINDOW_CHARS:
+        window = self.window_chars
+        if len(text) <= window:
             return [text]
         out: List[str] = []
         i = 0
         while i < len(text):
-            end = min(i + _EMBED_WINDOW_CHARS, len(text))
+            end = min(i + window, len(text))
             if end < len(text):
-                cut = text.rfind(" ", i + _EMBED_WINDOW_CHARS // 2, end)
+                cut = text.rfind(" ", i + window // 2, end)
                 if cut > i:
                     end = cut
             out.append(text[i:end])
@@ -276,10 +291,10 @@ class BuiltVectors:
     summary_doc: Optional[LevelIndex] = None
 
 
-def _chunker():
+def _chunker(max_tokens: Optional[int] = None):
     from localvectordb.chunking import ChunkerFactory
 
-    return ChunkerFactory.create_chunker(CHUNKING["method"], CHUNKING["max_tokens"], CHUNKING["overlap"])
+    return ChunkerFactory.create_chunker(CHUNKING["method"], max_tokens or CHUNKING["max_tokens"], CHUNKING["overlap"])
 
 
 def _detect_sections(text: str):
@@ -289,7 +304,10 @@ def _detect_sections(text: str):
 
 
 def build_vectors(
-    bench: SyntheticBenchmark, encoder: CachedEncoder, summarizer: "Optional[object]" = None
+    bench: SyntheticBenchmark,
+    encoder: CachedEncoder,
+    summarizer: "Optional[object]" = None,
+    chunk_tokens: Optional[int] = None,
 ) -> BuiltVectors:
     """Chunk every super-doc, then build all five level indices for the sweep.
 
@@ -298,11 +316,17 @@ def build_vectors(
     Raw-span vectors are the embedding of the span's own text. Queries embedded
     once and shared by every arm.
 
+    ``chunk_tokens`` overrides the chunk size (default 500). Larger chunks capture
+    more context per chunk and so narrow the gap between the chunk baseline and
+    the section arms -- the diminishing-returns axis. Only the chunk (and thus
+    centroid) levels change with it; raw-span section/doc vectors are the span's
+    own text and are reused across chunk sizes.
+
     If ``summarizer`` is given (a ``benchmarks.summarize.CachedSummarizer``), also
     build the directed-summary section/doc levels (H2): each span is summarised,
     then the summary is embedded with the same encoder.
     """
-    chunker = _chunker()
+    chunker = _chunker(chunk_tokens)
 
     # Flat registries, filled per document, embedded in bulk afterwards.
     chunk_texts: List[str] = []
@@ -554,6 +578,22 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--max-papers", type=int, default=None, help="qasper only: cap the number of papers.")
     p.add_argument("--provider", default=DEFAULT_PROVIDER, help="Embedding provider (default: openai).")
     p.add_argument("--model", default=DEFAULT_MODEL, help="Embedding model (default: text-embedding-3-small).")
+    p.add_argument(
+        "--num-ctx",
+        type=int,
+        default=None,
+        help="Ollama only: context window to load (options.num_ctx). Ollama defaults each model to "
+        "~2048 regardless of its nominal max and truncates longer inputs; raise this (e.g. 8192 for "
+        "nomic-embed-text) to embed long sections in full. Keys the embedding cache.",
+    )
+    p.add_argument(
+        "--chunk-tokens",
+        type=int,
+        default=None,
+        help="Chunk size in tokens (default 500). Larger chunks (e.g. 2000) capture more context "
+        "per chunk and test whether the section/fusion arms still beat a large-chunk baseline "
+        "(diminishing-returns axis). Keys the result file.",
+    )
     p.add_argument("--sections", type=int, default=3, help="Sections per super-document (S).")
     p.add_argument("--passages", type=int, default=3, help="Passages per section (P).")
     p.add_argument("--seed", type=int, default=0)
@@ -612,8 +652,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         summarizer = CachedSummarizer(args.summary_model, directive=args.directive)
         logger.info("Directed-summary arm on: model=%s directive=%s", args.summary_model, args.directive)
 
-    encoder = CachedEncoder(args.provider, args.model)
-    built = build_vectors(bench, encoder, summarizer)
+    encoder = CachedEncoder(args.provider, args.model, num_ctx=args.num_ctx)
+    if args.num_ctx:
+        logger.info("Ollama num_ctx=%d (window=%d chars)", args.num_ctx, encoder.window_chars)
+    built = build_vectors(bench, encoder, summarizer, chunk_tokens=args.chunk_tokens)
+    if args.chunk_tokens:
+        logger.info("Chunk size overridden to %d tokens (default %d)", args.chunk_tokens, CHUNKING["max_tokens"])
     logger.info(
         "Encoded: %d new, %d cached, %d pooled (dim=%s)",
         encoder.n_embedded,
@@ -658,7 +702,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "schema": 1,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "dataset": args.dataset,
-        "embedding": {"provider": args.provider, "model": args.model},
+        "embedding": {"provider": args.provider, "model": args.model, "num_ctx": args.num_ctx},
+        "chunk_tokens": args.chunk_tokens or CHUNKING["max_tokens"],
         "synthetic": bench.params | {"super_docs": len(bench.corpus), "queries": len(bench.queries)},
         "primary_metric": PRIMARY_METRIC,
         "cost": cost,
@@ -670,6 +715,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         tag = f"qasper_{args.split}"
     else:
         tag = f"{args.dataset}_s{args.sections}p{args.passages}_{args.mode}"
+    # Distinguish encoder + chunk size in the filename so the sweep doesn't overwrite itself.
+    tag = f"{tag}_{args.model.replace('/', '_').replace(':', '-')}"
+    if args.num_ctx:
+        tag = f"{tag}_ctx{args.num_ctx}"
+    if args.chunk_tokens:
+        tag = f"{tag}_ck{args.chunk_tokens}"
     out = RESULTS_DIR / f"hierarchical_{tag}_{stamp}.json"
     out.write_text(json.dumps(full, indent=2), encoding="utf-8")
     logger.info("Wrote %s", out)
