@@ -1185,7 +1185,7 @@ itself.
 
 Results are returned as ``QueryResult`` objects (``type="document"``) sorted by
 descending similarity, using the same output formatting as ``search``. This command
-wraps the :meth:`~localvectordb.LocalVectorDB.nearest_neighbors` API; see
+wraps the :meth:`~localvectordb.database.LocalVectorDB.nearest_neighbors` API; see
 :doc:`comparison` for the underlying document-similarity model.
 
 Schema Management

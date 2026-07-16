@@ -3,6 +3,10 @@ name: Docs
 on:
   push:
     branches: [main]
+  # Also build on PRs so the -W warning gate below actually blocks a regression
+  # before it merges, rather than reporting it once it is already on main.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # Permissions required to deploy to GitHub Pages via the official actions.
@@ -34,8 +38,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      # -W turns warnings into errors so doc rot (duplicate targets, malformed
+      # markup, broken :doc:/:ref: links) fails the build instead of silently
+      # shipping. --keep-going reports every warning in one run rather than
+      # stopping at the first. The tree is warning-clean as of the v0.1.0 docs
+      # audit; if this starts failing, fix the warning rather than dropping -W.
+      # Note: conf.py uses intersphinx, so this step needs network access to
+      # docs.python.org and numpy.org to resolve type links.
       - name: Build HTML docs
-        run: uv run sphinx-build -b html docs/source docs/build/html
+        run: uv run sphinx-build -b html -W --keep-going docs/source docs/build/html
 
       - name: Disable Jekyll processing
         run: touch docs/build/html/.nojekyll
@@ -47,6 +58,8 @@ jobs:
 
   deploy:
     needs: build
+    # PRs build (to run the -W gate) but must not publish to Pages.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

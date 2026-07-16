@@ -31,9 +31,9 @@ _FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 
 
 def find_code_fence_spans(text: str) -> List[tuple[int, int]]:
-    """Return ``(start, end)`` character spans covered by fenced code blocks.
+    r"""Return ``(start, end)`` character spans covered by fenced code blocks.
 
-    Both backtick (```` ``` ````) and tilde (``~~~``) fences are recognised,
+    Both backtick (:literal:`\`\`\``) and tilde (``~~~``) fences are recognised,
     including unterminated fences (which extend to end of text) following
     CommonMark behaviour. Spans are returned in document order and are used to
     suppress header matches that fall inside code, so example Markdown or shell

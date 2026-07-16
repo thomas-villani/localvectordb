@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `MetadataFieldType.valid_types()` is annotated `Tuple[Type[Any], ...]` rather
+  than `Tuple[type, ...]`. Same runtime behaviour and same type-checker result;
+  the bare `type` had no documentable target, so Sphinx resolved the rendered
+  annotation to the unrelated `MetadataField.type` attribute.
 - **`query(search_level="sections"|"documents")` now raises `ValueError` on a
   database created without `hierarchical_embeddings=True`**, instead of silently
   returning chunk-level results. The old behaviour handed back plausible
@@ -51,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Documentation builds clean** (123 Sphinx warnings → 0) and CI now enforces
+  that with `sphinx-build -W`, on pull requests as well as pushes. The bulk were
+  a numpydoc `Attributes` section and autodoc's `undoc-members` each describing
+  the same dataclass field (fixed with `napoleon_use_ivar`), plus the same class
+  being documented at both its re-export and its defining module, which left
+  autodoc unable to resolve unqualified type references. Also adds intersphinx,
+  so `str`/`int`/`Path`/`ndarray` in signatures link to their real docs instead
+  of silently rendering as dead text (~230 such references).
 - Raw-span section/document embeddings now size their pooling window to the
   encoder's own context (`num_ctx` / `max_input_tokens`) instead of a fixed
   ~24k-char (~8k-token) window. On a small-context encoder (e.g. a 2k-context
