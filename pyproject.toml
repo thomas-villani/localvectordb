@@ -219,8 +219,12 @@ serialize = [
     "{major}.{minor}.{patch}{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
-search = "{current_version}"
-replace = "{new_version}"
+# Quote the default search (used to rewrite this file's own current_version).
+# The quotes matter for pre-release bumps: "0.1.0" does not match inside
+# "0.1.0rc1", so a 0.1.0 -> 0.1.0rc1 bump cannot compound an already-updated
+# value into "0.1.0rc1rc1".
+search = "\"{current_version}\""
+replace = "\"{new_version}\""
 regex = false
 ignore_missing_version = false
 ignore_missing_files = false
@@ -247,8 +251,11 @@ optional_value = "final"
 
 [[tool.bumpversion.files]]
 filename = "pyproject.toml"
-search = "version = \"{current_version}\""
-replace = "version = \"{new_version}\""
+# Anchor to the start of the line so this only matches project.version and never
+# the current_version key above (which contains "version = ..." as a substring).
+regex = true
+search = '(?m)^version = "{current_version}"'
+replace = 'version = "{new_version}"'
 
 [[tool.bumpversion.files]]
 filename = "src/localvectordb/__init__.py"
