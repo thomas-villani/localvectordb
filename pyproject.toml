@@ -257,6 +257,16 @@ regex = true
 search = '(?m)^version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
+# Keep this [tool.bumpversion] current_version in sync explicitly. The implicit
+# config updater goes inert with the quoted default search above, so this is the
+# sole updater of the key (no double-application), and the anchor keeps it off
+# the project.version line.
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+regex = true
+search = '(?m)^current_version = "{current_version}"'
+replace = 'current_version = "{new_version}"'
+
 [[tool.bumpversion.files]]
 filename = "src/localvectordb/__init__.py"
 search = "__version__ = \"{current_version}\""
