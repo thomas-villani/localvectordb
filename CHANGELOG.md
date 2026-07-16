@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`examples/`** — runnable programs rather than snippets, covered by
+  `tests/test_examples.py` so they cannot rot. The first is
+  `section_vs_chunk_retrieval.py`, which runs this project's headline retrieval
+  comparison (section-level vs chunk-level vs fused) **on your own corpus** and
+  reports nDCG@10 / recall@k per mode, so the claim in the README is something
+  you can check rather than something you have to believe. Ships with a sample
+  corpus and judgments. Requires a real embedding backend and refuses the `mock`
+  provider, which cannot measure relevance.
 - Document **patch API** for in-place edits — change part of a stored document
   without re-sending the whole content. Exact find/replace with a uniqueness
   requirement (the contract coding agents already handle), plus `splice` /
