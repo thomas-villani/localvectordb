@@ -1,7 +1,7 @@
 [project]
 name = "localvectordb-mcpb"
-version = "0.1.0"
+version = "0.1.0rc1"
 requires-python = ">=3.12"
 dependencies = [
-    "localvectordb[mcp]>=0.1.0",
+    "localvectordb[mcp]>=0.1.0rc1",
 ]

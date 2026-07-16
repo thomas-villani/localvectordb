@@ -9,7 +9,7 @@ Copyright (c) 2025-2026 Tom Villani
 Licensed under the MIT License.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.0rc1"
 
 from localvectordb.backup import BackupManager, IncrementalBackupManager, PointInTimeRecoveryManager
 from localvectordb.chunking import ChunkerFactory
