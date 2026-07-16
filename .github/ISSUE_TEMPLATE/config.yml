@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://thomas-villani.github.io/localvectordb/
+    about: Guides, API reference, tutorials, and the retrieval evaluation study.
+  - name: Security vulnerability
+    url: https://github.com/thomas-villani/localvectordb/blob/main/SECURITY.md
+    about: Please report vulnerabilities privately, not as a public issue.

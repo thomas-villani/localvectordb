@@ -15,6 +15,7 @@ import os
 
 import click
 
+from localvectordb.chunking import ChunkerFactory
 from localvectordb_server.cli._utils import (
     EXIT_CODE_CONFIGURATION_ERROR,
     EXIT_CODE_ERROR,
@@ -240,7 +241,9 @@ def list_databases(ctx, details):
 @click.option(
     "--chunking-method",
     default=None,
-    type=click.Choice(["sentences", "tokens", "characters", "words", "lines", "sections"]),
+    # Derived from the registry, not hardcoded: a hardcoded list silently drops
+    # chunkers as they are added (it was missing `paragraphs` and `code-blocks`).
+    type=click.Choice(ChunkerFactory.list_methods()),
     help="Chunking method",
 )
 @click.option("--chunk-overlap", default=None, type=int, help="Overlap between chunks")

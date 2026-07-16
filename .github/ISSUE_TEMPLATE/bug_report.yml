@@ -1,0 +1,68 @@
+name: Bug report
+description: Something behaves differently from what the docs say
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this. If you have found a security
+        vulnerability, please do **not** open an issue — see
+        [SECURITY.md](../blob/main/SECURITY.md) for private disclosure.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest snippet or command that shows the problem. The `mock`
+        embedding provider (`embedding_provider="mock", embedding_model="mock"`)
+        needs no external service and makes a repro runnable by anyone.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version and environment
+      description: "Output of `lvdb version`, plus your OS and Python version."
+      placeholder: |
+        lvdb version: 0.1.0
+        Python: 3.12.4
+        OS: Windows 11 / Ubuntu 24.04 / macOS 14
+    validations:
+      required: true
+
+  - type: dropdown
+    id: embedding-provider
+    attributes:
+      label: Embedding provider
+      description: Which provider were you using? (Skip if not relevant.)
+      options:
+        - ollama (default)
+        - openai
+        - google
+        - jina
+        - sentence_transformers
+        - huggingface
+        - huggingface_local
+        - mock
+        - other / not relevant
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback or logs
+      render: shell
+    validations:
+      required: false

@@ -5,7 +5,7 @@ from localvectordb.database._core import LocalVectorDBCore
 from localvectordb.database._crud import CrudMixin
 from localvectordb.database._ingest import PipelineMixin
 from localvectordb.database._metadata import MetadataMixin
-from localvectordb.database._repair import RepairMixin, RepairReport
+from localvectordb.database._repair import RepairMixin, RepairReport, open_for_repair
 from localvectordb.database._search import SearchMixin
 from localvectordb.database._tuning import LocalTuningMixin, TuningMixin
 from localvectordb.database.base import BaseVectorDB
@@ -65,4 +65,4 @@ class LocalVectorDB(
     pass
 
 
-__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin", "RepairReport"]
+__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin", "RepairReport", "open_for_repair"]

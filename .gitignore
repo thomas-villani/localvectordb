@@ -2,6 +2,9 @@
 __pycache__/
 *.py[oc]
 build/
+# Sphinx's other default output dir: `make html` uses docs/build (covered by
+# `build/` above), but a bare `sphinx-build`/IDE invocation often writes _build.
+_build/
 dist/
 wheels/
 *.egg-info

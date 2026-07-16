@@ -233,9 +233,10 @@ def _render_query_results(results, *, title, output_as_json, output, metadata, p
 @click.option(
     "--search-level",
     default="chunks",
-    type=click.Choice(["chunks", "sections", "documents"]),
-    help="Which index to search: chunks (default), sections, or documents "
-    "(sections/documents require a database created with hierarchical_embeddings=True)",
+    type=click.Choice(["chunks", "sections", "documents", "fused"]),
+    help="Which index to search: chunks (default), sections, documents, or fused "
+    "(blend chunk and section rankings). Anything but chunks requires a database "
+    "created with hierarchical_embeddings=True",
 )
 @click.option("--score-threshold", default=0.0, type=float, help="Minimum score threshold")
 @click.option("--vector-weight", default=0.5, type=float, help="Weight for vector search in hybrid mode")

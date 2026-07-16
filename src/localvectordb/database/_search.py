@@ -532,7 +532,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
         k : int
             Maximum number of results to return
         score_threshold : float
-            Minimum score threshold (0-1, higher=better)
+            Minimum score to keep (0-1, higher=better). For ``search_type="hybrid"``
+            each leg is min-max normalized *within this query's own candidate pool*,
+            so scores are not comparable across queries or across different ``k``:
+            the threshold cuts on rank position within the pool, not on absolute
+            match quality, and is not a portable bar you can tune once and reuse.
         filters : Optional[Dict[str, Any]]
             Metadata filters. Filter fields must be declared in the metadata
             schema (or be reserved columns like ``id``/``created_at``);
@@ -618,8 +622,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     document_scoring_options=document_scoring_options,
                 )
 
-            # Hierarchical search levels
-            if search_level in ("sections", "documents") and self._hierarchical_embeddings:
+            # Hierarchical search levels. Fail loudly on a non-hierarchical
+            # database rather than quietly answering with chunk results: plausible
+            # wrong-level results read as "the feature does nothing" instead of
+            # "the feature is switched off". Matches 'fused' above.
+            if search_level in ("sections", "documents"):
+                if not self._hierarchical_embeddings:
+                    raise ValueError(f"search_level={search_level!r} requires hierarchical_embeddings=True")
                 return self._hierarchical_search(
                     query,
                     search_level=search_level,
@@ -2833,7 +2842,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
         k : int
             Maximum number of results to return
         score_threshold : float
-            Minimum score threshold (0-1, higher=better)
+            Minimum score to keep (0-1, higher=better). For ``search_type="hybrid"``
+            each leg is min-max normalized *within this query's own candidate pool*,
+            so scores are not comparable across queries or across different ``k``:
+            the threshold cuts on rank position within the pool, not on absolute
+            match quality, and is not a portable bar you can tune once and reuse.
         filters : Optional[Dict[str, Any]]
             Metadata filters to apply. Filter fields must be declared in the
             metadata schema; unknown fields or unsupported operators raise
@@ -3043,7 +3056,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
         k : int
             Maximum number of results to return, by default 10
         score_threshold : float
-            Minimum score threshold (0-1, higher=better), by default 0.0
+            Minimum score to keep (0-1, higher=better). For ``search_type="hybrid"``
+            each leg is min-max normalized *within this query's own candidate pool*,
+            so scores are not comparable across queries or across different ``k``:
+            the threshold cuts on rank position within the pool, not on absolute
+            match quality, and is not a portable bar you can tune once and reuse., by default 0.0
         filters : Optional[Dict[str, Any]]
             Metadata filters to apply, by default None. Filter fields must be
             declared in the metadata schema; unknown fields or unsupported
@@ -3086,9 +3103,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
 
-        # Hierarchical + fused search levels: delegate to sync for now. 'fused'
-        # always delegates so the sync path raises if the DB is not hierarchical.
-        if search_level == "fused" or (search_level in ("sections", "documents") and self._hierarchical_embeddings):
+        # Hierarchical + fused search levels: delegate to sync for now. Every
+        # non-chunk level delegates unconditionally, so the sync path is the one
+        # place that decides whether the DB can serve the level (and raises if not).
+        if search_level in ("fused", "sections", "documents"):
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 None,
@@ -4224,7 +4242,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
         k : int
             Maximum number of results to return
         score_threshold : float
-            Minimum score threshold (0-1, higher=better)
+            Minimum score to keep (0-1, higher=better). For ``search_type="hybrid"``
+            each leg is min-max normalized *within this query's own candidate pool*,
+            so scores are not comparable across queries or across different ``k``:
+            the threshold cuts on rank position within the pool, not on absolute
+            match quality, and is not a portable bar you can tune once and reuse.
         filters : Optional[Dict[str, Any]]
             Metadata filters to apply. Filter fields must be declared in the
             metadata schema; unknown fields or unsupported operators raise

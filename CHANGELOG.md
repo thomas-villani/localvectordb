@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`query(search_level="sections"|"documents")` now raises `ValueError` on a
+  database created without `hierarchical_embeddings=True`**, instead of silently
+  returning chunk-level results. The old behaviour handed back plausible
+  wrong-level results, which reads as "the feature does nothing" rather than
+  "the feature is switched off". `"fused"` already raised; all three levels are
+  now consistent, in `query()` and `query_async()` alike. If you were relying on
+  the silent fallthrough, pass `search_level="chunks"` (the default) explicitly.
+- `lvdb create --chunking-method` now offers every registered chunker (it was a
+  hardcoded list missing `paragraphs` and `code-blocks` — the latter documented
+  in the README's own code-repository example but unreachable from the CLI).
+  `lvdb db <name> search --search-level` gains `fused`.
+
 ### Added
 
 - Document **patch API** for in-place edits — change part of a stored document
