@@ -132,7 +132,7 @@ Sections
 
 Splits text at Markdown-style headers (``#``, ``##``, ``###``), using them as
 preferred break points and keeping small sections whole. Headers that appear
-**inside fenced code blocks** (```` ``` ```` or ``~~~``) are ignored, so example
+**inside fenced code blocks** (:literal:`\`\`\`` or ``~~~``) are ignored, so example
 snippets containing ``#`` comments or shell prompts do not create spurious
 breaks.
 
@@ -150,7 +150,7 @@ breaks.
 
 .. tip::
 
-   Files ingested via :meth:`~localvectordb.LocalVectorDB.upsert_from_file` or
+   Files ingested via :meth:`~localvectordb.database.LocalVectorDB.upsert_from_file` or
    the server ``/upload`` endpoint are extracted to **Markdown** (see
    :doc:`/file-extraction`), so ``"sections"`` is an especially good fit for
    PDFs, DOCX, and other documents whose heading structure is preserved during
@@ -419,8 +419,8 @@ Key behaviors:
 
 - **Preamble handling**: text before the first heading becomes a leading section
   with ``heading=None``.
-- **Code-fence aware**: ``#`` lines inside fenced code blocks (```` ``` ````/
-  ``~~~``) are not treated as headings. This matters because extracted content
+- **Code-fence aware**: ``#`` lines inside fenced code blocks (:literal:`\`\`\``
+  or ``~~~``) are not treated as headings. This matters because extracted content
   is now Markdown and frequently contains fenced code. The helper
   :func:`~localvectordb.section_detection.find_code_fence_spans` computes the
   fenced regions used to exclude these false headers.

@@ -409,7 +409,7 @@ the extended-format parsers once::
    pip install "localvectordb[file-extraction]"
 
 Then let the database extract and ingest files for you with
-:meth:`~localvectordb.LocalVectorDB.upsert_from_file`, which replaces the manual
+:meth:`~localvectordb.database.LocalVectorDB.upsert_from_file`, which replaces the manual
 ``_read_*`` helpers above for these formats:
 
 .. code-block:: python

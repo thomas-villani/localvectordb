@@ -89,7 +89,7 @@ class MetadataFieldType(str, Enum):
     DATE = "date"
     JSON = "json"
 
-    def valid_types(self) -> Tuple[type, ...]:
+    def valid_types(self) -> Tuple[Type[Any], ...]:
         if self.value == "text":
             return (str,)
         elif self.value == "integer":

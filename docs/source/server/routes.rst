@@ -1850,8 +1850,8 @@ Compute a pairwise similarity matrix across documents.
 
 .. note::
    Fact-checking ("reverse RAG") is a **local-only** feature in v0.1.0. There are no HTTP
-   fact-check endpoints; use the :class:`~localvectordb.FactChecker` class directly against a
-   :class:`~localvectordb.LocalVectorDB`. See :doc:`../factcheck`.
+   fact-check endpoints; use the :class:`~localvectordb.validation.FactChecker` class directly against a
+   :class:`~localvectordb.database.LocalVectorDB`. See :doc:`../factcheck`.
 
 Embedding Operations
 --------------------

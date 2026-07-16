@@ -144,7 +144,7 @@ You can use the extraction system directly without uploading:
 Ingesting files into a database
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-:class:`~localvectordb.LocalVectorDB` can ingest files directly, running them
+:class:`~localvectordb.database.LocalVectorDB` can ingest files directly, running them
 through the extractor before chunking and embedding:
 
 .. code-block:: python

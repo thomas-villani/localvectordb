@@ -19,7 +19,7 @@ The pipeline has three stages, all orchestrated by :class:`FactChecker`:
 
 1. **Claim extraction** -- the LLM splits the input text into atomic factual claims.
 2. **Retrieval** -- each claim is used as a query against one or more
-   :class:`~localvectordb.LocalVectorDB` instances (vector, keyword, or hybrid search).
+   :class:`~localvectordb.database.LocalVectorDB` instances (vector, keyword, or hybrid search).
 3. **Polarity classification** -- the LLM judges each retrieved chunk against the claim and
    assigns a :class:`Polarity` (``SUPPORTS``, ``CONTRADICTS``, or ``UNRELATED``) with a
    confidence score.
@@ -276,8 +276,8 @@ Local-Only in v0.1.0
 --------------------
 
 Fact-checking is a **local-only** feature: it runs in-process against one or more
-:class:`~localvectordb.LocalVectorDB` instances via the :class:`FactChecker` class shown above.
+:class:`~localvectordb.database.LocalVectorDB` instances via the :class:`FactChecker` class shown above.
 The LocalVectorDB HTTP server does **not** expose fact-check endpoints, and
-:class:`~localvectordb.RemoteVectorDB` has no ``fact_check`` method. To fact-check against data
+:class:`~localvectordb.client.RemoteVectorDB` has no ``fact_check`` method. To fact-check against data
 served remotely, retrieve or open the database locally and construct a :class:`FactChecker`
 around it.

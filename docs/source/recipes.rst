@@ -310,7 +310,7 @@ plus many source/text formats. Extracted content is **Markdown**, preserving
 headings, tables, and lists. Install the extended-format parsers with
 ``pip install "localvectordb[file-extraction]"`` (see :doc:`/file-extraction`).
 
-The simplest path is :meth:`~localvectordb.LocalVectorDB.upsert_from_file`,
+The simplest path is :meth:`~localvectordb.database.LocalVectorDB.upsert_from_file`,
 which runs each file through the extractor, merges any extracted metadata
 (``title``, ``author``, ``source_format``, …) with your own, then chunks and
 embeds:
@@ -357,7 +357,7 @@ Using Directory Processing
 ---------------------------
 
 Process every supported file in a directory by collecting paths and passing them
-to :meth:`~localvectordb.LocalVectorDB.upsert_from_file` in one call. Use
+to :meth:`~localvectordb.database.LocalVectorDB.upsert_from_file` in one call. Use
 :meth:`ExtractorRegistry.get_supported_formats` to discover which extensions the
 installed extractors can handle, rather than hard-coding a list:
 
