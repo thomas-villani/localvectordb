@@ -67,14 +67,16 @@ LocalVectorDB does that most vector stores do not.
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: Hierarchical retrieval
+   .. grid-item-card:: Section retrieval, measured
       :link: hierarchical
       :link-type: doc
 
-      Search a *document → section → chunk* hierarchy, so a query can match a
-      whole section instead of one stray sentence adrift in a long report.
-      Section and document vectors are centroids of chunk embeddings, so this
-      costs no extra embedding calls.
+      In a long report the answer is usually a whole *section*, not one stray
+      sentence — so LocalVectorDB embeds each section's own text and retrieves
+      it alongside chunks. Not a hunch: a controlled study across three local
+      encoders puts it **+0.03–0.08 nDCG@10** over a chunk-only baseline for
+      finding the right document, and **+0.07–0.17** for the right section.
+      :doc:`Read the study <hierarchical-evaluation>`.
 
    .. grid-item-card:: Reverse-RAG fact-checking
       :link: factcheck
@@ -111,6 +113,11 @@ search your databases directly — read-only by default.
 **Tuning for scale.** :doc:`chunking` and :doc:`embeddings` control what gets
 indexed and how. :doc:`document-scoring` covers the chunk-to-document
 aggregation strategies. :doc:`performance` has the benchmark numbers.
+
+**Retrieving from long documents.** :doc:`hierarchical` turns on section-level
+indexing and explains the knobs; :doc:`hierarchical-evaluation` is the
+controlled study behind its defaults — read it if you want to know whether the
+feature is worth enabling for *your* corpus and encoder, and why.
 
 
 .. toctree::

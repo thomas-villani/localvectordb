@@ -11,7 +11,7 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
 > **Beyond basic RAG.** LocalVectorDB pairs a zero-infrastructure SQLite + FAISS core with capabilities most vector stores don't have:
-> - 🧬 **Hierarchical retrieval** — search a three-level *document → section → chunk* hierarchy, so you can match a whole section (not just a stray sentence) in long, structured documents.
+> - 🧬 **Section-level retrieval, measured** — in a long, structured document the answer is usually spread across a whole *section*, not concentrated in one stray sentence — and flat chunking cannot see it. LocalVectorDB embeds each section's own text and retrieves it alongside chunks: **+0.03–0.08 nDCG@10** for finding the right document and **+0.07–0.17** for the right section, over a chunk-only baseline, across three local encoders on real papers (Qasper, 15 papers / 48 queries). [Read the study](https://thomas-villani.github.io/localvectordb/hierarchical-evaluation.html).
 > - ✅ **Reverse-RAG fact-checking** — ground LLM-generated text against your corpus, flagging unsupported or contradicted claims with citations.
 > - 📊 **Document comparison & visualization** — synteny ribbons and chord diagrams that show how two documents (or a document's own chunks) relate.
 
@@ -58,12 +58,42 @@ To run the CLI/server without adding it to a project, use uv's tool runner:
 uvx --from "localvectordb[server]" lvdb serve
 ```
 
-### Basic Usage
+### Prerequisites
 
+LocalVectorDB needs an embedding provider. By default it embeds through
+[Ollama](https://ollama.com) running locally:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Any other provider works via `embedding_provider=` — OpenAI, Google, Jina,
+HuggingFace (Inference API or local), or Sentence Transformers. See the
+[Embeddings guide](https://thomas-villani.github.io/localvectordb/embeddings.html).
+
+**No provider handy?** The built-in `mock` provider needs no service and ships in
+the base install, so you can verify the install and explore the API immediately:
+
+<!-- test: run -->
 ```python
 from localvectordb import VectorDB
 
-# Create or connect to a database
+db = VectorDB("demo", ":memory:", embedding_provider="mock", embedding_model="mock")
+db.upsert(["Python is a programming language"])
+print(db.query("programming", k=1))
+```
+
+Mock vectors are deterministic but carry no semantic meaning, so *rankings from
+the mock provider are arbitrary*. It is for wiring up code, not for judging
+retrieval quality.
+
+### Basic Usage
+
+<!-- test: verify-api -->
+```python
+from localvectordb import VectorDB
+
+# Create or connect to a database (defaults to Ollama + nomic-embed-text)
 db = VectorDB("my_docs", "./data")
 
 # Add documents
@@ -84,6 +114,7 @@ print(f"Content: {doc.content}")
 
 ### With Metadata Schema
 
+<!-- test: verify-api -->
 ```python
 from localvectordb import VectorDB
 from localvectordb.core import MetadataField, MetadataFieldType
@@ -118,6 +149,7 @@ results = db.query(
 
 ### Remote Server Usage
 
+<!-- test: verify-api -->
 ```python
 from localvectordb import VectorDB
 
@@ -216,13 +248,15 @@ for the full tool list, configuration reference, and security guidance.
 - **Hybrid Search**: Combined vector + keyword with configurable weighting
 - **Reranking**: Optional cross-encoder reranking via Jina, Sentence Transformers, or HuggingFace
 - **Metadata Filtering**: MongoDB-style queries on structured metadata
-- **Document Scoring**: 11 chunk-to-document aggregation strategies for tuning relevance
+- **Document Scoring**: Three chunk-to-document aggregation strategies (`best`, `average`, `frequency_boost`) for tuning relevance
 
 ### 🧬 **Hierarchical Retrieval**
-- **Three-Level Hierarchy**: Index and search at *document*, *section*, and *chunk* granularity
+- **Raw-Span Section Vectors**: Each section is embedded from *its own text*, not averaged from its chunks — averaging blurs away the cross-chunk structure that makes a section retrievable in the first place. This costs one extra embedding call per section at ingest (sections are far fewer than chunks, so it is modest — but it is not free). Sections longer than the encoder's context are window-pooled, never truncated
+- **Search a Level, or Fuse Two**: `search_level="sections"` retrieves sections directly; `search_level="fused"` blends the section and chunk rankings with a tunable `section_weight` (default 0.65). Sections alone are the stronger choice when relevance is genuinely section-shaped; fusion leans toward document-level accuracy
 - **Automatic Section Detection**: Sections derived from document structure (Markdown headings by default, custom patterns supported)
-- **No Extra Embedding Cost**: Section/document vectors are centroids of existing chunk embeddings
+- **Measured, Not Asserted**: A controlled study across three local encoders, two chunk sizes, and real papers — raw-span sections beat the chunk-only baseline at every target, and beat the "free" centroid decisively. Full tables, methodology, and caveats: [Raw-Span Hierarchical Retrieval](https://thomas-villani.github.io/localvectordb/hierarchical-evaluation.html)
 - **Section Metadata**: Pluggable extractors (heading path, keywords, word/char counts, or your own)
+- **Opt-in**: Off by default (`hierarchical_embeddings=True` to enable); the flat retrieval path is unchanged. Document-level search (`search_level="documents"`) is also available
 
 ### ✅ **Reverse-RAG Fact-Checking**
 - **Grounding Verification**: Check LLM-generated text against your databases claim-by-claim
@@ -354,6 +388,7 @@ See [`sdk/js/README.md`](sdk/js/README.md) for the full SDK API.
 #### `upsert(documents, metadata=None, ids=None)`
 Insert or update documents.
 
+<!-- test: verify-api -->
 ```python
 # Single document
 db.upsert("Document content")
@@ -369,6 +404,7 @@ doc_ids = db.upsert(
 #### `query(query, search_type='hybrid', k=10, filters=None)`
 Unified search interface.
 
+<!-- test: verify-api -->
 ```python
 # Vector search
 results = db.query("search text", search_type="vector", k=5)
@@ -392,6 +428,7 @@ results = db.query("exact phrase", search_type="keyword")
 #### `get(ids)` / `delete(ids)` / `exists(ids)`
 Document management.
 
+<!-- test: verify-api -->
 ```python
 # Single document
 doc = db.get("doc_1")
@@ -408,6 +445,7 @@ deleted_count = db.delete(["doc_1", "doc_2"])
 Edit a document in place without re-sending its whole content. Ops resolve
 against the current content, touch disjoint spans, and apply atomically.
 
+<!-- test: verify-api -->
 ```python
 # Exact find/replace (must match exactly `count` times, default 1)
 result = db.patch("doc_1", [{"op": "replace", "find": "draft", "replace": "final"}])
@@ -426,6 +464,7 @@ db.patch("doc_1", [{"op": "replace", "find": "v1", "replace": "v2"}],
 #### `filter(where=None, order_by=None, limit=None, offset=0)`
 MongoDB-style filtering on metadata.
 
+<!-- test: verify-api -->
 ```python
 # Simple filters
 docs = db.filter(where={"author": "Jane Doe", "status": "published"})
@@ -576,6 +615,7 @@ formats work out of the box; extended/niche formats and OCR are opt-in extras.
 Extracted content is **Markdown**, preserving headings, tables, and lists for
 better chunk boundaries.
 
+<!-- test: skip reason="raw HTTP against a running server; no library calls to check" -->
 ```python
 # Upload files via HTTP API
 import requests
@@ -701,6 +741,7 @@ export OPENAI_API_KEY="your-openai-key"  # if using OpenAI
 
 ### Research Paper Database
 
+<!-- test: verify-api -->
 ```python
 from localvectordb import VectorDB
 from localvectordb import get_common_metadata_schemas
@@ -731,6 +772,7 @@ results = db.query(
 
 ### Code Repository Search
 
+<!-- test: verify-api -->
 ```python
 import glob
 import os
@@ -767,6 +809,7 @@ results = db.query("async def", search_type="keyword")
 
 ### Hierarchical (Section-Level) Retrieval
 
+<!-- test: verify-api -->
 ```python
 from localvectordb import VectorDB
 
@@ -782,6 +825,7 @@ for r in results:
 
 ### Reverse-RAG Fact-Checking
 
+<!-- test: verify-api -->
 ```python
 import anthropic
 from localvectordb import VectorDB, FactChecker

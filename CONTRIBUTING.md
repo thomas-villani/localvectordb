@@ -85,11 +85,11 @@ mypy src/
 
 ## Pull Request Process
 
-1. Fork the repository and create a branch from `master`.
+1. Fork the repository and create a branch from `main`.
 2. Make your changes. Add or update tests as appropriate.
 3. Ensure `pytest` passes and `ruff check .` reports no issues.
 4. Write a clear commit message describing what changed and why.
-5. Open a pull request against `master`. In the PR description, explain the
+5. Open a pull request against `main`. In the PR description, explain the
    motivation and summarize the changes.
 
 Keep pull requests focused. If you are fixing a bug and adding a feature,

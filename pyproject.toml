@@ -3,7 +3,7 @@ name = "localvectordb"
 version = "0.1.0rc1"
 license = "MIT"
 license-files = ["LICENSE"]
-description = "A lightweight vector database using SQLite, FAISS and pluggable embedding providers, including Ollama and OpenAI"
+description = "A document-first vector database on SQLite + FAISS: measured section-level retrieval, reverse-RAG fact-checking, and pluggable local or hosted embeddings"
 readme = "README.md"
 authors = [
     { name = "Tom Villani, Ph.D.", email = "thomas.villani@gmail.com" }
@@ -12,6 +12,21 @@ maintainers = [
     { name = "Tom Villani, Ph.D.", email = "thomas.villani@gmail.com" }
 ]
 requires-python = ">=3.12"
+keywords = [
+    "vector-database",
+    "embeddings",
+    "rag",
+    "semantic-search",
+    "hybrid-search",
+    "hierarchical-retrieval",
+    "faiss",
+    "sqlite",
+    "fact-checking",
+    "mcp",
+    "local-first",
+    "ollama",
+    "openai",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -21,8 +36,10 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Framework :: FastAPI",
     "Topic :: Database",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Indexing",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -97,6 +114,10 @@ exclude = [
     "/scripts",
     "/etc",
     "/todo.md",
+    "/roadmap.md",
+    "/patch-api-plan.md",
+    "/hierarchical-test-plan.md",
+    "/hierarchical-test-findings.md",
     "/remote-layer-streaming.md",
     "/docs/build",
     "/.github",
@@ -361,6 +382,7 @@ markers = [
     "client: Tests for the remote client",
     "performance: Performance and benchmark tests",
     "regression: Regression tests for specific bug fixes",
+    "docs: Tests that check documentation examples against the real API",
 ]
 
 [tool.coverage.run]
