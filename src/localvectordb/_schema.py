@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -11,7 +12,7 @@ from localvectordb._pools import ReadWriteLock
 from localvectordb._sqlite_uri import is_sqlite_uri, normalize_db_path
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
-from localvectordb.versioning import DatabaseVersion, VersionManager
+from localvectordb.versioning import CURRENT_SCHEMA_VERSION, DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
 
@@ -887,6 +888,10 @@ class DatabaseSchema:
         if metadata_schema:
             await self._setup_metadata_schema_async(conn, metadata_schema)
 
+        # Initialize version tracking (mirrors the sync path so async-initialised
+        # databases carry the same on-disk version metadata).
+        await self._initialize_version_tracking_async(conn)
+
     def _core_setup_metadata_schema_sync(self, conn: sqlite3.Connection, schema: Dict[str, MetadataField]):
         """Core logic for setting up metadata schema and adding columns to documents table (sync version)"""
         # Validate that no metadata field names conflict with reserved columns
@@ -1214,6 +1219,68 @@ class DatabaseSchema:
 
         except Exception as e:
             logger.warning(f"Could not initialize version tracking: {e}")
+            # Don't fail database initialization for version tracking issues
+
+    async def _initialize_version_tracking_async(self, conn) -> None:
+        """Async twin of :meth:`_initialize_version_tracking`.
+
+        Stamps a brand-new database with the current schema version, or
+        back-records the migration log for an existing pre-versioning DB. Mirrors
+        the sync path (PRAGMA user_version + config + migration_log) so databases
+        first initialised through the async path are not left unversioned.
+        """
+        try:
+            # Determine current version: PRAGMA user_version, then config fallback.
+            cursor = await conn.execute("PRAGMA user_version")
+            row = await cursor.fetchone()
+            sqlite_version = row[0] if row else 0
+
+            if sqlite_version > 0:
+                current_version = DatabaseVersion.from_sqlite_version(sqlite_version)
+            else:
+                current_version = DatabaseVersion("0.0.0")
+                try:
+                    cursor = await conn.execute("SELECT value FROM config WHERE key = ?", ("db_version",))
+                    config_row = await cursor.fetchone()
+                    if config_row:
+                        current_version = DatabaseVersion(config_row[0])
+                except sqlite3.OperationalError:
+                    # config table doesn't exist or is inaccessible
+                    pass
+
+            if current_version == DatabaseVersion("0.0.0"):
+                # New database - initialize with the current schema version.
+                logger.info("Initializing version tracking for new database")
+                target = DatabaseVersion(CURRENT_SCHEMA_VERSION)
+                now = datetime.now(UTC).isoformat()
+                # PRAGMA does not accept bound parameters; the value is an int.
+                await conn.execute(f"PRAGMA user_version = {target.to_sqlite_version()}")
+                await conn.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", ("db_version", str(target))
+                )
+                await conn.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", ("version_updated_at", now)
+                )
+                await conn.execute(
+                    "INSERT INTO migration_log (version, applied_at, rollback_script, checksum) " "VALUES (?, ?, ?, ?)",
+                    (str(target), now, None, None),
+                )
+            else:
+                # Existing database - back-record its version if migration_log is absent.
+                logger.debug(f"Database version: {current_version}")
+                cursor = await conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='migration_log'"
+                )
+                if not await cursor.fetchone():
+                    logger.info("Adding migration tracking to existing database")
+                    await conn.execute(
+                        "INSERT INTO migration_log (version, applied_at, rollback_script, checksum) "
+                        "VALUES (?, ?, ?, ?)",
+                        (str(current_version), datetime.now(UTC).isoformat(), None, None),
+                    )
+
+        except Exception as e:
+            logger.warning(f"Could not initialize version tracking (async): {e}")
             # Don't fail database initialization for version tracking issues
 
     def load_metadata_schema(self, db_connection=None) -> Dict[str, MetadataField]:
