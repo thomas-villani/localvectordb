@@ -1,6 +1,6 @@
 [project]
 name = "localvectordb"
-version = "0.1.0"
+version = "0.1.0rc1"
 license = "MIT"
 license-files = ["LICENSE"]
 description = "A lightweight vector database using SQLite, FAISS and pluggable embedding providers, including Ollama and OpenAI"
@@ -210,7 +210,7 @@ dev = [
 
 
 [tool.bumpversion]
-current_version = "0.1.0"
+current_version = "0.1.0rc1"
 # PEP 440 versions with an optional release-candidate suffix (e.g. 0.1.0rc1).
 # A final release omits the pre-release parts; pre_l defaults to "final" which
 # selects the short serialize form below.

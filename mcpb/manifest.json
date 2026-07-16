@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "localvectordb",
   "display_name": "LocalVectorDB",
-  "version": "0.1.0",
+  "version": "0.1.0rc1",
   "description": "Search and manage local SQLite + FAISS vector databases directly inside Claude.",
   "long_description": "LocalVectorDB's built-in MCP server, packaged for one-click install. Exposes your local document-first vector databases (SQLite + FAISS with FTS5 keyword search) to Claude: list databases and inspect their schema, run vector / keyword / hybrid search, filter documents by metadata, fetch documents, and check existence. Starts in read-only mode by default; switch to read-write to also create databases, upsert / update / delete documents, and evolve metadata schemas. Point it at a folder of databases and Claude can retrieve and reason over your own indexed content.",
   "author": {
