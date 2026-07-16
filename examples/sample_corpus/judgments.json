@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "Relevance judgments for the sample corpus, used by section_vs_chunk_retrieval.py.",
+    "",
+    "Write the same shape for your own corpus and pass it with --judgments.",
+    "  query             : the search string, exactly as a user would type it.",
+    "  relevant_docs     : document ids that answer it. upsert_from_file() ids a",
+    "                      document by its filename stem, so 'data-retention.md'",
+    "                      becomes 'data-retention'.",
+    "  relevant_sections : '<doc id>::<section heading>', matched against the",
+    "                      section_heading metadata on each result. Headings are",
+    "                      used rather than section indices because you can read a",
+    "                      heading off the document; an index you would have to",
+    "                      count.",
+    "",
+    "These are binary judgments (relevant / not). Grading them 0-2 would be more",
+    "informative and much more work; binary is what most people will actually do."
+  ],
+  "queries": [
+    {
+      "query": "when should I roll back a deploy instead of investigating the cause first?",
+      "relevant_docs": ["deployment-pipeline", "incident-response"],
+      "relevant_sections": [
+        "deployment-pipeline::Rollback",
+        "incident-response::Mitigation Before Diagnosis"
+      ]
+    },
+    {
+      "query": "how long is customer data kept after an account is closed?",
+      "relevant_docs": ["data-retention"],
+      "relevant_sections": ["data-retention::Retention Periods"]
+    },
+    {
+      "query": "who is in charge during an incident and what are they responsible for?",
+      "relevant_docs": ["incident-response"],
+      "relevant_sections": ["incident-response::Roles During an Incident"]
+    },
+    {
+      "query": "how do I change a database schema safely?",
+      "relevant_docs": ["deployment-pipeline"],
+      "relevant_sections": ["deployment-pipeline::Schema Migrations"]
+    },
+    {
+      "query": "what actually happens when a customer asks for their data to be deleted?",
+      "relevant_docs": ["data-retention"],
+      "relevant_sections": ["data-retention::Deletion Requests"]
+    },
+    {
+      "query": "how much real traffic does a change see before it is fully released?",
+      "relevant_docs": ["deployment-pipeline"],
+      "relevant_sections": ["deployment-pipeline::Promotion and Environments"]
+    },
+    {
+      "query": "what counts as an incident worth declaring?",
+      "relevant_docs": ["incident-response"],
+      "relevant_sections": ["incident-response::Declaring an Incident"]
+    },
+    {
+      "query": "are flaky tests retried automatically?",
+      "relevant_docs": ["deployment-pipeline"],
+      "relevant_sections": ["deployment-pipeline::Continuous Integration"]
+    },
+    {
+      "query": "who can read customer content in production and is it logged?",
+      "relevant_docs": ["data-retention"],
+      "relevant_sections": ["data-retention::Access and Audit"]
+    },
+    {
+      "query": "how do we decide how serious an incident is?",
+      "relevant_docs": ["incident-response"],
+      "relevant_sections": ["incident-response::Severity Levels"]
+    },
+    {
+      "query": "when is an incident considered finished?",
+      "relevant_docs": ["incident-response"],
+      "relevant_sections": ["incident-response::Closing Out and Review"]
+    },
+    {
+      "query": "how is expired data actually destroyed and is it checked?",
+      "relevant_docs": ["data-retention"],
+      "relevant_sections": ["data-retention::Disposal"]
+    }
+  ]
+}

@@ -255,6 +255,7 @@ for the full tool list, configuration reference, and security guidance.
 - **Search a Level, or Fuse Two**: `search_level="sections"` retrieves sections directly; `search_level="fused"` blends the section and chunk rankings with a tunable `section_weight` (default 0.65). Sections alone are the stronger choice when relevance is genuinely section-shaped; fusion leans toward document-level accuracy
 - **Automatic Section Detection**: Sections derived from document structure (Markdown headings by default, custom patterns supported)
 - **Measured, Not Asserted**: A controlled study across three local encoders, two chunk sizes, and real papers — raw-span sections beat the chunk-only baseline at every target, and beat the "free" centroid decisively. Full tables, methodology, and caveats: [Raw-Span Hierarchical Retrieval](https://thomas-villani.github.io/localvectordb/hierarchical-evaluation.html)
+- **Check It Yourself**: Don't take the study on faith — [`examples/section_vs_chunk_retrieval.py`](examples/section_vs_chunk_retrieval.py) runs the same comparison on *your* corpus and prints the same nDCG@10 table. Your documents are the only ones that decide whether this is worth enabling
 - **Section Metadata**: Pluggable extractors (heading path, keywords, word/char counts, or your own)
 - **Opt-in**: Off by default (`hierarchical_embeddings=True` to enable); the flat retrieval path is unchanged. Document-level search (`search_level="documents"`) is also available
 
@@ -758,6 +759,19 @@ export OPENAI_API_KEY="your-openai-key"  # if using OpenAI
 ```
 
 ## 🧪 Examples
+
+### Runnable scripts
+
+The snippets below are illustrative. [`examples/`](examples/) holds complete
+programs you can run, each covered by the test suite so it cannot rot:
+
+| Script | What it does |
+|---|---|
+| [`section_vs_chunk_retrieval.py`](examples/section_vs_chunk_retrieval.py) | Runs this project's headline retrieval comparison — section-level vs chunk-level — **on your own corpus**, and prints nDCG@10 / recall@k per mode. Bring your documents and a small judgments file; it ships with a sample of both. |
+
+They need a real embedding backend (Ollama or `sentence-transformers`) and
+refuse the `mock` provider, because mock vectors cannot tell you whether the
+right thing ranked first. See [`examples/README.md`](examples/README.md).
 
 ### Research Paper Database
 
