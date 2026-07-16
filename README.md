@@ -563,6 +563,26 @@ lvdb config set server.port 8080
 lvdb config set database.chunk_size 1000
 ```
 
+### All Commands
+
+| Command | What it does |
+|---------|--------------|
+| `lvdb serve` | Start the HTTP server |
+| `lvdb create` / `list` / `delete` / `rename` | Database lifecycle |
+| `lvdb version` | Show the installed version |
+| `lvdb db <name> ...` | Operate on one database: `info`, `stats`, `search`, `add`, `get`, `related`, `update`, `patch`, `delete`, `repair`, `shell`, `schema` |
+| `lvdb chunk` | Chunk text to JSONL without a database — useful for inspecting a chunking strategy |
+| `lvdb backup` | `create`, `list`, `restore`, `verify`, `cleanup`, `pitr` |
+| `lvdb migrate` | Metadata schema evolution: `status`, `apply`, `rollback`, `create`, `list` |
+| `lvdb config` | `show`, `get`, `set`, `init` |
+| `lvdb auth` | API keys: `create-key`, `list-keys`, `revoke-key`, `rotate-key`, `key-info`, `prune-expired`, `status` |
+| `lvdb tuning` | SQLite tuning: `list`, `get`, `set`, `set-pragma`, `auto-tune` |
+| `lvdb maintenance` | `checkpoint`, `optimize`, `vacuum`, `analyze` |
+| `lvdb mcp` | MCP server: `serve`, `status`, `test`, `tools`, `config-example` |
+
+Every command takes `--help`. Full reference with all flags and exit codes:
+[CLI documentation](https://thomas-villani.github.io/localvectordb/cli.html).
+
 ## 🏗️ Architecture
 
 ### Local Architecture

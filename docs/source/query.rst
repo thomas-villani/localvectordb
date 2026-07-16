@@ -304,7 +304,16 @@ Common Parameters
 All query methods support these parameters:
 
 * ``k`` (int, default=10): Maximum number of results to return
-* ``score_threshold`` (float, default=0.0): Minimum similarity score (0-1, higher=better)
+* ``score_threshold`` (float, default=0.0): Minimum similarity score (0-1,
+  higher=better). On hybrid queries scores are normalized within the query's own
+  candidate pool, so this cuts the tail of *this* ranking rather than asserting an
+  absolute match quality, and is not a bar you can tune once and reuse across
+  queries (see the warning under ``search_type="hybrid"`` above).
+* ``rerank_k`` (int, optional): Size of the candidate pool fetched *before*
+  reranking, defaulting to ``5 * k`` (capped at 200). Only has an effect when
+  ``reranker`` or ``reranker_config`` is supplied — without over-fetching, a
+  reranker can only reorder the top ``k`` it was already given, so it cannot
+  improve recall. See :doc:`embeddings` for available rerankers.
 * ``filters`` (dict, optional): Metadata filters to apply. Filter fields must be
   declared in the database's ``metadata_schema`` (reserved columns like ``id`` and
   ``created_at`` are also allowed); filtering on an undeclared field or using an

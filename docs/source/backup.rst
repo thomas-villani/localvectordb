@@ -1020,6 +1020,84 @@ The multi-layer approach detects various corruption scenarios:
             else:
                 print(f"❌ Unknown corruption: {e}")
 
+Repairing a Database In Place
+-----------------------------
+
+Backups restore a database from a *copy*. Repair rebuilds the one you have —
+useful when there is no recent backup, or when the damage predates it.
+
+LocalVectorDB verifies index integrity every time it opens a database. If that
+check fails, the constructor refuses to open it and points here.
+
+What repair fixes
+^^^^^^^^^^^^^^^^^
+
+Databases written before FAISS ids became monotonic can hold duplicate
+``faiss_id`` values: ids were allocated from ``index.ntotal``, which
+``remove_ids`` decrements, so any delete (or replacing upsert) could re-issue an
+id that was still live. A duplicated id makes one vector hydrate two chunk rows,
+so queries return the wrong document.
+
+:meth:`~localvectordb.database.LocalVectorDB.repair` reassigns every id from a
+fresh monotonic counter and rewrites the SQLite columns that reference them. How
+each vector is recovered is decided **per id**:
+
+- An id appearing exactly once is read back out of the index with
+  ``reconstruct()`` — no embedding provider, no network, no cost.
+- A **duplicated** id cannot be reconstructed: ``reconstruct(id)`` returns
+  whichever vector the id map points at, so one of the colliding chunks would
+  silently receive the other's vector. Both are re-embedded from their content.
+- An id live in the index with no owning row is an orphan, and is dropped.
+
+So a healthy database compacts for free, and a damaged one only pays to re-embed
+the chunks that actually collided.
+
+Diagnosing and repairing
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Because the integrity check refuses to open exactly the databases repair exists
+to fix, use :func:`~localvectordb.database.open_for_repair`, which bypasses it:
+
+.. code-block:: python
+
+    from localvectordb.database import open_for_repair
+
+    db = open_for_repair("my_docs", "./data")
+
+    # Look before you leap: report findings without changing anything.
+    report = db.repair(dry_run=True)
+    print(report.summary())
+
+    if not report.healthy:
+        report = db.repair()
+        print(f"reconstructed={report.reconstructed} "
+              f"re-embedded={report.reembedded} dropped={report.dropped}")
+
+``repair()`` returns a :class:`~localvectordb.database.RepairReport` with
+``healthy`` (a property), ``summary()`` (a method returning a human-readable
+line), the ``duplicate_ids`` / ``orphan_vectors`` / ``dangling_rows`` it found,
+and counts of what it ``reconstructed``, ``reembedded``, and ``dropped``.
+
+.. note::
+
+   ``open_for_repair`` reads the saved embedding provider out of SQLite before
+   opening, rather than validating the *default* provider first. Repair
+   therefore works offline whenever it does not need to re-embed anything — you
+   do not need Ollama running to fix a database built with it.
+
+.. warning::
+
+   Re-embedding uses the database's configured provider. If duplicated ids need
+   re-embedding, that provider must be reachable, and the calls are billed like
+   any other embedding.
+
+The same thing from the CLI:
+
+.. code-block:: bash
+
+    lvdb db my_docs repair --dry-run
+    lvdb db my_docs repair
+
 Best Practices
 --------------
 

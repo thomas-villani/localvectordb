@@ -403,6 +403,38 @@ class TestHierarchicalIntegration:
         assert len(results) >= 1
         assert results[0].type == "document"
 
+    @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
+    def test_non_chunk_level_without_hierarchy_raises(self, db_without_hierarchy, level):
+        """Asking for a level the DB cannot serve is an error, not chunk results.
+
+        Regression: 'sections'/'documents' used to fall through to chunk search
+        here, so the caller got plausible wrong-level results and concluded the
+        feature did nothing. Only 'fused' raised.
+        """
+        db = db_without_hierarchy
+        db.upsert(["Hello world. This is a test."], ids=["doc1"])
+
+        with pytest.raises(ValueError, match="requires hierarchical_embeddings=True"):
+            db.query("hello", search_level=level, k=1)
+
+    @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
+    async def test_non_chunk_level_without_hierarchy_raises_async(self, db_without_hierarchy, level):
+        """query_async delegates every non-chunk level to the sync guard."""
+        db = db_without_hierarchy
+        db.upsert(["Hello world. This is a test."], ids=["doc1"])
+
+        with pytest.raises(ValueError, match="requires hierarchical_embeddings=True"):
+            await db.query_async("hello", search_level=level, k=1)
+
+    @pytest.mark.parametrize("level", ["sections", "fused"])
+    def test_non_chunk_level_with_hierarchy_still_works(self, db_with_hierarchy, level):
+        """The guard must not block the levels a hierarchical DB can serve."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        results = db.query("neural networks", search_level=level, k=3)
+        assert len(results) >= 1
+
     def test_upsert_with_hierarchy(self, db_with_hierarchy):
         """Test that upsert populates sections table."""
         db = db_with_hierarchy

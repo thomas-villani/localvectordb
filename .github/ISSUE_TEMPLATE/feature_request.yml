@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a capability or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        Describe the situation you are in, not only the feature you have in
+        mind — it often turns out there is a better fit for the underlying need.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+      description: Sketch the API, CLI, or behaviour you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried or considered?
+      description: >
+        Existing workarounds, other libraries, or approaches you ruled out —
+        and why they fall short.
+    validations:
+      required: false

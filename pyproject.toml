@@ -120,6 +120,7 @@ exclude = [
     "/hierarchical-test-findings.md",
     "/remote-layer-streaming.md",
     "/docs/build",
+    "/docs/_build",
     "/.github",
     "/.claude",
     "/.idea",
