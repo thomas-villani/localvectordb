@@ -111,10 +111,16 @@ which leg's raw scale dominates. See :doc:`document-scoring` for the exact formu
 Return Types
 ------------
 
-LocalVectorDB offers four return modes optimized for different use cases:
+LocalVectorDB offers five return modes optimized for different use cases.
 
-``return_type="documents"`` (Default)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``return_type`` is optional. Left unset it follows ``search_level`` — it gives
+you back the unit the query was matched against. For the default chunk search
+that means ``"documents"``, so the mode below is what you get if you say
+nothing; for ``search_level="sections"`` it means sections. Set it explicitly to
+ask for a different unit — see :doc:`hierarchical`.
+
+``return_type="documents"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Returns complete documents with aggregated scores from all matching chunks. Uses document scoring methods to combine chunk-level results.
 There are a number of different valid inputs for the ``document_scoring_method`` parameter, which modify how the

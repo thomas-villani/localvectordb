@@ -74,6 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`POST /databases/{db}/query` returned 500 for a caller's bad arguments.**
+  `query()` rejects an unsupported `search_level`/`return_type` pairing — or a
+  hierarchical level on a database without `hierarchical_embeddings` — with
+  `ValueError`, and nothing mapped `ValueError` to a status, so it reached the
+  catch-all handler as `500 INTERNAL_ERROR "An unexpected error occurred"`: the
+  caller's mistake billed as a server fault, with the message naming the option
+  to change thrown away. These are now `400 VALIDATION_ERROR` carrying the
+  explanation. Domain exceptions still map as before — several of them subclass
+  `ValueError`, so they pass through ahead of it rather than collapsing into a
+  generic 400.
 - **`query(search_level="sections")` accepted `return_type` and ignored it**,
   always answering in sections — so `return_type="documents"` silently returned
   the wrong unit, the same class of defect as the silent chunk fallthrough one
