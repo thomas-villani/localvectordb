@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`return_type` now defaults to `None`** on `query()`/`query_async()` (local,
+  remote, and the `query_database` MCP tool), meaning "the unit `search_level`
+  searched": documents for the default chunk search, sections for
+  `search_level="sections"`. Every existing default is unchanged — this only
+  makes "I want documents" distinguishable from "I didn't say", which is what
+  lets `search_level="sections"` honour an explicit `return_type` without
+  turning a bare section search into a document search. `RemoteVectorDB` omits
+  `return_type` from the request when unset rather than sending `"documents"`,
+  so remote and local answer a bare section search in the same unit; the server
+  resolves an absent `return_type` the same way and still echoes a concrete
+  value.
 - `MetadataFieldType.valid_types()` is annotated `Tuple[Type[Any], ...]` rather
   than `Tuple[type, ...]`. Same runtime behaviour and same type-checker result;
   the bare `type` had no documentable target, so Sphinx resolved the rendered
@@ -63,6 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`query(search_level="sections")` accepted `return_type` and ignored it**,
+  always answering in sections — so `return_type="documents"` silently returned
+  the wrong unit, the same class of defect as the silent chunk fallthrough one
+  level down. It now rolls section hits up to their parent documents, scoring
+  each document by its best-matching section (the roll-up `search_level="fused"`
+  already did), over-fetching the section pool so `k` documents stay reachable
+  when one document owns several of the top sections.
+  `search_level="documents"` with a non-document `return_type`, and
+  `search_level="sections"` with `"chunks"`/`"context"`/`"enriched"`, now raise
+  `ValueError` instead of being ignored.
 - **The `LocalVectorDB` API reference documented none of its 74 methods.** The
   class is assembled from mixins and defines nothing itself, so autodoc needed
   `:inherited-members:` to see anything — but `autodoc_default_options` carried

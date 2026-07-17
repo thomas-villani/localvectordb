@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field
 
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
+from localvectordb.database._search import _resolve_return_type
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
@@ -159,8 +160,12 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
     """
     query_text = search_params["query"]
     search_type = search_params.get("search_type", "hybrid")
-    return_type = search_params.get("return_type", "documents")
     search_level = search_params.get("search_level", "chunks")
+    # An absent return_type means "the unit search_level searched", the same as
+    # it does locally -- defaulting it to "documents" here would make a remote
+    # section search answer in documents while a local one answers in sections.
+    # Resolve it now so the value echoed in the response stays a real string.
+    return_type = _resolve_return_type(search_params.get("return_type"), search_level)
     k = search_params.get("k", 10)
     score_threshold = search_params.get("score_threshold", 0.0)
     filters = search_params.get("filters", search_params.get("metadata_filters"))

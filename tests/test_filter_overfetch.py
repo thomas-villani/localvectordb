@@ -180,13 +180,16 @@ class TestHierarchicalFilterPushdown:
         tmp = tempfile.mkdtemp()
         try:
             database = _make_db(tmp, hierarchical=True)
+            # Ask each level for the unit it actually searches. This used to say
+            # return_type="chunks" for the section level and pass anyway, because
+            # the parameter was ignored and sections came back regardless.
             results = database.query(
                 SHARED_TERMS,
                 search_type="vector",
                 search_level=search_level,
                 k=5,
                 filters={"category": "rare"},
-                return_type="chunks" if search_level == "sections" else "documents",
+                return_type="sections" if search_level == "sections" else "documents",
             )
             doc_ids = {r.document_id or r.id for r in results}
             assert doc_ids <= RARE_DOC_IDS
