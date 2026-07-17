@@ -1132,35 +1132,6 @@ Best Practices
    - **Large Documents**: Use file operations with chunking
    - **Complex Filtering**: Create appropriate indexes on metadata fields
 
-Migration Guide
----------------
-
-Migrating from the legacy API
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-If migrating from an older, pre-release API::
-
-    # Old (legacy) code
-    from localvectordb import LocalVectorDB
-
-    db = LocalVectorDB(path="./data/mydb.db")
-    db.add_texts(["text1", "text2"])
-    results = db.similarity_search("query")
-
-    # v0.1.0 code (local)
-    from localvectordb import LocalVectorDB
-
-    db = LocalVectorDB("mydb", "./data")
-    db.upsert(["text1", "text2"])
-    results = db.query("query", search_type="vector")
-
-    # v0.1.0 code (remote)
-    from localvectordb.client import RemoteVectorDB
-
-    db = RemoteVectorDB("mydb", "http://server:8000")
-    db.upsert(["text1", "text2"])
-    results = db.query("query", search_type="vector")
-
 See Also
 --------
 

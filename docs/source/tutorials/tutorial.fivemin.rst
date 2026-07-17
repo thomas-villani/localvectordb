@@ -135,7 +135,21 @@ You should see output like this:
    2. Score: 0.123
       Content: LocalVectorDB is a simple vector database that makes semantic search easy to implement.
 
-   Database stats: {'documents': 5, 'chunks': 5, 'index_vectors': 5, 'embedding_dimension': 768}
+   Database stats:
+   {
+     "documents": 5,
+     "chunks": 5,
+     "sections": 0,
+     "index_vectors": 5,
+     "embedding_dimension": 768,
+     "embedding_provider": "ollama",
+     "embedding_model": "nomic-embed-text",
+     "chunking_method": "sentences",
+     "chunk_size": 500,
+     "chunk_overlap": 1,
+     "fts_enabled": true,
+     "hierarchical_embeddings": false
+   }
 
    Done! You just created your first vector database!
 
@@ -200,11 +214,12 @@ If you don't have Ollama installed, use this version instead:
 
 .. code-block:: python
 
-   from localvectordb import LocalVectorDB
+   from localvectordb import VectorDB
 
    # Use OpenAI embeddings (requires API key)
-   db = LocalVectorDB(
+   db = VectorDB(
        name="my_first_db",
+       base_path="./my_first_db",
        embedding_provider="openai",
        embedding_model="text-embedding-3-small",
        embedding_config={"api_key": "your-openai-api-key"}
