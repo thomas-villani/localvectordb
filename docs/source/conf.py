@@ -40,12 +40,17 @@ intersphinx_timeout = 15
 templates_path = ["_templates"]
 exclude_patterns = []
 
+# Do NOT add "inherited-members": False here. Sphinx's process_documenter_options
+# overwrites a directive option with the config default whenever that default is
+# not a string, so the entry silently clobbered the `:inherited-members:` on
+# modules/localvectordb.database.rst -- and LocalVectorDB, whose every method
+# comes from a mixin, documented zero members while appearing to build fine.
+# Omitting the key gives the same off-by-default behaviour without the clobber.
 autodoc_default_options = {
     "members": True,
     "undoc-members": True,
     "private-members": False,
     "special-members": "__init__",
-    "inherited-members": False,
     "show-inheritance": True,
 }
 autodoc_inherit_docstrings = True

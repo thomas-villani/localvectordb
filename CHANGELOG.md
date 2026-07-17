@@ -63,6 +63,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `LocalVectorDB` API reference documented none of its 74 methods.** The
+  class is assembled from mixins and defines nothing itself, so autodoc needed
+  `:inherited-members:` to see anything — but `autodoc_default_options` carried
+  an `"inherited-members": False` entry that looked like a harmless restatement
+  of the default and in fact overrode the directive (Sphinx replaces a directive
+  option with the config default whenever that default is not a string). The
+  page rendered the class docstring and stopped. 52 methods were reachable only
+  under their `BaseVectorDB` names and 22 — including `repair()`,
+  `query_stream()`, `visualize_*()`, `rebuild_hierarchical_embeddings()` and the
+  `sqlite_*` tuning calls — appeared nowhere in the docs at all. All 74 are now
+  documented, and `tests/test_docs_api_coverage.py` guards both halves of the
+  trap, neither of which produces a warning.
+- `LocalVectorDB.section_vector_strategy` rendered its description as its type
+  ("How sections are represented"), and `upsert_async()` documented a parameter
+  named `upsert()`. Napoleon splits a property docstring on its first colon, and
+  reads a bare line inside a `Parameters` block as another parameter.
 - **Documentation builds clean** (123 Sphinx warnings → 0) and CI now enforces
   that with `sphinx-build -W`, on pull requests as well as pushes. The bulk were
   a numpydoc `Attributes` section and autodoc's `undoc-members` each describing
