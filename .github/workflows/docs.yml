@@ -35,8 +35,15 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      # The two extras are load-bearing for the API reference, not optional
+      # niceties: autodoc imports the module it documents, so without fastmcp
+      # `localvectordb_server.mcp.server` and without plotly
+      # `localvectordb.visualization._interactive` fail to import and their pages
+      # build empty. That is how they shipped until -W made the failure fatal.
+      # (The pywin32 dependency that makes `--extra mcp` awkward locally is a
+      # Windows problem; this runner is ubuntu.)
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --dev --extra mcp --extra visualization-interactive
 
       # -W turns warnings into errors so doc rot (duplicate targets, malformed
       # markup, broken :doc:/:ref: links) fails the build instead of silently
