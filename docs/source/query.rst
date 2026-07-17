@@ -292,6 +292,11 @@ match against the section index directly:
     for r in results:
         print(r.score, r.metadata["section_heading"])
 
+``return_type`` is optional: left unset it follows ``search_level``, so the
+query above returns sections without being told to. Set it to pick a different
+unit — ``search_level="sections", return_type="documents"`` ranks whole
+documents by their best-matching section.
+
 See :doc:`hierarchical` for the full three-level (document → section → chunk)
 retrieval model, section detection, and section metadata.
 

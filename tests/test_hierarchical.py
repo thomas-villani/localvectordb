@@ -3,6 +3,7 @@
 Tests for hierarchical document vectors (sections, multi-level FAISS indices).
 """
 
+import asyncio
 import hashlib
 import tempfile
 
@@ -1072,5 +1073,130 @@ class TestFusedSearch:
                 )
                 assert len(results) >= 1
                 assert all(r.type == "document" for r in results)
+            finally:
+                db.close()
+
+
+class TestSectionSearchReturnType:
+    """search_level='sections' honours return_type instead of ignoring it.
+
+    It used to accept return_type and always answer in sections, so
+    return_type='documents' silently got the wrong unit -- the same class of
+    defect as the silent chunk fallthrough, one level down. The fix has to keep
+    a bare query(search_level='sections') answering in sections, which is what
+    every documented example expects, so return_type defaults to None ("the unit
+    the level searched") rather than to "documents".
+    """
+
+    def test_sections_default_still_returns_sections(self):
+        """The default must not drift to documents: every doc example relies on it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = db.query("neural networks", search_level="sections", k=5)
+                assert len(results) >= 1
+                assert all(r.type == "section" for r in results)
+            finally:
+                db.close()
+
+    def test_sections_with_return_type_documents_rolls_up(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                results = db.query("neural networks", search_level="sections", return_type="documents", k=3)
+                assert len(results) >= 1
+                assert all(r.type == "document" for r in results)
+                assert all(":section:" not in r.id for r in results)
+                assert results == sorted(results, key=lambda r: r.score, reverse=True)
+            finally:
+                db.close()
+
+    def test_rolled_up_document_scores_its_best_section(self):
+        """A document inherits the score of its strongest section, not its weakest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                sections = db.query("neural networks", search_level="sections", k=50)
+                best_by_doc = {}
+                for s in sections:
+                    best_by_doc[s.document_id] = max(best_by_doc.get(s.document_id, 0.0), s.score)
+
+                docs = db.query("neural networks", search_level="sections", return_type="documents", k=10)
+                assert docs, "expected at least one rolled-up document"
+                for d in docs:
+                    assert d.score == pytest.approx(best_by_doc[d.id], abs=1e-6)
+            finally:
+                db.close()
+
+    def test_rollup_overfetches_the_section_pool(self, monkeypatch):
+        """The section pool must be over-fetched before it is rolled up.
+
+        Several sections of one document collapse into a single document result,
+        so rolling up a pool truncated to k sections can return far fewer than k
+        documents. This asserts the fetch size rather than the document count:
+        with MockEmbeddings every copy of a document scores identically, so the
+        ranking cannot be steered to make one document own the top sections, and
+        a count-based test passes whether or not the over-fetch is there (it did).
+        """
+        from localvectordb.database._search import _SECTION_ROLLUP_OVERFETCH, SearchMixin
+
+        calls = []
+        original = SearchMixin._section_level_search
+
+        def spy(self, query_embedding, k, score_threshold, filters, warn_k=None):
+            calls.append({"k": k, "warn_k": warn_k})
+            return original(self, query_embedding, k, score_threshold, filters, warn_k=warn_k)
+
+        monkeypatch.setattr(SearchMixin, "_section_level_search", spy)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                db.query("neural networks", search_level="sections", return_type="documents", k=3)
+                assert calls, "_section_level_search was never called"
+                # Assert the pool is bigger than k, not just that it equals
+                # `k * _SECTION_ROLLUP_OVERFETCH` -- that comparison moves with the
+                # constant and holds even when the factor is neutered to 1.
+                assert _SECTION_ROLLUP_OVERFETCH > 1, "the over-fetch factor must over-fetch"
+                assert calls[0]["k"] > 3
+                assert calls[0]["k"] == 3 * _SECTION_ROLLUP_OVERFETCH
+                # Starvation is judged against the k the caller asked for, so the
+                # over-fetch does not manufacture "filter starved" warnings.
+                assert calls[0]["warn_k"] == 3
+
+                # Returning sections directly needs no over-fetch.
+                calls.clear()
+                db.query("neural networks", search_level="sections", k=3)
+                assert calls[0]["k"] == 3
+            finally:
+                db.close()
+
+    def test_sections_reject_unsupported_return_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                with pytest.raises(ValueError, match="return_type"):
+                    db.query("neural networks", search_level="sections", return_type="chunks", k=3)
+            finally:
+                db.close()
+
+    def test_documents_level_rejects_unsupported_return_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                with pytest.raises(ValueError, match="return_type"):
+                    db.query("neural networks", search_level="documents", return_type="sections", k=3)
+            finally:
+                db.close()
+
+    def test_async_matches_sync(self):
+        """query_async must resolve the default to the same unit as query."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_hier_db(tmpdir)
+            try:
+                sync_results = db.query("neural networks", search_level="sections", k=5)
+                async_results = asyncio.run(db.query_async("neural networks", search_level="sections", k=5))
+                assert [r.type for r in async_results] == [r.type for r in sync_results]
+                assert [r.id for r in async_results] == [r.id for r in sync_results]
             finally:
                 db.close()

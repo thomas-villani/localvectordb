@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from fastmcp import FastMCP
 
 from localvectordb import VectorDB
+from localvectordb.database._search import _resolve_return_type
 from localvectordb.document_portions import get_document_portion
 from localvectordb.embeddings import EmbeddingRegistry
 from localvectordb.exceptions import (
@@ -311,7 +312,7 @@ async def query_database(
     database_name: str,
     query: str,
     search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-    return_type: Literal["documents", "chunks", "context", "enriched", "sections"] = "documents",
+    return_type: Optional[Literal["documents", "chunks", "context", "enriched", "sections"]] = None,
     search_level: Literal["chunks", "sections", "documents"] = "chunks",
     k: int = 10,
     score_threshold: float = 0.0,
@@ -330,7 +331,10 @@ async def query_database(
         database_name: Name of the database to search
         query: Search query text
         search_type: Type of search (vector, keyword, hybrid)
-        return_type: Return documents, chunks, context, enriched, or sections
+        return_type: Return documents, chunks, context, enriched, or sections.
+            Defaults to the unit search_level searched: documents for 'chunks',
+            sections for 'sections'. Set return_type='documents' with
+            search_level='sections' to rank documents by their best section.
             ('sections' requires a database created with hierarchical_embeddings=True)
         search_level: Which index to query — 'chunks' (default), 'sections', or 'documents'
             ('sections'/'documents' require a database created with hierarchical_embeddings=True)
@@ -355,6 +359,10 @@ async def query_database(
     try:
         manager = _get_manager()
         db = await manager.get_database(database_name)
+
+        # Resolve here as well as in the database layer, so the value echoed back
+        # to the agent names the unit the results are actually in.
+        return_type = _resolve_return_type(return_type, search_level)
 
         # Use async query if available
         if hasattr(db, "query_async"):

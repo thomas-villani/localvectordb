@@ -1837,7 +1837,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         query: str,
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        return_type: Optional[Literal["documents", "chunks", "sections", "context", "enriched"]] = None,
         search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -1899,7 +1899,6 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         payload = {
             "query": query,
             "search_type": search_type,
-            "return_type": return_type,
             "search_level": search_level,
             "k": k,
             "score_threshold": score_threshold,
@@ -1910,6 +1909,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "document_scoring_method": document_scoring_method,
             "document_scoring_options": document_scoring_options,
         }
+
+        # Omit rather than default: sending "documents" for an unset return_type
+        # would ask the server to roll section hits up to documents, so a bare
+        # query(search_level="sections") would answer in a different unit here
+        # than it does against a local database.
+        if return_type is not None:
+            payload["return_type"] = return_type
 
         if filters is not None:
             payload["filters"] = filters
@@ -3295,7 +3301,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         query: str,
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        return_type: Optional[Literal["documents", "chunks", "sections", "context", "enriched"]] = None,
         search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -3357,7 +3363,6 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         payload = {
             "query": query,
             "search_type": search_type,
-            "return_type": return_type,
             "search_level": search_level,
             "k": k,
             "score_threshold": score_threshold,
@@ -3369,6 +3374,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             "document_scoring_method": document_scoring_method,
             "document_scoring_options": document_scoring_options,
         }
+
+        # Omitted when unset -- see the sync `query()` for why sending the
+        # default would change the unit a section search answers in.
+        if return_type is not None:
+            payload["return_type"] = return_type
 
         if filters is not None:
             payload["filters"] = filters

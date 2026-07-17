@@ -1272,3 +1272,48 @@ class TestRemoteContractRegressions:
         sample.write_text("hello world")
         with pytest.raises(ValueError, match="extractor_kwargs"):
             mock_db.upsert_from_file(str(sample), extractor_kwargs={"foo": "bar"})
+
+
+@pytest.mark.client
+class TestRemoteReturnTypeParity:
+    """A bare section search must answer in the same unit remotely as locally.
+
+    `return_type` defaults to None ("the unit search_level searched"). If the
+    client filled that in as "documents" before sending, the server would take it
+    as an explicit request to roll section hits up to documents, and
+    query(search_level="sections") would return sections locally but documents
+    remotely -- a divergence no local test could see.
+    """
+
+    @pytest.fixture
+    def mock_db(self, mock_httpx_client):
+        return RemoteVectorDB("test_db", api_key="test-key")
+
+    def test_unset_return_type_is_omitted_from_the_payload(self, mock_httpx_client, mock_db):
+        mock_httpx_client.request.return_value.json.return_value = {"results": []}
+
+        mock_db.query("test query", search_level="sections")
+
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert "return_type" not in payload, (
+            "client sent a return_type the caller never asked for; the server "
+            "would read it as a request to roll sections up to documents"
+        )
+
+    def test_explicit_return_type_is_forwarded(self, mock_httpx_client, mock_db):
+        mock_httpx_client.request.return_value.json.return_value = {"results": []}
+
+        mock_db.query("test query", search_level="sections", return_type="documents")
+
+        payload = mock_httpx_client.request.call_args[1]["json"]
+        assert payload["return_type"] == "documents"
+
+    def test_server_resolves_an_absent_return_type_like_the_database(self):
+        """The server's default must match the database's, not be its own guess."""
+        from localvectordb.database._search import _resolve_return_type
+
+        assert _resolve_return_type(None, "sections") == "sections"
+        assert _resolve_return_type(None, "chunks") == "documents"
+        assert _resolve_return_type(None, "documents") == "documents"
+        assert _resolve_return_type(None, "fused") == "documents"
+        assert _resolve_return_type("documents", "sections") == "documents"

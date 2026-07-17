@@ -167,13 +167,11 @@ def section_key(result: Any) -> str:
 def document_key(result: Any) -> str:
     """The parent document of a result, whatever level the result came from.
 
-    Needed because the arms do not all return the same shape. With
-    search_level="sections" the results are sections regardless of
-    return_type="documents" -- `id` is "<doc>:section:<n>" and the document is
-    in `document_id`. Scoring a section run at the document target means rolling
-    sections up to their parent (best-ranked section wins, later duplicates
-    drop), which is what the published study does. Ranking a document by its
-    single best passage is standard practice in passage retrieval.
+    Every arm is asked for return_type="documents" at the document target, so
+    each result is already a whole document and `id` is the document id. The
+    fallback to `document_id` keeps this honest for a result that arrived at
+    some other level: a document is ranked by its best-matching passage, which
+    is standard practice in passage retrieval and what the study does.
     """
     return result.document_id or result.id
 
@@ -242,19 +240,15 @@ def run_arms(db, queries: List[Dict[str, Any]], target: str) -> Dict[str, Dict[s
     scored: Dict[str, Dict[str, float]] = {}
     for label, kwargs in ARMS:
         per_query: List[tuple[List[str], List[str]]] = []
-        # An arm that returns sections needs to fetch more than K of them to be
-        # able to offer K distinct documents after roll-up; an arm that returns
-        # documents already gets K. Without this the section arm is scored on a
-        # shorter list than the baseline and loses on recall for a reason that
-        # has nothing to do with retrieval quality.
-        rolls_up = target == "document" and kwargs["search_level"] == "sections"
-        fetch = K * 5 if rolls_up else K
-
+        # Every arm is asked for the same unit, so each is scored on a list of
+        # the same length. The section arm's roll-up to documents (including the
+        # over-fetch that keeps K documents reachable) is the library's job, not
+        # this script's -- passing return_type is all it takes.
         for q in queries:
             relevant = q.get(rel_field) or []
             if not relevant:
                 continue
-            results = db.query(q["query"], k=fetch, return_type=return_type, **kwargs)
+            results = db.query(q["query"], k=K, return_type=return_type, **kwargs)
             ranked = dedupe([key(r) for r in results])[:K]
             per_query.append((ranked, relevant))
 

@@ -259,6 +259,33 @@ anything added by section metadata extractors) along with a
 :class:`~localvectordb.core.ChunkPosition` spanning the section. Document-level
 results carry ``type="document"``.
 
+Choosing the level and the unit separately
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``search_level`` decides *how* the query is matched; ``return_type`` decides
+*what you get back*. They are independent. Left alone, ``return_type`` follows
+the level — ``search_level="sections"`` answers in sections, as above — but you
+can ask for a different unit:
+
+.. code-block:: python
+
+   # Rank whole documents by their single best-matching section.
+   results = db.query(
+       "how do I rotate the API key?",
+       search_level="sections",
+       return_type="documents",
+   )
+   for r in results:
+       print(r.score, r.id)   # r.type == "document"
+
+Each document is scored by its strongest section, so a document with one
+excellent section outranks one that is vaguely on-topic throughout. This is the
+same roll-up ``search_level="fused"`` performs with ``return_type="documents"``,
+without the chunk leg. ``search_level="sections"`` reports ``"sections"`` or
+``"documents"``; ``search_level="documents"`` reports only ``"documents"``.
+Anything else raises ``ValueError`` rather than quietly answering in the wrong
+unit.
+
 Metadata filters apply at every level: for section, document, and fused searches
 the filter is matched against the parent document's metadata.
 

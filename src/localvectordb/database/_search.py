@@ -56,6 +56,32 @@ _CONTEXT_SEPARATOR = "\n\n---\n\n"
 # reasonable `k` while capping the worst case.
 _RERANK_K_MAX = 200
 
+# Over-fetch factor when rolling section hits up to their parent documents. Several
+# sections of one document collapse into a single document result, so fetching
+# exactly `k` sections can yield far fewer than `k` documents -- the same starvation
+# `_resolve_rerank_k` exists to prevent, one level up.
+_SECTION_ROLLUP_OVERFETCH = 5
+
+ReturnType = Literal["documents", "chunks", "sections", "context", "enriched"]
+
+# The unit each search level answers in when the caller does not say. `return_type`
+# defaults to None rather than "documents" so that "I want documents" is
+# distinguishable from "I did not ask": a bare query(search_level="sections") wants
+# sections, while an explicit return_type="documents" wants them rolled up.
+_NATURAL_RETURN_TYPE: Dict[str, ReturnType] = {
+    "chunks": "documents",
+    "sections": "sections",
+    "documents": "documents",
+    "fused": "documents",
+}
+
+
+def _resolve_return_type(return_type: Optional[ReturnType], search_level: str) -> ReturnType:
+    """Fill in the unit a search level answers in when the caller did not choose."""
+    if return_type is not None:
+        return return_type
+    return _NATURAL_RETURN_TYPE.get(search_level, "documents")
+
 
 def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
     """Size of the candidate pool to fetch before reranking down to ``k``.
@@ -500,7 +526,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query: str,
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        return_type: Optional[Literal["documents", "chunks", "sections", "context", "enriched"]] = None,
         search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -526,9 +552,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform
-        return_type : Literal['documents', 'chunks', 'context', 'enriched']
-            Whether to return full documents, individual chunks,
-            chunks with context, or enriched chunks with intra-document context
+        return_type : Optional[Literal['documents', 'chunks', 'sections', 'context', 'enriched']]
+            The unit to report hits in: whole documents, individual chunks,
+            sections, chunks with context, or enriched chunks with intra-document
+            context. Defaults to ``None``, meaning "whatever unit
+            ``search_level`` searched": documents for the default chunk search,
+            sections for ``search_level='sections'``. Pass a value to override --
+            notably ``return_type='documents'`` with ``search_level='sections'``
+            ranks *documents* by their best-matching section.
         k : int
             Maximum number of results to return
         score_threshold : float
@@ -546,8 +577,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         search_level : Literal['chunks', 'sections', 'documents', 'fused']
             Which retrieval level to search. 'chunks' (default) is the normal path.
             'sections'/'documents' search the hierarchical indices directly. 'fused'
-            blends chunk retrieval with section (raw-span) retrieval and supports
-            return_type 'documents' or 'sections'; requires ``hierarchical_embeddings``.
+            blends chunk retrieval with section (raw-span) retrieval. All three
+            require ``hierarchical_embeddings`` and raise ``ValueError`` without
+            it. 'sections' and 'fused' report either 'sections' or 'documents';
+            'documents' reports only 'documents'.
         section_weight : float
             Weight on the section leg when ``search_level='fused'`` (0-1): 0.0 is
             chunk-only, 1.0 is section-only. Default 0.65 (tuned on real long docs).
@@ -604,6 +637,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with normalized scores
         """
         _validate_context_unit(context_unit)
+        return_type = _resolve_return_type(return_type, search_level)
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
@@ -1611,23 +1645,50 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
-        """Search using section or document FAISS indices."""
+        """Search using section or document FAISS indices.
+
+        ``return_type`` chooses the unit the hits are reported in, exactly as it
+        does for ``search_level='fused'``. It used to be accepted and ignored
+        here, so ``return_type='documents'`` quietly handed back sections.
+        """
         query_embeddings = self.embedding_provider.embed_sync([query])
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
 
         if search_level == "sections":
-            return self._section_level_search(query_embedding, return_type, k, score_threshold, filters)
-        elif search_level == "documents":
-            return self._document_level_search(query_embedding, return_type, k, score_threshold, filters)
+            if return_type == "sections":
+                return self._section_level_search(query_embedding, k, score_threshold, filters)
+            if return_type == "documents":
+                # Over-fetch before rolling up: k sections may live in far fewer
+                # than k documents. Warn on starvation against the k the caller
+                # actually asked for, not the inflated fetch.
+                section_hits = self._section_level_search(
+                    query_embedding,
+                    k * _SECTION_ROLLUP_OVERFETCH,
+                    score_threshold,
+                    filters,
+                    warn_k=k,
+                )
+                best_by_doc = self._reduce_to_best_per_key(section_hits, lambda r: r.document_id or r.id)
+                # The threshold already cut the section hits; applying it again to
+                # the rolled-up scores would be a no-op at best.
+                return self._documents_from_scores(best_by_doc, k, 0.0)
+            raise ValueError(
+                f"search_level='sections' supports return_type 'sections' or 'documents', got {return_type!r}"
+            )
+
+        if search_level == "documents":
+            if return_type != "documents":
+                raise ValueError(f"search_level='documents' supports return_type 'documents', got {return_type!r}")
+            return self._document_level_search(query_embedding, k, score_threshold, filters)
         return []
 
     def _section_level_search(
         self,
         query_embedding: np.ndarray,
-        return_type: str,
         k: int,
         score_threshold: float,
         filters: Optional[Dict[str, Any]],
+        warn_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """Search the section FAISS index."""
         if self.section_index is None or self.section_index.ntotal == 0:
@@ -1720,15 +1781,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 )
                 results.append(result)
 
-        if not exact and filters and len(results) < k:
-            self._warn_filter_starved(len(results), k)
+        starve_k = warn_k if warn_k is not None else k
+        if not exact and filters and len(results) < starve_k:
+            self._warn_filter_starved(len(results), starve_k)
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:k]
 
     def _document_level_search(
         self,
         query_embedding: np.ndarray,
-        return_type: str,
         k: int,
         score_threshold: float,
         filters: Optional[Dict[str, Any]],
@@ -1914,7 +1975,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             False,
             query_embedding=query_embedding,
         )
-        section_hits = self._section_level_search(query_embedding, "sections", pool_k, 0.0, filters)
+        section_hits = self._section_level_search(query_embedding, pool_k, 0.0, filters)
 
         if return_type == "documents":
             return self._fuse_to_documents(chunk_hits, section_hits, k, score_threshold, section_weight)
@@ -1945,8 +2006,16 @@ class SearchMixin(LocalVectorDBBase, ABC):
         chunk_by_doc = self._reduce_to_best_per_key(chunk_hits, lambda r: r.document_id or r.id)
         section_by_doc = self._reduce_to_best_per_key(section_hits, lambda r: r.document_id or r.id)
         fused = _two_leg_minmax_fuse(chunk_by_doc, section_by_doc, section_weight)
+        return self._documents_from_scores(fused, k, score_threshold)
 
-        ranked = [(d, s) for d, s in sorted(fused.items(), key=lambda kv: -kv[1]) if s >= score_threshold][:k]
+    def _documents_from_scores(
+        self,
+        scores: Dict[str, float],
+        k: int,
+        score_threshold: float,
+    ) -> List[QueryResult]:
+        """Materialise the top ``k`` scored document ids as ``type="document"`` results."""
+        ranked = [(d, s) for d, s in sorted(scores.items(), key=lambda kv: -kv[1]) if s >= score_threshold][:k]
         if not ranked:
             return []
         doc_ids = [d for d, _ in ranked]
@@ -3023,7 +3092,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query: str,
         *,
         search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
-        return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents",
+        return_type: Optional[Literal["documents", "chunks", "sections", "context", "enriched"]] = None,
         search_level: Literal["chunks", "sections", "documents", "fused"] = "chunks",
         k: int = 10,
         score_threshold: float = 0.0,
@@ -3049,10 +3118,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search query text
         search_type : Literal['vector', 'keyword', 'hybrid']
             Type of search to perform, by default 'hybrid'
-        return_type : Literal['documents', 'chunks', 'context', 'enriched']
-            Whether to return full documents, individual chunks,
-            chunks with context, or enriched chunks with intra-document context,
-            by default 'documents'
+        return_type : Optional[Literal['documents', 'chunks', 'sections', 'context', 'enriched']]
+            The unit to report hits in. Defaults to ``None``, meaning "whatever
+            unit ``search_level`` searched" -- documents for the default chunk
+            search, sections for ``search_level='sections'``. See ``query()``.
         k : int
             Maximum number of results to return, by default 10
         score_threshold : float
@@ -3098,6 +3167,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with normalized scores
         """
         _validate_context_unit(context_unit)
+        return_type = _resolve_return_type(return_type, search_level)
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         self._ensure_async_pool()
