@@ -1896,8 +1896,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Maximum concurrent chunking operations
         max_concurrent_embeddings : int, default=2
             Maximum concurrent embedding operations
-
-        Other parameters same as upsert()
+        **kwargs : Any
+            Any other parameter accepted by :meth:`upsert`.
 
         Returns
         -------

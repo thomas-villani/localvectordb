@@ -692,7 +692,13 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
     @property
     def section_vector_strategy(self) -> Optional[str]:
-        """How sections are represented: ``"centroid"`` | ``"rawspan"`` (None if not hierarchical)."""
+        # Keep the colon out of the first line: napoleon reads `x: y` in a
+        # property docstring as a type/description split and renders the prose
+        # as the type.
+        """How sections are represented -- ``"centroid"`` or ``"rawspan"``.
+
+        ``None`` when the database is not hierarchical.
+        """
         return self._section_vector_strategy
 
     def _add_vectors_to_section_index(self, embeddings: np.ndarray, faiss_ids: np.ndarray) -> None:
