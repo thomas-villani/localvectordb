@@ -172,11 +172,11 @@ file-extraction-ocr = [
 ]
 sentence-transformers = [
     "sentence-transformers>=3.0.0",
-    "torch>=2.12.1",
+    "torch>=2.13.0",
 ]
 local-embeddings = [
     "transformers>=4.40.0",
-    "torch>=2.12.1",
+    "torch>=2.13.0",
 ]
 visualization = [
     "scikit-learn>=1.9.0",
