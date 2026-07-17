@@ -1223,12 +1223,19 @@ The main search endpoint supporting vector, keyword, and hybrid search.
 
 - ``query``: Search text (required)
 - ``search_type``: "vector", "keyword", or "hybrid" (default: "hybrid")
-- ``return_type``: "documents", "chunks", "context", "enriched", or "sections"
-  (default: "documents"). ``"sections"`` requires a database created with
-  ``hierarchical_embeddings=True``.
+- ``return_type``: "documents", "chunks", "context", "enriched", or "sections".
+  Optional — **omit it and the response follows** ``search_level``, reporting the
+  unit the query was matched against: "documents" for the default chunk search,
+  "sections" for ``search_level="sections"``. Send it to ask for a different
+  unit; ``search_level="sections"`` with ``"return_type": "documents"`` ranks
+  whole documents by their best-matching section. ``"sections"`` requires a
+  database created with ``hierarchical_embeddings=True``. The response always
+  echoes the resolved value, never null.
 - ``search_level``: Which FAISS index to query — "chunks" (default), "sections",
   or "documents". The "sections"/"documents" levels require
-  ``hierarchical_embeddings=True`` (see :doc:`../hierarchical`).
+  ``hierarchical_embeddings=True`` (see :doc:`../hierarchical`). "sections"
+  reports "sections" or "documents"; "documents" reports only "documents";
+  anything else is a 400.
 - ``k``: Maximum results to return (default: 10)
 - ``score_threshold``: Minimum score (0-1, higher=better)
 - ``filters``: Metadata filter conditions

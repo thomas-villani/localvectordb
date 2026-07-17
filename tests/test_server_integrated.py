@@ -520,6 +520,33 @@ class TestErrorHandlingIntegration:
         )
         assert response.status_code == 400
 
+    def test_bad_search_level_combination_is_400_not_500(self, integration_client, integration_app, valid_auth_headers):
+        """query() rejects a bad argument combination with ValueError.
+
+        Nothing maps ValueError to a status, so these used to reach the catch-all
+        handler as 500 "An unexpected error occurred" -- the caller's mistake
+        billed as a server fault, with the message explaining it swallowed.
+        """
+        from unittest.mock import AsyncMock
+
+        integration_app.state.db_manager.create_db("level_error_db")
+        db = integration_app.state.db_manager.databases["level_error_db"]
+        err = ValueError("search_level='sections' requires hierarchical_embeddings=True")
+        db.query = Mock(side_effect=err)
+        db.query_async = AsyncMock(side_effect=err)
+
+        response = integration_client.post(
+            "/api/v1/databases/level_error_db/query",
+            json={"query": "anything", "search_level": "sections"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 400, f"expected 400, got {response.status_code}"
+        error = response.json()["error"]
+        assert error["code"] == "VALIDATION_ERROR"
+        # The message is the whole point: it names the option to change.
+        assert "hierarchical_embeddings" in error["message"]
+        assert error["recoverable"] is True
+
     def test_invalid_filter_flow(self, integration_client, integration_app, valid_auth_headers):
         """MetadataFilterError raised by the database layer (bad filter specs:
         unknown fields, unsupported operators) maps to 400 INVALID_FILTER, not 500."""

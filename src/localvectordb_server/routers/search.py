@@ -15,6 +15,7 @@ from pydantic import ConfigDict, Field
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb._schema import DatabaseSchema
 from localvectordb.database._search import _resolve_return_type
+from localvectordb.exceptions import BaseLocalVectorDBException
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import ValidationError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
@@ -193,24 +194,42 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
 
         # Async twin required: the sync query() path calls embed_sync(), which
         # refuses to run on the event loop thread.
-        results = await db.query_async(
-            query=query_text,
-            search_type=search_type,
-            return_type=return_type,
-            search_level=search_level,
-            k=k,
-            score_threshold=score_threshold,
-            filters=filters,
-            vector_weight=vector_weight,
-            context_window=context_window,
-            context_unit=context_unit,
-            context_truncate=context_truncate,
-            semantic_dedup_threshold=semantic_dedup_threshold,
-            document_scoring_method=document_scoring_method,
-            document_scoring_options=document_scoring_options,
-            reranker_config=reranker_config,
-            rerank_k=rerank_k,
-        )
+        try:
+            results = await db.query_async(
+                query=query_text,
+                search_type=search_type,
+                return_type=return_type,
+                search_level=search_level,
+                k=k,
+                score_threshold=score_threshold,
+                filters=filters,
+                vector_weight=vector_weight,
+                context_window=context_window,
+                context_unit=context_unit,
+                context_truncate=context_truncate,
+                semantic_dedup_threshold=semantic_dedup_threshold,
+                document_scoring_method=document_scoring_method,
+                document_scoring_options=document_scoring_options,
+                reranker_config=reranker_config,
+                rerank_k=rerank_k,
+            )
+        except BaseLocalVectorDBException:
+            # Must precede the bare-ValueError catch: DatabaseError and its
+            # subclasses (MetadataFilterError, DuplicateDocumentIDError,
+            # PatchError, ...) inherit from ValueError, and each already maps to
+            # its own status. Catching them below would collapse 400
+            # INVALID_FILTER / 409 / 422 into a generic 400 VALIDATION_ERROR.
+            raise
+        except ValueError as e:
+            # query() rejects a bad combination of arguments with a bare
+            # ValueError -- an unsupported search_level/return_type pairing, or a
+            # hierarchical level on a database without hierarchical_embeddings.
+            # Nothing maps ValueError to a status, so these reached the catch-all
+            # handler as "500 An unexpected error occurred": the caller's mistake
+            # reported as a server fault, with the message that explains it
+            # swallowed. Scoped to this call so a genuine internal ValueError
+            # elsewhere in the request still surfaces as the 500 it is.
+            raise ValidationError(str(e)) from e
 
         # Apply semantic filters server-side if provided
         if semantic_filters:

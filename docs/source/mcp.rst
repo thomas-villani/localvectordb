@@ -342,8 +342,13 @@ Available in both read-only and read-write modes:
    Search using vector, keyword, or hybrid search with configurable parameters:
 
    * ``search_type``: "vector", "keyword", or "hybrid"
-   * ``return_type``: "documents", "chunks", "context", "enriched", or "sections"
-     ("sections" requires a database created with ``hierarchical_embeddings=True``)
+   * ``return_type``: "documents", "chunks", "context", "enriched", or "sections".
+     Optional — left unset it follows ``search_level``, reporting the unit the
+     query was matched against ("documents" for the default chunk search,
+     "sections" for ``search_level="sections"``). Set it to ask for a different
+     unit: ``search_level="sections"`` with ``return_type="documents"`` ranks
+     whole documents by their best-matching section. ("sections" requires a
+     database created with ``hierarchical_embeddings=True``)
    * ``search_level``: which index to query — "chunks" (default), "sections", or
      "documents" ("sections"/"documents" require ``hierarchical_embeddings=True``)
    * ``k``: Number of results to return
