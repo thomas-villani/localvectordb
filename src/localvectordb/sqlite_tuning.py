@@ -233,8 +233,11 @@ def format_pragma_value(value: Any) -> str:
         if upper_val in SAFE_PRAGMA_VALUES:
             return upper_val
         else:
-            # Quote string values
-            return f"'{value}'"
+            # Quote string values, doubling any embedded single quotes. PRAGMA
+            # statements cannot take bound parameters, so an unescaped value like
+            # ``foo'bar`` would produce the malformed/breakable SQL ``'foo'bar'``.
+            escaped = value.replace("'", "''")
+            return f"'{escaped}'"
     else:
         return str(value)
 

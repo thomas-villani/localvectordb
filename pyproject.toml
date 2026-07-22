@@ -34,7 +34,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: MIT License",
+    # License is declared via the SPDX `license = "MIT"` expression above (PEP
+    # 639); the classic "License :: OSI Approved" classifier is intentionally
+    # omitted to avoid a duplicate/conflicting declaration.
     "Operating System :: OS Independent",
     "Framework :: FastAPI",
     "Topic :: Database",
@@ -105,8 +107,16 @@ packages = ["src/localvectordb", "src/localvectordb_server"]
 # Keep the source distribution to the Python package + its tests/docs. Internal
 # notes (competitive analysis, code reviews, scratch files) live under /etc and
 # are gitignored; we ALSO list them explicitly here so a stray un-ignore can
-# never silently publish them. This block additionally drops dev-only and
+# never silently publish them -- this explicit denylist is the real guarantee,
+# independent of .gitignore. This block additionally drops dev-only and
 # non-Python assets.
+#
+# NOTE: hatchling force-includes the root `.gitignore` in the sdist regardless of
+# the exclude below (it consumes .gitignore for its own file selection), so that
+# one line is a no-op and `.gitignore` still ships. That's harmless -- it is a
+# public repo file, not an internal note -- and every other entry here is honored
+# (verified: CLAUDE.md, /etc, .python-version, .pre-commit-config.yaml, etc. are
+# all absent from the built sdist).
 exclude = [
     "/sdk",
     "/skills",

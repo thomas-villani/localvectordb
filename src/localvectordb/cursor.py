@@ -311,39 +311,45 @@ class QueryCursor:
     # ------------------------------------------------------------------
 
     def _fetch_chunk_batch(self, batch_size: int) -> List[QueryResult]:
-        """Hydrate a batch of chunk candidates from SQLite."""
-        if self._position >= len(self._candidates):
-            self._exhausted = True
-            return []
+        """Hydrate a batch of chunk candidates from SQLite.
 
-        end = min(self._position + batch_size, len(self._candidates))
-        batch_candidates = self._candidates[self._position : end]
-        self._position = end
-        self._last_access = time.monotonic()
+        Loops (rather than recursing) when a batch is fully filtered out: with a
+        highly selective filter over a large candidate pool this "fetch more"
+        path can fire once per batch, and tail recursion would overflow the stack.
+        """
+        while True:
+            if self._position >= len(self._candidates):
+                self._exhausted = True
+                return []
 
-        results = self._hydrate_chunks_sync(batch_candidates)
+            end = min(self._position + batch_size, len(self._candidates))
+            batch_candidates = self._candidates[self._position : end]
+            self._position = end
+            self._last_access = time.monotonic()
 
-        # Apply metadata filters per-batch
-        if self._config.filters:
-            from localvectordb._filters import matches_metadata_filter
+            results = self._hydrate_chunks_sync(batch_candidates)
 
-            results = [r for r in results if matches_metadata_filter(r.metadata, self._config.filters)]
+            # Apply metadata filters per-batch
+            if self._config.filters:
+                from localvectordb._filters import matches_metadata_filter
 
-        # Apply context/enrichment post-processing per-batch
-        if self._config.return_type == "context":
-            results = self._db._add_context_window(
-                results, self._config.context_window, self._config.context_unit, self._config.context_truncate
-            )
-        elif self._config.return_type == "enriched":
-            results = self._db._enrich_with_intra_doc_context(
-                results, self._config.context_window, self._config.context_unit, self._config.context_truncate
-            )
+                results = [r for r in results if matches_metadata_filter(r.metadata, self._config.filters)]
 
-        if not results and self._position < len(self._candidates):
-            # Filters removed everything in this batch; fetch more
-            return self._fetch_chunk_batch(batch_size)
+            # Apply context/enrichment post-processing per-batch
+            if self._config.return_type == "context":
+                results = self._db._add_context_window(
+                    results, self._config.context_window, self._config.context_unit, self._config.context_truncate
+                )
+            elif self._config.return_type == "enriched":
+                results = self._db._enrich_with_intra_doc_context(
+                    results, self._config.context_window, self._config.context_unit, self._config.context_truncate
+                )
 
-        return results
+            if not results and self._position < len(self._candidates):
+                # Filters removed everything in this batch; fetch more.
+                continue
+
+            return results
 
     def _hydrate_chunks_sync(self, candidates: List[CursorCandidate]) -> List[QueryResult]:
         """Load content + metadata from SQLite for a batch of chunk candidates."""
@@ -353,6 +359,14 @@ class QueryCursor:
         if not faiss_ids and not chunk_rowids:
             return []
 
+        # Hydrate by faiss_id and by rowid independently. A single batch can carry
+        # both (e.g. a hybrid batch mixing embedded chunks with keyword-only hits
+        # whose chunk has a NULL faiss_id), and the two id spaces overlap
+        # numerically, so they must be kept in separate maps rather than merged
+        # into one integer-keyed dict.
+        rows_by_faiss: Dict[int, Any] = {}
+        rows_by_rowid: Dict[int, Any] = {}
+        doc_ids_to_fetch: set[str] = set()
         with self._db.connection_pool.get_connection() as conn:
             if faiss_ids:
                 placeholders = ",".join(["?"] * len(faiss_ids))
@@ -365,7 +379,11 @@ class QueryCursor:
                     """,
                     faiss_ids,
                 )
-            else:
+                for row in cursor.fetchall():
+                    rows_by_faiss[row["faiss_id"]] = row
+                    doc_ids_to_fetch.add(row["doc_id"])
+
+            if chunk_rowids:
                 placeholders = ",".join(["?"] * len(chunk_rowids))
                 cursor = conn.execute(
                     f"""
@@ -376,23 +394,21 @@ class QueryCursor:
                     """,
                     chunk_rowids,
                 )
-
-            rows_by_key: Dict[int, Any] = {}
-            doc_ids_to_fetch: set[str] = set()
-            for row in cursor.fetchall():
-                key = row["faiss_id"] if faiss_ids else row["id"]
-                rows_by_key[key] = row
-                doc_ids_to_fetch.add(row["doc_id"])
+                for row in cursor.fetchall():
+                    rows_by_rowid[row["id"]] = row
+                    doc_ids_to_fetch.add(row["doc_id"])
 
             doc_metadata_batch = self._db._get_documents_metadata_batch(conn, list(doc_ids_to_fetch))
 
         # Build QueryResults maintaining candidate order
         results: List[QueryResult] = []
         for candidate in candidates:
-            key = candidate.faiss_id if candidate.faiss_id is not None else candidate.chunk_rowid
-            if key is None:
+            if candidate.faiss_id is not None:
+                row = rows_by_faiss.get(candidate.faiss_id)
+            elif candidate.chunk_rowid is not None:
+                row = rows_by_rowid.get(candidate.chunk_rowid)
+            else:
                 continue
-            row = rows_by_key.get(key)
             if not row:
                 continue
 
@@ -423,41 +439,46 @@ class QueryCursor:
     # ------------------------------------------------------------------
 
     async def _fetch_chunk_batch_async(self, batch_size: int) -> List[QueryResult]:
-        """Hydrate a batch of chunk candidates from SQLite asynchronously."""
-        if self._position >= len(self._candidates):
-            self._exhausted = True
-            return []
+        """Hydrate a batch of chunk candidates from SQLite asynchronously.
 
-        end = min(self._position + batch_size, len(self._candidates))
-        batch_candidates = self._candidates[self._position : end]
-        self._position = end
-        self._last_access = time.monotonic()
+        Loops on the fully-filtered "fetch more" path instead of recursing, so a
+        selective filter over a large pool cannot overflow the stack.
+        """
+        while True:
+            if self._position >= len(self._candidates):
+                self._exhausted = True
+                return []
 
-        results = await self._hydrate_chunks_async(batch_candidates)
+            end = min(self._position + batch_size, len(self._candidates))
+            batch_candidates = self._candidates[self._position : end]
+            self._position = end
+            self._last_access = time.monotonic()
 
-        if self._config.filters:
-            from localvectordb._filters import matches_metadata_filter
+            results = await self._hydrate_chunks_async(batch_candidates)
 
-            results = [r for r in results if matches_metadata_filter(r.metadata, self._config.filters)]
+            if self._config.filters:
+                from localvectordb._filters import matches_metadata_filter
 
-        cw = self._config.context_window
-        cu = self._config.context_unit
-        ct = self._config.context_truncate
-        if self._config.return_type == "context":
-            if hasattr(self._db, "_add_context_window_async"):
-                results = await self._db._add_context_window_async(results, cw, cu, ct)
-            else:
-                results = self._db._add_context_window(results, cw, cu, ct)
-        elif self._config.return_type == "enriched":
-            if hasattr(self._db, "_enrich_with_intra_doc_context_async"):
-                results = await self._db._enrich_with_intra_doc_context_async(results, cw, cu, ct)
-            else:
-                results = self._db._enrich_with_intra_doc_context(results, cw, cu, ct)
+                results = [r for r in results if matches_metadata_filter(r.metadata, self._config.filters)]
 
-        if not results and self._position < len(self._candidates):
-            return await self._fetch_chunk_batch_async(batch_size)
+            cw = self._config.context_window
+            cu = self._config.context_unit
+            ct = self._config.context_truncate
+            if self._config.return_type == "context":
+                if hasattr(self._db, "_add_context_window_async"):
+                    results = await self._db._add_context_window_async(results, cw, cu, ct)
+                else:
+                    results = self._db._add_context_window(results, cw, cu, ct)
+            elif self._config.return_type == "enriched":
+                if hasattr(self._db, "_enrich_with_intra_doc_context_async"):
+                    results = await self._db._enrich_with_intra_doc_context_async(results, cw, cu, ct)
+                else:
+                    results = self._db._enrich_with_intra_doc_context(results, cw, cu, ct)
 
-        return results
+            if not results and self._position < len(self._candidates):
+                continue
+
+            return results
 
     async def _hydrate_chunks_async(self, candidates: List[CursorCandidate]) -> List[QueryResult]:
         """Load content + metadata from SQLite asynchronously."""
@@ -470,6 +491,12 @@ class QueryCursor:
         self._db._ensure_async_pool()
         assert self._db.async_connection_pool is not None
 
+        # See _hydrate_chunks_sync: hydrate the two id spaces independently so a
+        # mixed batch (embedded chunks + keyword-only NULL-faiss_id hits) is not
+        # collapsed into one integer-keyed dict where the spaces could collide.
+        rows_by_faiss: Dict[int, Any] = {}
+        rows_by_rowid: Dict[int, Any] = {}
+        doc_ids_to_fetch: set[str] = set()
         async with self._db.async_connection_pool.get_connection_context() as conn:
             if faiss_ids:
                 placeholders = ",".join(["?"] * len(faiss_ids))
@@ -482,7 +509,11 @@ class QueryCursor:
                     """,
                     faiss_ids,
                 )
-            else:
+                async for row in cursor:
+                    rows_by_faiss[row["faiss_id"]] = row
+                    doc_ids_to_fetch.add(row["doc_id"])
+
+            if chunk_rowids:
                 placeholders = ",".join(["?"] * len(chunk_rowids))
                 cursor = await conn.execute(
                     f"""
@@ -493,23 +524,21 @@ class QueryCursor:
                     """,
                     chunk_rowids,
                 )
-
-            rows_by_key: Dict[int, Any] = {}
-            doc_ids_to_fetch: set[str] = set()
-            async for row in cursor:
-                key = row["faiss_id"] if faiss_ids else row["id"]
-                rows_by_key[key] = row
-                doc_ids_to_fetch.add(row["doc_id"])
+                async for row in cursor:
+                    rows_by_rowid[row["id"]] = row
+                    doc_ids_to_fetch.add(row["doc_id"])
 
             # Get metadata using the async method
             doc_metadata_batch = await self._db._get_documents_metadata_async(list(doc_ids_to_fetch))
 
         results: List[QueryResult] = []
         for candidate in candidates:
-            key = candidate.faiss_id if candidate.faiss_id is not None else candidate.chunk_rowid
-            if key is None:
+            if candidate.faiss_id is not None:
+                chunk_row = rows_by_faiss.get(candidate.faiss_id)
+            elif candidate.chunk_rowid is not None:
+                chunk_row = rows_by_rowid.get(candidate.chunk_rowid)
+            else:
                 continue
-            chunk_row = rows_by_key.get(key)
             if not chunk_row:
                 continue
 
@@ -620,133 +649,147 @@ class QueryCursor:
         return doc_candidates
 
     def _fetch_document_batch(self, batch_size: int) -> List[QueryResult]:
-        """Hydrate a batch of document candidates from SQLite."""
-        if self._position >= len(self._doc_candidates):
-            self._exhausted = True
-            return []
+        """Hydrate a batch of document candidates from SQLite.
 
-        end = min(self._position + batch_size, len(self._doc_candidates))
-        batch = self._doc_candidates[self._position : end]
-        self._position = end
-        self._last_access = time.monotonic()
+        Loops on the fully-filtered "fetch more" path instead of recursing, so a
+        selective filter over a large pool cannot overflow the stack.
+        """
+        while True:
+            if self._position >= len(self._doc_candidates):
+                self._exhausted = True
+                return []
 
-        doc_ids = [d.document_id for d in batch]
-        scores = {d.document_id: d for d in batch}
+            end = min(self._position + batch_size, len(self._doc_candidates))
+            batch = self._doc_candidates[self._position : end]
+            self._position = end
+            self._last_access = time.monotonic()
 
-        with self._db.connection_pool.get_connection() as conn:
-            placeholders = ",".join(["?"] * len(doc_ids))
-            cursor = conn.execute(
-                f"SELECT id, content FROM documents WHERE id IN ({placeholders})",
-                doc_ids,
-            )
-            doc_content = {row["id"]: row["content"] for row in cursor.fetchall()}
-            doc_metadata_batch = self._db._get_documents_metadata_batch(conn, doc_ids)
+            doc_ids = [d.document_id for d in batch]
+            scores = {d.document_id: d for d in batch}
 
-        if self._config.filters:
-            from localvectordb._filters import matches_metadata_filter
-
-            doc_ids = [
-                did for did in doc_ids if matches_metadata_filter(doc_metadata_batch.get(did, {}), self._config.filters)
-            ]
-
-        results: List[QueryResult] = []
-        for doc_id in doc_ids:
-            content = doc_content.get(doc_id, "")
-            if not content:
-                continue
-            doc_cand = scores[doc_id]
-            doc_metadata = doc_metadata_batch.get(doc_id, {})
-
-            # Add scoring metadata
-            doc_metadata["_scoring"] = {
-                "_aggregation_method": self._config.document_scoring_method,
-                "_chunk_count": len(doc_cand.chunk_scores),
-                "_best_chunk_score": max(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0,
-                "_average_chunk_score": (
-                    sum(doc_cand.chunk_scores) / len(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0
-                ),
-            }
-
-            results.append(
-                QueryResult(
-                    id=doc_id,
-                    score=doc_cand.score,
-                    type="document",
-                    content=content,
-                    metadata=doc_metadata,
+            with self._db.connection_pool.get_connection() as conn:
+                placeholders = ",".join(["?"] * len(doc_ids))
+                cursor = conn.execute(
+                    f"SELECT id, content FROM documents WHERE id IN ({placeholders})",
+                    doc_ids,
                 )
-            )
+                doc_content = {row["id"]: row["content"] for row in cursor.fetchall()}
+                doc_metadata_batch = self._db._get_documents_metadata_batch(conn, doc_ids)
 
-        if not results and self._position < len(self._doc_candidates):
-            return self._fetch_document_batch(batch_size)
+            if self._config.filters:
+                from localvectordb._filters import matches_metadata_filter
 
-        return results
+                doc_ids = [
+                    did
+                    for did in doc_ids
+                    if matches_metadata_filter(doc_metadata_batch.get(did, {}), self._config.filters)
+                ]
+
+            results: List[QueryResult] = []
+            for doc_id in doc_ids:
+                content = doc_content.get(doc_id, "")
+                if not content:
+                    continue
+                doc_cand = scores[doc_id]
+                doc_metadata = doc_metadata_batch.get(doc_id, {})
+
+                # Add scoring metadata
+                doc_metadata["_scoring"] = {
+                    "_aggregation_method": self._config.document_scoring_method,
+                    "_chunk_count": len(doc_cand.chunk_scores),
+                    "_best_chunk_score": max(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0,
+                    "_average_chunk_score": (
+                        sum(doc_cand.chunk_scores) / len(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0
+                    ),
+                }
+
+                results.append(
+                    QueryResult(
+                        id=doc_id,
+                        score=doc_cand.score,
+                        type="document",
+                        content=content,
+                        metadata=doc_metadata,
+                    )
+                )
+
+            if not results and self._position < len(self._doc_candidates):
+                continue
+
+            return results
 
     async def _fetch_document_batch_async(self, batch_size: int) -> List[QueryResult]:
-        """Hydrate a batch of document candidates from SQLite asynchronously."""
-        if self._position >= len(self._doc_candidates):
-            self._exhausted = True
-            return []
+        """Hydrate a batch of document candidates from SQLite asynchronously.
 
-        end = min(self._position + batch_size, len(self._doc_candidates))
-        batch = self._doc_candidates[self._position : end]
-        self._position = end
-        self._last_access = time.monotonic()
+        Loops on the fully-filtered "fetch more" path instead of recursing, so a
+        selective filter over a large pool cannot overflow the stack.
+        """
+        while True:
+            if self._position >= len(self._doc_candidates):
+                self._exhausted = True
+                return []
 
-        doc_ids = [d.document_id for d in batch]
-        scores = {d.document_id: d for d in batch}
+            end = min(self._position + batch_size, len(self._doc_candidates))
+            batch = self._doc_candidates[self._position : end]
+            self._position = end
+            self._last_access = time.monotonic()
 
-        self._db._ensure_async_pool()
-        assert self._db.async_connection_pool is not None
+            doc_ids = [d.document_id for d in batch]
+            scores = {d.document_id: d for d in batch}
 
-        async with self._db.async_connection_pool.get_connection_context() as conn:
-            placeholders = ",".join(["?"] * len(doc_ids))
-            cursor = await conn.execute(
-                f"SELECT id, content FROM documents WHERE id IN ({placeholders})",
-                doc_ids,
-            )
-            doc_content: Dict[str, str] = {}
-            async for row in cursor:
-                doc_content[row["id"]] = row["content"]
+            self._db._ensure_async_pool()
+            assert self._db.async_connection_pool is not None
 
-            doc_metadata_batch = await self._db._get_documents_metadata_async(doc_ids)
-
-        if self._config.filters:
-            from localvectordb._filters import matches_metadata_filter
-
-            doc_ids = [
-                did for did in doc_ids if matches_metadata_filter(doc_metadata_batch.get(did, {}), self._config.filters)
-            ]
-
-        results: List[QueryResult] = []
-        for doc_id in doc_ids:
-            content = doc_content.get(doc_id, "")
-            if not content:
-                continue
-            doc_cand = scores[doc_id]
-            doc_metadata = doc_metadata_batch.get(doc_id, {})
-            doc_metadata["_scoring"] = {
-                "_aggregation_method": self._config.document_scoring_method,
-                "_chunk_count": len(doc_cand.chunk_scores),
-                "_best_chunk_score": max(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0,
-                "_average_chunk_score": (
-                    sum(doc_cand.chunk_scores) / len(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0
-                ),
-            }
-            results.append(
-                QueryResult(
-                    id=doc_id,
-                    score=doc_cand.score,
-                    type="document",
-                    content=content,
-                    metadata=doc_metadata,
+            async with self._db.async_connection_pool.get_connection_context() as conn:
+                placeholders = ",".join(["?"] * len(doc_ids))
+                cursor = await conn.execute(
+                    f"SELECT id, content FROM documents WHERE id IN ({placeholders})",
+                    doc_ids,
                 )
-            )
+                doc_content: Dict[str, str] = {}
+                async for row in cursor:
+                    doc_content[row["id"]] = row["content"]
 
-        if not results and self._position < len(self._doc_candidates):
-            return await self._fetch_document_batch_async(batch_size)
+                doc_metadata_batch = await self._db._get_documents_metadata_async(doc_ids)
 
-        return results
+            if self._config.filters:
+                from localvectordb._filters import matches_metadata_filter
+
+                doc_ids = [
+                    did
+                    for did in doc_ids
+                    if matches_metadata_filter(doc_metadata_batch.get(did, {}), self._config.filters)
+                ]
+
+            results: List[QueryResult] = []
+            for doc_id in doc_ids:
+                content = doc_content.get(doc_id, "")
+                if not content:
+                    continue
+                doc_cand = scores[doc_id]
+                doc_metadata = doc_metadata_batch.get(doc_id, {})
+                doc_metadata["_scoring"] = {
+                    "_aggregation_method": self._config.document_scoring_method,
+                    "_chunk_count": len(doc_cand.chunk_scores),
+                    "_best_chunk_score": max(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0,
+                    "_average_chunk_score": (
+                        sum(doc_cand.chunk_scores) / len(doc_cand.chunk_scores) if doc_cand.chunk_scores else 0.0
+                    ),
+                }
+                results.append(
+                    QueryResult(
+                        id=doc_id,
+                        score=doc_cand.score,
+                        type="document",
+                        content=content,
+                        metadata=doc_metadata,
+                    )
+                )
+
+            if not results and self._position < len(self._doc_candidates):
+                continue
+
+            return results
 
     # ------------------------------------------------------------------
     # Repr

@@ -760,12 +760,15 @@ class DatabaseManager:
                             details={"provider": embedding_config.provider, "model": embedding_config.model},
                         ) from e
                     else:
+                        # Do not echo str(e) to the client: the underlying error
+                        # (e.g. "unable to open database file: C:\\...\\db.sqlite")
+                        # can leak filesystem paths. The full error is logged above
+                        # via db_logger.log_error; the client gets the code only.
                         raise APIError(
-                            message=f"Failed to create database: {str(e)}",
+                            message="Failed to create database",
                             error_code="DATABASE_CREATION_FAILED",
                             status_code=500,
                             recoverable=False,
-                            details={"original_error": str(e)},
                         ) from e
 
     @log_performance("get_database")
@@ -856,12 +859,13 @@ class DatabaseManager:
                     db_logger.log_error("load_database_failed", e, database_name=name)
                     self._record_error(name, e)
 
+                    # Generic client message (str(e) can carry the DB file path);
+                    # the detail is logged above via db_logger.log_error.
                     raise APIError(
-                        message=f"Failed to load database '{name}': {str(e)}",
+                        message=f"Failed to load database '{name}'",
                         error_code="DATABASE_LOAD_FAILED",
                         status_code=500,
                         recoverable=False,
-                        details={"original_error": str(e)},
                     ) from e
 
     def list_databases(self) -> List[str]:
@@ -933,12 +937,13 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"Failed to delete database '{name}': {e}")
                 db_logger.log_error("delete_database_failed", e, database_name=name)
+                # Generic client message (str(e) can carry the DB file path); the
+                # detail is logged above via logger.error / db_logger.log_error.
                 raise APIError(
-                    message=f"Failed to delete database: {str(e)}",
+                    message="Failed to delete database",
                     error_code="DATABASE_DELETE_FAILED",
                     status_code=500,
                     recoverable=False,
-                    details={"original_error": str(e)},
                 ) from e
 
     @log_performance("search_databases")
@@ -998,7 +1003,8 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"Unexpected error searching database {db_name}: {e}")
                 db_logger.log_error("search_database_failed", e, database_name=db_name)
-                results[db_name] = {"error": f"Search failed: {str(e)}"}
+                # Generic per-database error (str(e) can leak the DB file path).
+                results[db_name] = {"error": "Search failed"}
 
         return results
 

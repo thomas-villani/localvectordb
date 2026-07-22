@@ -806,11 +806,62 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             logger.warning(f"Could not roll back {len(faiss_ids)} FAISS vector(s) after a failed transaction: {e}")
 
     def _reconstruct_embeddings_batch(self, faiss_ids: List[int]) -> np.ndarray:
+        """Reconstruct embeddings for ``faiss_ids``, one row per id in input order.
+
+        This is the alignment guarantee every caller relies on: the returned matrix
+        has exactly ``len(faiss_ids)`` rows, and row ``i`` is the embedding for
+        ``faiss_ids[i]``. Consumers throughout ``_search``/``_comparison``/``_ingest``
+        index the result positionally (``embeddings[i]`` <-> ``faiss_ids[i]``), so a
+        shorter array would silently misalign scores or raise ``IndexError``.
+
+        The batch/id-mapping strategies in ``_reconstruct_embeddings_batch_raw``
+        silently skip ids they cannot reconstruct, which breaks that invariant.
+        When the raw result is short we fall back to a strictly-aligned per-id
+        reconstruction that zero-fills any id that cannot be reconstructed (a
+        benign, orthogonal vector for the similarity math the callers perform) and
+        warns, so a degraded index never corrupts ranking or crashes a query.
+        """
+        if not faiss_ids:
+            return np.array([]).reshape(0, self.embedding_dimension)
+
+        result = self._reconstruct_embeddings_batch_raw(faiss_ids)
+        if result.shape[0] != len(faiss_ids):
+            logger.warning(
+                "Embedding reconstruction returned %d of %d requested vectors; "
+                "realigning per-id (missing ids zero-filled) to preserve row/id alignment.",
+                result.shape[0],
+                len(faiss_ids),
+            )
+            return self._reconstruct_embeddings_aligned(faiss_ids)
+        return result
+
+    def _reconstruct_embeddings_aligned(self, faiss_ids: List[int]) -> np.ndarray:
+        """Reconstruct one row per id in order, zero-filling any id that fails."""
+        if self.index is None:
+            raise RuntimeError("FAISS index is not initialized")
+        out = np.zeros((len(faiss_ids), self.embedding_dimension), dtype=np.float32)
+        missing = 0
+        with self._faiss_lock.read_lock():
+            for i, fid in enumerate(faiss_ids):
+                try:
+                    out[i] = self.index.reconstruct(int(fid))
+                except Exception as e:
+                    missing += 1
+                    logger.debug(f"Could not reconstruct FAISS ID {fid}: {e}")
+        if missing:
+            logger.warning(f"{missing}/{len(faiss_ids)} embeddings could not be reconstructed; zero-filled.")
+        return out
+
+    def _reconstruct_embeddings_batch_raw(self, faiss_ids: List[int]) -> np.ndarray:
         """
         Batch reconstruct embeddings with proper IndexIDMap2 handling and fallback strategies.
 
         For IndexIDMap/IndexIDMap2 indices, we need to map external FAISS IDs to internal
         indices before calling reconstruct_batch on the base index.
+
+        May return FEWER rows than ``faiss_ids`` when some ids cannot be reconstructed;
+        callers must go through :meth:`_reconstruct_embeddings_batch` for the alignment
+        guarantee rather than calling this directly.
         """
         if not faiss_ids:
             return np.array([]).reshape(0, self.embedding_dimension)

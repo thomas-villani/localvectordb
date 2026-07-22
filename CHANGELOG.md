@@ -35,6 +35,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardcoded list missing `paragraphs` and `code-blocks` — the latter documented
   in the README's own code-repository example but unreachable from the CLI).
   `lvdb db <name> search --search-level` gains `fused`.
+- **`DELETE /databases/{name}` is now idempotent.** Deleting an absent database
+  returns `200` with `deleted: false` (matching document deletion) instead of
+  `404`, so a retried or duplicate delete is no longer an error. The response
+  gains a `deleted` boolean for clients that need to distinguish "removed now"
+  from "was never there".
+- **`query(return_type="sections")` now raises `ValueError` on a non-hierarchical
+  database** instead of silently returning chunk-level results — consistent with
+  the `search_level="sections"` guard. Create with `hierarchical_embeddings=True`
+  (or use `search_level="sections"`) for section results.
+- Sub-document range specs (`char_range` / `line_range` / `chunk` in the `get`
+  CLI and MCP tool) now reject negative and reversed ranges (e.g. `"5:2"`,
+  `"-3:"`) with a clear error instead of silently returning an empty or
+  wrong slice.
+- The interactive shell's `add` command now routes files through the same
+  extraction pipeline as `lvdb db add`, so PDF/DOCX/HTML/… are converted to
+  Markdown rather than skipped as "not unicode".
+
+### Fixed
+
+- **Whitespace-only documents now reconstruct byte-for-byte.** Every
+  general-purpose chunker emits a single chunk for whitespace-only input instead
+  of dropping it, restoring the reconstruction invariant (truly empty input
+  still yields no chunks).
+- **`$type: "boolean"` metadata filters now agree between `filter()` and
+  `query()`.** SQLite stores booleans as `0`/`1`, so the Python post-filter used
+  by `query()` now treats an int `0`/`1` as boolean (matching the SQL `IN (0,1)`
+  check `filter()` uses), eliminating a filter/query divergence.
+- Oversized `k` no longer over-allocates: vector search clamps `k` to the number
+  of stored vectors at the FAISS boundary (FAISS does not clamp it itself), for
+  both local and remote callers.
+- Hybrid streaming/cursor results no longer drop keyword-only matches whose chunk
+  has not been embedded yet (NULL `faiss_id`); such hits now hydrate by row id.
+- Embedding reconstruction always returns one row per requested id in order
+  (zero-filling any id it cannot reconstruct), preventing score misalignment or
+  `IndexError` in deduplication / comparison consumers.
+- The SSE streaming endpoint releases its query cursor on client disconnect.
+- Cursor batch hydration loops instead of recursing when a batch is fully
+  filtered out, so a highly selective filter over a large candidate pool can no
+  longer overflow the stack.
+- MCP `MCPConfig.from_file` validates `mode` (a typo like `"readonly"` used to
+  fail open and permit writes) and reports malformed TOML with a clear error.
+- Server error envelopes for database create/load/delete/search failures no
+  longer echo the underlying exception text, which could leak filesystem paths;
+  the detail is still logged server-side.
+- PRAGMA string values are quote-escaped before execution.
+
+### Security
+
+- The server now logs a prominent startup warning when bound to a non-loopback
+  interface with API authentication disabled (open read/write access). Defaults
+  are unchanged; see the deployment docs for the hardening checklist.
 
 ### Added
 
@@ -124,7 +175,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local model) an over-long section is windowed and mean-pooled to represent it
   in full, rather than each 24k window overflowing and being silently truncated.
 
-## [0.1.0] - 2026-07-09
+## [0.1.0rc1] - 2026-07-09
+
+This is the first release candidate. The version published to PyPI is
+`0.1.0rc1` (a pre-release); the final `0.1.0` will collect the `[Unreleased]`
+changes above. The entries below are the initial feature set as of rc1.
 
 ### Added
 

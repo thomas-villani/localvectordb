@@ -75,8 +75,12 @@ class QueryBuilderStateBody(StrictModel):
     vector_weight: Optional[float] = None
     return_type: Optional[Literal["documents", "chunks", "sections", "context"]] = None
     order_by: List[Dict[str, Any]] = []
-    limit: Optional[int] = None
-    offset: Optional[int] = None
+    # Floors only (L6): a negative offset produces a wrong slice rather than an
+    # error, and a non-positive limit is nonsense. No upper ceiling -- per M2 the
+    # server accepts anything local accepts; body-size DoS is bounded by
+    # max_request_size, and result pools are bounded by ntotal at the index.
+    limit: Optional[int] = Field(default=None, ge=1)
+    offset: Optional[int] = Field(default=None, ge=0)
     group_by: Optional[List[str]] = None
     aggregations: List[Dict[str, Any]] = []
 

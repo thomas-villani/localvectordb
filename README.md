@@ -630,7 +630,7 @@ formats work out of the box; extended/niche formats and OCR are opt-in extras.
 | HTML, EPUB, RTF, ODT/ODP/ODS | Built-in |
 | Markdown, reStructuredText, Org, CSV, JSON, YAML, `.eml`, `.ipynb` | Built-in |
 | Source code & plain text (200+ extensions) | Built-in |
-| LaTeX, MediaWiki, Textile, archives, `.enex`, `.fb2`, CHM, Outlook | `localvectordb[file-extraction]` |
+| LaTeX, MediaWiki, Textile, archives, `.enex`, `.fb2`, Outlook | `localvectordb[file-extraction]` |
 | OCR for scanned PDFs (Tesseract) | `localvectordb[file-extraction-ocr]` |
 
 Extracted content is **Markdown**, preserving headings, tables, and lists for

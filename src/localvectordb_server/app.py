@@ -257,6 +257,41 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# Loopback hosts that keep the server unreachable from other machines. Binding
+# to anything else exposes it on the network, where "no auth" means anyone who
+# can reach the port has full read/write access.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1"})
+
+
+def _warn_if_insecure_bind(config, logger) -> None:
+    """Emit loud startup warnings when the server is exposed without protection.
+
+    The dev defaults (no API key, CORS ``*``, no Host validation) are convenient
+    on ``127.0.0.1`` but dangerous on a routable interface. We do not change the
+    defaults (that would break existing docker/compose deployments), but a
+    non-loopback bind with authentication disabled gets a prominent warning so an
+    operator cannot expose an open read/write endpoint without being told.
+    """
+    host = (getattr(config.server, "host", "") or "").strip()
+    security = config.server.security
+    if host in _LOOPBACK_HOSTS:
+        return
+    if security.require_api_key:
+        return  # Exposed, but authenticated -- the operator opted in knowingly.
+
+    logger.warning("=" * 72)
+    # nosec B104 - "0.0.0.0" here is a display fallback in a warning message, not a bind address.
+    logger.warning("SECURITY: server is bound to %r with API authentication DISABLED.", host or "0.0.0.0")  # nosec B104
+    logger.warning("Any host that can reach this port has full read/write access to every database.")
+    if security.cors_allowed_origins == "*":
+        logger.warning("CORS is also open to all origins ('*').")
+    if not security.trusted_hosts:
+        logger.warning("Host header validation is off (security.trusted_hosts is unset).")
+    logger.warning("Before exposing this server, set security.require_api_key = true and trusted_hosts.")
+    logger.warning("See the 'Production deployment' section of the docs for the hardening checklist.")
+    logger.warning("=" * 72)
+
+
 def create_app(
     configuration: Union[str, Config, None] = None,
     database_directory=None,
@@ -321,6 +356,8 @@ def create_app(
         logger.info(f"  - API authentication: {'enabled' if _config.server.security.require_api_key else 'disabled'}")
         logger.info(f"  - CORS: {'enabled' if _config.server.security.cors_enabled else 'disabled'}")
         logger.info(f"  - Rate limiting: {'enabled' if _config.server.enable_rate_limiting else 'disabled'}")
+
+        _warn_if_insecure_bind(_config, logger)
 
         yield
 

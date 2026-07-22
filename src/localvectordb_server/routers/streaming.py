@@ -54,6 +54,12 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
     )
 
     async def event_generator() -> AsyncIterator[dict]:
+        # Track the cursor outside the try so the finally can release it even when
+        # the client disconnects: a disconnect closes this async generator via
+        # GeneratorExit / CancelledError, which does NOT pass through the
+        # ``except Exception`` handler below, so without the finally the cursor's
+        # DB reference would leak until its TTL sweep.
+        cursor = None
         try:
             if hasattr(db, "query_cursor_async"):
                 # query_cursor_async is a coroutine returning a QueryCursor, which
@@ -97,5 +103,11 @@ async def query_stream(db_name: str, body: StreamQueryBody, db=Depends(get_db)):
             else:
                 safe_message = "Internal error during streaming query"
             yield {"event": "error", "data": json.dumps({"error": safe_message})}
+        finally:
+            # Release the cursor's DB reference on every exit path -- normal
+            # completion, error, and (crucially) client disconnect. close() is
+            # idempotent and synchronous, so calling it here is always safe.
+            if cursor is not None:
+                cursor.close()
 
     return EventSourceResponse(event_generator())

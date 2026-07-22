@@ -71,18 +71,33 @@ def parse_range_spec(spec: str, *, allow_single: bool = False) -> Tuple[Optional
         except ValueError as e:
             raise ValueError(f"{label} of range must be an integer, got {part!r}") from e
 
+    def _reject_negative(value: Optional[int], label: str) -> None:
+        # Positions are non-negative (0-based chars/chunks, 1-based lines). A
+        # negative bound would otherwise do a silent Python-negative slice
+        # (``content[-3:]``) instead of the wrong-input error the caller expects.
+        if value is not None and value < 0:
+            raise ValueError(f"{label} of range must be non-negative, got {value}")
+
     if ":" not in raw:
         if not allow_single:
             raise ValueError(f"expected a range 'M:N', got {raw!r}")
         value = _to_int(raw, "value")
         if value is None:  # pragma: no cover - guarded by the empty check above
             raise ValueError("range specification is empty")
+        _reject_negative(value, "value")
         return value, value
 
     parts = raw.split(":")
     if len(parts) != 2:
         raise ValueError(f"range must contain a single ':', got {raw!r}")
-    return _to_int(parts[0], "start"), _to_int(parts[1], "end")
+    start, end = _to_int(parts[0], "start"), _to_int(parts[1], "end")
+    _reject_negative(start, "start")
+    _reject_negative(end, "end")
+    # A reversed range ("5:2") would silently slice to the empty string; reject
+    # it so the caller sees a real error instead of an empty result.
+    if start is not None and end is not None and start > end:
+        raise ValueError(f"range start ({start}) must not exceed end ({end})")
+    return start, end
 
 
 def _slice_lines(content: str, start: Optional[int], end: Optional[int]) -> str:

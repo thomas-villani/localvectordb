@@ -11,6 +11,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, cast
 
+# The only valid security modes. A typo here must fail closed: an unvalidated
+# ``mode`` other than "read-only" makes check_write_permission() fail OPEN and
+# silently permit writes, so from_file() validates against this set.
+_VALID_MODES = ("read-only", "read-write")
+
 
 @dataclass
 class MCPConfig:
@@ -148,14 +153,24 @@ class MCPConfig:
             raise FileNotFoundError(f"Configuration file not found: {path}")
 
         with open(config_path, "rb") as f:
-            data = tomllib.load(f)
+            try:
+                data = tomllib.load(f)
+            except tomllib.TOMLDecodeError as e:
+                # Surface a clear, actionable error instead of a raw parser message.
+                raise ValueError(f"Invalid TOML in MCP config '{path}': {e}") from e
 
         config = cls()
 
         # Load MCP section
         if mcp := data.get("mcp"):
             if "mode" in mcp:
-                config.mode = mcp["mode"]
+                mode = mcp["mode"]
+                if mode not in _VALID_MODES:
+                    # Reject rather than fail open: an unrecognized mode would make
+                    # check_write_permission() permit writes (it only blocks
+                    # "read-only"), so a typo like "readonly" must not slip through.
+                    raise ValueError(f"Invalid MCP mode {mode!r}; must be one of {_VALID_MODES}.")
+                config.mode = mode
             if "log_level" in mcp:
                 config.log_level = mcp["log_level"]
             if "log_operations" in mcp:

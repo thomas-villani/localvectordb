@@ -11,6 +11,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
+from pydantic import Field
 from starlette.concurrency import run_in_threadpool
 
 from localvectordb.exceptions import MetadataFilterError
@@ -44,7 +45,9 @@ class CompareDetailedBody(StrictModel):
 
 class NearestNeighborsBody(StrictModel):
     doc_id: str
-    k: int = 5
+    # Floor only (L6/M2): reject k<=0 but impose no ceiling -- the result pool is
+    # bounded by the index's ntotal, so an oversized k can't amplify allocation.
+    k: int = Field(default=5, ge=1)
     score_threshold: float = 0.0
     filters: Optional[Dict[str, Any]] = None
 
