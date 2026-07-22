@@ -2,7 +2,7 @@ from datetime import datetime
 
 import click
 
-from localvectordb_server.cli._utils import format_table, get_ctx_db, print_db_stats
+from localvectordb_server.cli._utils import format_table, get_ctx_db, load_file_for_ingest, print_db_stats
 
 
 @click.command("shell")
@@ -536,22 +536,23 @@ def shell(ctx):
                                 click.secho(f"Skipping {file_path} (not a file)", fg="yellow")
                                 continue
 
-                            try:
-                                with open(file_path, "r", encoding="utf-8") as f:
-                                    content = f.read()
-                            except UnicodeError:
-                                click.secho(f"Cannot decode {file_path} as unicode, skipping!", fg="yellow")
+                            # Route through the same extraction pipeline as
+                            # ``lvdb db add`` so rich formats (PDF, DOCX, HTML,
+                            # CSV, ...) are converted to Markdown instead of being
+                            # skipped as "not unicode". Plain text/source files are
+                            # still read directly by the helper.
+                            result = load_file_for_ingest(file_path)
+                            if result.text is None:
+                                click.secho(f"Skipping {file_path}: {result.error}", fg="yellow")
                                 continue
 
-                            documents.append(content)
-                            metadata.append(
-                                {
-                                    "source": file_path,
-                                    "filename": path.name,
-                                    "extension": path.suffix,
-                                    "added_at": datetime.now().isoformat(),
-                                }
-                            )
+                            documents.append(result.text)
+                            meta = dict(result.metadata or {})
+                            meta.setdefault("source", file_path)
+                            meta.setdefault("filename", path.name)
+                            meta.setdefault("extension", path.suffix)
+                            meta["added_at"] = datetime.now().isoformat()
+                            metadata.append(meta)
 
                         except Exception as e:
                             click.secho(f"Error processing {file_path}: {str(e)}", fg="bright_red")

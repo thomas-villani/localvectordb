@@ -1086,12 +1086,15 @@ class TestUncoveredRoutersHappyPath:
 class TestHTTPContractRegressions:
     """Regression tests for the v0.1.0 HTTP contract hardening."""
 
-    def test_delete_nonexistent_database_returns_404(self, integration_client, valid_auth_headers):
+    def test_delete_nonexistent_database_is_idempotent(self, integration_client, valid_auth_headers):
+        # L13: database deletion is idempotent (matches document deletion). An
+        # absent database is a 200 with deleted=False, not a 404, so a retried or
+        # duplicate delete is not an error.
         response = integration_client.delete("/api/v1/databases/never_created_db", headers=valid_auth_headers)
-        assert response.status_code == 404
+        assert response.status_code == 200
         body = response.json()
-        # Standard error envelope, not a 200 "no action taken".
-        assert body["error"]["code"] == "DATABASE_NOT_FOUND"
+        assert body["status"] == "success"
+        assert body["deleted"] is False
 
     def test_formerly_reserved_database_name_now_allowed(self, integration_client, valid_auth_headers):
         # Per-database routes are namespaced under /api/v1/databases/{db_name},

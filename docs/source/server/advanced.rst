@@ -140,6 +140,8 @@ Rate Limit Patterns
 
 The rate limiting uses the client's IP address by default. For applications behind proxies, ensure proper proxy configuration (see Proxy Settings below).
 
+.. _api-key-authentication:
+
 API Key Authentication
 ----------------------
 
@@ -259,6 +261,40 @@ Permission-Based Usage Patterns
 
 Security Configuration
 ----------------------
+
+Defaults and Threat Model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The server ships with **developer-friendly defaults**, not
+production-hardened ones:
+
+- ``require_api_key = false`` — no authentication; every route is open.
+- ``cors_allowed_origins = "*"`` — all web origins may call the API.
+- ``trusted_hosts`` unset — no Host-header validation.
+- ``host = "127.0.0.1"`` — bound to loopback only.
+
+On the default loopback bind these are safe: nothing off the machine can
+reach the port. **The moment you bind to a routable interface (e.g.
+``0.0.0.0``) without enabling authentication, anyone who can reach the port
+has full read/write access to every database.** The server logs a prominent
+startup warning when it detects a non-loopback bind with ``require_api_key =
+false`` so this cannot happen silently, but it does not refuse to start (that
+would break common container deployments).
+
+Before exposing the server beyond localhost, enable the hardening checklist:
+
+.. code-block:: toml
+
+   [server]
+   host = "0.0.0.0"            # or a specific interface
+
+   [server.security]
+   require_api_key = true                       # authenticate every request
+   trusted_hosts = ["api.example.com"]          # reject unexpected Host headers
+   cors_allowed_origins = ["https://app.example.com"]  # not "*"
+
+See :ref:`API Key Authentication <api-key-authentication>` below to create keys,
+and the CORS / Trusted Hosts / Proxy subsections for the individual settings.
 
 CORS (Cross-Origin Resource Sharing)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

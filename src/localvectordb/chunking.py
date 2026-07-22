@@ -31,6 +31,24 @@ class PositionTrackingChunker(ABC):
         """Split text into chunks with position tracking"""
         pass
 
+    def _empty_guard(self, text: str) -> Optional[List[Chunk]]:
+        """Handle empty / whitespace-only input at the top of every ``chunk()``.
+
+        Returns the chunk list to short-circuit with, or ``None`` when ``text``
+        has real content and normal chunking should proceed:
+
+        * truly empty ``""`` -> ``[]`` (its reconstruction is ``""`` -- correct).
+        * whitespace-only (e.g. ``"  \\n\\n"``) -> a single chunk spanning the whole
+          text. There is nothing retrievable, but emitting one chunk keeps the
+          document reconstructible byte-for-byte, which is the core chunking
+          invariant; dropping it (returning ``[]``) would reconstruct to ``""``.
+        """
+        if not text:
+            return []
+        if not text.strip():
+            return [self._create_chunk(text, 0, len(text), 0)]
+        return None
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text.
 
@@ -137,8 +155,9 @@ class SentenceChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by sentences"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         # Find sentence boundaries
         sentences = self._split_into_sentences(text)
@@ -336,8 +355,9 @@ class TokenChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by token boundaries"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         # Encode the text to get tokens
         tokens = self.encoding.encode(text)
@@ -391,8 +411,9 @@ class WordChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by word boundaries while preserving whitespace"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         # Split into words while preserving positions - using \S+ to find word boundaries
         word_pattern = re.compile(r"\S+")
@@ -472,8 +493,9 @@ class LineChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by line boundaries"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         lines = text.splitlines(keepends=True)
         line_positions = []
@@ -556,8 +578,9 @@ class CharChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by character boundaries"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         chunks = []
         chunk_index = 0
@@ -607,8 +630,9 @@ class ParagraphChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by paragraph boundaries"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         # Find paragraph boundaries
         paragraphs = self._split_into_paragraphs(text)
@@ -728,8 +752,9 @@ class SectionChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split text by section headers"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         # Use a simple approach: treat headers as preferred break points
         # but don't let headers get orphaned
@@ -935,8 +960,9 @@ class CodeBlockChunker(PositionTrackingChunker):
 
     def chunk(self, text: str) -> List[Chunk]:
         """Split code while preserving logical blocks"""
-        if not text.strip():
-            return []
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
 
         # Check if the entire text fits within the token limit
         if self.count_tokens(text) <= self.max_tokens:

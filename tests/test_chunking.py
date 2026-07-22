@@ -194,10 +194,19 @@ class TestSentenceChunker:
         assert len(all_content) > len(text)  # Due to overlap
 
     def test_chunk_empty_text(self):
-        """Test chunking empty text."""
+        """Test chunking empty and whitespace-only text (L1).
+
+        Truly empty text yields no chunks (its reconstruction is ``""``), but
+        whitespace-only text must still emit a single chunk so the document
+        reconstructs byte-for-byte instead of collapsing to ``""``.
+        """
         chunker = SentenceChunker()
         assert chunker.chunk("") == []
-        assert chunker.chunk("   ") == []
+
+        ws_chunks = chunker.chunk("   ")
+        assert len(ws_chunks) == 1
+        # Byte-for-byte reconstruction: the chunk spans the whole input.
+        assert "".join(c.content for c in ws_chunks) == "   "
 
     def test_chunk_single_long_sentence(self):
         """Test chunking when single sentence exceeds token limit."""

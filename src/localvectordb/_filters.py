@@ -835,7 +835,13 @@ def check_metadata_condition(metadata: dict, field: str, condition: Union[dict, 
             elif target == "real":
                 return isinstance(value, float)
             elif target == "boolean":
-                return isinstance(value, bool)
+                # SQLite has no boolean type: booleans are stored -- and read back
+                # by the metadata hydration in _crud._from_row -- as int 0/1, and
+                # the SQL side (filter()) checks ``field IN (0, 1)``. Mirror that
+                # here so the Python post-filter used by query() agrees with the
+                # SQL used by filter(): a genuine bool, or an int 0/1 that a bool
+                # round-tripped into through storage.
+                return isinstance(value, bool) or (isinstance(value, int) and value in (0, 1))
             elif target == "array":
                 return isinstance(value, list)
             elif target == "object":

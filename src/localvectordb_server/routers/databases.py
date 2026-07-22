@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends
 from pydantic import ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from localvectordb.exceptions import DatabaseNotFoundError
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import (
     APIError,
@@ -96,6 +95,10 @@ class DatabaseListResponse(StrictModel):
 class DeleteDatabaseResponse(StrictModel):
     message: str
     status: str
+    # True when this call removed the database; False when it was already absent.
+    # Delete is idempotent, so an absent database is a 200 with deleted=False
+    # (matching document deletion) rather than a 404.
+    deleted: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -341,12 +344,17 @@ def get_database_info(db_name: str, db=Depends(get_db)):
 def delete_database(db_name: str, db_manager=Depends(get_db_manager)):
     """Delete a database."""
     with request_context("delete_database"):
-        success = db_manager.delete_database(db_name)
-        if not success:
-            # A delete against a nonexistent database is a 404 so clients can
-            # distinguish "deleted" from "was never there" programmatically.
-            raise DatabaseNotFoundError(f"Database '{db_name}' not found")
+        deleted = db_manager.delete_database(db_name)
+        # Idempotent delete (matches document deletion): deleting an absent
+        # database is a 200 with deleted=False, not a 404, so a retried or
+        # duplicate delete is not an error. The `deleted` flag lets clients that
+        # care still distinguish "removed now" from "was never there".
+        if deleted:
+            message = f"Successfully deleted database '{db_name}'"
+        else:
+            message = f"Database '{db_name}' does not exist; nothing to delete"
         return {
-            "message": f"Successfully deleted database '{db_name}'",
+            "message": message,
             "status": "success",
+            "deleted": deleted,
         }

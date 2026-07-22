@@ -453,6 +453,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # Normalize the query vector to match the stored vectors when ``index``
         # scores by inner product; a no-op for L2, so the baseline is unmoved.
         query_embedding = self._normalize_for_index(query_embedding, index)
+        # Clamp the requested pool to the number of stored vectors. FAISS does
+        # NOT clamp ``k`` to ``ntotal`` -- ``index.search(q, 2_000_000)`` on a
+        # 5-vector index allocates a 2M-wide result array -- so an oversized
+        # ``k`` (from a client or a bad caller) would amplify a tiny request into
+        # gigabytes of allocation. We can never return more than ``ntotal`` hits
+        # anyway, so this is semantically a no-op while closing that vector for
+        # both local and remote callers.
+        ntotal = int(getattr(index, "ntotal", 0))
+        if ntotal <= 0:
+            empty = np.empty(0, dtype=np.int64)
+            return np.empty(0, dtype=np.float32), empty, True
+        initial_k = min(initial_k, ntotal)
         if not filters:
             with self._faiss_lock.read_lock():
                 distances, indices = index.search(query_embedding, initial_k)
@@ -655,6 +667,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         _validate_context_unit(context_unit)
         return_type = _resolve_return_type(return_type, search_level)
+        # A 'sections' return on a chunk-level search needs section data to group
+        # into. On a non-hierarchical DB there is none, so the assembly below is
+        # skipped and the user silently gets chunk results back. Fail loudly
+        # instead -- consistent with the search_level='sections'/'fused' guards.
+        if (
+            return_type == "sections"
+            and search_level not in ("fused", "sections", "documents")
+            and not self._hierarchical_embeddings
+        ):
+            raise ValueError(
+                "return_type='sections' requires a hierarchical database "
+                "(create with hierarchical_embeddings=True), or use search_level='sections'."
+            )
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
@@ -1153,6 +1178,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         faiss_to_key: Dict[int, str] = {}
         rowid_to_key: Dict[int, str] = {}
         key_to_faiss: Dict[str, int] = {}
+        # Fallback rowid per key, used for keyword-only hits whose chunk has no
+        # faiss_id yet (unembedded but FTS-indexed): without a rowid to hydrate
+        # by, such a candidate would carry neither id and be silently dropped.
+        key_to_rowid: Dict[str, int] = {}
 
         with self.connection_pool.get_connection() as conn:
             if faiss_ids:
@@ -1175,6 +1204,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 for row in cursor.fetchall():
                     key = f"{row['document_id']}:{row['chunk_index']}"
                     rowid_to_key[row["id"]] = key
+                    key_to_rowid[key] = row["id"]
                     if row["faiss_id"] is not None:
                         key_to_faiss[key] = row["faiss_id"]
 
@@ -1190,11 +1220,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
             if key and c.raw_rank is not None:
                 keyword_ranks[key] = c.raw_rank
 
-        candidates = [
-            CursorCandidate(score=score, source="hybrid", faiss_id=key_to_faiss.get(key))
-            for key, score in _relative_score_fusion(vector_scores, keyword_ranks, vector_weight).items()
-            if score >= score_threshold
-        ]
+        candidates = []
+        for key, score in _relative_score_fusion(vector_scores, keyword_ranks, vector_weight).items():
+            if score < score_threshold:
+                continue
+            faiss_id = key_to_faiss.get(key)
+            # Prefer hydrating by faiss_id; fall back to the chunk rowid for
+            # keyword-only hits whose chunk isn't embedded (NULL faiss_id).
+            chunk_rowid = key_to_rowid.get(key) if faiss_id is None else None
+            candidates.append(CursorCandidate(score=score, source="hybrid", faiss_id=faiss_id, chunk_rowid=chunk_rowid))
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates
 
@@ -3197,6 +3231,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         _validate_context_unit(context_unit)
         return_type = _resolve_return_type(return_type, search_level)
+        # See the sync path: a 'sections' return on a chunk-level search over a
+        # non-hierarchical DB would silently degrade to chunk results.
+        if (
+            return_type == "sections"
+            and search_level not in ("fused", "sections", "documents")
+            and not self._hierarchical_embeddings
+        ):
+            raise ValueError(
+                "return_type='sections' requires a hierarchical database "
+                "(create with hierarchical_embeddings=True), or use search_level='sections'."
+            )
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         self._ensure_async_pool()
