@@ -74,9 +74,18 @@ class All2MdExtractor(BaseExtractor):
     # Availability
     # ------------------------------------------------------------------ #
     def _check_availability(self) -> bool:
-        import importlib.util
+        # ``find_spec`` only proves the package is discoverable, not that it
+        # imports -- a broken all2md install (e.g. a missing transitive dep)
+        # would still pass find_spec but blow up on first real use, letting
+        # ``/schema`` and upload-format discovery advertise a dead extractor as
+        # healthy. Actually import it so availability reflects reality.
+        import importlib
 
-        return importlib.util.find_spec("all2md") is not None
+        try:
+            importlib.import_module("all2md")
+        except Exception:
+            return False
+        return True
 
     @property
     def required_packages(self) -> List[str]:

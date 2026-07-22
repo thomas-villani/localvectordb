@@ -490,10 +490,27 @@ class SearchMixin(LocalVectorDBBase, ABC):
     def _calculate_embedding_similarities(
         self, query_embedding: np.ndarray, field_embeddings: np.ndarray
     ) -> np.ndarray:
-        """Calculate similarities between query and field embeddings (pure business logic)"""
-        query_embedding_2d = query_embedding.reshape(1, -1)
-        similarities = np.dot(field_embeddings, query_embedding_2d.T).flatten()
-        scores: np.ndarray = (similarities + 1) / 2  # Normalize to [0, 1]
+        """Calculate similarities between query and field embeddings (pure business logic)
+
+        Column embeddings are stored unnormalized on an L2 index (normalization is
+        IP-only), so a raw dot product is unbounded -- ``(dot + 1) / 2`` then yields
+        scores outside [0, 1] that sort incoherently against the [0, 1] content
+        scores they are merged with. Compute a true cosine similarity (L2-normalize
+        both sides, guarding zero-norm rows) so the mapped score is genuinely [0, 1].
+        """
+        query_vec = query_embedding.reshape(1, -1).astype(np.float64)
+        field_vecs = field_embeddings.astype(np.float64)
+
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm > 0:
+            query_vec = query_vec / query_norm
+        field_norms = np.linalg.norm(field_vecs, axis=1)
+        safe_norms = np.where(field_norms > 0, field_norms, 1.0)
+        field_vecs = field_vecs / safe_norms[:, None]
+
+        cosine = np.dot(field_vecs, query_vec.T).flatten()
+        cosine = np.clip(cosine, -1.0, 1.0)
+        scores: np.ndarray = (cosine + 1) / 2  # cosine [-1, 1] -> [0, 1]
         return scores
 
     def _filter_and_sort_by_scores(self, scores: np.ndarray, score_threshold: float, k: int) -> np.ndarray:
@@ -641,14 +658,23 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
+            # When a reranker is configured, over-fetch a larger candidate pool so
+            # it can promote results the search legs ranked below `k`; otherwise the
+            # rerank is a no-op on recall. `fetch_k == k` when no reranker, so the
+            # non-rerank path is byte-for-byte unchanged -- including the fused and
+            # hierarchical levels below, which are called with `fetch_k` too so the
+            # shared rerank block (H8) can re-score their pool before truncating to k.
+            reranking = reranker is not None or bool(reranker_config)
+            fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
+
             # Fused level: blend chunk retrieval with section (raw-span) retrieval.
             if search_level == "fused":
                 if not self._hierarchical_embeddings:
                     raise ValueError("search_level='fused' requires hierarchical_embeddings=True")
-                return self._fused_search(
+                results = self._fused_search(
                     query,
                     return_type=return_type,
-                    k=k,
+                    k=fetch_k,
                     score_threshold=score_threshold,
                     filters=filters,
                     section_weight=section_weight,
@@ -660,28 +686,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
             # database rather than quietly answering with chunk results: plausible
             # wrong-level results read as "the feature does nothing" instead of
             # "the feature is switched off". Matches 'fused' above.
-            if search_level in ("sections", "documents"):
+            elif search_level in ("sections", "documents"):
                 if not self._hierarchical_embeddings:
                     raise ValueError(f"search_level={search_level!r} requires hierarchical_embeddings=True")
-                return self._hierarchical_search(
+                results = self._hierarchical_search(
                     query,
                     search_level=search_level,
                     return_type=return_type,
-                    k=k,
+                    k=fetch_k,
                     score_threshold=score_threshold,
                     filters=filters,
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options,
                 )
 
-            # When a reranker is configured, over-fetch a larger candidate pool so
-            # it can promote results the search legs ranked below `k`; otherwise the
-            # rerank is a no-op on recall. `fetch_k == k` when no reranker, so the
-            # non-rerank path is byte-for-byte unchanged.
-            reranking = reranker is not None or bool(reranker_config)
-            fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
-
-            if search_type == "vector":
+            elif search_type == "vector":
                 results = self._vector_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
@@ -729,11 +748,18 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
             # Post-process: if return_type='sections', group chunk results by section.
             # Keep the over-fetched pool intact here (fetch_k) so reranking still sees
-            # the extra candidates; the rerank step below truncates to k.
-            if return_type == "sections" and self._hierarchical_embeddings:
+            # the extra candidates; the rerank step below truncates to k. (The fused
+            # and hierarchical branches above already return the requested unit.)
+            if (
+                return_type == "sections"
+                and self._hierarchical_embeddings
+                and search_level not in ("fused", "sections", "documents")
+            ):
                 results = self._assemble_section_results(results, fetch_k)
 
-            # Apply reranking if configured
+            # Apply reranking if configured. Runs for every search_level (H8): the
+            # fused/hierarchical branches used to early-return above this block, so
+            # a reranker passed with those levels was silently ignored.
             if reranker is not None:
                 results = reranker.rerank(query, results, top_k=k)
             elif reranker_config:
@@ -1591,7 +1617,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 context_unit,
                 context_truncate,
             )
-        search_k = min(k * 4, 100)
+        # Over-fetch k*4 for fusion/dedup headroom, ceiling 100 to bound work for
+        # small k -- but never below k itself, or a large-k request (or the rerank
+        # over-fetch that passes fetch_k in as k) is silently truncated / starved.
+        search_k = max(k, min(k * 4, 100))
         vector_results = self._vector_search(query, "chunks", search_k, 0.0, filters, 0, None)
         # `search_k * 2` mirrors the `initial_k` over-fetch `_keyword_search` applies for
         # chunk results, so the keyword leg sees the same candidate pool it always has.
@@ -3196,6 +3225,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     semantic_dedup_threshold=semantic_dedup_threshold,
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options,
+                    # Forward reranking so fused/hierarchical levels rerank remotely
+                    # too (H8) instead of silently dropping the reranker.
+                    reranker=reranker,
+                    reranker_config=reranker_config,
+                    rerank_k=rerank_k,
                 ),
             )
 
@@ -3327,7 +3361,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
     ) -> List[QueryResult]:
 
         loop = asyncio.get_event_loop()
-        search_k = min(k * 2, 100)
+        # Ceiling the over-fetch at 100 bounds work for small k, but never below
+        # k (nor the rerank fetch_k passed in as k), which would truncate/starve.
+        search_k = max(k, min(k * 2, 100))
 
         # Push the metadata filter into FAISS (id-selector) when the index and
         # filter allow it, so a selective filter is not starved by the fixed
@@ -3388,69 +3424,101 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold: float,
         filters: Optional[Dict[str, Any]],
     ) -> Tuple[List[QueryResult], Dict[str, float]]:
-        """Async counterpart of ``_keyword_chunk_hits``: hits best-first, plus raw BM25 ranks."""
+        """Async counterpart of ``_keyword_chunk_hits``: hits best-first, plus raw BM25 ranks.
+
+        Mirrors the sync path's filter contract (H10): a SQL-expressible filter is
+        pushed into the FTS query via ``_build_filter_where`` -- which *declines
+        gracefully* for a filter SQL cannot express (a dot-notation JSON path, an
+        operator the builder rejects) instead of raising -- and
+        ``matches_metadata_filter`` is always applied afterwards as the authority,
+        so async neither crashes on an unpushable filter nor returns rows a
+        broader-than-Python SQL clause would leak.
+        """
         sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
         if not sanitized_query:
             return [], {}
-        filter_clause = ""
-        filter_params: List[Any] = []
-        if filters:
-            filter_builder = FilterQueryBuilder(self.metadata_schema)
-            where_clause, params = filter_builder.build_where_clause(filters)
-            filter_clause = f" AND d.rowid IN (SELECT rowid FROM documents WHERE {where_clause})"
-            filter_params = params
-        metadata_columns = list(self.metadata_schema.keys())
-        metadata_select = ", ".join([f"d.{col}" for col in metadata_columns]) if metadata_columns else ""
-        metadata_select_clause = f", {metadata_select}" if metadata_select else ""
+
+        built = self._build_filter_where(filters)
+        if built is not None:
+            where_clause, filter_params = built
+            # chunks_fts is contentless over chunks, so rowid == chunks.id.
+            fts_sql = (
+                "SELECT rowid, bm25(chunks_fts) AS rank FROM chunks_fts "
+                "WHERE chunks_fts MATCH ? "
+                "AND rowid IN (SELECT id FROM chunks WHERE document_id IN "
+                f"(SELECT id FROM documents WHERE {where_clause})) "
+                "ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params: List[Any] = [sanitized_query, *filter_params, limit]
+        else:
+            fts_sql = (
+                "SELECT rowid, bm25(chunks_fts) AS rank FROM chunks_fts "
+                "WHERE chunks_fts MATCH ? ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params = [sanitized_query, limit]
+
         assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
-            sql = f"""
-                SELECT c.document_id, c.chunk_index, c.content, c.faiss_id,
-                       c.start_pos, c.end_pos, c.start_line, c.start_col, c.end_line, c.end_col,
-                       bm25(chunks_fts) AS rank, d.content as doc_content{metadata_select_clause}
-                FROM chunks_fts fts
-                JOIN chunks c ON c.rowid = fts.rowid
-                JOIN documents d ON d.id = c.document_id
-                WHERE chunks_fts MATCH ? {filter_clause}
-                ORDER BY rank ASC
-                LIMIT ?
-            """
-            params = [sanitized_query] + filter_params + [limit]
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+            cursor = await conn.execute(fts_sql, fts_params)
+            fts_rows = await cursor.fetchall()
+
+            valid_chunk_data: List[Tuple[int, float, float]] = []
+            valid_chunk_ids: List[int] = []
+            for row in fts_rows:
+                score = self._fts_rank_to_similarity(row["rank"])
+                if score < score_threshold:
+                    continue
+                valid_chunk_ids.append(row["rowid"])
+                valid_chunk_data.append((row["rowid"], score, float(row["rank"])))
+            if not valid_chunk_ids:
+                return [], {}
+
+            placeholders = ",".join(["?"] * len(valid_chunk_ids))
+            cursor = await conn.execute(
+                f"SELECT * FROM chunks WHERE id IN ({placeholders})",
+                valid_chunk_ids,
+            )
+            chunk_id_to_row: Dict[int, Any] = {}
+            doc_ids_to_fetch: set[str] = set()
+            async for row in cursor:
+                chunk_id_to_row[row["id"]] = row
+                doc_ids_to_fetch.add(row["document_id"])
+
+        # Fetched outside the connection context above: the async pool is small
+        # and this opens its own connection.
+        doc_metadata_batch = await self._get_documents_metadata_async(list(doc_ids_to_fetch))
+
         query_results: List[QueryResult] = []
         raw_ranks: Dict[str, float] = {}
-        for row in rows:
-            fts_rank = row["rank"]
-            # Convert FTS rank to similarity using consistent formula
-            similarity = self._fts_rank_to_similarity(fts_rank)
-            if similarity >= score_threshold:
-                position = ChunkPosition(
-                    start=row["start_pos"],
-                    end=row["end_pos"],
-                    line=row["start_line"],
-                    column=row["start_col"],
-                    end_line=row["end_line"],
-                    end_column=row["end_col"],
+        for chunk_id, score, raw_rank in valid_chunk_data:
+            chunk_row = chunk_id_to_row.get(chunk_id)
+            if chunk_row is None:
+                continue
+            doc_metadata = doc_metadata_batch.get(chunk_row["document_id"], {})
+            # Python authority: never return a row the matcher would reject.
+            if filters and not matches_metadata_filter(doc_metadata, filters):
+                continue
+            position = ChunkPosition(
+                start=chunk_row["start_pos"],
+                end=chunk_row["end_pos"],
+                line=chunk_row["start_line"],
+                column=chunk_row["start_col"],
+                end_line=chunk_row["end_line"],
+                end_column=chunk_row["end_col"],
+            )
+            key = f"{chunk_row['document_id']}:{chunk_row['chunk_index']}"
+            query_results.append(
+                QueryResult(
+                    id=key,
+                    score=score,
+                    type="chunk",
+                    content=chunk_row["content"],
+                    metadata=doc_metadata,
+                    document_id=chunk_row["document_id"],
+                    position=position,
                 )
-                metadata: Dict[str, Any] = {}
-                for field_name in metadata_columns:
-                    value = row[field_name]
-                    if value is not None:
-                        metadata[field_name] = value
-                key = f"{row['document_id']}:{row['chunk_index']}"
-                query_results.append(
-                    QueryResult(
-                        id=key,
-                        score=similarity,
-                        type="chunk",
-                        content=row["content"],
-                        metadata=metadata,
-                        document_id=row["document_id"],
-                        position=position,
-                    )
-                )
-                raw_ranks[key] = float(fts_rank)
+            )
+            raw_ranks[key] = raw_rank
         return query_results, raw_ranks
 
     async def _keyword_search_async(
@@ -3514,7 +3582,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 context_unit,
                 context_truncate,
             )
-        search_k = min(k * 4, 100)
+        # Ceiling the over-fetch at 100 bounds work for small k, but never below
+        # k (nor the rerank fetch_k passed in as k), which would truncate/starve.
+        search_k = max(k, min(k * 4, 100))
         vector_task = asyncio.create_task(
             self._vector_search_with_embedding_async(query_embedding, "chunks", search_k, 0.0, filters, 0, None, "best")
         )

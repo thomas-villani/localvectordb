@@ -991,6 +991,49 @@ class TestUncoveredRoutersHappyPath:
         assert response.status_code == 200
         assert response.json()["similarity"] == 0.87
 
+    def test_compare_missing_document_returns_404(self, integration_app, integration_client, valid_auth_headers):
+        # H6: a missing doc raises DocumentNotFoundError -> 404 (was an unmapped 500).
+        mock_db = self._prepare_db(integration_app, "cmp404_db")
+        mock_db.compare_documents.side_effect = DocumentNotFoundError("Document 'x' not found", "x")
+        response = integration_client.post(
+            "/api/v1/databases/cmp404_db/compare",
+            json={"doc_id_1": "x", "doc_id_2": "y"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
+
+    def test_compare_empty_document_returns_422(self, integration_app, integration_client, valid_auth_headers):
+        # H6: a doc that exists but has no embeddable content is unprocessable (422),
+        # not a 500.
+        mock_db = self._prepare_db(integration_app, "cmp422_db")
+        mock_db.compare_documents.side_effect = ValueError("Document 'x' has no chunk embeddings")
+        response = integration_client.post(
+            "/api/v1/databases/cmp422_db/compare",
+            json={"doc_id_1": "x", "doc_id_2": "y"},
+            headers=valid_auth_headers,
+        )
+        assert response.status_code == 422
+
+    def test_multiget_returns_partial_and_missing_ids(self, integration_app, integration_client, valid_auth_headers):
+        # H9: multi-get returns found docs + missing_ids instead of erroring on a
+        # single absent id; the RemoteVectorDB client reconstructs the error from it.
+        from localvectordb.core import Document
+
+        mock_db = self._prepare_db(integration_app, "mget_db")
+        found = Document(id="a", content="hello", metadata={}, content_hash=_content_hash("hello"))
+        # _create_mock_db assigns real get/exists bound to db._documents (and its
+        # get doesn't accept a list); override them to drive the partition path.
+        mock_db.exists = Mock(return_value=[True, False])
+        mock_db.get = Mock(return_value=[found])
+        response = integration_client.get("/api/v1/databases/mget_db/documents?ids=a,b", headers=valid_auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["returned_ids"] == ["a"]
+        assert body["missing_ids"] == ["b"]
+        # db.get must be called with only the present ids, never the missing one.
+        mock_db.get.assert_called_once_with(["a"])
+
     def test_get_tuning(self, integration_app, integration_client, valid_auth_headers):
         mock_db = self._prepare_db(integration_app, "tune_db")
         mock_db.get_sqlite_tuning.return_value = {"profile": "balanced", "pragmas": {}}

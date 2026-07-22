@@ -11,7 +11,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
+from starlette.concurrency import run_in_threadpool
 
+from localvectordb.exceptions import MetadataFilterError
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import APIError
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
@@ -120,13 +122,20 @@ async def compare_documents(db_name: str, body: CompareBody, db=Depends(get_db))
             )
 
         try:
-            similarity = db.compare_documents(body.doc_id_1, body.doc_id_2)
+            similarity = await run_in_threadpool(db.compare_documents, body.doc_id_1, body.doc_id_2)
             return {
                 "doc_id_1": body.doc_id_1,
                 "doc_id_2": body.doc_id_2,
                 "similarity": similarity,
                 "status": "success",
             }
+        except ValueError as e:
+            # A missing doc raises DocumentNotFoundError (-> global 404); a bare
+            # ValueError here means the document exists but has no embeddable
+            # content (e.g. whitespace-only). That is unprocessable, not a 500.
+            raise APIError(
+                message=str(e), error_code="UNPROCESSABLE_DOCUMENT", status_code=422, recoverable=False
+            ) from e
         except Exception as e:
             db_logger.log_error("compare_documents", e, database_name=db_name)
             raise
@@ -150,9 +159,15 @@ async def compare_documents_detailed(db_name: str, body: CompareDetailedBody, db
             )
 
         try:
-            result = db.compare_documents_detailed(body.doc_id_1, body.doc_id_2, chunk_threshold=body.chunk_threshold)
+            result = await run_in_threadpool(
+                db.compare_documents_detailed, body.doc_id_1, body.doc_id_2, chunk_threshold=body.chunk_threshold
+            )
             return CompareDetailedResponse(**result.to_dict(), status="success")
 
+        except ValueError as e:
+            raise APIError(
+                message=str(e), error_code="UNPROCESSABLE_DOCUMENT", status_code=422, recoverable=False
+            ) from e
         except Exception as e:
             db_logger.log_error("compare_documents_detailed", e, database_name=db_name)
             raise
@@ -175,7 +190,8 @@ async def nearest_neighbors(db_name: str, body: NearestNeighborsBody, db=Depends
             )
 
         try:
-            results = db.nearest_neighbors(
+            results = await run_in_threadpool(
+                db.nearest_neighbors,
                 body.doc_id,
                 k=body.k,
                 score_threshold=body.score_threshold,
@@ -189,6 +205,14 @@ async def nearest_neighbors(db_name: str, body: NearestNeighborsBody, db=Depends
                 "total_results": len(serialized),
                 "status": "success",
             }
+        except MetadataFilterError:
+            # A bad filter spec is a ValueError subclass but must stay a 400
+            # INVALID_FILTER (via the global handler), not the 422 below.
+            raise
+        except ValueError as e:
+            raise APIError(
+                message=str(e), error_code="UNPROCESSABLE_DOCUMENT", status_code=422, recoverable=False
+            ) from e
         except Exception as e:
             db_logger.log_error("nearest_neighbors", e, database_name=db_name)
             raise
@@ -213,7 +237,7 @@ async def pairwise_similarity_matrix(db_name: str, body: Optional[SimilarityMatr
             )
 
         try:
-            matrix = db.pairwise_similarity_matrix(doc_ids=doc_ids)
+            matrix = await run_in_threadpool(db.pairwise_similarity_matrix, doc_ids=doc_ids)
             return SimilarityMatrixResponse(**matrix.to_dict(), status="success")
 
         except Exception as e:

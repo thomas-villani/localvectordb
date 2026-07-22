@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends
+from starlette.concurrency import run_in_threadpool
 
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import ValidationError
@@ -84,8 +85,10 @@ async def update_metadata_schema(db_name: str, body: UpdateMetadataSchemaBody, d
                 column_mapping=column_mapping,
             )
 
-            # Apply schema update
-            changes = db.update_metadata_schema(new_schema, drop_columns=drop_columns, column_mapping=column_mapping)
+            # Apply schema update (sync + blocking: offload off the event loop).
+            changes = await run_in_threadpool(
+                db.update_metadata_schema, new_schema, drop_columns=drop_columns, column_mapping=column_mapping
+            )
 
             db_logger.log_query(
                 "update_metadata_schema_success",

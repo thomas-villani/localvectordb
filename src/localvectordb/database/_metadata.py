@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 from abc import ABC
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiosqlite
 import numpy as np
@@ -19,6 +19,9 @@ from localvectordb._pools import AsyncConnectionPool
 from localvectordb._schema import get_common_metadata_schemas
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database.base import LocalVectorDBBase
+
+if TYPE_CHECKING:
+    from localvectordb.database._ingest import _PendingFaissRemovals
 from localvectordb.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
@@ -482,7 +485,9 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                     (document_id, field_name, chunk_index, int(faiss_id)),
                 )
 
-    def _remove_metadata_embeddings(self, conn, document_id: str) -> None:
+    def _remove_metadata_embeddings(
+        self, conn, document_id: str, pending: Optional["_PendingFaissRemovals"] = None
+    ) -> None:
         cursor = conn.execute(
             """
             SELECT faiss_id FROM column_embeddings
@@ -492,7 +497,12 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         )
         faiss_ids = [row["faiss_id"] for row in cursor.fetchall()]
         if faiss_ids:
-            self._remove_old_vectors_bulk(faiss_ids)
+            # Metadata vectors live in the main index. Defer their removal to after
+            # the commit when a transaction is in flight (see _PendingFaissRemovals).
+            if pending is not None:
+                pending.main.extend(faiss_ids)
+            else:
+                self._remove_old_vectors_bulk(faiss_ids)
             conn.execute(
                 """
                 DELETE FROM column_embeddings
@@ -501,7 +511,9 @@ class MetadataMixin(LocalVectorDBBase, ABC):
                 (document_id,),
             )
 
-    async def _remove_metadata_embeddings_async(self, conn: aiosqlite.Connection, document_id: str) -> None:
+    async def _remove_metadata_embeddings_async(
+        self, conn: aiosqlite.Connection, document_id: str, pending: Optional["_PendingFaissRemovals"] = None
+    ) -> None:
         cursor = await conn.execute(
             """
             SELECT faiss_id FROM column_embeddings
@@ -512,8 +524,12 @@ class MetadataMixin(LocalVectorDBBase, ABC):
         rows = await cursor.fetchall()
         faiss_ids_to_remove = [row["faiss_id"] for row in rows]
         if faiss_ids_to_remove:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
+            if pending is not None:
+                # Defer the index removal until after the commit (see _PendingFaissRemovals).
+                pending.main.extend(faiss_ids_to_remove)
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
         await conn.execute(
             """
             DELETE FROM column_embeddings

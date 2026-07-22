@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from localvectordb._filters import FilterQueryBuilder
 from localvectordb.core import Chunk, ChunkPosition, Document, MetadataFieldType
+from localvectordb.database._ingest import _PendingFaissRemovals
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError, PatchConflictError
@@ -541,16 +542,22 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 updated_metadata.update(metadata)
                 self._validate_metadata_batch([updated_metadata])
                 changed_embedding_fields = self._get_changed_embedding_fields(existing_doc.metadata, updated_metadata)
+                # Deferred removals + added-vector tracking so a rollback leaves the
+                # index consistent with the rolled-back rows (see _PendingFaissRemovals).
+                pending_removals = _PendingFaissRemovals()
+                added_faiss_ids: List[int] = []
                 with self.connection_pool.get_connection() as conn:
                     conn.execute("BEGIN")
                     try:
                         if changed_embedding_fields:
-                            self._remove_metadata_embeddings(conn, doc_id)
+                            self._remove_metadata_embeddings(conn, doc_id, pending=pending_removals)
                             new_field_embeddings = self._generate_metadata_embeddings(
                                 updated_metadata, changed_embedding_fields, batch_size=100
                             )
                             if new_field_embeddings:
-                                self._store_metadata_embeddings(conn, doc_id, new_field_embeddings)
+                                added_faiss_ids.extend(
+                                    self._store_metadata_embeddings(conn, doc_id, new_field_embeddings)
+                                )
                                 logger.debug(
                                     f"Updated embeddings for {len(new_field_embeddings)} "
                                     f"metadata fields in document {doc_id}"
@@ -567,10 +574,23 @@ class CrudMixin(LocalVectorDBBase, ABC):
                         sql = f"UPDATE documents SET {', '.join(set_clauses)} WHERE id = ?"
                         conn.execute(sql, values)
                         conn.commit()
+                        # Drop replaced metadata vectors only after the durable commit.
+                        if pending_removals.main:
+                            self._remove_old_vectors_bulk(pending_removals.main)
                         logger.debug(f"Updated metadata for document {doc_id}")
                     except Exception:
                         conn.rollback()
+                        # Undo the vectors we added; leave the old (removed-deferred)
+                        # vectors in place so the restored rows are not left dangling.
+                        self._discard_faiss_ids_best_effort(added_faiss_ids)
                         raise
+                if changed_embedding_fields:
+                    # Re-embedding the metadata fields mutated the FAISS index in
+                    # RAM. Persist it now (as delete()/upsert do) so a crash before
+                    # the next save() cannot leave the just-committed rows pointing
+                    # at metadata vectors that exist only in memory.
+                    self._save_internal()
+                    self._save_faiss_counters()
                 return True
             return False
 
@@ -832,50 +852,54 @@ class CrudMixin(LocalVectorDBBase, ABC):
         self._require_writable("Deleting a document")
         self._require_deletable("Deleting a document")
         deleted_count = 0
-        async with self.async_connection_pool.get_connection_context() as conn:
-            placeholders = ",".join(["?" for _ in ids])
-            cursor = await conn.execute(
-                f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
-                ids,
-            )
-            faiss_ids = [row["faiss_id"] for row in await cursor.fetchall()]
+        # Hold the cross-thread write gate across the commit + index mutation so a
+        # concurrent backup snapshot cannot capture the SQLite delete without the
+        # matching FAISS removal (and vice versa). See _async_write_gate.
+        async with self._async_write_gate():
+            async with self.async_connection_pool.get_connection_context() as conn:
+                placeholders = ",".join(["?" for _ in ids])
+                cursor = await conn.execute(
+                    f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
+                    ids,
+                )
+                faiss_ids = [row["faiss_id"] for row in await cursor.fetchall()]
 
-            # Also collect metadata embedding FAISS IDs
-            # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
-            # when documents are deleted, but we need to collect their FAISS IDs first
-            cursor = await conn.execute(
-                f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
-                ids,
-            )
-            faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
+                # Also collect metadata embedding FAISS IDs
+                # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
+                # when documents are deleted, but we need to collect their FAISS IDs first
+                cursor = await conn.execute(
+                    f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
+                    ids,
+                )
+                faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
 
-            # Commit SQLite first, then remove the vectors -- matching the sync path.
-            # The reverse order (which this used to do) means a rollback leaves rows
-            # whose vectors are already gone: dangling rows, recoverable only by
-            # re-embedding. Committing first can only leave orphan vectors, which
-            # `repair` sweeps for free.
-            await conn.execute("BEGIN")
-            try:
-                await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
-                cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
-                deleted_count = cursor.rowcount or 0
-                await conn.commit()
-            except Exception:
-                await conn.rollback()
-                raise
+                # Commit SQLite first, then remove the vectors -- matching the sync path.
+                # The reverse order (which this used to do) means a rollback leaves rows
+                # whose vectors are already gone: dangling rows, recoverable only by
+                # re-embedding. Committing first can only leave orphan vectors, which
+                # `repair` sweeps for free.
+                await conn.execute("BEGIN")
+                try:
+                    await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
+                    cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
+                    deleted_count = cursor.rowcount or 0
+                    await conn.commit()
+                except Exception:
+                    await conn.rollback()
+                    raise
 
-            if faiss_ids and deleted_count:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
-        if deleted_count == 0:
-            if len(ids) == 1:
-                raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
-            else:
-                raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
+                if faiss_ids and deleted_count:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids)
+            if deleted_count == 0:
+                if len(ids) == 1:
+                    raise DocumentNotFoundError(f"Document with ID '{ids[0]}' not found")
+                else:
+                    raise DocumentNotFoundError(f"None of the {len(ids)} specified documents were found")
 
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._save_internal)
-        await loop.run_in_executor(None, self._save_faiss_counters)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._save_internal)
+            await loop.run_in_executor(None, self._save_faiss_counters)
         logger.info(f"Deleted {deleted_count} documents")
         return deleted_count
 
@@ -1046,45 +1070,62 @@ class CrudMixin(LocalVectorDBBase, ABC):
             await self._validate_metadata_async(updated_metadata)
             changed_embedding_fields = self._get_changed_embedding_fields(existing_doc.metadata, updated_metadata)
             assert self.async_connection_pool is not None
-            async with self.async_connection_pool.get_connection_context() as conn:
-                await conn.execute("BEGIN")
-                try:
-                    if changed_embedding_fields:
-                        await self._remove_metadata_embeddings_async(conn, doc_id)
-                        new_field_embeddings = await self._generate_metadata_embeddings_async(
-                            updated_metadata, changed_embedding_fields, batch_size=100
-                        )
-                        if new_field_embeddings:
-                            await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
-                            logger.debug(
-                                f"Updated embeddings for {len(new_field_embeddings)} "
-                                f"metadata fields in document {doc_id}"
+            # Deferred removals so a rollback cannot leave dangling rows (see
+            # _PendingFaissRemovals). Added metadata vectors that orphan on a
+            # rollback are the safe direction (repair sweeps them).
+            pending_removals = _PendingFaissRemovals()
+            # Gate the commit + metadata-embedding index mutation against a
+            # concurrent backup snapshot (see _async_write_gate).
+            async with self._async_write_gate():
+                async with self.async_connection_pool.get_connection_context() as conn:
+                    await conn.execute("BEGIN")
+                    try:
+                        if changed_embedding_fields:
+                            await self._remove_metadata_embeddings_async(conn, doc_id, pending=pending_removals)
+                            new_field_embeddings = await self._generate_metadata_embeddings_async(
+                                updated_metadata, changed_embedding_fields, batch_size=100
                             )
-                    set_clauses = ['"updated_at" = ?']
-                    values: list[Any] = [datetime.now(UTC)]
-                    for field_name, value in updated_metadata.items():
-                        if field_name in self.metadata_schema:
-                            # Validate and quote field name to prevent SQL injection
-                            quoted_field = _quote_identifier(field_name)
-                            set_clauses.append(f"{quoted_field} = ?")
-                            values.append(value)
-                    values.append(doc_id)
-                    update_sql = f"""
-                        UPDATE documents
-                        SET {', '.join(set_clauses)}
-                        WHERE id = ?
-                    """
-                    cursor = await conn.execute(update_sql, values)
-                    affected_rows = cursor.rowcount
-                    await conn.commit()
-                    if affected_rows > 0:
-                        changes_made = True
-                        logger.debug(f"Updated metadata for document {doc_id}")
-                    else:
-                        logger.warning(f"No rows affected when updating document {doc_id}")
-                except Exception:
-                    await conn.rollback()
-                    raise
+                            if new_field_embeddings:
+                                await self._store_metadata_embeddings_async(conn, doc_id, new_field_embeddings)
+                                logger.debug(
+                                    f"Updated embeddings for {len(new_field_embeddings)} "
+                                    f"metadata fields in document {doc_id}"
+                                )
+                        set_clauses = ['"updated_at" = ?']
+                        values: list[Any] = [datetime.now(UTC)]
+                        for field_name, value in updated_metadata.items():
+                            if field_name in self.metadata_schema:
+                                # Validate and quote field name to prevent SQL injection
+                                quoted_field = _quote_identifier(field_name)
+                                set_clauses.append(f"{quoted_field} = ?")
+                                values.append(value)
+                        values.append(doc_id)
+                        update_sql = f"""
+                            UPDATE documents
+                            SET {', '.join(set_clauses)}
+                            WHERE id = ?
+                        """
+                        cursor = await conn.execute(update_sql, values)
+                        affected_rows = cursor.rowcount
+                        await conn.commit()
+                        # Drop replaced metadata vectors only after the durable commit.
+                        if pending_removals.main:
+                            await asyncio.to_thread(self._remove_old_vectors_bulk, pending_removals.main)
+                        if affected_rows > 0:
+                            changes_made = True
+                            logger.debug(f"Updated metadata for document {doc_id}")
+                        else:
+                            logger.warning(f"No rows affected when updating document {doc_id}")
+                    except Exception:
+                        await conn.rollback()
+                        raise
+                if changed_embedding_fields:
+                    # H2 (async twin): persist the FAISS index mutated by the
+                    # metadata re-embedding so a crash before the next save() cannot
+                    # leave the committed rows pointing at RAM-only vectors.
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._save_internal)
+                    await loop.run_in_executor(None, self._save_faiss_counters)
         if not changes_made:
             logger.debug(f"No changes made to document {doc_id}")
         return changes_made

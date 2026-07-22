@@ -296,14 +296,14 @@ class TestChunkModeUnchanged:
 # Server request-model validation
 # ---------------------------------------------------------------------------
 class TestServerModelValidation:
-    def test_chunk_window_capped_at_20(self):
-        from pydantic import ValidationError
-
+    def test_chunk_window_not_capped(self):
+        # M2 (relax server to match local): local query() imposes no context_window
+        # ceiling, so the server must not either -- a value that succeeds locally must
+        # not 422 remotely. The old <=20-for-chunks cap was removed.
         from localvectordb_server.routers._models import QueryBody
 
-        # chunks unit keeps the small ceiling.
-        with pytest.raises(ValidationError):
-            QueryBody(query="x", context_unit="chunks", context_window=50)
+        body = QueryBody(query="x", context_unit="chunks", context_window=50)
+        assert body.context_window == 50
 
     def test_budget_window_allows_large_values(self):
         from localvectordb_server.routers._models import QueryBody

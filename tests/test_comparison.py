@@ -13,6 +13,7 @@ from localvectordb.core import (
     QueryResult,
 )
 from localvectordb.database import LocalVectorDB
+from localvectordb.exceptions import DocumentNotFoundError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,7 +121,9 @@ class TestCompareDocuments:
     def test_compare_missing_document_raises(self, temp_dir):
         db = _make_db(temp_dir)
         _seed_docs(db)
-        with pytest.raises(ValueError, match="nonexistent"):
+        # A genuinely missing document is a DocumentNotFoundError (-> 404 over
+        # HTTP), not a bare ValueError (which mapped to 500).
+        with pytest.raises(DocumentNotFoundError, match="nonexistent"):
             db.compare_documents("doc_0", "nonexistent")
         db.close()
 

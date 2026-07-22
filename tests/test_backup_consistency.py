@@ -20,6 +20,7 @@ mid-upsert could capture exactly the poisonous case. Passing the live database t
 duration of the snapshot, which closes that window.
 """
 
+import asyncio
 import threading
 import time
 
@@ -108,6 +109,71 @@ class TestLiveBackupConsistency:
             missing = dangling_rows(sqlite_path, faiss_path)
             assert not missing, f"backup {backup_id} has {len(missing)} dangling row(s): {sorted(missing)[:10]}"
 
+        db.close()
+
+    def test_backup_under_concurrent_async_writes_has_no_dangling_rows(self, tmp_path):
+        """H3: async mutators bypass the sync write lock, so the quiesce must also
+        hold the cross-thread write gate they honour -- otherwise an async write
+        lands mid-snapshot and produces dangling rows."""
+        db = make_db(tmp_path, name="async_backup_test")
+        db.upsert(documents=[f"seed document {i}" for i in range(5)], ids=[f"seed{i}" for i in range(5)])
+
+        manager = BackupManager(db.db_path, db=db)
+        manager.config = BackupConfig(backup_location=tmp_path / "backups")
+
+        stop = threading.Event()
+        errors = []
+        WRITES = 20
+
+        def async_writer():
+            async def run():
+                for n in range(WRITES):
+                    if stop.is_set():
+                        return
+                    try:
+                        await db.upsert_async(documents=[f"async document {n}"], ids=[f"aw{n}"])
+                        await asyncio.sleep(0.01)
+                    except Exception as e:  # pragma: no cover - surfaced below
+                        errors.append(e)
+                        return
+
+            asyncio.run(run())
+
+        t = threading.Thread(target=async_writer, name="AsyncBackupWriter", daemon=True)
+        t.start()
+        try:
+            backup_ids = [manager.create_backup(BackupType.FULL) for _ in range(2)]
+        finally:
+            stop.set()
+            t.join(timeout=60)
+
+        assert not errors, f"async writer thread failed: {errors[0]!r}"
+
+        for backup_id in backup_ids:
+            restore_dir = tmp_path / f"restore_async_{backup_id[:8]}"
+            manager.restore_backup(backup_id, restore_dir, overwrite_existing=True)
+            missing = dangling_rows(restore_dir / f"{db.name}.sqlite", restore_dir / f"{db.name}.faiss")
+            assert not missing, f"backup {backup_id} has {len(missing)} dangling row(s): {sorted(missing)[:10]}"
+
+        db.close()
+
+    async def test_async_write_blocks_while_write_gate_held(self, tmp_path):
+        """Deterministic proof the gate excludes async writers: with the gate held
+        (as the quiesce holds it), an async upsert cannot make progress."""
+        db = make_db(tmp_path, name="gate_block_test")
+        # Warm the async pool so upsert_async's only wait is the gate, not setup.
+        await db.upsert_async(documents=["warmup"], ids=["warm"])
+
+        db._write_gate.acquire()  # stand in for a backup quiesce holding the gate
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(db.upsert_async(documents=["blocked document"], ids=["blocked"]), timeout=0.5)
+        finally:
+            db._write_gate.release()
+
+        # With the gate free the same write now succeeds.
+        result = await db.upsert_async(documents=["now allowed"], ids=["blocked"])
+        assert result == ["blocked"]
         db.close()
 
     def test_quiesce_flushes_a_dirty_index_before_copying(self, tmp_path):

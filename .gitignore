@@ -43,6 +43,7 @@ remote-layer-streaming.md
 hierarchical-test-plan.md
 hierarchical-test-findings.md
 patch-api-plan.md
+AUDIT.md
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

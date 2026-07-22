@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends
 from pydantic import Field
+from starlette.concurrency import run_in_threadpool
 
 from localvectordb_server._auth import require_read_permission, require_write_permission
 from localvectordb_server._error_handlers import ValidationError
@@ -158,11 +159,11 @@ async def set_sqlite_tuning(db_name: str, body: SetTuningBody, db=Depends(get_db
                 persist=persist,
             )
 
-            # Apply tuning
-            db.set_sqlite_tuning(profile, overrides, persist)
+            # Apply tuning (sync + blocking: offload off the event loop).
+            await run_in_threadpool(db.set_sqlite_tuning, profile, overrides, persist)
 
             # Get updated configuration
-            new_config = db.get_sqlite_tuning()
+            new_config = await run_in_threadpool(db.get_sqlite_tuning)
 
             tuning_db_logger.log_query("set_sqlite_tuning_success", database_name=db_name, profile=profile)
 
@@ -198,8 +199,8 @@ async def sqlite_checkpoint(db_name: str, body: Optional[CheckpointBody] = None,
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("sqlite_checkpoint", database_name=db_name, mode=mode)
 
-            # Run checkpoint
-            db.sqlite_checkpoint(mode)
+            # Run checkpoint (sync + blocking: offload off the event loop).
+            await run_in_threadpool(db.sqlite_checkpoint, mode)
 
             tuning_db_logger.log_query("sqlite_checkpoint_success", database_name=db_name, mode=mode)
 
@@ -228,8 +229,8 @@ async def sqlite_optimize(db_name: str, db=Depends(get_db)):
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("sqlite_optimize", database_name=db_name)
 
-            # Run optimize
-            db.sqlite_optimize()
+            # Run optimize (sync + blocking: offload off the event loop).
+            await run_in_threadpool(db.sqlite_optimize)
 
             tuning_db_logger.log_query("sqlite_optimize_success", database_name=db_name)
 
@@ -257,8 +258,8 @@ async def sqlite_vacuum(db_name: str, db=Depends(get_db)):
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("sqlite_vacuum", database_name=db_name)
 
-            # Run vacuum
-            db.sqlite_vacuum()
+            # Run vacuum (sync + blocking, can be very slow: offload off the loop).
+            await run_in_threadpool(db.sqlite_vacuum)
 
             tuning_db_logger.log_query("sqlite_vacuum_success", database_name=db_name)
 
@@ -293,8 +294,8 @@ async def sqlite_incremental_vacuum(db_name: str, body: Optional[IncrementalVacu
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("sqlite_incremental_vacuum", database_name=db_name, pages=pages)
 
-            # Run incremental vacuum
-            db.sqlite_incremental_vacuum(pages)
+            # Run incremental vacuum (sync + blocking: offload off the loop).
+            await run_in_threadpool(db.sqlite_incremental_vacuum, pages)
 
             tuning_db_logger.log_query("sqlite_incremental_vacuum_success", database_name=db_name, pages=pages)
 
@@ -331,8 +332,10 @@ async def auto_tune_database(db_name: str, body: Optional[AutoTuneBody] = None, 
                 has_workload=workload is not None,
             )
 
-            # Get auto-tuning recommendations
-            recommendation = db.auto_tune(workload=workload, interactive=False, apply=apply_settings)
+            # Get auto-tuning recommendations (sync + blocking: offload off the loop).
+            recommendation = await run_in_threadpool(
+                db.auto_tune, workload=workload, interactive=False, apply=apply_settings
+            )
 
             tuning_db_logger.log_query(
                 "auto_tune_database_success",
@@ -372,8 +375,8 @@ async def checkpoint_if_wal_large(db_name: str, body: Optional[CheckpointIfLarge
             tuning_db_logger = DatabaseLogger.get_logger(db_name)
             tuning_db_logger.log_query("checkpoint_if_wal_large", database_name=db_name, threshold_mb=threshold_mb)
 
-            # Check and checkpoint if needed
-            checkpointed = db.checkpoint_if_wal_large(threshold_mb)
+            # Check and checkpoint if needed (sync + blocking: offload off the loop).
+            checkpointed = await run_in_threadpool(db.checkpoint_if_wal_large, threshold_mb)
 
             tuning_db_logger.log_query(
                 "checkpoint_if_wal_large_success",

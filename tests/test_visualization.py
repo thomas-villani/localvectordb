@@ -97,6 +97,29 @@ class TestReduceDimensions:
         assert proj.method == "pca"
         assert proj.coordinates.shape[0] == 2
 
+    def test_single_sample_tsne_pads_to_n_components(self):
+        # H7: a single-document DB collapses PCA to 1 component; coordinates must
+        # still be padded to n_components so consumers can index coords[:, 1].
+        embs = np.random.randn(1, 10).astype(np.float32)
+        proj = reduce_dimensions(embs, method="tsne")
+        assert proj.coordinates.shape == (1, 2)
+
+    def test_single_sample_pca_pads_to_n_components(self):
+        embs = np.random.randn(1, 10).astype(np.float32)
+        proj = reduce_dimensions(embs, method="pca")
+        assert proj.coordinates.shape == (1, 2)
+
+    def test_single_sample_pads_3d(self):
+        embs = np.random.randn(1, 10).astype(np.float32)
+        proj = reduce_dimensions(embs, method="pca", n_components=3)
+        assert proj.coordinates.shape == (1, 3)
+
+    def test_embedding_dim_below_n_components_pads(self):
+        # An embedding dimension smaller than n_components also under-produces columns.
+        embs = np.random.randn(5, 1).astype(np.float32)
+        proj = reduce_dimensions(embs, method="pca", n_components=2)
+        assert proj.coordinates.shape == (5, 2)
+
 
 @pytest.mark.unit
 class TestProjectNewPoints:
@@ -204,6 +227,22 @@ class TestPlotEmbeddingMap:
             doc_ids=[],
         )
         fig = plot_embedding_map(proj)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_single_document_default_tsne_does_not_crash(self):
+        # H7: the default tsne path on a single-document DB used to IndexError at
+        # coords[:, 1]. Padding keeps the whole plot path (dots + query overlay) alive.
+        embs = np.random.randn(1, 32).astype(np.float32)
+        proj = reduce_dimensions(embs, method="tsne", doc_ids=["only_doc"])
+        q = QueryOverlay(
+            query_text="q",
+            query_embedding=np.random.randn(32).astype(np.float32),
+            scores=np.array([0.9], dtype=np.float32),
+        )
+        fig = plot_embedding_map(proj, queries=[q])
         assert fig is not None
         import matplotlib.pyplot as plt
 

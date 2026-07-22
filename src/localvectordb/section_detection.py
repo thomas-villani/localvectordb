@@ -140,7 +140,10 @@ class SectionDetector:
             preamble_text = text[:first_match_start].strip()
             if preamble_text:
                 start_line = 1
-                end_line = text[:first_match_start].count("\n") + 1
+                # end_pos is the next header's start, so the raw slice runs to
+                # the blank line before that header; report the last line that
+                # actually holds preamble content, not the header's own line.
+                end_line = text[:first_match_start].rstrip().count("\n") + 1
                 sections.append(
                     SectionBoundary(
                         index=section_index,
@@ -171,7 +174,11 @@ class SectionDetector:
                 end_pos = len(text)
 
             start_line = text[:start_pos].count("\n") + 1
-            end_line = text[:end_pos].count("\n") + 1
+            # end_pos is the *next* header's start (kept contiguous for chunk
+            # assignment), so deriving end_line straight from it overshoots into
+            # the next header's line. Count lines within this section's own body,
+            # ignoring the trailing blank lines that lead up to the next header.
+            end_line = start_line + text[start_pos:end_pos].rstrip().count("\n")
 
             sections.append(
                 SectionBoundary(

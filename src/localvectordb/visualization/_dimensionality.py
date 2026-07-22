@@ -11,6 +11,23 @@ from sklearn.manifold import TSNE
 from localvectordb.visualization.types import EmbeddingProjection
 
 
+def _pad_to_components(coords: np.ndarray, n_components: int) -> np.ndarray:
+    """Zero-pad projected coordinates up to ``n_components`` columns.
+
+    Degenerate inputs — a single sample, or an embedding dimension smaller than
+    ``n_components`` — make PCA/t-SNE emit fewer columns than requested. Consumers
+    index ``coords[:, 1]`` (and ``[:, 2]`` for 3-D) unconditionally, so pad to a
+    stable width here rather than letting every plot path ``IndexError``.
+    """
+    if coords.ndim != 2:
+        coords = coords.reshape(coords.shape[0], -1)
+    have = coords.shape[1]
+    if have >= n_components:
+        return coords
+    pad = np.zeros((coords.shape[0], n_components - have), dtype=coords.dtype)
+    return np.hstack([coords, pad])
+
+
 def reduce_dimensions(
     embeddings: np.ndarray,
     method: str = "tsne",
@@ -53,12 +70,14 @@ def reduce_dimensions(
         effective_components = min(n_components, n_samples, embeddings.shape[1])
         pca = PCA(n_components=effective_components, **kwargs)
         coords = pca.fit_transform(embeddings)
+        # A degenerate projection (e.g. a single document) yields fewer than
+        # ``n_components`` columns; pad so downstream ``coords[:, 1]`` is valid.
         return EmbeddingProjection(
-            coordinates=coords,
+            coordinates=_pad_to_components(coords, n_components),
             method="pca",
             doc_ids=doc_ids,
             transformer=pca,
-            n_components=effective_components,
+            n_components=n_components,
             explained_variance=pca.explained_variance_ratio_,
         )
 
@@ -70,7 +89,7 @@ def reduce_dimensions(
             return reduce_dimensions(embeddings, method="pca", n_components=n_components, doc_ids=doc_ids, **kwargs)
 
         tsne = TSNE(n_components=n_components, perplexity=perplexity, **kwargs)
-        coords = tsne.fit_transform(embeddings)
+        coords = _pad_to_components(tsne.fit_transform(embeddings), n_components)
 
         # Store a PCA fallback transformer for projecting new query points
         # (t-SNE cannot natively transform unseen data)
@@ -115,9 +134,9 @@ def project_new_points(projection: EmbeddingProjection, new_embeddings: np.ndarr
     """
     if projection.method == "pca":
         result: np.ndarray = projection.transformer.transform(new_embeddings)
-        return result
+        return _pad_to_components(result, projection.n_components)
     if projection.method == "tsne":
         pca_fallback = projection.transformer["pca_fallback"]
         result_tsne: np.ndarray = pca_fallback.transform(new_embeddings)
-        return result_tsne
+        return _pad_to_components(result_tsne, projection.n_components)
     raise ValueError(f"Cannot project new points for method '{projection.method}'")

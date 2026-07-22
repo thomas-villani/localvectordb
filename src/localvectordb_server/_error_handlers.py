@@ -11,6 +11,7 @@ from localvectordb.exceptions import (
     ConfigurationError,
     ConnectionPoolError,
     DatabaseNotFoundError,
+    DocumentNotFoundError,
     DuplicateDocumentIDError,
     EmbeddingError,
     MetadataFilterError,
@@ -107,6 +108,11 @@ def standardize_error_response(
 
     if isinstance(error, DatabaseNotFoundError):
         api_error = APIError(message=str(error), error_code="DATABASE_NOT_FOUND", status_code=404, recoverable=True)
+    elif isinstance(error, DocumentNotFoundError):
+        # A missing document is a client-addressable 404, not a server fault.
+        # Without this branch it falls through to BaseLocalVectorDBException -> 500
+        # (e.g. comparison endpoints and multi-get of an unknown id).
+        api_error = APIError(message=str(error), error_code="DOCUMENT_NOT_FOUND", status_code=404, recoverable=True)
     elif isinstance(error, DuplicateDocumentIDError):
         api_error = APIError(message=str(error), error_code="DUPLICATE_DOCUMENT_ID", status_code=409, recoverable=True)
     elif isinstance(error, PatchConflictError):

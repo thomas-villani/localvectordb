@@ -66,8 +66,13 @@ def serve(mode, config, databases_root, databases_map, log_level):
 
     click.echo(f"Starting LocalVectorDB MCP server in {mode} mode...", err=True)
 
-    # Import and run server
-    from localvectordb_server.mcp.server import run_mcp_server
+    # Import and run server. The MCP server dependencies ship in the optional
+    # ``mcp`` extra, so give the same friendly hint ``test``/``status`` would
+    # rather than dumping a raw ImportError traceback.
+    try:
+        from localvectordb_server.mcp.server import run_mcp_server
+    except ImportError as e:
+        error(f"MCP server dependencies are not installed ({e}). " "Install them with `uv sync --dev --extra mcp`.")
 
     asyncio.run(run_mcp_server(mode=mode))
 

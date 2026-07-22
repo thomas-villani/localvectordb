@@ -312,6 +312,48 @@ class TestIncrementalBackup:
 
         restored_db.close()
 
+    def test_incremental_restore_refuses_to_clobber_existing(self, incremental_manager, sample_database, temp_dirs):
+        """H5: without overwrite_existing, an incremental restore must not destroy
+        a database that already lives at the restore location."""
+        full_backup_id = incremental_manager.backup_manager.create_backup(BackupType.FULL)
+        sample_database.upsert(["Incremental document 1"], metadata=[{"category": "inc1", "priority": 1}])
+        sample_database.save()
+        inc_backup_id = incremental_manager.create_incremental_backup(full_backup_id)
+
+        # A live DB already sits at the restore target.
+        live_db = temp_dirs["restore"] / "test.sqlite"
+        live_db.write_text("PRECIOUS PRODUCTION DATA")
+
+        with pytest.raises(ValueError, match="already exist"):
+            incremental_manager.restore_incremental_backup_chain(inc_backup_id, temp_dirs["restore"])
+
+        # The guard fired before any move: the live file is untouched.
+        assert live_db.read_text() == "PRECIOUS PRODUCTION DATA"
+
+    def test_incremental_restore_overwrites_when_opted_in(self, incremental_manager, sample_database, temp_dirs):
+        """H5: overwrite_existing=True still allows an intentional overwrite."""
+        full_backup_id = incremental_manager.backup_manager.create_backup(BackupType.FULL)
+        sample_database.upsert(["Incremental document 1"], metadata=[{"category": "inc1", "priority": 1}])
+        sample_database.save()
+        inc_backup_id = incremental_manager.create_incremental_backup(full_backup_id)
+
+        (temp_dirs["restore"] / "test.sqlite").write_text("stale")
+
+        restore_path = incremental_manager.restore_incremental_backup_chain(
+            inc_backup_id, temp_dirs["restore"], overwrite_existing=True
+        )
+        assert restore_path == temp_dirs["restore"]
+
+        restored_db = LocalVectorDB(
+            "test",
+            str(temp_dirs["restore"]),
+            create_if_not_exists=False,
+            embedding_provider="mock",
+            embedding_model="mock-model",
+        )
+        assert len(restored_db.filter()) >= 4  # original 3 + 1 incremental
+        restored_db.close()
+
 
 @pytest.mark.unit
 class TestPointInTimeRecovery:

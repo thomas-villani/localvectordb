@@ -26,6 +26,7 @@ from localvectordb.database._span_embed import embed_spans_pooled
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import (
     DuplicateDocumentIDError,
+    IngestError,
 )
 from localvectordb.extractors import ExtractorRegistry
 from localvectordb.section_detection import SectionDetector
@@ -39,6 +40,32 @@ if TYPE_CHECKING:
     from localvectordb.chunking import PositionTrackingChunker
 
 logger = logging.getLogger(__name__)
+
+
+def _finalize_ingest_result(
+    result_ids: List[str],
+    failures: Dict[str, str],
+    errors: Literal["ignore", "raise"],
+) -> List[str]:
+    """Apply the ``errors`` contract to a completed ingest (H12).
+
+    Every ingest pipeline is best-effort internally: it commits each document in
+    its own transaction and records per-document embed/write failures in
+    ``failures`` instead of silently dropping them. This decides what the caller
+    sees: ``errors="raise"`` (default) raises ``IngestError`` naming the failed
+    IDs (the succeeded documents stay committed); ``errors="ignore"`` returns only
+    the IDs that landed. Sync and async share this so their contracts agree.
+    """
+    if failures and errors == "raise":
+        failed_ids = ", ".join(sorted(failures))
+        raise IngestError(
+            f"{len(failures)} document(s) failed to ingest: {failed_ids}. "
+            f"{len(result_ids)} succeeded and are committed. "
+            f"Pass errors='ignore' for best-effort ingestion.",
+            failures=dict(failures),
+            succeeded=list(result_ids),
+        )
+    return result_ids
 
 
 class ChunkBatchAccumulator:
@@ -185,6 +212,32 @@ class ChunkBatchAccumulator:
                 del self.pending_docs[doc_key]
 
         return completed_docs
+
+
+class _PendingFaissRemovals:
+    """Old FAISS ids whose SQLite rows are deleted in the current upsert transaction
+    but whose *index* removal is deferred until after the commit.
+
+    Deferring upholds the dual-store rule "prefer orphan vectors, never dangling
+    rows": if the transaction rolls back, the old rows AND their old vectors are
+    both kept (consistent); on a successful commit the now-unreferenced vectors are
+    dropped (a crash before that only orphans them, which ``repair`` sweeps). The
+    reverse order -- removing vectors before the commit -- means a rollback restores
+    rows whose vectors are already gone, i.e. dangling rows recoverable only by
+    re-embedding. Ids are grouped by their owning index (main / section / document).
+    """
+
+    __slots__ = ("main", "section", "document")
+
+    def __init__(self) -> None:
+        self.main: List[int] = []
+        self.section: List[int] = []
+        self.document: List[int] = []
+
+    def clear(self) -> None:
+        self.main.clear()
+        self.section.clear()
+        self.document.clear()
 
 
 class PipelineMixin(LocalVectorDBBase, ABC):
@@ -388,6 +441,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         ids: Optional[Union[str, List[str]]] = None,
         batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         """
         Insert or update documents in the database with pipeline processing
@@ -409,6 +463,11 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             Batch size for processing, by default 100
         similarity_threshold : Optional[float]
             Skip adding chunks that are more similar than this value
+        errors : Literal["ignore", "raise"]
+            How to handle a document that fails to embed or write. ``"raise"``
+            (default) raises :class:`IngestError` naming the failed IDs after the
+            documents that succeeded are committed; ``"ignore"`` returns only the
+            IDs that landed.
 
         Returns
         -------
@@ -433,13 +492,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             ids = [(self._generate_doc_id() if i is None else i) for i in ids]
             self._validate_metadata_batch(metadata)
             batch_size = batch_size or self.batch_size
-            result_ids = self._process_with_pipeline(
+            result_ids, failures = self._process_with_pipeline(
                 documents, metadata, ids, batch_size, similarity_threshold, mode="upsert"
             )
             self._save_next_doc_id()
             self._save_faiss_counters()
             self._save_internal()
-            return result_ids
+            # Persist first, then honour the errors= contract (H12) so a raise never
+            # leaves committed rows pointing at unsaved vectors.
+            return _finalize_ingest_result(result_ids, failures, errors)
 
     def upsert_from_file(
         self,
@@ -531,6 +592,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         metadata: Optional[Dict[str, Dict[str, Any]]] = None,
         batch_size: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
+        errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         """
         Insert or update documents from pre-chunked data with pipeline processing.
@@ -577,7 +639,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if not normalized_chunks_by_document:
                 return []
             batch_size = batch_size or self.batch_size
-            result_ids = self._process_from_chunks_pipeline(
+            result_ids, failures = self._process_from_chunks_pipeline(
                 normalized_chunks_by_document,
                 metadata_batch,
                 batch_size,
@@ -587,7 +649,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self._save_next_doc_id()
             self._save_faiss_counters()
             self._save_internal()
-            return result_ids
+            return _finalize_ingest_result(result_ids, failures, errors)
 
     def insert(
         self,
@@ -660,13 +722,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             meta_to_process = [d[1] for d in docs_to_insert]
             ids_to_process = [d[2] for d in docs_to_insert]
             batch_size = batch_size or self.batch_size
-            result_ids = self._process_with_pipeline(
+            result_ids, failures = self._process_with_pipeline(
                 docs_to_process, meta_to_process, ids_to_process, batch_size, similarity_threshold, mode="insert"
             )
             self._save_next_doc_id()
             self._save_faiss_counters()
             self._save_internal()
-            return result_ids
+            return _finalize_ingest_result(result_ids, failures, errors)
 
     def insert_from_file(
         self,
@@ -834,7 +896,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if not normalized_chunks_by_document:
                 return []
             effective_batch_size = batch_size or self.batch_size
-            result_ids = self._process_from_chunks_pipeline(
+            result_ids, failures = self._process_from_chunks_pipeline(
                 normalized_chunks_by_document,
                 metadata_to_insert,
                 effective_batch_size,
@@ -844,7 +906,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             self._save_next_doc_id()
             self._save_faiss_counters()
             self._save_internal()
-            return result_ids
+            return _finalize_ingest_result(result_ids, failures, errors)
 
     # ------------------
     # Chunk normalization
@@ -1020,7 +1082,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         similarity_threshold: Optional[float],
         # queue_size: int = 3,
         mode: Literal["upsert", "insert"] = "upsert",
-    ) -> List[str]:
+    ) -> Tuple[List[str], Dict[str, str]]:
         # Fail fast and synchronously: the write below happens in a worker thread whose
         # exception would not reach the caller, so guard before the pipeline spawns.
         self._require_writable("Ingesting documents")
@@ -1033,6 +1095,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         result_queue: queue.Queue = queue.Queue()
         total_docs = len(documents)
+        # Per-document ingest failures recorded by the database worker (H12); the
+        # caller applies the errors= contract via _finalize_ingest_result.
+        failures: Dict[str, str] = {}
 
         def chunking_worker():
             try:
@@ -1245,13 +1310,31 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     # index is not covered by the SQLite transaction, so a rollback must
                     # compensate for them explicitly or they become orphan vectors.
                     txn_faiss_ids: List[int] = []
+                    # Old FAISS ids whose SQLite rows were deleted this transaction but
+                    # whose index removal is deferred until the commit succeeds, so a
+                    # rollback cannot leave dangling rows (see _PendingFaissRemovals).
+                    pending_removals = _PendingFaissRemovals()
+                    # Whether a batch transaction is currently open. Tracked separately
+                    # from docs_in_txn because a per-document failure rolls that doc back
+                    # to its SAVEPOINT (H12) but leaves the batch transaction open with
+                    # zero committed docs.
+                    txn_open = False
 
                     def flush() -> None:
-                        nonlocal docs_in_txn
-                        if docs_in_txn > 0:
+                        nonlocal docs_in_txn, txn_open
+                        if txn_open:
                             conn.commit()
-                            docs_in_txn = 0
+                            txn_open = False
+                            # Drop replaced vectors only AFTER the commit is durable.
+                            if pending_removals.main:
+                                self._remove_old_vectors_bulk(pending_removals.main)
+                            if pending_removals.section:
+                                self._remove_section_vectors(pending_removals.section)
+                            if pending_removals.document:
+                                self._remove_document_vectors(pending_removals.document)
+                        docs_in_txn = 0
                         txn_faiss_ids.clear()
+                        pending_removals.clear()
                         for did in pending_doc_ids:
                             result_queue.put(did)
                         pending_doc_ids.clear()
@@ -1297,46 +1380,74 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 )
                             ]
                             chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
-                            if docs_in_txn == 0:
+                            if not txn_open:
                                 conn.execute("BEGIN")
+                                txn_open = True
                                 txn_faiss_ids.clear()
+                                pending_removals.clear()
+                            # Isolate each document in a SAVEPOINT (H12): a per-document
+                            # failure rolls back only that doc while its batch-mates stay
+                            # in the open transaction and commit at the next flush, so a
+                            # bad doc no longer silently discards a whole batch. Track this
+                            # doc's index mutations separately so a rollback compensates
+                            # exactly them.
+                            doc_faiss_ids: List[int] = []
+                            doc_pending = _PendingFaissRemovals()
+                            conn.execute("SAVEPOINT doc")
                             try:
                                 if mode == "upsert":
-                                    self._remove_metadata_embeddings(conn, chunk_data["doc_id"])
+                                    # Defer the index removals to after the commit; the
+                                    # SQLite row deletes still happen in the transaction.
+                                    self._remove_metadata_embeddings(conn, chunk_data["doc_id"], pending=doc_pending)
                                     self._remove_old_chunks_batch(
                                         conn,
                                         chunk_data["doc_id"],
                                         chunk_data["chunk_indices_to_remove"],
                                         chunk_data["faiss_ids_to_remove"],
+                                        pending=doc_pending,
                                     )
                                     # Remove old sections and their FAISS vectors
                                     if self._hierarchical_embeddings:
-                                        self._remove_sections_for_document(conn, chunk_data["doc_id"])
+                                        self._remove_sections_for_document(
+                                            conn, chunk_data["doc_id"], pending=doc_pending
+                                        )
                                 self._insert_documents_bulk(conn, documents_data, mode=db_mode)
                                 if new_embeddings.size > 0:
                                     self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
-                                    txn_faiss_ids.extend(
+                                    doc_faiss_ids.extend(
                                         c.faiss_id for c in chunks_needing_embedding if c.faiss_id is not None
                                     )
                                 self._insert_chunks_bulk(conn, chunks_data)
                                 if field_embeddings:
-                                    txn_faiss_ids.extend(
+                                    doc_faiss_ids.extend(
                                         self._store_metadata_embeddings(conn, chunk_data["doc_id"], field_embeddings)
                                     )
                                 # Hierarchical: store sections and update indices
                                 if self._hierarchical_embeddings:
                                     self._store_hierarchical_data(conn, chunk_data, all_chunks)
+                                conn.execute("RELEASE doc")
+                                # Doc committed to the savepoint: promote its index
+                                # mutations to the batch so the next flush applies them.
+                                txn_faiss_ids.extend(doc_faiss_ids)
+                                pending_removals.main.extend(doc_pending.main)
+                                pending_removals.section.extend(doc_pending.section)
+                                pending_removals.document.extend(doc_pending.document)
                                 docs_in_txn += 1
-                            except Exception:
-                                conn.rollback()
-                                # Undo every main-index vector added since BEGIN: rollback
-                                # discards the rows, so without this the vectors orphan.
-                                self._discard_faiss_ids_best_effort(list(txn_faiss_ids))
-                                txn_faiss_ids.clear()
-                                docs_in_txn = 0
-                                pending_doc_ids.clear()
-                                raise
-                        pending_doc_ids.append(chunk_data["doc_id"])
+                                pending_doc_ids.append(chunk_data["doc_id"])
+                            except Exception as e:  # noqa: BLE001 - recorded, not swallowed
+                                # Undo only this doc: ROLLBACK TO restores the rows it
+                                # touched (including any old rows it deleted), so its old
+                                # vectors must stay (doc_pending is dropped) and the new
+                                # vectors it added must be discarded.
+                                conn.execute("ROLLBACK TO doc")
+                                conn.execute("RELEASE doc")
+                                self._discard_faiss_ids_best_effort(list(doc_faiss_ids))
+                                failures[chunk_data["doc_id"]] = str(e)
+                                logger.error(f"Error ingesting document {chunk_data['doc_id']}: {e}")
+                        else:
+                            # Insert-mode doc that produced zero chunks: a no-op that is
+                            # still reported as processed (preserves prior behaviour).
+                            pending_doc_ids.append(chunk_data["doc_id"])
                         if docs_in_txn >= commit_batch_size:
                             flush()
                         embedding_queue.task_done()
@@ -1368,7 +1479,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         f"Worker {w.name} did not exit within "
                         f"{self.pipeline_worker_timeout} seconds, may be blocked"
                     )
-        return processed_ids
+        return processed_ids, failures
 
     def _process_from_chunks_pipeline(
         self,
@@ -1377,7 +1488,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         batch_size: int,
         similarity_threshold: Optional[float],
         mode: Literal["upsert", "insert"] = "upsert",
-    ) -> List[str]:
+    ) -> Tuple[List[str], Dict[str, str]]:
         # Fail fast and synchronously: the write below happens in a worker thread whose
         # exception would not reach the caller, so guard before the pipeline spawns.
         self._require_writable("Ingesting documents")
@@ -1390,6 +1501,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         embedding_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         result_queue: queue.Queue = queue.Queue()
         total_docs = len(doc_ids)
+        # Per-document ingest failures recorded by the database worker (H12).
+        failures: Dict[str, str] = {}
 
         def chunk_comparison_worker():
             try:
@@ -1504,70 +1617,94 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         def database_worker():
             try:
                 processed_ids = []
-                while len(processed_ids) < total_docs:
+                # Count docs consumed (success OR failure) so a recorded failure does
+                # not leave the loop waiting on an item that will never arrive (H12).
+                consumed = 0
+                while consumed < total_docs:
                     chunk_data = result_queue.get()
                     if chunk_data is None:
                         break
-                    unchanged_chunks = chunk_data["unchanged_chunks"]
-                    chunks_needing_embedding = chunk_data["chunks_needing_embedding"]
-                    new_embeddings = chunk_data["new_embeddings"]
-                    field_embeddings = chunk_data["field_embeddings"]
-                    if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
-                        doc_info = (
-                            chunk_data["doc_text"],
-                            chunk_data["metadata"],
-                            chunk_data["doc_id"],
-                            chunk_data["content_hash"],
-                        )
-                        doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
-                        filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
-                            new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
-                        )
-                        chunks_needing_embedding = filtered_chunks
-                        new_embeddings = filtered_embeddings
-                    all_chunks = unchanged_chunks + chunks_needing_embedding
-                    if len(all_chunks) > 0 or mode == "upsert":
-                        documents_data = [
-                            (
-                                chunk_data["doc_id"],
+                    consumed += 1
+                    doc_id = chunk_data["doc_id"]
+                    # Best-effort per document: each doc is its own transaction, so a
+                    # failure rolls back only that doc; record it and continue.
+                    try:
+                        unchanged_chunks = chunk_data["unchanged_chunks"]
+                        chunks_needing_embedding = chunk_data["chunks_needing_embedding"]
+                        new_embeddings = chunk_data["new_embeddings"]
+                        field_embeddings = chunk_data["field_embeddings"]
+                        if similarity_threshold is not None and len(chunks_needing_embedding) > 0:
+                            doc_info = (
                                 chunk_data["doc_text"],
-                                chunk_data["content_hash"],
                                 chunk_data["metadata"],
+                                chunk_data["doc_id"],
+                                chunk_data["content_hash"],
                             )
-                        ]
-                        chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
-                        with self.connection_pool.get_connection() as conn:
-                            conn.execute("BEGIN")
-                            # The in-RAM FAISS index is outside this transaction; track
-                            # what we add so a rollback can undo it.
-                            txn_faiss_ids: List[int] = []
-                            try:
-                                if mode == "upsert":
-                                    self._remove_metadata_embeddings(conn, chunk_data["doc_id"])
-                                    self._remove_old_chunks_batch(
-                                        conn,
-                                        chunk_data["doc_id"],
-                                        chunk_data["chunk_indices_to_remove"],
-                                        chunk_data["faiss_ids_to_remove"],
-                                    )
-                                self._insert_documents_bulk(conn, documents_data, mode=db_mode)
-                                if new_embeddings.size > 0:
-                                    self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
-                                    txn_faiss_ids.extend(
-                                        c.faiss_id for c in chunks_needing_embedding if c.faiss_id is not None
-                                    )
-                                self._insert_chunks_bulk(conn, chunks_data)
-                                if field_embeddings:
-                                    txn_faiss_ids.extend(
-                                        self._store_metadata_embeddings(conn, chunk_data["doc_id"], field_embeddings)
-                                    )
-                                conn.commit()
-                            except Exception:
-                                conn.rollback()
-                                self._discard_faiss_ids_best_effort(txn_faiss_ids)
-                                raise
-                    processed_ids.append(chunk_data["doc_id"])
-                    result_queue.task_done()
+                            doc_chunk_mapping = [doc_info] * len(chunks_needing_embedding)
+                            filtered_chunks, filtered_embeddings, _ = self._filter_similar_chunks_vectorized(
+                                new_embeddings, chunks_needing_embedding, doc_chunk_mapping, similarity_threshold
+                            )
+                            chunks_needing_embedding = filtered_chunks
+                            new_embeddings = filtered_embeddings
+                        all_chunks = unchanged_chunks + chunks_needing_embedding
+                        if len(all_chunks) > 0 or mode == "upsert":
+                            documents_data = [
+                                (
+                                    chunk_data["doc_id"],
+                                    chunk_data["doc_text"],
+                                    chunk_data["content_hash"],
+                                    chunk_data["metadata"],
+                                )
+                            ]
+                            chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
+                            with self.connection_pool.get_connection() as conn:
+                                conn.execute("BEGIN")
+                                # The in-RAM FAISS index is outside this transaction; track
+                                # what we add so a rollback can undo it.
+                                txn_faiss_ids: List[int] = []
+                                # Old vectors to drop only after the commit succeeds, so a
+                                # rollback cannot leave dangling rows (see _PendingFaissRemovals).
+                                pending_removals = _PendingFaissRemovals()
+                                try:
+                                    if mode == "upsert":
+                                        self._remove_metadata_embeddings(
+                                            conn, chunk_data["doc_id"], pending=pending_removals
+                                        )
+                                        self._remove_old_chunks_batch(
+                                            conn,
+                                            chunk_data["doc_id"],
+                                            chunk_data["chunk_indices_to_remove"],
+                                            chunk_data["faiss_ids_to_remove"],
+                                            pending=pending_removals,
+                                        )
+                                    self._insert_documents_bulk(conn, documents_data, mode=db_mode)
+                                    if new_embeddings.size > 0:
+                                        self._add_vectors_to_faiss_bulk(new_embeddings, chunks_needing_embedding)
+                                        txn_faiss_ids.extend(
+                                            c.faiss_id for c in chunks_needing_embedding if c.faiss_id is not None
+                                        )
+                                    self._insert_chunks_bulk(conn, chunks_data)
+                                    if field_embeddings:
+                                        txn_faiss_ids.extend(
+                                            self._store_metadata_embeddings(
+                                                conn, chunk_data["doc_id"], field_embeddings
+                                            )
+                                        )
+                                    conn.commit()
+                                    if pending_removals.main:
+                                        self._remove_old_vectors_bulk(pending_removals.main)
+                                except Exception:
+                                    conn.rollback()
+                                    self._discard_faiss_ids_best_effort(txn_faiss_ids)
+                                    # Deferred removals discarded (not applied): the rollback
+                                    # restored the old rows, so their old vectors must stay.
+                                    raise
+                        processed_ids.append(doc_id)
+                    except Exception as e:  # noqa: BLE001 - recorded, not swallowed
+                        failures[doc_id] = str(e)
+                        logger.error(f"Error ingesting document {doc_id}: {e}")
+                    finally:
+                        result_queue.task_done()
                 return processed_ids
             except Exception as e:
                 logger.error(f"Database worker error: {e}")
@@ -1590,7 +1727,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         f"Worker {w.name} did not exit within "
                         f"{self.pipeline_worker_timeout} seconds, may be blocked"
                     )
-        return db_result
+        return db_result, failures
 
     def _fetch_existing_chunks_batch(self, doc_ids: List[str]):
         if not doc_ids:
@@ -1613,7 +1750,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         return existing
 
     def _remove_old_chunks_batch(
-        self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
+        self,
+        conn,
+        doc_id: str,
+        chunk_indices_to_remove: List[int],
+        faiss_ids_to_remove: List[int],
+        pending: Optional["_PendingFaissRemovals"] = None,
     ) -> None:
         if chunk_indices_to_remove:
             placeholders = ",".join(["?"] * len(chunk_indices_to_remove))
@@ -1622,7 +1764,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 [doc_id] + chunk_indices_to_remove,
             )
         if faiss_ids_to_remove:
-            self._remove_old_vectors_bulk(faiss_ids_to_remove)
+            # When a transaction is in flight, defer the index removal to after the
+            # commit so a rollback cannot leave dangling rows (see _PendingFaissRemovals).
+            if pending is not None:
+                pending.main.extend(faiss_ids_to_remove)
+            else:
+                self._remove_old_vectors_bulk(faiss_ids_to_remove)
             logger.debug(
                 f"Removed {len(chunk_indices_to_remove)} old chunks and "
                 f"{len(faiss_ids_to_remove)} FAISS vectors for {doc_id}"
@@ -1631,19 +1778,32 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     # ------------------
     # Hierarchical operations
     # ------------------
-    def _remove_sections_for_document(self, conn, doc_id: str) -> None:
-        """Remove existing sections and their FAISS vectors for a document."""
+    def _remove_sections_for_document(
+        self, conn, doc_id: str, pending: Optional["_PendingFaissRemovals"] = None
+    ) -> None:
+        """Remove existing sections and their FAISS vectors for a document.
+
+        When ``pending`` is supplied the section/document index removals are deferred
+        to after the transaction commits (see _PendingFaissRemovals); the SQLite
+        section rows are still deleted in the transaction so the new state is correct.
+        """
         # Get existing section FAISS IDs before deletion
         cursor = conn.execute("SELECT faiss_id FROM sections WHERE document_id = ? AND faiss_id IS NOT NULL", (doc_id,))
         section_faiss_ids = [row["faiss_id"] for row in cursor.fetchall()]
         if section_faiss_ids:
-            self._remove_section_vectors(section_faiss_ids)
+            if pending is not None:
+                pending.section.extend(section_faiss_ids)
+            else:
+                self._remove_section_vectors(section_faiss_ids)
 
         # Get document FAISS ID before deletion
         cursor = conn.execute("SELECT doc_faiss_id FROM documents WHERE id = ? AND doc_faiss_id IS NOT NULL", (doc_id,))
         row = cursor.fetchone()
         if row and row["doc_faiss_id"] is not None:
-            self._remove_document_vectors([row["doc_faiss_id"]])
+            if pending is not None:
+                pending.document.append(row["doc_faiss_id"])
+            else:
+                self._remove_document_vectors([row["doc_faiss_id"]])
 
         # Delete section rows (CASCADE will handle chunk.section_id SET NULL)
         conn.execute("DELETE FROM sections WHERE document_id = ?", (doc_id,))
@@ -1873,6 +2033,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         similarity_threshold: Optional[float] = None,
         max_concurrent_chunks: int = 3,
         max_concurrent_embeddings: int = 2,
+        errors: Literal["ignore", "raise"] = "raise",
         **kwargs: Any,
     ) -> List[str]:
         """
@@ -1929,7 +2090,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         ids = new_ids
         self._validate_metadata_batch(metadata)
         batch_size = batch_size or self.batch_size
-        result_ids = await self._async_pipeline_process(
+        result_ids, failures = await self._async_pipeline_process(
             documents,
             metadata,
             ids,
@@ -1941,9 +2102,16 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
-        await loop.run_in_executor(None, self._save_faiss_counters)
-        await loop.run_in_executor(None, self._save_internal)
-        return result_ids
+        # save_async() persists under the write lock (via save()), which serializes
+        # with a concurrent backup snapshot so the two never write the index file at
+        # the same time (a bare _save_internal() bypasses the lock and, sharing the
+        # .faiss.tmp path, collides -- WinError 5 on Windows). Matches the *_from_chunks
+        # async paths, and it resets the dirty flag correctly.
+        await self.save_async()
+        # Persist first, then honour the errors= contract (H12): succeeded docs must
+        # be durably saved before we raise, or a crash would leave committed rows
+        # pointing at RAM-only vectors.
+        return _finalize_ingest_result(result_ids, failures, errors)
 
     async def upsert_from_file_async(
         self,
@@ -2052,6 +2220,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         similarity_threshold: Optional[float] = None,
         max_concurrent_chunks: int = 3,
         max_concurrent_embeddings: int = 2,
+        errors: Literal["ignore", "raise"] = "raise",
     ) -> List[str]:
         """
         Async version of upsert_from_chunks - Insert or update documents from pre-chunked data.
@@ -2103,7 +2272,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if not normalized_chunks_by_document:
             return []
         batch_size = batch_size or self.batch_size
-        result_ids = await self._async_process_from_chunks_pipeline(
+        result_ids, failures = await self._async_process_from_chunks_pipeline(
             normalized_chunks_by_document,
             metadata_batch,
             batch_size,
@@ -2116,7 +2285,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         await loop.run_in_executor(None, self._save_next_doc_id)
         await loop.run_in_executor(None, self._save_faiss_counters)
         await self.save_async()
-        return result_ids
+        return _finalize_ingest_result(result_ids, failures, errors)
 
     async def insert_async(
         self,
@@ -2191,7 +2360,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         meta_to_process = [item[1] for item in docs_to_insert]
         ids_to_process = [item[2] for item in docs_to_insert]
         batch_size = batch_size or self.batch_size
-        result_ids = await self._async_pipeline_process(
+        result_ids, failures = await self._async_pipeline_process(
             docs_to_process,
             meta_to_process,
             ids_to_process,
@@ -2203,9 +2372,10 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         )
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_next_doc_id)
-        await loop.run_in_executor(None, self._save_faiss_counters)
-        await loop.run_in_executor(None, self._save_internal)
-        return result_ids
+        # save_async() persists under the write lock (see upsert_async), serializing
+        # with a concurrent backup snapshot instead of racing it on the index file.
+        await self.save_async()
+        return _finalize_ingest_result(result_ids, failures, errors)
 
     async def insert_from_file_async(
         self,
@@ -2390,7 +2560,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if not normalized_chunks_by_document:
             return []
         batch_size = batch_size or self.batch_size
-        result_ids = await self._async_process_from_chunks_pipeline(
+        result_ids, failures = await self._async_process_from_chunks_pipeline(
             normalized_chunks_by_document,
             metadata_to_insert,
             batch_size,
@@ -2403,7 +2573,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         await loop.run_in_executor(None, self._save_next_doc_id)
         await loop.run_in_executor(None, self._save_faiss_counters)
         await self.save_async()
-        return result_ids
+        return _finalize_ingest_result(result_ids, failures, errors)
 
     async def _check_existing_ids_async(self, ids: List[str]) -> set:
         if not ids:
@@ -2428,37 +2598,46 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         max_concurrent_chunks: int,
         max_concurrent_embeddings: int,
         mode: Literal["upsert", "insert"] = "upsert",
-    ) -> List[str]:
+    ) -> Tuple[List[str], Dict[str, str]]:
         self._require_writable("Ingesting documents")
-        existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(ids)
+        # Hold the cross-thread write gate for the whole pipeline: the database
+        # stage commits SQLite and mutates the FAISS index (interleaved with the
+        # embedding stage via the queue), so there is no shorter atomic section to
+        # gate. This excludes a concurrent backup snapshot -- and serializes async
+        # ingests against each other -- keeping the two stores consistent.
+        async with self._async_write_gate():
+            existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(ids)
 
-        # Use asyncio.Queue for proper async pipeline communication
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
-        embedding_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
+            # Use asyncio.Queue for proper async pipeline communication
+            chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
+            embedding_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
 
-        # Use asyncio.Semaphore for proper async concurrency control
-        chunk_semaphore = asyncio.Semaphore(max_concurrent_chunks)
-        embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
+            # Use asyncio.Semaphore for proper async concurrency control
+            chunk_semaphore = asyncio.Semaphore(max_concurrent_chunks)
+            embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
 
-        result_ids: List[str] = []
-        total_docs = len(documents)
+            result_ids: List[str] = []
+            failures: Dict[str, str] = {}
+            total_docs = len(documents)
 
-        # Create tasks for pipeline stages
-        chunking_task = asyncio.create_task(
-            self._chunking_stage(documents, metadata_batch, ids, existing_chunks_by_doc, chunk_queue, chunk_semaphore)
-        )
+            # Create tasks for pipeline stages
+            chunking_task = asyncio.create_task(
+                self._chunking_stage(
+                    documents, metadata_batch, ids, existing_chunks_by_doc, chunk_queue, chunk_semaphore
+                )
+            )
 
-        embedding_task = asyncio.create_task(
-            self._embedding_stage(chunk_queue, embedding_queue, batch_size, embedding_semaphore)
-        )
+            embedding_task = asyncio.create_task(
+                self._embedding_stage(chunk_queue, embedding_queue, batch_size, embedding_semaphore)
+            )
 
-        database_task = asyncio.create_task(
-            self._database_stage(embedding_queue, similarity_threshold, mode, result_ids, total_docs)
-        )
+            database_task = asyncio.create_task(
+                self._database_stage(embedding_queue, similarity_threshold, mode, result_ids, total_docs, failures)
+            )
 
-        # Run all pipeline stages concurrently
-        await asyncio.gather(chunking_task, embedding_task, database_task)
-        return result_ids
+            # Run all pipeline stages concurrently
+            await asyncio.gather(chunking_task, embedding_task, database_task)
+            return result_ids, failures
 
     async def _chunking_stage(
         self,
@@ -2571,6 +2750,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         mode: Literal["upsert", "insert"],
         result_ids: List[str],
         total_docs: int,
+        failures: Dict[str, str],
     ) -> None:
         try:
             processed_count = 0
@@ -2579,10 +2759,17 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 if chunk_data is None:
                     break
 
-                doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
-                if doc_id:
-                    result_ids.append(doc_id)
-                    processed_count += 1
+                # Best-effort per document (H12): a failing document is recorded in
+                # `failures` and the pipeline continues; the driver applies the
+                # errors= contract. `processed_count` advances either way so the
+                # loop terminates.
+                try:
+                    doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
+                    if doc_id:
+                        result_ids.append(doc_id)
+                except Exception as e:  # noqa: BLE001 - recorded, not swallowed
+                    failures[chunk_data.get("doc_id", f"<doc#{processed_count}>")] = str(e)
+                processed_count += 1
 
                 embedding_queue.task_done()
         except Exception as e:
@@ -2598,39 +2785,46 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         max_concurrent_chunks: int,
         max_concurrent_embeddings: int,
         mode: Literal["upsert", "insert"] = "upsert",
-    ) -> List[str]:
+    ) -> Tuple[List[str], Dict[str, str]]:
         self._require_writable("Ingesting documents")
-        doc_ids = list(chunks_by_document.keys())
-        existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(doc_ids)
+        # Gate the commit + FAISS mutation for the whole pipeline (see the twin
+        # _async_pipeline_process and _async_write_gate) so a backup snapshot stays
+        # consistent and async chunk-ingests serialize.
+        async with self._async_write_gate():
+            doc_ids = list(chunks_by_document.keys())
+            existing_chunks_by_doc = await self._fetch_existing_chunks_batch_async(doc_ids)
 
-        # Use asyncio.Queue for proper async pipeline communication
-        processing_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
+            # Use asyncio.Queue for proper async pipeline communication
+            processing_queue: asyncio.Queue = asyncio.Queue(maxsize=self.pipeline_queue_size)
 
-        # Use asyncio.Semaphore for proper async concurrency control
-        embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
+            # Use asyncio.Semaphore for proper async concurrency control
+            embedding_semaphore = asyncio.Semaphore(max_concurrent_embeddings)
 
-        result_ids: List[str] = []
-        total_docs = len(doc_ids)
+            result_ids: List[str] = []
+            failures: Dict[str, str] = {}
+            total_docs = len(doc_ids)
 
-        # Create tasks for pipeline stages
-        comparison_task = asyncio.create_task(
-            self._chunk_comparison_stage(
-                chunks_by_document,
-                metadata_batch,
-                existing_chunks_by_doc,
-                processing_queue,
-                batch_size,
-                embedding_semaphore,
+            # Create tasks for pipeline stages
+            comparison_task = asyncio.create_task(
+                self._chunk_comparison_stage(
+                    chunks_by_document,
+                    metadata_batch,
+                    existing_chunks_by_doc,
+                    processing_queue,
+                    batch_size,
+                    embedding_semaphore,
+                )
             )
-        )
 
-        database_task = asyncio.create_task(
-            self._chunk_database_stage(processing_queue, similarity_threshold, mode, result_ids, total_docs)
-        )
+            database_task = asyncio.create_task(
+                self._chunk_database_stage(
+                    processing_queue, similarity_threshold, mode, result_ids, total_docs, failures
+                )
+            )
 
-        # Run pipeline stages concurrently
-        await asyncio.gather(comparison_task, database_task)
-        return result_ids
+            # Run pipeline stages concurrently
+            await asyncio.gather(comparison_task, database_task)
+            return result_ids, failures
 
     async def _chunk_comparison_stage(
         self,
@@ -2678,6 +2872,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         mode: Literal["upsert", "insert"],
         result_ids: List[str],
         total_docs: int,
+        failures: Dict[str, str],
     ) -> None:
         try:
             processed_count = 0
@@ -2686,10 +2881,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 if chunk_data is None:
                     break
 
-                doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
-                if doc_id:
-                    result_ids.append(doc_id)
-                    processed_count += 1
+                # Best-effort per document (H12); see _database_stage.
+                try:
+                    doc_id = await self._process_document_data_async(chunk_data, similarity_threshold, mode)
+                    if doc_id:
+                        result_ids.append(doc_id)
+                except Exception as e:  # noqa: BLE001 - recorded, not swallowed
+                    failures[chunk_data.get("doc_id", f"<doc#{processed_count}>")] = str(e)
+                processed_count += 1
 
                 processing_queue.task_done()
         except Exception as e:
@@ -2899,22 +3098,28 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 async def _write_document_txn() -> None:
                     nonlocal faiss_added
                     assert self.async_connection_pool is not None
+                    # Fresh per attempt: retry_on_locked_async re-runs this coroutine,
+                    # and a rolled-back attempt must not carry removals into the next.
+                    pending = _PendingFaissRemovals()
                     async with self.async_connection_pool.get_connection_context() as conn:
                         try:
                             # BEGIN IMMEDIATE takes the write lock up front so contention
                             # surfaces before the (non-transactional) FAISS mutation.
                             await conn.execute("BEGIN IMMEDIATE")
 
-                            # Remove old chunks and metadata embeddings on upsert
+                            # Remove old chunks and metadata embeddings on upsert. The
+                            # index removals are deferred to after the commit so a
+                            # rollback cannot leave dangling rows (see _PendingFaissRemovals).
                             if mode == "upsert":
                                 await self._remove_old_chunks_batch_async(
                                     conn,
                                     chunk_data["doc_id"],
                                     chunk_data["chunk_indices_to_remove"],
                                     chunk_data["faiss_ids_to_remove"],
+                                    pending=pending,
                                 )
                                 # Always remove metadata embeddings on upsert to prevent orphaned entries
-                                await self._remove_metadata_embeddings_async(conn, doc_id)
+                                await self._remove_metadata_embeddings_async(conn, doc_id, pending=pending)
 
                             await self._insert_documents_bulk_async(conn, documents_data, mode="replace")
                             if new_embeddings.size > 0 and not faiss_added:
@@ -2938,6 +3143,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                                 await self._store_metadata_embeddings_async(conn, doc_id, field_embeddings)
 
                             await conn.commit()
+                            # Drop replaced vectors only after the commit is durable.
+                            if pending.main:
+                                await asyncio.to_thread(self._remove_old_vectors_bulk, pending.main)
                         except Exception:
                             await conn.rollback()
                             raise
@@ -2945,21 +3153,33 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 await retry_on_locked_async(_write_document_txn)
             return doc_id
         except Exception as e:
+            # Do NOT swallow (H12): a failed document must surface to the caller,
+            # not vanish from the returned ID list. The database stage records the
+            # failure and _finalize_ingest_result honours the errors= contract.
             logger.error(f"Error processing document data for {doc_id}: {e}")
-            return None
+            raise
 
     async def _remove_old_chunks_batch_async(
-        self, conn, doc_id: str, chunk_indices_to_remove: List[int], faiss_ids_to_remove: List[int]
+        self,
+        conn,
+        doc_id: str,
+        chunk_indices_to_remove: List[int],
+        faiss_ids_to_remove: List[int],
+        pending: Optional["_PendingFaissRemovals"] = None,
     ) -> None:
         if faiss_ids_to_remove:
-            # Use asyncio.to_thread for FAISS operations in Python 3.9+
-            # Falls back to run_in_executor for compatibility
-            try:
-                await asyncio.to_thread(self._remove_old_vectors_bulk, faiss_ids_to_remove)
-            except AttributeError:
-                # Fallback for Python < 3.9
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
+            if pending is not None:
+                # Defer the index removal until after the commit (see _PendingFaissRemovals).
+                pending.main.extend(faiss_ids_to_remove)
+            else:
+                # Use asyncio.to_thread for FAISS operations in Python 3.9+
+                # Falls back to run_in_executor for compatibility
+                try:
+                    await asyncio.to_thread(self._remove_old_vectors_bulk, faiss_ids_to_remove)
+                except AttributeError:
+                    # Fallback for Python < 3.9
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
         if chunk_indices_to_remove:
             placeholders = ",".join(["?"] * len(chunk_indices_to_remove))
             await conn.execute(

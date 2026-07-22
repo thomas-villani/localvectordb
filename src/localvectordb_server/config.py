@@ -71,6 +71,15 @@ class EmbeddingSettings(BaseSettings):
     timeout: int = 30  # Request timeout in seconds
     max_retries: int = 3
 
+    # SSRF guard for the create-database endpoint: a request-supplied provider
+    # base_url drives server-side HTTP (validate_model hits `{base_url}/api/tags`),
+    # so an unauthenticated caller could otherwise probe internal services or
+    # cloud metadata. Off by default -- the server's own configured base_url is
+    # always trusted; a *request* override is rejected unless this is enabled.
+    # When enabled, allowed_provider_hosts (if set) further restricts the host.
+    allow_custom_provider_url: bool = False
+    allowed_provider_hosts: Optional[List[str]] = None
+
     # Provider-specific configurations
     config: Dict[str, Any] = field(default_factory=dict)
 
@@ -98,6 +107,13 @@ class EmbeddingSettings(BaseSettings):
         # Provider-specific validation
         if self.provider.lower() == "openai" and not self.api_key and not os.getenv("OPENAI_API_KEY"):
             raise ConfigurationError("OpenAI provider requires api_key or OPENAI_API_KEY environment variable")
+
+        if self.allowed_provider_hosts is not None:
+            if not isinstance(self.allowed_provider_hosts, list):
+                raise ConfigurationError("allowed_provider_hosts must be a list of strings or None")
+            for host in self.allowed_provider_hosts:
+                if not isinstance(host, str) or not host:
+                    raise ConfigurationError("Each entry in allowed_provider_hosts must be a non-empty string")
 
         return True
 

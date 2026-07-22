@@ -33,10 +33,17 @@ class ClaimResult:
 
 @dataclass
 class FactCheckResult:
-    """Aggregate result of fact-checking a text against one or more databases."""
+    """Aggregate result of fact-checking a text against one or more databases.
+
+    ``error`` is set only when the check could not be performed at all (e.g. the
+    LLM provider failed during claim extraction). It is distinct from a genuine
+    zero score: callers should treat a non-``None`` ``error`` as "unverified",
+    never as "verified" or "refuted".
+    """
 
     claims: list[ClaimResult] = field(default_factory=list)
     overall_score: float = 0.0
     has_contradictions: bool = False
     citation_text: str = ""
     annotated_text: Optional[str] = None
+    error: Optional[str] = None

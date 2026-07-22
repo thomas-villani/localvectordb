@@ -438,9 +438,12 @@ def restore_backup(ctx, backup_id, to_location, overwrite, location, output_form
             )
 
         else:
-            # Incremental backup restore
+            # Incremental backup restore. Honour --overwrite like the full path so
+            # a restore can't silently clobber a live database (H5).
             inc_manager = IncrementalBackupManager(backup_manager)
-            restored_path = inc_manager.restore_incremental_backup_chain(manifest_data["backup_id"], to_location)
+            restored_path = inc_manager.restore_incremental_backup_chain(
+                manifest_data["backup_id"], to_location, overwrite_existing=overwrite
+            )
 
         result = {
             "success": True,

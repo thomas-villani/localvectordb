@@ -380,6 +380,62 @@ class TestQueryBuilderCursor:
 
 
 # ---------------------------------------------------------------------------
+# H1: the cursor must not emit more than the requested k
+# ---------------------------------------------------------------------------
+
+
+class TestCursorKCap:
+    """The candidate pool is deliberately over-fetched (k*2..k*4) to give
+    filtering/dedup headroom, but the cursor must return at most ``k`` results.
+    Before the fix ``total_k`` had zero readers and streams leaked the whole pool."""
+
+    def test_fetch_all_respects_k_chunks(self, db_with_docs):
+        # 8 short docs -> ~8 chunks; k=2 over-fetches to 4 candidates.
+        with db_with_docs.query_cursor(
+            "learning", search_type="vector", return_type="chunks", k=2, batch_size=50
+        ) as cursor:
+            results = cursor.fetch_all()
+        assert len(results) == 2
+
+    def test_fetch_all_respects_k_documents(self, db_with_docs):
+        with db_with_docs.query_cursor(
+            "learning", search_type="vector", return_type="documents", k=2, batch_size=50
+        ) as cursor:
+            results = cursor.fetch_all()
+        assert len(results) <= 2
+
+    def test_stream_across_batches_respects_k(self, db_with_docs):
+        # batch_size < k forces multiple batches; the cumulative total is still capped.
+        with db_with_docs.query_cursor(
+            "learning", search_type="vector", return_type="chunks", k=3, batch_size=1
+        ) as cursor:
+            total = sum(len(batch) for batch in cursor.stream(1))
+        assert total == 3
+
+    def test_remaining_bounded_by_k(self, db_with_docs):
+        with db_with_docs.query_cursor(
+            "learning", search_type="vector", return_type="chunks", k=2, batch_size=50
+        ) as cursor:
+            assert cursor.remaining <= 2
+
+    def test_hybrid_respects_k(self, db_with_docs):
+        with db_with_docs.query_cursor(
+            "learning technology", search_type="hybrid", return_type="chunks", k=2, batch_size=50
+        ) as cursor:
+            results = cursor.fetch_all()
+        assert len(results) <= 2
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_async_respects_k(self, db_with_docs):
+        cursor = await db_with_docs.query_cursor_async(
+            "learning", search_type="vector", return_type="chunks", k=2, batch_size=50
+        )
+        async with cursor:
+            results = await cursor.fetch_all_async()
+        assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
 # B4: reranking is rejected (not silently dropped) on cursor/stream paths
 # ---------------------------------------------------------------------------
 

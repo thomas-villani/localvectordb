@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from localvectordb.extractors import get_extractor_registry, get_supported_formats
 from localvectordb_server._auth import require_read_permission, require_write_permission
@@ -308,9 +309,11 @@ async def upload_files(
             if not documents:
                 raise ValidationError("No valid files to process")
 
-            # Insert or upsert documents to database based on mode
+            # Insert or upsert documents to database based on mode. These are sync
+            # + blocking (embedding + write-lock): offload off the event loop.
             if mode == "insert":
-                result_ids = db.insert(
+                result_ids = await run_in_threadpool(
+                    db.insert,
                     documents=documents,
                     metadata=metadata_list,
                     ids=document_ids if document_ids else None,
@@ -320,7 +323,8 @@ async def upload_files(
                 )
             else:
                 # Default to upsert
-                result_ids = db.upsert(
+                result_ids = await run_in_threadpool(
+                    db.upsert,
                     documents=documents,
                     metadata=metadata_list,
                     ids=document_ids if document_ids else None,

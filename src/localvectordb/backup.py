@@ -299,12 +299,24 @@ class BackupManager:
             yield
             return
 
+        # The write lock excludes sync mutators. Async mutators bypass it, so also
+        # take the cross-thread write gate they honour (see LocalVectorDB._write_gate
+        # / _async_write_gate); order is always write_lock -> write_gate, and async
+        # writers never take the write lock, so this cannot deadlock. Held for the
+        # whole snapshot so no write lands between the SQLite copy and the FAISS copy.
+        write_gate = getattr(db, "_write_gate", None)
         with db._read_write_lock.write_lock():
-            if getattr(db, "_index_dirty", False):
-                db._save_internal()
-                db._save_faiss_counters()
-                db._index_dirty = False
-            yield
+            if write_gate is not None:
+                write_gate.acquire()
+            try:
+                if getattr(db, "_index_dirty", False):
+                    db._save_internal()
+                    db._save_faiss_counters()
+                    db._index_dirty = False
+                yield
+            finally:
+                if write_gate is not None:
+                    write_gate.release()
 
     def _calculate_file_checksum(self, file_path: Path) -> str:
         """Calculate SHA-256 checksum of a file."""
@@ -2012,7 +2024,12 @@ class IncrementalBackupManager:
         except sqlite3.OperationalError:
             logger.debug("Could not update last backup timestamp")
 
-    def restore_incremental_backup_chain(self, target_backup_id: str, restore_location: Union[str, Path]) -> Path:
+    def restore_incremental_backup_chain(
+        self,
+        target_backup_id: str,
+        restore_location: Union[str, Path],
+        overwrite_existing: bool = False,
+    ) -> Path:
         """
         Restore database by applying a chain of incremental backups.
 
@@ -2022,6 +2039,11 @@ class IncrementalBackupManager:
             ID of the target backup (can be full or incremental)
         restore_location : Union[str, Path]
             Directory to restore to
+        overwrite_existing : bool
+            When ``False`` (default), refuse to overwrite an existing database at
+            ``restore_location`` and raise ``ValueError`` instead. Mirrors
+            :meth:`BackupManager.restore_backup` so the incremental path cannot
+            silently clobber a live DB (the final move is unconditional).
 
         Returns
         -------
@@ -2036,6 +2058,15 @@ class IncrementalBackupManager:
 
         restore_location = Path(restore_location)
         restore_location.mkdir(parents=True, exist_ok=True)
+
+        # Guard the live DB: the final move overwrites unconditionally, so refuse
+        # unless the caller opted in. Matches BackupManager.restore_backup.
+        if not overwrite_existing:
+            db_name = self.backup_manager.database_name
+            existing_db = restore_location / f"{db_name}.sqlite"
+            existing_faiss = restore_location / f"{db_name}.faiss"
+            if existing_db.exists() or existing_faiss.exists():
+                raise ValueError("Files already exist at restore location. Use overwrite_existing=True to overwrite.")
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)

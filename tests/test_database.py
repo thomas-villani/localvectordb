@@ -258,7 +258,7 @@ class TestLocalVectorDBUpsert:
     def test_upsert_single_document(self, mock_db):
         """Test upserting a single document."""
         with patch.object(mock_db, "_process_with_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = ["doc_1"]
+            mock_pipeline.return_value = (["doc_1"], {})
 
             result = mock_db.upsert("Test document")
 
@@ -277,7 +277,7 @@ class TestLocalVectorDBUpsert:
         metadata = [{"author": "A"}, {"author": "B"}, {"author": "C"}]
 
         with patch.object(mock_db, "_process_with_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = ["doc_1", "doc_2", "doc_3"]
+            mock_pipeline.return_value = (["doc_1", "doc_2", "doc_3"], {})
 
             result = mock_db.upsert(documents, metadata=metadata)
 
@@ -291,7 +291,7 @@ class TestLocalVectorDBUpsert:
     def test_upsert_with_custom_ids(self, mock_db):
         """Test upserting with custom document IDs."""
         with patch.object(mock_db, "_process_with_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = ["custom_1"]
+            mock_pipeline.return_value = (["custom_1"], {})
 
             result = mock_db.upsert("Test", ids="custom_1")
 
@@ -314,7 +314,7 @@ class TestLocalVectorDBUpsert:
         documents = [f"Doc {i}" for i in range(150)]  # More than default batch size
 
         with patch.object(mock_db, "_process_with_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = [f"doc_{i}" for i in range(150)]
+            mock_pipeline.return_value = ([f"doc_{i}" for i in range(150)], {})
 
             result = mock_db.upsert(documents, batch_size=100)
 
@@ -380,7 +380,7 @@ class TestLocalVectorDBInsert:
     def test_insert_new_documents(self, mock_db):
         """Test inserting new documents."""
         with patch.object(mock_db, "_process_with_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = ["doc_1", "doc_2"]
+            mock_pipeline.return_value = (["doc_1", "doc_2"], {})
 
             # Mock connection to return no existing docs
             mock_conn = create_mock_connection()
@@ -419,7 +419,7 @@ class TestLocalVectorDBInsert:
     def test_insert_with_similarity_threshold(self, mock_db):
         """Test insert with similarity threshold."""
         with patch.object(mock_db, "_process_with_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = ["doc_1"]
+            mock_pipeline.return_value = (["doc_1"], {})
 
             # Mock no existing documents
             mock_conn = create_mock_connection()
@@ -1671,6 +1671,53 @@ class TestMultiColumnEmbedding:
                     assert callable(db._search_metadata_field)
 
             db.close()
+
+
+@pytest.mark.unit
+class TestMetadataUpdateIndexPersistence:
+    """H2: a metadata-only update that re-embeds a field must persist the FAISS
+    index immediately (like delete()/upsert), not leave the committed rows
+    pointing at vectors that live only in RAM until the next save()."""
+
+    def _make_db(self, temp_dir):
+        from localvectordb.core import MetadataField, MetadataFieldType
+        from localvectordb.database import LocalVectorDB
+
+        schema = {
+            "title": MetadataField(type=MetadataFieldType.TEXT, embedding_enabled=True),
+            "category": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+        }
+        return LocalVectorDB(
+            name="h2_persist_db",
+            base_path=temp_dir,
+            metadata_schema=schema,
+            embedding_provider="mock",
+            embedding_model="mock-model",
+        )
+
+    def test_embedding_field_update_persists_index(self, temp_dir):
+        db = self._make_db(temp_dir)
+        doc_id = db.upsert(["hello world"], [{"title": "old title", "category": "a"}])[0]
+
+        with patch.object(db, "_save_internal", wraps=db._save_internal) as spy:
+            changed = db.update(doc_id, metadata={"title": "a completely new title"})
+
+        assert changed is True
+        # The embedding-enabled field changed -> FAISS mutated -> must persist now.
+        assert spy.called
+        db.close()
+
+    def test_non_embedding_field_update_does_not_persist(self, temp_dir):
+        db = self._make_db(temp_dir)
+        doc_id = db.upsert(["hello world"], [{"title": "t", "category": "a"}])[0]
+
+        with patch.object(db, "_save_internal", wraps=db._save_internal) as spy:
+            changed = db.update(doc_id, metadata={"category": "b"})
+
+        assert changed is True
+        # No embedding field changed -> FAISS untouched -> no index write needed.
+        assert not spy.called
+        db.close()
 
 
 @pytest.mark.unit

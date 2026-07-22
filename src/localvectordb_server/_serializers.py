@@ -18,7 +18,9 @@ def serialize_query_result(result: QueryResult) -> Dict[str, Any]:
         "content": result.content,
         "metadata": result.metadata,
     }
-    if result.type == "chunk" and result.document_id:
+    if result.document_id:
+        # Emit for every result type that carries a parent id (chunk, section,
+        # context, enriched) so the remote payload matches the local dataclass.
         data["document_id"] = result.document_id
     if result.position:
         data["position"] = result.position.to_dict()
