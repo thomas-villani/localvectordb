@@ -16,7 +16,7 @@ Conventions adopted in the model-driven server pass (v0.1.0):
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from localvectordb.core import DocumentScoringMethod
 
@@ -121,24 +121,33 @@ class QueryBody(StrictModel):
 
     query: str = Field(min_length=1)
     search_type: Literal["vector", "keyword", "hybrid"] = "hybrid"
-    return_type: Literal["documents", "chunks", "sections", "context", "enriched"] = "documents"
+    # None is the "natural unit of search_level" sentinel (see _resolve_return_type).
+    # A concrete default here would materialize via model_dump() and defeat the
+    # client's omission -- a remote section search would then roll up to documents
+    # while the identical local search answers in sections. Consumers must resolve
+    # this against search_level before passing it to query() or echoing it back.
+    return_type: Optional[Literal["documents", "chunks", "sections", "context", "enriched"]] = None
     search_level: Literal["chunks", "sections", "documents"] = "chunks"
-    k: int = Field(default=10, ge=1, le=1000)
-    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Local query() applies no upper caps on these, so the server must not
+    # either: a request that succeeds locally must not 422 remotely. Only
+    # sanity floors are kept (local never sends negatives; realistic callers
+    # cannot hit them), and the DB layer still clamps rerank_k to <= 200.
+    k: int = Field(default=10, ge=1)
+    score_threshold: float = Field(default=0.0, ge=0.0)
     filters: Optional[Dict[str, Any]] = Field(
         default=None, validation_alias=AliasChoices("filters", "metadata_filters")
     )
-    vector_weight: float = Field(default=0.5, ge=0.0, le=1.0)
-    context_window: int = Field(default=2, ge=0, le=1_000_000)
+    vector_weight: float = Field(default=0.5, ge=0.0)
+    context_window: int = Field(default=2, ge=0)
     context_unit: Literal["chunks", "tokens", "words", "characters"] = "chunks"
     context_truncate: bool = False
-    semantic_dedup_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    semantic_dedup_threshold: Optional[float] = Field(default=None, ge=0.0)
     document_scoring_method: DocumentScoringMethod = "frequency_boost"
     document_scoring_options: Optional[Dict[str, Any]] = None
     reranker_config: Optional[Dict[str, Any]] = None
     # Candidate-pool size fetched before reranking (only used when reranker_config
     # is set). Clamped server-side to <= 200; see database `query(rerank_k=...)`.
-    rerank_k: Optional[int] = Field(default=None, ge=1, le=1000)
+    rerank_k: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("query")
     @classmethod
@@ -147,10 +156,5 @@ class QueryBody(StrictModel):
             raise ValueError("Query must be a non-empty string")
         return v
 
-    @model_validator(mode="after")
-    def _check_context_window(self) -> "QueryBody":
-        # ``context_window`` counts chunks when the unit is 'chunks' (keep the old
-        # small ceiling); for token/word/character budgets it may be much larger.
-        if self.context_unit == "chunks" and self.context_window > 20:
-            raise ValueError("context_window must be between 0 and 20 when context_unit='chunks'")
-        return self
+    # (No context_window ceiling: local query() imposes none, so enforcing one
+    # here would 422 a request that succeeds locally. See M2.)

@@ -207,6 +207,15 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # _faiss_lock so the two are taken in a consistent order everywhere.
         self._faiss_id_lock: threading.Lock = threading.Lock()
         self._faiss_id_counters: Dict[str, int] = {}
+        # Cross-thread write gate for the ASYNC mutators. They bypass the
+        # (threading, event-loop-blocking) _read_write_lock, so without this a
+        # backup snapshot (BackupManager.quiesce) could not exclude them and would
+        # capture committed rows whose vectors are missing from the copied index.
+        # A plain threading.Lock bridges the async executor threads and the sync
+        # backup thread (any thread may release it); quiesce holds it too. Ordering
+        # is always _read_write_lock -> _write_gate -> _faiss_lock, so it cannot
+        # deadlock with the other locks (async writers never take _read_write_lock).
+        self._write_gate: threading.Lock = threading.Lock()
 
         # Initialize SQLite tuning configuration
         profile = get_sqlite_pragma_profile(sqlite_profile, default="balanced")
@@ -1457,6 +1466,29 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             except Exception as e:
                 logger.warning(f"Failed to convert GPU index to CPU for saving: {e}")
         self._atomic_write_index(to_write, path)
+
+    @contextlib.asynccontextmanager
+    async def _async_write_gate(self):
+        """Hold the cross-thread write gate around an async mutator's critical section.
+
+        Async mutators do not take ``_read_write_lock`` (it is a threading lock and
+        acquiring it on the event loop would block the loop). This gate serializes
+        async writes against each other and, crucially, against a backup snapshot:
+        ``BackupManager.quiesce`` holds the same gate, so no async write can commit
+        rows whose vectors are absent from the copied index (dangling rows).
+
+        Acquire with a non-blocking poll rather than blocking inside an executor:
+        parking an executor thread per waiter could exhaust the default pool, and
+        then the gate holder's own FAISS ``run_in_executor`` calls could not get a
+        thread -- a deadlock. Polling yields to the loop and holds no thread while
+        waiting. ``threading.Lock`` may be released from any thread, so exit is direct.
+        """
+        while not self._write_gate.acquire(blocking=False):
+            await asyncio.sleep(0.005)
+        try:
+            yield
+        finally:
+            self._write_gate.release()
 
     def _save_internal(self):
         if self.is_memory_only:

@@ -261,6 +261,10 @@ const CODE_TO_CLASS: Record<
   HASH_CONFLICT: PatchConflictError,
   PATCH_FAILED: PatchFailedError,
   DATABASE_ALREADY_EXISTS: DatabaseAlreadyExistsError,
+  // SSRF guard on POST /databases: a request-supplied embedding provider URL was
+  // rejected (not opted in, or host not in the allowlist). Both are 403s.
+  EMBEDDING_URL_NOT_ALLOWED: PermissionError,
+  EMBEDDING_URL_HOST_NOT_ALLOWED: PermissionError,
   EMBEDDING_ERROR: EmbeddingError,
   OLLAMA_NOT_AVAILABLE: OllamaNotAvailableError,
   DATABASE_CONNECTION_ERROR: DatabaseConnectionError,

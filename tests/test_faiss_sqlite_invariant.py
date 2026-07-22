@@ -120,6 +120,38 @@ class TestDualStoreInvariant:
         finally:
             db.close()
 
+    def test_metadata_update_rollback_leaves_no_dangling_vectors(self, tmp_path):
+        """H4: a mid-transaction failure while re-embedding a metadata field must not
+        have already removed the old field vector. The rollback restores the old
+        rows, so their vector must still be in the index -- otherwise it dangles
+        (recoverable only by re-embedding). The removal is deferred to post-commit.
+        """
+        from localvectordb.core import MetadataField, MetadataFieldType
+
+        schema = {"title": MetadataField(type=MetadataFieldType.TEXT, embedding_enabled=True)}
+        db = make_db(tmp_path, metadata_schema=schema)
+        try:
+            db.upsert(["body text here"], [{"title": "original title"}], ids=["docA"])
+            assert_invariant(db, "initial upsert")
+            old_ids = set(sqlite_faiss_ids(db))
+            assert old_ids, "expected the seed doc to have chunk + metadata vectors"
+
+            # Fail after the (deferred) removal of the old metadata vector but
+            # before the new one is generated/committed, forcing the rollback path.
+            with mock.patch.object(db, "_generate_metadata_embeddings", side_effect=RuntimeError("boom")):
+                with pytest.raises(RuntimeError, match="boom"):
+                    db.update("docA", metadata={"title": "a completely new title"})
+
+            # No dangling rows: every faiss_id SQLite references is present in the index.
+            dangling = set(sqlite_faiss_ids(db)) - set(live_faiss_ids(db))
+            assert not dangling, f"rollback left dangling rows: {sorted(dangling)}"
+            assert_invariant(db, "rolled-back metadata update")
+            # The original metadata (and its vector) survived intact.
+            assert db.get("docA").metadata["title"] == "original title"
+            assert set(sqlite_faiss_ids(db)) == old_ids
+        finally:
+            db.close()
+
     def test_no_duplicate_ids_after_replacing_upsert(self, tmp_path):
         """The minimal repro: replacing upsert on a 3-doc database, no explicit delete."""
         db = make_db(tmp_path)

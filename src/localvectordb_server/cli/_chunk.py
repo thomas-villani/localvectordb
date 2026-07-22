@@ -103,7 +103,7 @@ def chunk_command(files_or_text, method, max_tokens, overlap, output, extract):
                     click.secho(f"Skipping `{item}`: {result.error}", fg="bright_red", err=True)
                     continue
                 inputs.append((item, result.text))
-            elif os.path.isdir(os.path.dirname(item)) and any(c in os.path.basename(item) for c in "*?[]"):
+            elif os.path.isdir(os.path.dirname(item) or ".") and any(c in os.path.basename(item) for c in "*?[]"):
                 for file in glob.glob(item, recursive=True):
                     if not os.path.isfile(file):
                         continue

@@ -63,17 +63,23 @@ async def classify_polarity(
 
         result_map: dict[int, PolarityResult] = {}
         for item in results_data:
-            idx = item.get("index", -1)
-            polarity_str = str(item.get("polarity", "unrelated")).lower()
+            # One malformed entry (bad index, non-numeric confidence, wrong
+            # shape) must only cost its own chunk -- it must not fall through to
+            # the outer handler and discard every chunk's classification.
             try:
-                polarity = Polarity(polarity_str)
-            except ValueError:
-                polarity = Polarity.UNRELATED
-            result_map[idx] = PolarityResult(
-                polarity=polarity,
-                confidence=float(item.get("confidence", 0.0)),
-                excerpt=item.get("excerpt"),
-            )
+                idx = int(item.get("index", -1))
+                polarity_str = str(item.get("polarity", "unrelated")).lower()
+                try:
+                    polarity = Polarity(polarity_str)
+                except ValueError:
+                    polarity = Polarity.UNRELATED
+                result_map[idx] = PolarityResult(
+                    polarity=polarity,
+                    confidence=float(item.get("confidence", 0.0)),
+                    excerpt=item.get("excerpt"),
+                )
+            except (ValueError, TypeError, AttributeError):
+                continue
 
         default = PolarityResult(polarity=Polarity.UNRELATED, confidence=0.0)
         return [result_map.get(i, default) for i in range(len(chunks))]

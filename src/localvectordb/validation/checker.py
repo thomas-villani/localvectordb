@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from .annotator import annotate_response
-from .claims import extract_claims
+from .claims import ClaimExtractionError, extract_claims
 from .llm import LLMProvider, detect_provider
 from .polarity import PolarityResult, classify_polarity
 from .result import ClaimResult, FactCheckResult, Polarity
@@ -82,7 +82,20 @@ class FactChecker:
             queried when no supporting evidence is found or a contradiction is
             detected.
         """
-        claims_data = await extract_claims(self._llm, text)
+        try:
+            claims_data = await extract_claims(self._llm, text)
+        except ClaimExtractionError as e:
+            # Extraction could not be performed (provider outage / garbled
+            # response). This is NOT "no claims found": returning overall_score
+            # 1.0 here would report unverifiable text as fully grounded -- a
+            # safety inversion. Surface the failure with a zero score + error.
+            return FactCheckResult(
+                claims=[],
+                overall_score=0.0,
+                has_contradictions=False,
+                citation_text=f"Fact-check could not be completed: {e}",
+                error=str(e),
+            )
 
         if not claims_data:
             return FactCheckResult(
@@ -98,7 +111,25 @@ class FactChecker:
             async with sem:
                 return await self._check_claim(claim_data, sources)
 
-        claim_results = list(await asyncio.gather(*(_guarded(c) for c in claims_data)))
+        # return_exceptions=True so one claim's search/classification error does
+        # not discard the whole batch. A failed claim is recorded as ungrounded
+        # (confidence 0.0) -- it lowers the aggregate score rather than vanishing.
+        gathered = await asyncio.gather(*(_guarded(c) for c in claims_data), return_exceptions=True)
+        claim_results: list[ClaimResult] = []
+        for claim_data, outcome in zip(claims_data, gathered, strict=True):
+            if isinstance(outcome, ClaimResult):
+                claim_results.append(outcome)
+            elif isinstance(outcome, Exception):
+                claim_results.append(
+                    ClaimResult(
+                        claim=claim_data.get("claim", ""),
+                        grounded=False,
+                        confidence=0.0,
+                        original_sentence=claim_data.get("sentence"),
+                    )
+                )
+            else:  # pragma: no cover - BaseException (e.g. cancellation) propagates
+                raise outcome
 
         return self._build_result(text, claim_results)
 

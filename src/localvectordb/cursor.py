@@ -109,6 +109,10 @@ class QueryCursor:
         self._exhausted = False
         self._lock = threading.Lock()
         self._position: int = 0
+        # Results emitted so far. The candidate pool is deliberately over-fetched
+        # (k*2..k*4) to give filtering/dedup headroom, but the cursor must still
+        # return no more than the caller's requested k (``config.total_k``).
+        self._emitted: int = 0
         self._candidates: List[CursorCandidate] = []
         self._doc_candidates: List[DocumentCandidate] = []
 
@@ -165,9 +169,11 @@ class QueryCursor:
 
     @property
     def remaining(self) -> int:
-        """Number of unfetched candidates."""
+        """Number of results still available (bounded by the requested ``k``)."""
         total = self.total_candidates
-        return max(0, total - self._position)
+        unfetched = max(0, total - self._position)
+        allowance = max(0, self._config.total_k - self._emitted)
+        return min(unfetched, allowance)
 
     @property
     def is_exhausted(self) -> bool:
@@ -200,9 +206,24 @@ class QueryCursor:
             self._check_alive()
             batch_size = batch_size or self._default_batch_size
 
+            allowance = self._config.total_k - self._emitted
+            if allowance <= 0:
+                self._exhausted = True
+                return []
+
             if self._config.return_type == "documents":
-                return self._fetch_document_batch(batch_size)
-            return self._fetch_chunk_batch(batch_size)
+                results = self._fetch_document_batch(batch_size)
+            else:
+                results = self._fetch_chunk_batch(batch_size)
+            return self._apply_k_cap(results, allowance)
+
+    def _apply_k_cap(self, results: List[QueryResult], allowance: int) -> List[QueryResult]:
+        """Truncate a hydrated batch so cumulative output never exceeds ``total_k``."""
+        if len(results) > allowance:
+            results = results[:allowance]
+            self._exhausted = True
+        self._emitted += len(results)
+        return results
 
     def fetch_all(self) -> List[QueryResult]:
         """Fetch all remaining results at once."""
@@ -249,9 +270,16 @@ class QueryCursor:
             self._check_alive()
             batch_size = batch_size or self._default_batch_size
 
+            allowance = self._config.total_k - self._emitted
+            if allowance <= 0:
+                self._exhausted = True
+                return []
+
             if self._config.return_type == "documents":
-                return await self._fetch_document_batch_async(batch_size)
-            return await self._fetch_chunk_batch_async(batch_size)
+                results = await self._fetch_document_batch_async(batch_size)
+            else:
+                results = await self._fetch_chunk_batch_async(batch_size)
+            return self._apply_k_cap(results, allowance)
 
     async def fetch_all_async(self) -> List[QueryResult]:
         """Fetch all remaining results asynchronously."""

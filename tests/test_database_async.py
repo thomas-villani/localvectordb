@@ -619,3 +619,72 @@ class TestAsyncErrorHandling:
                     await db.async_connection_pool.close_all()
             except Exception:
                 pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestAsyncKeywordFilterParity:
+    """H10: the async keyword leg must match the sync leg's filter contract --
+    decline a filter SQL cannot express (instead of crashing) and always apply
+    the Python matcher as the authority (instead of leaking broader-SQL rows)."""
+
+    @pytest_asyncio.fixture
+    async def kw_db(self, temp_dir):
+        db = LocalVectorDB(
+            name="test_kw_parity",
+            base_path=temp_dir,
+            embedding_provider="mock",
+            embedding_model="test-model",
+            metadata_schema={
+                "author": MetadataField(type=MetadataFieldType.TEXT, indexed=True),
+                "tags": MetadataField(type=MetadataFieldType.JSON),
+            },
+            enable_fts=True,
+        )
+        docs = [
+            "python programming language tutorial",
+            "python data science and machine learning",
+            "python web development guide",
+        ]
+        metadata = [
+            {"author": "alice", "tags": {"level": "beginner"}},
+            {"author": "bob", "tags": {"level": "advanced"}},
+            # Third doc has NULL author -> exercises NULL-inclusive $ne parity.
+            {"tags": {"level": "beginner"}},
+        ]
+        await db.upsert_async(docs, metadata=metadata)
+        yield db
+        try:
+            if db.connection_pool:
+                db.connection_pool.close_all()
+            if db.async_connection_pool:
+                await db.async_connection_pool.close_all()
+        except Exception:
+            pass
+
+    async def test_dotted_json_path_keyword_does_not_crash(self, kw_db):
+        # A dot-notation JSON path is not SQL-expressible; sync declines pushdown
+        # and post-filters in Python. Async used to call build_where_clause bare
+        # and raise. It must now decline gracefully too.
+        result = await kw_db.query_async("python", search_type="keyword", filters={"tags.level": "beginner"}, k=10)
+        assert result is not None
+
+    async def test_dotted_json_path_keyword_matches_sync(self, kw_db):
+        filters = {"tags.level": "beginner"}
+        sync_ids = {r.id for r in kw_db.query("python", search_type="keyword", filters=filters, k=10)}
+        async_ids = {r.id for r in await kw_db.query_async("python", search_type="keyword", filters=filters, k=10)}
+        assert async_ids == sync_ids
+
+    async def test_ne_null_inclusive_keyword_matches_sync(self, kw_db):
+        # $ne must keep NULL-author rows (Python authority); async must not leak
+        # or drop rows relative to sync.
+        filters = {"author": {"$ne": "alice"}}
+        sync_ids = {r.id for r in kw_db.query("python", search_type="keyword", filters=filters, k=10)}
+        async_ids = {r.id for r in await kw_db.query_async("python", search_type="keyword", filters=filters, k=10)}
+        assert async_ids == sync_ids
+
+    async def test_simple_filter_keyword_matches_sync(self, kw_db):
+        filters = {"author": "alice"}
+        sync_ids = {r.id for r in kw_db.query("python", search_type="keyword", filters=filters, k=10)}
+        async_ids = {r.id for r in await kw_db.query_async("python", search_type="keyword", filters=filters, k=10)}
+        assert async_ids == sync_ids

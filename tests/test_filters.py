@@ -15,6 +15,8 @@ from localvectordb._filters import (
     FilterQueryBuilder,
     FTSQuerySanitization,
     _validate_and_quote_identifier,
+    check_metadata_condition,
+    matches_metadata_filter,
     validate_filter_spec,
 )
 from localvectordb.core import MetadataField, MetadataFieldType
@@ -218,6 +220,76 @@ class TestJsonContainsAgainstRealSqlite:
         rows = conn.execute(f"SELECT author FROM docs WHERE {clause}", params).fetchall()
         assert [r[0] for r in rows] == ["Bob"]
         conn.close()
+
+
+class TestNullInclusionParity:
+    """B4: the SQL pushdown must never drop NULL-metadata rows the Python
+    authority (matches_metadata_filter) keeps, or query()/filter() silently
+    under-return. $ne, $nin, and $eq: None are the SQL-narrower-than-Python cases.
+    """
+
+    # Python-side "documents": id -> metadata dict. The NULL row simply omits
+    # 'author', so get_nested_value returns None (SQL NULL's in-memory twin).
+    _DOCS = {
+        1: {"author": "Jane", "rating": 4.5},
+        2: {"author": "Bob", "rating": 3.0},
+        3: {"rating": 2.0},  # author is NULL / absent
+    }
+
+    def _db(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE docs (id INTEGER PRIMARY KEY, author TEXT, rating REAL)")
+        conn.execute("INSERT INTO docs (id, author, rating) VALUES (1, 'Jane', 4.5)")
+        conn.execute("INSERT INTO docs (id, author, rating) VALUES (2, 'Bob', 3.0)")
+        conn.execute("INSERT INTO docs (id, author, rating) VALUES (3, NULL, 2.0)")
+        conn.commit()
+        return conn
+
+    def _sql_ids(self, filter_spec):
+        builder = FilterQueryBuilder(_schema())
+        clause, params = builder.build_where_clause(filter_spec)
+        conn = self._db()
+        try:
+            rows = conn.execute(f"SELECT id FROM docs WHERE {clause}", params).fetchall()
+        finally:
+            conn.close()
+        return {r[0] for r in rows}
+
+    def _python_ids(self, filter_spec):
+        return {doc_id for doc_id, meta in self._DOCS.items() if matches_metadata_filter(meta, filter_spec)}
+
+    @pytest.mark.parametrize(
+        "filter_spec, expected",
+        [
+            ({"author": {"$ne": "Jane"}}, {2, 3}),  # NULL row kept
+            ({"author": {"$nin": ["Jane"]}}, {2, 3}),  # NULL row kept
+            ({"author": {"$eq": None}}, {3}),  # only the NULL row
+            ({"author": {"$ne": "Nobody"}}, {1, 2, 3}),  # no match drops nothing but NULL kept
+        ],
+    )
+    def test_sql_matches_python_authority(self, filter_spec, expected):
+        sql_ids = self._sql_ids(filter_spec)
+        py_ids = self._python_ids(filter_spec)
+        assert sql_ids == expected
+        assert sql_ids == py_ids  # SQL pushdown agrees with the Python authority
+
+
+class TestOrderedCompareCoercion:
+    """B3: an ordered comparison of a typed metadata value against a string
+    operand used to raise TypeError (int > str) and surface as a 500."""
+
+    def test_typed_int_vs_string_operand_does_not_crash(self):
+        # Stored value is an int (typed field); operand is a JSON string.
+        assert check_metadata_condition({"year": 2021}, "year", {"$gt": "2020"}) is True
+        assert check_metadata_condition({"year": 2019}, "year", {"$gt": "2020"}) is False
+        assert check_metadata_condition({"year": 2020}, "year", {"$gte": "2020"}) is True
+        assert check_metadata_condition({"year": 2020}, "year", {"$lt": "2020"}) is False
+
+    def test_incomparable_pair_is_non_match_not_crash(self):
+        # A value with no safe coercion to a comparable type is a non-match,
+        # not a crash. A list vs an int cannot be coerced either way.
+        assert check_metadata_condition({"x": [1, 2]}, "x", {"$gt": 5}) is False
+        assert check_metadata_condition({"x": None}, "x", {"$gt": 5}) is False
 
 
 class TestFTSSanitization:

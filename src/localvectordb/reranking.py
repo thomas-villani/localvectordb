@@ -304,7 +304,24 @@ class SentenceTransformersReranker(Reranker):
 
         cross_encoder = self._load_model()
         pairs = [[query, r.content or ""] for r in results]
-        scores = cross_encoder.predict(pairs)
+
+        # ``CrossEncoder.predict`` applies the model's default activation, which
+        # is a Sigmoid for the num_labels=1 rerankers used here. Applying our own
+        # sigmoid on top of that compresses every score into ~[0.5, 0.73] and
+        # breaks the documented absolute [0, 1] scale. Request the raw logits
+        # instead (the activation kwarg was renamed across the supported
+        # sentence-transformers range, so probe for it) and map them exactly
+        # once. Falls back to whatever ``predict`` returns if neither name exists.
+        import inspect
+
+        identity = lambda logits: logits  # noqa: E731 - keep raw logits
+        predict_params = inspect.signature(cross_encoder.predict).parameters
+        if "activation_fn" in predict_params:
+            scores = cross_encoder.predict(pairs, activation_fn=identity)
+        elif "activation_fct" in predict_params:
+            scores = cross_encoder.predict(pairs, activation_fct=identity)
+        else:
+            scores = cross_encoder.predict(pairs)
 
         # Absolute [0, 1] mapping of the cross-encoder logit via a logistic sigmoid.
         scores_array = np.array(scores, dtype=np.float64)

@@ -436,6 +436,95 @@ class TestHierarchicalIntegration:
         results = db.query("neural networks", search_level=level, k=3)
         assert len(results) >= 1
 
+    # -- H8: reranking must not be silently dropped on fused/sections/documents --
+
+    @pytest.mark.parametrize("level", ["fused", "sections", "documents"])
+    def test_reranker_is_invoked_on_non_chunk_levels(self, db_with_hierarchy, level):
+        """Before the fix these levels early-returned above the rerank block, so a
+        configured reranker was silently ignored."""
+        from localvectordb.reranking import Reranker
+
+        class _RecordingReranker(Reranker):
+            def __init__(self):
+                super().__init__("recording")
+                self.calls = 0
+
+            @property
+            def provider_name(self):
+                return "recording"
+
+            def validate_model(self):
+                return True
+
+            def rerank(self, query, results, top_k=None):
+                self.calls += 1
+                return list(results)[:top_k] if top_k is not None else list(results)
+
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        rr = _RecordingReranker()
+        db.query("neural networks", search_level=level, k=2, reranker=rr)
+        assert rr.calls >= 1, f"reranker was not invoked at search_level={level!r}"
+
+    def test_reranker_reorders_fused_results(self, db_with_hierarchy):
+        """A deterministic reranker must be able to change the top result."""
+        from localvectordb.reranking import Reranker
+
+        class _MarkerReranker(Reranker):
+            def __init__(self, marker):
+                super().__init__("marker")
+                self.marker = marker
+
+            @property
+            def provider_name(self):
+                return "marker"
+
+            def validate_model(self):
+                return True
+
+            def rerank(self, query, results, top_k=None):
+                for r in results:
+                    r.score = 1.0 if self.marker in (r.content or "") else 0.0
+                ranked = sorted(results, key=lambda x: x.score, reverse=True)
+                return ranked[:top_k] if top_k is not None else ranked
+
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        rr = _MarkerReranker(marker="attention mechanisms")
+        results = db.query("neural networks", search_level="fused", k=5, reranker=rr)
+        assert results, "no results to rerank"
+        assert "attention mechanisms" in (results[0].content or "")
+
+    async def test_reranker_forwarded_on_async_non_chunk_level(self, db_with_hierarchy):
+        """query_async delegates non-chunk levels to sync query(); it must forward
+        the reranker too (H8)."""
+        from localvectordb.reranking import Reranker
+
+        class _RecordingReranker(Reranker):
+            def __init__(self):
+                super().__init__("recording")
+                self.calls = 0
+
+            @property
+            def provider_name(self):
+                return "recording"
+
+            def validate_model(self):
+                return True
+
+            def rerank(self, query, results, top_k=None):
+                self.calls += 1
+                return list(results)[:top_k] if top_k is not None else list(results)
+
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        rr = _RecordingReranker()
+        await db.query_async("neural networks", search_level="sections", k=2, reranker=rr)
+        assert rr.calls >= 1
+
     def test_upsert_with_hierarchy(self, db_with_hierarchy):
         """Test that upsert populates sections table."""
         db = db_with_hierarchy

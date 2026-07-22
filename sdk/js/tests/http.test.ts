@@ -7,6 +7,7 @@ import {
   ServerError,
   DatabaseNotFoundError,
   AuthenticationError,
+  PermissionError,
 } from "../src/errors.js";
 
 // ---------------------------------------------------------------------------
@@ -137,6 +138,21 @@ describe("HttpClient", () => {
 
     await expect(client.get("/api/v1/foo/info")).rejects.toThrow(
       DatabaseNotFoundError,
+    );
+  });
+
+  it("maps EMBEDDING_URL_NOT_ALLOWED (SSRF guard) to PermissionError", async () => {
+    const client = makeClient();
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      errorResponse("EMBEDDING_URL_NOT_ALLOWED", "custom provider URL not permitted", 403),
+    );
+
+    await expect(client.post("/api/v1/databases", {})).rejects.toMatchObject({
+      code: "EMBEDDING_URL_NOT_ALLOWED",
+      statusCode: 403,
+    });
+    await expect(client.post("/api/v1/databases", {})).rejects.toThrow(
+      PermissionError,
     );
   });
 

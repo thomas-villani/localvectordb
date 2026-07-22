@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import AliasChoices, Field, model_validator
+from starlette.concurrency import run_in_threadpool
 
 from localvectordb.exceptions import DocumentNotFoundError, PatchConflictError, PatchError
 from localvectordb_server._auth import require_read_permission, require_write_permission
@@ -163,7 +164,10 @@ async def upsert_documents(
             db_logger.log_query(
                 "upsert_documents", database_name=db_name, document_count=len(documents), batch_size=batch_size
             )
-            result_ids = db.upsert(
+            # Offload the sync (blocking, embedding + write-lock) call so it does
+            # not stall the event loop; embed_sync() runs fine off the loop thread.
+            result_ids = await run_in_threadpool(
+                db.upsert,
                 documents=documents,
                 metadata=metadata,
                 ids=ids,
@@ -213,7 +217,8 @@ async def insert_documents(
 
         try:
             db_logger.log_query("insert_documents", database_name=db_name, document_count=len(documents))
-            result_ids = db.insert(
+            result_ids = await run_in_threadpool(
+                db.insert,
                 documents=documents,
                 metadata=metadata,
                 ids=ids,
@@ -240,7 +245,8 @@ async def upsert_from_chunks(db_name: str, body: UpsertChunksBody, db=Depends(ge
             db_logger.log_query(
                 "upsert_from_chunks", database_name=db_name, document_count=len(body.chunks_by_document)
             )
-            result_ids = db.upsert_from_chunks(
+            result_ids = await run_in_threadpool(
+                db.upsert_from_chunks,
                 chunks_by_document=_normalize_chunks(body.chunks_by_document),
                 metadata=body.metadata,
                 batch_size=body.batch_size,
@@ -267,7 +273,8 @@ async def insert_from_chunks(db_name: str, body: InsertChunksBody, db=Depends(ge
             db_logger.log_query(
                 "insert_from_chunks", database_name=db_name, document_count=len(body.chunks_by_document)
             )
-            result_ids = db.insert_from_chunks(
+            result_ids = await run_in_threadpool(
+                db.insert_from_chunks,
                 chunks_by_document=_normalize_chunks(body.chunks_by_document),
                 metadata=body.metadata,
                 batch_size=body.batch_size,
@@ -331,7 +338,9 @@ async def update_document(db_name: str, doc_id: str, body: UpdateDocumentBody, d
         try:
             if body.ops is not None:
                 db_logger.log_query("patch_document", database_name=db_name, document_id=doc_id, op_count=len(body.ops))
-                result = db.patch(doc_id, body.ops, expect_hash=body.expect_hash, metadata=body.metadata)
+                result = await run_in_threadpool(
+                    db.patch, doc_id, body.ops, expect_hash=body.expect_hash, metadata=body.metadata
+                )
                 message = (
                     f"Successfully patched document {doc_id}"
                     if result.updated
@@ -354,7 +363,7 @@ async def update_document(db_name: str, doc_id: str, body: UpdateDocumentBody, d
             # `update()` returns False for a *no-op* (content already matches the
             # stored hash, nothing else to change) and raises for a missing
             # document. Conflating the two would 404 a document that exists.
-            was_updated = db.update(doc_id, content=body.content, metadata=body.metadata)
+            was_updated = await run_in_threadpool(db.update, doc_id, content=body.content, metadata=body.metadata)
             if not was_updated:
                 return {"updated": False, "message": f"Document {doc_id} already up to date; nothing to update"}
             return {"updated": True, "message": f"Successfully updated document {doc_id}"}
@@ -435,17 +444,25 @@ async def delete_documents_batch(db_name: str, body: BatchDeleteBody, db=Depends
             )
 
         try:
-            deleted_count = 0
-            failed_ids: List[str] = []
-            for doc_id in ids:
-                if not db.exists(doc_id):
-                    failed_ids.append(doc_id)
-                    continue
-                try:
-                    deleted_count += db.delete(doc_id)
-                except Exception as e:  # noqa: BLE001 - per-id best effort
-                    logger.warning(f"Failed to delete document {sanitize_log_value(doc_id)}: {sanitize_log_value(e)}")
-                    failed_ids.append(doc_id)
+            # The per-id exists/delete loop is sync and blocking; run the whole
+            # loop in one threadpool hop rather than stalling the event loop.
+            def _run_batch_delete() -> tuple[int, List[str]]:
+                count = 0
+                failed: List[str] = []
+                for doc_id in ids:
+                    if not db.exists(doc_id):
+                        failed.append(doc_id)
+                        continue
+                    try:
+                        count += db.delete(doc_id)
+                    except Exception as e:  # noqa: BLE001 - per-id best effort
+                        logger.warning(
+                            f"Failed to delete document {sanitize_log_value(doc_id)}: {sanitize_log_value(e)}"
+                        )
+                        failed.append(doc_id)
+                return count, failed
+
+            deleted_count, failed_ids = await run_in_threadpool(_run_batch_delete)
 
             db_logger.log_query(
                 "delete_documents_batch_success",
@@ -476,7 +493,7 @@ async def count_documents(db_name: str, body: Optional[FilterBody] = None, db=De
         filters = body.filters if body else None
         try:
             db_logger.log_query("count_documents", database_name=db_name, has_filters=filters is not None)
-            count = db.count(filters=filters)
+            count = await run_in_threadpool(db.count, filters=filters)
             db_logger.log_query("count_documents_success", database_name=db_name, result_count=count)
             return {"count": count}
         except Exception as e:
@@ -495,7 +512,7 @@ async def check_documents_exist(db_name: str, body: ExistsBody, db=Depends(get_d
     with request_context("check_documents_exist"):
         ids = _as_list(body.ids) or []
         try:
-            return {"exists": db.exists(ids), "ids": ids}
+            return {"exists": await run_in_threadpool(db.exists, ids), "ids": ids}
         except Exception as e:
             db_logger.log_error("check_documents_exist", e, database_name=db_name)
             raise
@@ -518,7 +535,15 @@ def list_documents(
         try:
             if ids:
                 id_list = [i.strip() for i in ids.split(",") if i.strip()]
-                documents = db.get(id_list)
+                # db.get(list) raises DocumentNotFoundError if ANY id is missing,
+                # which would defeat this endpoint's partial-result contract
+                # (documents + returned_ids + missing_ids). Partition first so we
+                # return the found docs alongside missing_ids; the RemoteVectorDB
+                # client reconstructs DocumentNotFoundError from missing_ids, so
+                # local/remote get() parity is preserved.
+                exists_flags = db.exists(id_list)
+                present = [doc_id for doc_id, ok in zip(id_list, exists_flags, strict=True) if ok]
+                documents = db.get(present) if present else []
                 returned_ids = [doc.id for doc in documents]
                 return DocumentsByIdResponse(
                     documents=[DocumentResponse(**serialize_document(doc)) for doc in documents],

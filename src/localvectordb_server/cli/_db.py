@@ -219,9 +219,10 @@ def _render_query_results(results, *, title, output_as_json, output, metadata, p
 @click.option(
     "--search-type",
     "-t",
-    default="vector",
+    default="hybrid",
+    show_default=True,
     type=click.Choice(["vector", "keyword", "hybrid"]),
-    help="Type of search to perform",
+    help="Type of search to perform (matches the API/MCP default)",
 )
 @click.option(
     "--return-type",
@@ -475,7 +476,7 @@ def add_to_database(ctx, files_or_text, metadata, id, extract, text):
 
             glob_pattern = os.path.basename(file_or_text_input)
             has_glob = any(c in glob_pattern for c in "*?[]")
-            if has_glob and os.path.isdir(os.path.dirname(file_or_text_input)):
+            if has_glob and os.path.isdir(os.path.dirname(file_or_text_input) or "."):
                 matching_files = glob.glob(file_or_text_input, recursive=True)
                 for file in matching_files:
                     if not os.path.isfile(file):

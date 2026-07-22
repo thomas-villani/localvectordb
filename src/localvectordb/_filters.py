@@ -15,9 +15,10 @@ The filtering system supports:
 """
 
 import json
+import operator
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.exceptions import DatabaseError, MetadataFilterError
@@ -243,6 +244,18 @@ class FilterQueryBuilder:
         # Convert value to appropriate type
         converted_value = self._convert_value_for_type(value, field_type) if field_type else value
 
+        # NULL handling: SQL's three-valued logic drops NULL rows from `!=`,
+        # `NOT IN`, and `= NULL`, but the Python authority (check_metadata_condition)
+        # keeps them (None != x is True; None matches $eq: None). The pushdown must
+        # be broader-or-equal, never narrower, so mirror the Python semantics here.
+        # See _search._build_filter_where for the broader-not-narrower contract.
+        if value is None and operator == "=":
+            # $eq: None -- match rows where the field is NULL.
+            return f"{field} IS NULL"
+        if value is None and operator == "!=":
+            # $ne: None -- match rows where the field is NOT NULL.
+            return f"{field} IS NOT NULL"
+
         # Handle special cases
         if operator in ("IN", "NOT IN"):
             if not isinstance(value, (list, tuple)):
@@ -255,7 +268,16 @@ class FilterQueryBuilder:
             converted_values = [self._convert_value_for_type(v, field_type) if field_type else v for v in value]
             placeholders = [self._add_param(v) for v in converted_values]
             placeholder_str = f"({', '.join(placeholders)})"
-            return f"{field} {operator} {placeholder_str}"
+            if operator == "NOT IN":
+                # NULL NOT IN (...) is NULL (excluded) in SQL; the Python matcher
+                # keeps NULL rows for $nin. Union the NULLs back in.
+                return f"({field} NOT IN {placeholder_str} OR {field} IS NULL)"
+            return f"{field} IN {placeholder_str}"
+        elif operator == "!=":
+            # field != ? excludes NULL rows in SQL; the Python matcher keeps them
+            # ($ne against a non-NULL operand). Union the NULLs back in.
+            param_placeholder = self._add_param(converted_value)
+            return f"({field} != {param_placeholder} OR {field} IS NULL)"
         else:
             param_placeholder = self._add_param(converted_value)
             return f"{field} {operator} {param_placeholder}"
@@ -306,8 +328,32 @@ class FilterQueryBuilder:
         else:
             raise DatabaseError(f"Unsupported JSON operation: {json_op}")
 
+    def _build_substring_condition(self, field: str, value: Any, case_insensitive: bool) -> str:
+        """Literal substring containment, matching the Python matcher's semantics.
+
+        ``matches_metadata_filter`` implements ``$contains``/``$like`` as a plain
+        ``target in str(value)`` (case-sensitive, ``%``/``_`` treated literally),
+        and ``$ilike`` as the case-insensitive version. SQL ``LIKE`` is instead
+        case-insensitive and interprets ``%``/``_`` as wildcards, so the two sides
+        returned different sets (query() vs filter()). ``instr`` is a literal,
+        case-sensitive substring test, so it mirrors the Python authority exactly;
+        wrap both operands in ``lower()`` for the case-insensitive ``$ilike``.
+        """
+        self._validate_field_name(field)
+        if not isinstance(value, str):
+            value = str(value)
+        placeholder = self._add_param(value)
+        if case_insensitive:
+            return f"instr(lower({field}), lower({placeholder})) > 0"
+        return f"instr({field}, {placeholder}) > 0"
+
     def _build_string_condition(self, field: str, str_op: str, value: Any) -> str:
         """Build conditions for string operations.
+
+        Literal and case-sensitive to match the Python matcher (``str.startswith``/
+        ``str.endswith``/substring containment). ``substr(...) COLLATE BINARY`` keeps
+        the prefix/suffix comparison case-sensitive regardless of column collation;
+        ``%``/``_`` in the operand are literal (bound as a value, never a pattern).
 
         Parameters
         ----------
@@ -328,17 +374,21 @@ class FilterQueryBuilder:
         if not isinstance(value, str):
             value = str(value)
 
+        if str_op == "$contains":
+            return self._build_substring_condition(field, value, case_insensitive=False)
         if str_op == "$startswith":
-            pattern = f"{value}%"
-        elif str_op == "$endswith":
-            pattern = f"%{value}"
-        elif str_op == "$contains":
-            pattern = f"%{value}%"
-        else:
-            raise DatabaseError(f"Unsupported string operation: {str_op}")
-
-        param_placeholder = self._add_param(pattern)
-        return f"{field} LIKE {param_placeholder}"
+            # substr(field, 1, len(v)) = v -- both "?" are bound (positional).
+            len_placeholder = self._add_param(value)
+            eq_placeholder = self._add_param(value)
+            return f"substr({field}, 1, length({len_placeholder})) = {eq_placeholder} COLLATE BINARY"
+        if str_op == "$endswith":
+            if value == "":
+                # str.endswith("") is always True for a non-None value.
+                return f"{field} IS NOT NULL"
+            len_placeholder = self._add_param(value)
+            eq_placeholder = self._add_param(value)
+            return f"substr({field}, -length({len_placeholder})) = {eq_placeholder} COLLATE BINARY"
+        raise DatabaseError(f"Unsupported string operation: {str_op}")
 
     def _build_existence_condition(self, field: str, exists: bool) -> str:
         """Build existence check condition.
@@ -421,15 +471,11 @@ class FilterQueryBuilder:
             if op in self.OPERATORS:
                 sql_op = self.OPERATORS[op]
                 if op == "$ilike":
-                    # Special handling for case-insensitive LIKE
-                    self._validate_field_name(field)
-                    if not isinstance(value, str):
-                        value = str(value)
-                    # Add wildcards if not present
-                    if "%" not in value:
-                        value = f"%{value}%"
-                    param_placeholder = self._add_param(value.lower())
-                    conditions.append(f"LOWER({field}) LIKE {param_placeholder}")
+                    # Case-insensitive literal substring (matches the Python matcher).
+                    conditions.append(self._build_substring_condition(field, value, case_insensitive=True))
+                elif op == "$like":
+                    # Case-sensitive literal substring (matches the Python matcher).
+                    conditions.append(self._build_substring_condition(field, value, case_insensitive=False))
                 else:
                     conditions.append(self._build_simple_condition(field, sql_op, value))
             elif op in ["$contains", "$not_contains"]:
@@ -441,7 +487,10 @@ class FilterQueryBuilder:
                     if op == "$contains":
                         conditions.append(self._build_string_condition(field, "$contains", value))
                     else:
-                        conditions.append(f"NOT ({self._build_string_condition(field, '$contains', value)})")
+                        # NOT (contains) alone excludes NULL rows in SQL, but the
+                        # Python matcher keeps them for $not_contains -- union NULLs back.
+                        contains = self._build_string_condition(field, "$contains", value)
+                        conditions.append(f"(NOT ({contains}) OR {field} IS NULL)")
             elif op in ["$startswith", "$endswith"]:
                 conditions.append(self._build_string_condition(field, op, value))
             elif op == "$exists":
@@ -663,6 +712,53 @@ def get_nested_value(data: dict, path: str) -> Any:
         return None
 
 
+def _coerce_operand_for_compare(value: Any, target: Any) -> Any:
+    """Best-effort coercion of a filter *target* to the stored *value*'s type.
+
+    Ordered comparisons ($gt/$lt/...) raise ``TypeError`` across mismatched types
+    in Python 3 (e.g. ``2020 > "2020"``). Metadata stored under a typed field
+    reads back typed (int/float), while a filter operand may arrive as a JSON
+    string. Coerce the operand toward the value's type so the in-memory match
+    mirrors the SQL side, which converts operands via ``_convert_value_for_type``.
+
+    Returns the target unchanged when no safe coercion applies; the caller then
+    treats a still-incomparable pair as a non-match rather than crashing.
+    """
+    if type(value) is type(target):
+        return target
+    # bool is an int subclass; never coerce booleans numerically or we would
+    # silently compare True/False as 1/0.
+    if isinstance(value, bool) or isinstance(target, bool):
+        return target
+    if isinstance(value, (int, float)) and isinstance(target, str):
+        try:
+            return type(value)(target)
+        except (TypeError, ValueError):
+            return target
+    if isinstance(value, str) and isinstance(target, (int, float)):
+        return str(target)
+    return target
+
+
+def _ordered_compare(value: Any, target: Any, op: Callable[[Any, Any], bool]) -> bool:
+    """Apply an ordered comparison, coercing on type mismatch instead of raising.
+
+    A ``TypeError`` from an ordered comparison of a typed metadata value against
+    a mismatched operand used to bubble up as a 500. Coerce once and retry; a
+    pair that is still incomparable is a non-match.
+    """
+    if value is None:
+        return False
+    try:
+        return bool(op(value, target))
+    except TypeError:
+        coerced = _coerce_operand_for_compare(value, target)
+        try:
+            return bool(op(value, coerced))
+        except TypeError:
+            return False
+
+
 def check_metadata_condition(metadata: dict, field: str, condition: Union[dict, Any]) -> bool:
     """Check if metadata matches a single condition (in-memory filtering).
 
@@ -696,13 +792,13 @@ def check_metadata_condition(metadata: dict, field: str, condition: Union[dict, 
         elif op == "$ne":
             return bool(value != target)
         elif op == "$gt":
-            return bool(value > target) if value is not None else False
+            return _ordered_compare(value, target, operator.gt)
         elif op == "$lt":
-            return bool(value < target) if value is not None else False
+            return _ordered_compare(value, target, operator.lt)
         elif op == "$gte":
-            return bool(value >= target) if value is not None else False
+            return _ordered_compare(value, target, operator.ge)
         elif op == "$lte":
-            return bool(value <= target) if value is not None else False
+            return _ordered_compare(value, target, operator.le)
         elif op == "$ilike":
             return str(target).lower() in str(value).lower() if value is not None else False
         elif op == "$like":

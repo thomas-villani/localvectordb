@@ -408,9 +408,15 @@ async def query_builder_execute(db_name: str, body: QueryBuilderStateBody, db=De
 
             builder = QueryBuilder(db)
 
-            # Apply search clauses
+            # Apply search clauses. Honor the per-clause score_threshold the
+            # client serializes (``columns`` is a remote-only kwarg the local
+            # QueryBuilder.search does not accept, so it stays dropped).
             for clause in body.search_clauses:
-                builder = builder.search(clause["text"], search_type=clause.get("search_type", "hybrid"))
+                builder = builder.search(
+                    clause["text"],
+                    search_type=clause.get("search_type", "hybrid"),
+                    score_threshold=clause.get("score_threshold"),
+                )
 
             # Apply exact filters
             for filter_item in body.exact_filters:
@@ -478,11 +484,14 @@ async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get
     """Query across multiple columns (main content + embedding-enabled metadata fields)."""
     with request_context("query_multi_column"):
         try:
+            # Resolve the None sentinel to the natural unit of search_level so the
+            # response echoes a real string and remote parity with local holds.
+            return_type = _resolve_return_type(body.return_type, body.search_level)
             db_logger.log_query(
                 "query_multi_column",
                 database_name=db_name,
                 search_type=body.search_type,
-                return_type=body.return_type,
+                return_type=return_type,
                 k=body.k,
                 query_length=len(body.query),
                 columns_count=len(body.columns) if body.columns else None,
@@ -492,7 +501,7 @@ async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get
                 query=body.query,
                 columns=body.columns,
                 search_type=body.search_type,
-                return_type=body.return_type,
+                return_type=return_type,
                 k=body.k,
                 score_threshold=body.score_threshold,
                 filters=body.filters,
@@ -514,13 +523,11 @@ async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get
             return {
                 "results": serialized_results,
                 "search_type": body.search_type,
-                "return_type": body.return_type,
+                "return_type": return_type,
                 "total_results": len(serialized_results),
                 "columns_searched": body.columns,
                 "processing_info": {
-                    "document_scoring_method": (
-                        body.document_scoring_method if body.return_type == "documents" else None
-                    )
+                    "document_scoring_method": (body.document_scoring_method if return_type == "documents" else None)
                 },
             }
 
@@ -679,12 +686,15 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
             # in the threadpool so embed_sync() is off the event loop thread.
             from starlette.concurrency import run_in_threadpool
 
+            # Resolve the None sentinel; search_databases takes no search_level, so
+            # use the body's to pick the natural unit for the echoed/queried value.
+            return_type = _resolve_return_type(body.return_type, body.search_level)
             results = await run_in_threadpool(
                 db_manager.search_databases,
                 query=body.query,
                 database_names=body.databases,
                 search_type=body.search_type,
-                return_type=body.return_type,
+                return_type=return_type,
                 k=body.k,
                 score_threshold=body.score_threshold,
                 filters=body.filters,
@@ -699,7 +709,7 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
             return {
                 "results_by_database": results,
                 "search_type": body.search_type,
-                "return_type": body.return_type,
+                "return_type": return_type,
             }
 
         except Exception as e:

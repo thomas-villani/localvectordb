@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from localvectordb._interfaces import QueryBuilderInterface
     from localvectordb.cursor import QueryCursor
     from localvectordb.patching import PatchResult
@@ -756,6 +758,11 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
+    def _async_write_gate(self) -> "AbstractAsyncContextManager[None]":
+        """Cross-thread write gate for async mutators; see LocalVectorDB._async_write_gate."""
+        ...
+
+    @abstractmethod
     def _validate_metadata_batch(self, metadata_batch: List[Dict[str, Any]]) -> None:
         pass
 
@@ -770,7 +777,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    def _remove_metadata_embeddings(self, conn, document_id: str) -> None:
+    def _remove_metadata_embeddings(self, conn, document_id: str, pending: Any = None) -> None:
         pass
 
     @abstractmethod
@@ -837,7 +844,9 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         pass
 
     @abstractmethod
-    async def _remove_metadata_embeddings_async(self, conn: aiosqlite.Connection, document_id: str) -> None:
+    async def _remove_metadata_embeddings_async(
+        self, conn: aiosqlite.Connection, document_id: str, pending: Any = None
+    ) -> None:
         pass
 
     @abstractmethod

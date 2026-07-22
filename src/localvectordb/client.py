@@ -261,9 +261,8 @@ class RemoteQueryBuilder:
         Mirrors :meth:`localvectordb.query_builder.QueryBuilder.search` so a chain
         is portable between local and remote backends. The ``vector_weight`` is
         folded into builder-level state (the server reads it per builder, not per
-        clause). ``score_threshold`` is serialized on the clause for
-        forward-compatibility but is not currently honored by the server
-        query-builder endpoint.
+        clause). ``score_threshold`` is serialized on the clause and honored by
+        the server query-builder endpoint.
         """
         if not query or not isinstance(query, str):
             raise ValueError("Query must be a non-empty string")

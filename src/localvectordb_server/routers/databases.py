@@ -3,9 +3,11 @@
 
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 from pydantic import ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from localvectordb.exceptions import DatabaseNotFoundError
 from localvectordb_server._auth import require_read_permission, require_write_permission
@@ -15,9 +17,10 @@ from localvectordb_server._error_handlers import (
     validate_database_creation_params,
 )
 from localvectordb_server._logcfg import DatabaseLogger, log_performance, request_context
-from localvectordb_server.config import Config
+from localvectordb_server.config import Config, EmbeddingSettings
 from localvectordb_server.routers._deps import get_config, get_db, get_db_manager
 from localvectordb_server.routers._models import StrictModel
+from localvectordb_server.utils.hostmatch import validate_host_against_patterns
 from localvectordb_server.utils.schema import parse_metadata_schema
 
 logger = logging.getLogger(__name__)
@@ -96,6 +99,84 @@ class DeleteDatabaseResponse(StrictModel):
 
 
 # --------------------------------------------------------------------------- #
+# SSRF guard for request-supplied embedding provider URLs
+# --------------------------------------------------------------------------- #
+
+
+def _server_trusted_urls(server_embedding: EmbeddingSettings) -> set:
+    """URLs the *operator* configured server-side; these are always trusted."""
+    trusted = set()
+    if server_embedding.base_url:
+        trusted.add(server_embedding.base_url)
+    server_cfg = server_embedding.config or {}
+    cfg_url = server_cfg.get("base_url")
+    if isinstance(cfg_url, str) and cfg_url:
+        trusted.add(cfg_url)
+    return trusted
+
+
+def _request_provider_urls(request_embedding: Dict[str, Any]) -> List[str]:
+    """Every base_url a request tries to inject (top-level and nested config).
+
+    ``_dbmanager.create_db`` forwards both ``embedding.base_url`` and any
+    ``base_url`` spread from ``embedding.config`` into the provider, so both are
+    SSRF sinks and both must be gated.
+    """
+    urls: List[str] = []
+    top = request_embedding.get("base_url")
+    if isinstance(top, str) and top:
+        urls.append(top)
+    cfg = request_embedding.get("config")
+    if isinstance(cfg, dict):
+        nested = cfg.get("base_url")
+        if isinstance(nested, str) and nested:
+            urls.append(nested)
+    return urls
+
+
+def _enforce_embedding_url_policy(request_embedding: Dict[str, Any], server_embedding: EmbeddingSettings) -> None:
+    """Reject request-supplied embedding provider URLs per the SSRF policy.
+
+    The policy is read from the *server's* trusted config, never from the merged
+    request (``update_from_dict`` would otherwise let a caller flip
+    ``allow_custom_provider_url`` on itself). A request base_url that matches the
+    server's own configured URL is a no-op and allowed.
+    """
+    trusted = _server_trusted_urls(server_embedding)
+    for url in _request_provider_urls(request_embedding):
+        if url in trusted:
+            continue
+        if not server_embedding.allow_custom_provider_url:
+            raise APIError(
+                message=(
+                    "Custom embedding provider URLs are not permitted. The operator must set "
+                    "embedding.allow_custom_provider_url=true (and optionally embedding.allowed_provider_hosts) "
+                    "to enable per-request provider URLs."
+                ),
+                error_code="EMBEDDING_URL_NOT_ALLOWED",
+                status_code=403,
+                recoverable=False,
+            )
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValidationError(
+                f"Embedding provider base_url must use http or https (got scheme {parsed.scheme!r})",
+                field="embedding.base_url",
+            )
+        host = parsed.hostname
+        if not host:
+            raise ValidationError("Embedding provider base_url must include a host", field="embedding.base_url")
+        allowed = server_embedding.allowed_provider_hosts
+        if allowed is not None and not validate_host_against_patterns(host, allowed):
+            raise APIError(
+                message=f"Embedding provider host '{host}' is not in the configured allowlist",
+                error_code="EMBEDDING_URL_HOST_NOT_ALLOWED",
+                status_code=403,
+                recoverable=False,
+            )
+
+
+# --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
 
@@ -150,6 +231,10 @@ async def create_database(
                 raise ValidationError(f"Invalid database configuration: {str(e)}") from e
 
         if "embedding" in data:
+            # Gate a request-supplied provider URL BEFORE merging it in: the policy
+            # is read from the trusted server config (config.embedding), not the
+            # merged copy, so a caller cannot flip allow_custom_provider_url itself.
+            _enforce_embedding_url_policy(data["embedding"], config.embedding)
             try:
                 embedding_config.update_from_dict(data["embedding"])
             except Exception as e:
@@ -158,7 +243,10 @@ async def create_database(
         db_logger.log_query("create_database", database_name=name)
 
         try:
-            db = db_manager.create_db(name, metadata_schema, db_config, embedding_config)
+            # create_db validates the embedding model (a network round-trip for
+            # provider backends) and writes to disk -- both blocking. Offload so
+            # the event loop keeps serving other requests.
+            db = await run_in_threadpool(db_manager.create_db, name, metadata_schema, db_config, embedding_config)
             db_logger.log_query("create_database_success", database_name=name)
 
             return {

@@ -22,7 +22,7 @@ from localvectordb.core import (
     QueryResult,
 )
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.exceptions import DatabaseError
+from localvectordb.exceptions import DatabaseError, DocumentNotFoundError
 
 if TYPE_CHECKING:
     from faiss import Index
@@ -94,7 +94,7 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
             with self.connection_pool.get_connection() as conn:
                 row = conn.execute("SELECT doc_faiss_id FROM documents WHERE id = ?", (doc_id,)).fetchone()
             if row is None:
-                raise ValueError(f"Document '{doc_id}' not found")
+                raise DocumentNotFoundError(f"Document '{doc_id}' not found")
             doc_faiss_id = row["doc_faiss_id"]
             if doc_faiss_id is None:
                 raise ValueError(f"Document '{doc_id}' has no document-level embedding")
@@ -108,6 +108,13 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
         # Non-hierarchical: average chunk embeddings
         chunk_embs, _ = self._get_chunk_embeddings_for_doc(doc_id)
         if chunk_embs.shape[0] == 0:
+            # Zero chunks is ambiguous: distinguish "no such document" (404) from
+            # "document exists but has no embeddable content" (e.g. a whitespace-
+            # only doc -> 0 chunks) so the server maps the former to 404, not 500.
+            with self.connection_pool.get_connection() as conn:
+                exists_row = conn.execute("SELECT 1 FROM documents WHERE id = ?", (doc_id,)).fetchone()
+            if exists_row is None:
+                raise DocumentNotFoundError(f"Document '{doc_id}' not found")
             raise ValueError(f"Document '{doc_id}' has no chunk embeddings")
         result: np.ndarray = np.mean(chunk_embs, axis=0).astype(np.float32)
         return result
@@ -129,7 +136,9 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
                 emb = self._get_document_embedding(doc_id)
                 embeddings.append(emb)
                 valid_ids.append(doc_id)
-            except ValueError:
+            except (ValueError, DocumentNotFoundError):
+                # Batch (pairwise matrix) is lenient: skip a missing or
+                # embedding-less document rather than failing the whole call.
                 logger.warning("Skipping document '%s': no embedding available", doc_id)
         if not embeddings:
             return np.array([]).reshape(0, self.embedding_dimension), []

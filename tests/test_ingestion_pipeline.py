@@ -114,7 +114,7 @@ class TestMultiThreadedPipeline:
 
             # Run the pipeline
             doc_ids = ["doc_1", "doc_2", "doc_3"]
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=sample_documents,
                 metadata_batch=sample_metadata,
                 ids=doc_ids,
@@ -140,7 +140,7 @@ class TestMultiThreadedPipeline:
         with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             doc_ids = ["doc_1", "doc_2", "doc_3"]
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=sample_documents,
                 metadata_batch=sample_metadata,
                 ids=doc_ids,
@@ -315,7 +315,7 @@ class TestMultiThreadedPipeline:
             # In the threaded implementation, errors in worker threads may not propagate
             # to the main thread immediately. The pipeline may complete with empty results.
             # This is actually correct behavior - the error is logged and the pipeline continues.
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=["test document"],
                 metadata_batch=[{}],
                 ids=["doc_1"],
@@ -343,7 +343,7 @@ class TestMultiThreadedPipeline:
         ):
 
             # The pipeline catches worker errors and only logs them, returning empty result
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=["test document"],
                 metadata_batch=[{}],
                 ids=["doc_1"],
@@ -366,7 +366,7 @@ class TestMultiThreadedPipeline:
 
         with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=documents,
                 metadata_batch=metadata,
                 ids=doc_ids,
@@ -387,7 +387,7 @@ class TestMultiThreadedPipeline:
         """Test pipeline handling of empty document list."""
         db = mock_db_with_pipeline
 
-        result = db._process_with_pipeline(
+        result, _pf = db._process_with_pipeline(
             documents=[], metadata_batch=[], ids=[], batch_size=10, similarity_threshold=None, mode="upsert"
         )
 
@@ -505,7 +505,7 @@ class TestAsyncPipeline:
                 queue_items["embedding"].append(item)
                 await embedding_queue.put(item)
 
-        async def capture_database_stage(embedding_queue, threshold, mode, result_ids, total):
+        async def capture_database_stage(embedding_queue, threshold, mode, result_ids, total, failures):
             processed = 0
             while processed < total:
                 item = await embedding_queue.get()
@@ -521,7 +521,7 @@ class TestAsyncPipeline:
             patch.object(db, "_fetch_existing_chunks_batch_async", return_value={}),
         ):
 
-            result = await db._async_pipeline_process(
+            result, _pf = await db._async_pipeline_process(
                 documents=["doc1", "doc2"],
                 metadata_batch=[{}, {}],
                 ids=["id1", "id2"],
@@ -577,7 +577,7 @@ class TestAsyncPipeline:
                 chunk_data["new_embeddings"] = []
                 await embedding_queue.put(chunk_data)
 
-        async def mock_database_stage(embedding_queue, similarity_threshold, mode, result_ids, total_docs):
+        async def mock_database_stage(embedding_queue, similarity_threshold, mode, result_ids, total_docs, failures):
             processed = 0
             while processed < total_docs:
                 chunk_data = await embedding_queue.get()
@@ -598,7 +598,7 @@ class TestAsyncPipeline:
             metadata = [{}] * 6
             ids = [f"id{i}" for i in range(6)]
 
-            result = await db._async_pipeline_process(
+            result, _pf = await db._async_pipeline_process(
                 documents=documents,
                 metadata_batch=metadata,
                 ids=ids,
@@ -804,7 +804,7 @@ class TestEdgeCasesAndErrors:
             # Filter returns empty lists (all chunks filtered)
             mock_filter.return_value = ([], np.array([]).reshape(0, 384), None)
 
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=["test document"],
                 metadata_batch=[{}],
                 ids=["doc1"],
@@ -845,7 +845,7 @@ class TestEdgeCasesAndErrors:
             documents = ["doc1 content", "doc2 content"]
 
             # Worker errors are logged but don't propagate to main thread
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=documents,
                 metadata_batch=[{}, {}],
                 ids=["id1", "id2"],
@@ -872,7 +872,7 @@ class TestEdgeCasesAndErrors:
         with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
             # Should handle small queue size without deadlock
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=documents,
                 metadata_batch=metadata,
                 ids=ids,
@@ -939,7 +939,7 @@ class TestEdgeCasesAndErrors:
 
         with mock_database_operations(db), patch.object(db, "_fetch_existing_chunks_batch", return_value={}):
 
-            result = db._process_with_pipeline(
+            result, _pf = db._process_with_pipeline(
                 documents=[large_doc],
                 metadata_batch=[{}],
                 ids=["large_doc"],
@@ -966,7 +966,7 @@ class TestEdgeCasesAndErrors:
         ):
 
             # Insert mode - should process even with existing chunks
-            result_insert = db._process_with_pipeline(
+            result_insert, _pf = db._process_with_pipeline(
                 documents=["new document"],
                 metadata_batch=[{}],
                 ids=["doc_1"],
@@ -976,7 +976,7 @@ class TestEdgeCasesAndErrors:
             )
 
             # Upsert mode - should update existing
-            result_upsert = db._process_with_pipeline(
+            result_upsert, _pf = db._process_with_pipeline(
                 documents=["updated document"],
                 metadata_batch=[{}],
                 ids=["doc_1"],

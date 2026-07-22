@@ -227,6 +227,36 @@ class HostValidationMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Rejects request bodies larger than ``server.max_request_size``.
+
+    ``max_request_size`` was configured and validated but never wired into the
+    stack, so ``upload.py``'s ``await file.read()`` could buffer an arbitrarily
+    large upload into memory (a memory-exhaustion DoS). This restores the
+    Flask ``MAX_CONTENT_LENGTH`` parity the config already advertises by
+    rejecting on the declared ``Content-Length`` with a 413.
+    """
+
+    def __init__(self, app, config):
+        super().__init__(app)
+        self.max_request_size = config.server.max_request_size
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                return _error_response(400, "Invalid Content-Length header", "INVALID_CONTENT_LENGTH")
+            if declared > self.max_request_size:
+                return _error_response(
+                    413,
+                    f"Request body too large: {declared} bytes exceeds the " f"{self.max_request_size}-byte limit.",
+                    "REQUEST_TOO_LARGE",
+                )
+        return await call_next(request)
+
+
 def create_app(
     configuration: Union[str, Config, None] = None,
     database_directory=None,
@@ -312,6 +342,11 @@ def create_app(
 
     # Request logging
     app.add_middleware(RequestLoggingMiddleware)
+
+    # Request body size limit (enforces server.max_request_size). Added after
+    # RequestLoggingMiddleware so it sits outside it and rejects oversized
+    # bodies before any router buffers them.
+    app.add_middleware(RequestSizeLimitMiddleware, config=_config)
 
     # Host validation
     if _config.server.security.trusted_hosts:

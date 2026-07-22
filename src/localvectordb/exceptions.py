@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import Dict, List, Optional, Union
 
 
 class BaseLocalVectorDBException(Exception):
@@ -25,6 +25,29 @@ class DuplicateDocumentIDError(DatabaseError, ValueError):
     """Raised when inserting document(s) and the id(s) already exist"""
 
     pass
+
+
+class IngestError(DatabaseError):
+    """
+    Raised by ``upsert``/``insert`` (and their async twins) when one or more
+    documents fail to embed or write and ``errors="raise"`` (the default).
+
+    Each document is committed in its own transaction, so the documents that
+    succeeded *are* durably persisted -- their IDs are in ``succeeded``. The
+    documents that failed are in ``failures`` (``doc_id -> error message``).
+    Pass ``errors="ignore"`` to suppress this and get best-effort ingestion that
+    returns only the IDs that landed.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        failures: Optional[Dict[str, str]] = None,
+        succeeded: Optional[List[str]] = None,
+    ):
+        super().__init__(message)
+        self.failures: Dict[str, str] = failures or {}
+        self.succeeded: List[str] = succeeded or []
 
 
 class IndexIntegrityError(DatabaseError):

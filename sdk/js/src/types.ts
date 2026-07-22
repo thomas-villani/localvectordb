@@ -48,6 +48,11 @@ export type ErrorCode =
   | "DATABASE_ALREADY_EXISTS"
   | "EMBEDDING_ERROR"
   | "OLLAMA_NOT_AVAILABLE"
+  // Raised by POST /databases when a request supplies a custom embedding
+  // provider URL the server has not opted into (allow_custom_provider_url), or
+  // one whose host is not in allowed_provider_hosts. Both are 403.
+  | "EMBEDDING_URL_NOT_ALLOWED"
+  | "EMBEDDING_URL_HOST_NOT_ALLOWED"
   | "DATABASE_CONNECTION_ERROR"
   | "CONFIGURATION_ERROR"
   | "DATABASE_ERROR"

@@ -5,6 +5,7 @@ import logging
 from typing import List, Optional, Union
 
 from fastapi import APIRouter, Depends
+from starlette.concurrency import run_in_threadpool
 
 from localvectordb_server._auth import require_read_permission
 from localvectordb_server._error_handlers import APIError, ValidationError
@@ -85,7 +86,7 @@ async def get_embeddings_for_db(db_name: str, body: DbEmbeddingsBody, db=Depends
         try:
             if body.ids:
                 id_list = [body.ids] if isinstance(body.ids, str) else body.ids
-                embeddings = db.get_chunk_embeddings(id_list).tolist()
+                embeddings = (await run_in_threadpool(db.get_chunk_embeddings, id_list)).tolist()
             else:
                 if not body.texts:
                     raise ValidationError(

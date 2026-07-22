@@ -16,7 +16,7 @@ from localvectordb.validation import (
     Polarity,
 )
 from localvectordb.validation.annotator import _find_best_match, annotate_response
-from localvectordb.validation.claims import extract_claims
+from localvectordb.validation.claims import ClaimExtractionError, extract_claims
 from localvectordb.validation.llm import (
     AnthropicProvider,
     GeminiProvider,
@@ -228,14 +228,32 @@ class TestExtractClaims:
         assert len(result) == 1
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_failure(self):
+    async def test_raises_on_unparseable_response(self):
+        # A garbled response is an extraction *failure*, not "no claims".
+        # Swallowing it to [] would let FactChecker report score 1.0.
         llm = MockLLM("not valid json")
-        result = await extract_claims(llm, "text")
-        assert result == []
+        with pytest.raises(ClaimExtractionError):
+            await extract_claims(llm, "text")
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_non_list(self):
+    async def test_raises_on_non_list(self):
         llm = MockLLM('{"not": "a list"}')
+        with pytest.raises(ClaimExtractionError):
+            await extract_claims(llm, "text")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_provider_failure(self):
+        class BoomLLM:
+            async def complete(self, system, user):
+                raise RuntimeError("provider down")
+
+        with pytest.raises(ClaimExtractionError):
+            await extract_claims(BoomLLM(), "text")
+
+    @pytest.mark.asyncio
+    async def test_valid_empty_array_is_no_claims(self):
+        # A well-formed empty array is a *successful* extraction: no claims.
+        llm = MockLLM("[]")
         result = await extract_claims(llm, "text")
         assert result == []
 
@@ -431,6 +449,17 @@ class TestFactChecker:
         assert result.overall_score == 1.0
         assert len(result.claims) == 0
         assert result.citation_text == "No factual claims detected."
+        assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_extraction_failure_is_not_perfect_score(self):
+        # A garbled extraction response must NOT read as "fully verified".
+        checker = self._make_checker(llm_responses=["not valid json"])
+        result = await checker.check_async("The sky is green.")
+        assert result.overall_score == 0.0
+        assert result.error is not None
+        assert len(result.claims) == 0
+        assert result.has_contradictions is False
 
     @pytest.mark.asyncio
     async def test_claim_with_no_sources(self):

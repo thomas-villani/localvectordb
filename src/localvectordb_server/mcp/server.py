@@ -657,7 +657,13 @@ async def check_documents_exist(database_name: str, document_ids: List[str]) -> 
         else:
             exists_map = db.exists(document_ids)
 
-        return {"exists": exists_map, "total_checked": len(document_ids), "total_found": sum(exists_map.values())}
+        # db.exists() / exists_async() return a List[bool] aligned to document_ids,
+        # not a mapping. sum() over the list counts the True entries.
+        return {
+            "exists": {doc_id: present for doc_id, present in zip(document_ids, exists_map, strict=True)},
+            "total_checked": len(document_ids),
+            "total_found": sum(exists_map),
+        }
 
     except Exception as e:
         logger.error(f"Error checking document existence: {e}")

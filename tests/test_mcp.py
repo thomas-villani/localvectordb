@@ -819,7 +819,8 @@ class TestCheckDocumentsExistTool:
         from localvectordb_server.mcp.server import check_documents_exist
 
         mock_db = MagicMock()
-        mock_db.exists.return_value = {"d1": True, "d2": False}
+        # exists() returns a List[bool] aligned to the input ids, not a mapping.
+        mock_db.exists.return_value = [True, False]
         del mock_db.exists_async
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
@@ -833,10 +834,11 @@ class TestCheckDocumentsExistTool:
         from localvectordb_server.mcp.server import check_documents_exist
 
         mock_db = MagicMock()
-        mock_db.exists_async = AsyncMock(return_value={"d1": True})
+        mock_db.exists_async = AsyncMock(return_value=[True])
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(check_documents_exist("testdb", ["d1"]))
+        assert result["exists"]["d1"] is True
         assert result["total_found"] == 1
 
     def test_check_error(self, mcp_manager_fixture):
