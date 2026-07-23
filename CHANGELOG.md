@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A lighter `cli` install extra.** The `lvdb` command now installs with just
+  `pip install "localvectordb[cli]"` (click + tomli-w + bcrypt) — enough to
+  create, inspect, search, chunk, back up, migrate, and configure databases
+  without pulling fastapi/uvicorn/slowapi. The `server` extra now includes `cli`
+  and adds the HTTP stack; `lvdb serve` imports it lazily and prints an
+  actionable hint if only the `cli` extra is installed.
+- **`RepairReport.summary` is now a property**, matching the sibling `healthy`
+  property, so `report.summary` returns the human-readable line (previously
+  `report.summary()` — a bound method if the parentheses were forgotten). Access
+  it without the call.
 - **`lvdb serve` only probes for Ollama when the configured embedding provider
   is Ollama.** A server backed by OpenAI/Jina/OpenRouter/etc. no longer requires
   a local Ollama install at startup. `--disable-ollama-check` still overrides the
@@ -101,6 +111,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`delimiter` chunking strategy** — split a document on a literal delimiter
+  sequence (`"\n\n"` by default), packing the resulting segments into chunks up
+  to `chunk_size`. A segment larger than the limit falls back to character-level
+  splitting, so no chunk overflows even when the delimiter leaves an over-long
+  piece; spans stay contiguous, so `reconstruct_document` is exact. Select it as
+  `chunking_method="delimiter"` with a new `chunk_delimiter` constructor
+  parameter (persisted per database), on the CLI as
+  `lvdb create --chunking-method delimiter --chunk-delimiter '\n---\n'`, and for
+  standalone use as `lvdb chunk -M delimiter --delimiter '\n---\n'`. The CLI
+  interprets `\n`/`\t`/`\r` escapes in the delimiter. (Local library + CLI;
+  remote/server exposure of `chunk_delimiter` is deferred, consistent with the
+  other remote-parity gaps.)
+- **`lvdb chunk`** — run the position-aware chunkers standalone, with no
+  database, embedding, or config, emitting one JSON object per chunk (JSONL).
+  Reads files, globs, direct text, or stdin, extracting rich formats
+  (PDF/DOCX/HTML/…) to Markdown first, exactly as ingestion does.
 - **`LocalVectorDB.grep()`** — lexical, line-oriented content search, distinct
   from the ranked `query()` retrieval pipeline. Literal or regex matching with
   `ignore_case`, `whole_word`, and grep-style context (`context` / `before_context`

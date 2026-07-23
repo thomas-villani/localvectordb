@@ -59,6 +59,7 @@ class RepairReport:
     def healthy(self) -> bool:
         return not (self.duplicate_ids or self.orphan_vectors or self.dangling_rows)
 
+    @property
     def summary(self) -> str:
         findings = (
             f"{len(self.duplicate_ids)} duplicate id(s), "
@@ -244,7 +245,7 @@ class RepairMixin(LocalVectorDBBase, ABC):
         # Repair rebuilds the index and persists it directly via _save_internal (which
         # bypasses save()'s dirty gate), so the on-disk file now matches memory.
         self._index_dirty = False
-        logger.info(f"Repair complete: {report.summary()}")
+        logger.info(f"Repair complete: {report.summary}")
         return report
 
     def _rebuild_hierarchical_indices(self, conn, report: RepairReport) -> None:

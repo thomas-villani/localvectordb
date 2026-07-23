@@ -35,7 +35,7 @@ from localvectordb._filters import FilterQueryBuilder
 from localvectordb._pools import AsyncConnectionPool, ConnectionPool, ReadWriteLock
 from localvectordb._schema import DatabaseSchema, get_common_metadata_schemas
 from localvectordb._sqlite_retry import retry_on_locked
-from localvectordb.chunking import ChunkerFactory
+from localvectordb.chunking import ChunkerFactory, PositionTrackingChunker
 from localvectordb.core import Chunk, MetadataField
 from localvectordb.database._faiss_utils import build_id_lookup
 from localvectordb.database.base import LocalVectorDBBase
@@ -98,6 +98,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         chunking_method: Union[str, Any] = "sentences",
         chunk_size: int = 500,
         chunk_overlap: int = 1,
+        chunk_delimiter: str = "\n\n",
         batch_size: int = 100,
         faiss_index_type: Literal["IndexFlatL2", "IndexFlatIP", "IndexHNSWFlat", "IndexLSH"] = "IndexFlatL2",
         faiss_index_hnsw_flat_neighbors: Optional[int] = None,
@@ -131,6 +132,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             chunking_method=chunking_method,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            chunk_delimiter=chunk_delimiter,
             batch_size=batch_size,
             faiss_index_type=faiss_index_type,
             faiss_index_hnsw_flat_neighbors=faiss_index_hnsw_flat_neighbors,
@@ -178,6 +180,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         self._chunking_method = chunking_method
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
+        self._chunk_delimiter = chunk_delimiter
         self._batch_size = batch_size
         self.doc_id_pattern = doc_id_pattern
 
@@ -188,7 +191,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             self._metadata_schema = metadata_schema or {}
 
         # Chunker - create with initial values (might be overridden later)
-        self.chunker = ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size, self._chunk_overlap)
+        self.chunker = self._build_chunker()
 
         # Embedding provider - create with initial values (might be overridden later)
         embedding_config = embedding_config or {}
@@ -254,6 +257,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     self._chunking_method = loaded_config.get("chunking_method", self._chunking_method)
                     self._chunk_size = int(loaded_config.get("chunk_size", self._chunk_size))
                     self._chunk_overlap = int(loaded_config.get("chunk_overlap", self._chunk_overlap))
+                    self._chunk_delimiter = loaded_config.get("chunk_delimiter", self._chunk_delimiter)
                     self._batch_size = int(loaded_config.get("batch_size", self._batch_size))
                     self.doc_id_pattern = loaded_config.get("doc_id_pattern", self.doc_id_pattern)
 
@@ -263,9 +267,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     self.connection_pool._pragmas = self._sqlite_pragmas
 
                     # Re-create chunker with loaded configuration
-                    self.chunker = ChunkerFactory.create_chunker(
-                        self._chunking_method, self._chunk_size, self._chunk_overlap
-                    )
+                    self.chunker = self._build_chunker()
 
                     # Re-create embedding provider with loaded configuration
                     embedding_config = embedding_config or {}
@@ -355,6 +357,23 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
     @property
     def chunking_method(self) -> str:
         return self._chunking_method
+
+    @property
+    def chunk_delimiter(self) -> str:
+        """The delimiter used by ``chunking_method="delimiter"`` (ignored otherwise)."""
+        return self._chunk_delimiter
+
+    def _build_chunker(self) -> PositionTrackingChunker:
+        """Construct the chunker from the current chunking config.
+
+        The ``delimiter`` kwarg is forwarded only for the ``"delimiter"`` method:
+        most chunkers accept it harmlessly via ``**kwargs``, but a few (e.g.
+        ``SectionChunker``) do not, so it is passed conditionally.
+        """
+        kwargs: Dict[str, Any] = {}
+        if self._chunking_method == "delimiter":
+            kwargs["delimiter"] = self._chunk_delimiter
+        return ChunkerFactory.create_chunker(self._chunking_method, self._chunk_size, self._chunk_overlap, **kwargs)
 
     @property
     def fts_enabled(self) -> bool:
@@ -1228,6 +1247,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             "chunking_method": self.chunking_method,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
+            "chunk_delimiter": self.chunk_delimiter,
             "batch_size": self.batch_size,
             "doc_id_pattern": self.doc_id_pattern,
             "fts_enabled": str(self.fts_enabled),

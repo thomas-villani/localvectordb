@@ -144,19 +144,31 @@ exclude = [
 ]
 
 [project.optional-dependencies]
-server = [
-    "bcrypt>=5.0.0",
-    "cachelib>=0.14.0",
-    # The CLI imports click directly; declare it rather than relying on the
-    # transitive pin from uvicorn[standard]. 8.2+ required (ctx.args behavior
-    # the lazy-DB-open logic in the CLI depends on).
+# The `lvdb` CLI without the HTTP server. Enough to create/inspect/search
+# databases, chunk files, and manage backups, migrations, auth keys, and config
+# — everything except `lvdb serve`, which needs the [server] extra. Kept free of
+# fastapi/uvicorn/slowapi/etc. so the CLI installs light; the server-only
+# commands import their dependencies lazily and print an actionable hint when the
+# [server] extra is absent.
+cli = [
+    # The CLI framework itself. 8.2+ required for the ctx.args behavior the
+    # lazy-DB-open logic depends on.
     "click>=8.2",
+    # `lvdb config init` and other config writes.
+    "tomli-w>=1.2.0",
+    # `lvdb auth` API-key hashing; keymanager imports it at CLI load time.
+    "bcrypt>=5.0.0",
+]
+
+server = [
+    # The server is launched via `lvdb serve`, so it includes the CLI.
+    "localvectordb[cli]",
+    "cachelib>=0.14.0",
     "fastapi>=0.136.3",
     "uvicorn[standard]>=0.49.0",
     "python-multipart>=0.0.32",
     "sse-starlette>=3.4.4",
     "slowapi>=0.1.9",
-    "tomli-w>=1.2.0",
 ]
 
 mcp = [

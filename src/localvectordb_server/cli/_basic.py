@@ -87,8 +87,23 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     db_folder = ctx.obj["db_folder"]
 
     from localvectordb.exceptions import ConfigurationError
-    from localvectordb_server.app import create_app
     from localvectordb_server.config import load_config
+
+    # The HTTP server stack (fastapi/uvicorn/...) ships in the [server] extra,
+    # which the lighter [cli] install omits. Every other command works without it;
+    # only `lvdb serve` needs it, so import it here and fail with an actionable
+    # hint instead of a raw ModuleNotFoundError.
+    try:
+        from localvectordb_server.app import create_app
+    except ImportError as exc:
+        missing = getattr(exc, "name", None)
+        click.secho(
+            f"`lvdb serve` requires the server extra (missing dependency: {missing or exc}).\n"
+            'Install it with:  pip install "localvectordb[server]"',
+            fg="bright_red",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from exc
 
     if config_path is None:
         # No config file found. Fall back to built-in defaults ONLY when the
@@ -252,6 +267,13 @@ def list_databases(ctx, details):
 )
 @click.option("--chunk-overlap", default=None, type=int, help="Overlap between chunks")
 @click.option(
+    "--chunk-delimiter",
+    default=None,
+    type=str,
+    help="Delimiter for --chunking-method delimiter (default: a blank line). "
+    r"Escapes \n, \t, \r are interpreted; use e.g. --chunk-delimiter '\n---\n'.",
+)
+@click.option(
     "--metadata-schema",
     default=None,
     type=click.Choice(["files", "documents", "research_papers", "code_repository", "customer_support"]),
@@ -259,7 +281,15 @@ def list_databases(ctx, details):
 )
 @click.pass_context
 def create_vector_database(
-    ctx, name, embedding_model, embedding_provider, chunk_size, chunking_method, chunk_overlap, metadata_schema
+    ctx,
+    name,
+    embedding_model,
+    embedding_provider,
+    chunk_size,
+    chunking_method,
+    chunk_overlap,
+    chunk_delimiter,
+    metadata_schema,
 ):
     """
     Create a new vector database.
@@ -302,6 +332,11 @@ def create_vector_database(
     chunk_size = chunk_size or 500
     chunking_method = chunking_method or "sentences"
     chunk_overlap = chunk_overlap or 1
+    # Interpret the common escape sequences so a delimiter can carry newlines/tabs
+    # from a shell that does not (e.g. --chunk-delimiter '\n---\n'). Left literal
+    # when the flag is omitted; the DB default ("\n\n") then applies.
+    if chunk_delimiter is not None:
+        chunk_delimiter = chunk_delimiter.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
 
     from localvectordb.embeddings import EmbeddingRegistry
 
@@ -324,6 +359,12 @@ def create_vector_database(
         temp_config.apply_common_schema(metadata_schema)
         schema_dict = temp_config.database.default_metadata_schema
 
+    # Only forward chunk_delimiter when supplied so the library default applies
+    # otherwise (and old configs without the key stay unaffected).
+    extra_kwargs = {}
+    if chunk_delimiter is not None:
+        extra_kwargs["chunk_delimiter"] = chunk_delimiter
+
     try:
         from localvectordb.database import LocalVectorDB
 
@@ -336,7 +377,9 @@ def create_vector_database(
             chunk_size=chunk_size,
             chunking_method=chunking_method,
             chunk_overlap=chunk_overlap,
+            **extra_kwargs,
         )
+        resolved_delimiter = db.chunk_delimiter
         db.close()
 
         click.secho(f"Created database '{name}' in {os.path.abspath(db_folder)}", fg="green")
@@ -345,6 +388,8 @@ def create_vector_database(
         click.echo(f"   chunk_size: {chunk_size}")
         click.echo(f"   chunking_method: {chunking_method}")
         click.echo(f"   chunk_overlap: {chunk_overlap}")
+        if chunking_method == "delimiter":
+            click.echo(f"   chunk_delimiter: {resolved_delimiter!r}")
         if metadata_schema:
             click.echo(f"   metadata_schema: {metadata_schema}")
 

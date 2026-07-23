@@ -1066,7 +1066,7 @@ to fix, use :func:`~localvectordb.database.open_for_repair`, which bypasses it:
 
     # Look before you leap: report findings without changing anything.
     report = db.repair(dry_run=True)
-    print(report.summary())
+    print(report.summary)
 
     if not report.healthy:
         report = db.repair()
@@ -1074,7 +1074,7 @@ to fix, use :func:`~localvectordb.database.open_for_repair`, which bypasses it:
               f"re-embedded={report.reembedded} dropped={report.dropped}")
 
 ``repair()`` returns a :class:`~localvectordb.database.RepairReport` with
-``healthy`` (a property), ``summary()`` (a method returning a human-readable
+``healthy`` and ``summary`` (both properties -- ``summary`` is a human-readable
 line), the ``duplicate_ids`` / ``orphan_vectors`` / ``dangling_rows`` it found,
 and counts of what it ``reconstructed``, ``reembedded``, and ``dropped``.
 

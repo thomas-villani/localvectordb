@@ -1190,17 +1190,17 @@ def repair_database(ctx, dry_run):
         report = db.repair(dry_run=dry_run)
 
         if report.healthy and dry_run:
-            click.secho(report.summary(), fg="bright_green")
+            click.secho(report.summary, fg="bright_green")
             return
 
         if not report.healthy:
-            warn(report.summary())
+            warn(report.summary)
             if report.duplicate_ids:
                 shown = ", ".join(str(i) for i in report.duplicate_ids[:10])
                 more = f" (and {len(report.duplicate_ids) - 10} more)" if len(report.duplicate_ids) > 10 else ""
                 click.echo(f"  duplicate FAISS ids: {shown}{more}")
         else:
-            click.echo(report.summary())
+            click.echo(report.summary)
 
         if dry_run:
             click.echo("\nNothing was modified.")

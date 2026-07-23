@@ -36,14 +36,22 @@ never be confused with a usage mistake.
 Installation
 ------------
 
-The CLI is included with the server installation:
+For the CLI alone (everything except ``lvdb serve``), install the light
+``cli`` extra:
+
+.. code-block:: bash
+
+   pip install "localvectordb[cli]"
+
+   # Verify installation
+   lvdb --help
+
+To also run the HTTP server (``lvdb serve``), install the ``server`` extra,
+which includes the CLI:
 
 .. code-block:: bash
 
    pip install "localvectordb[server]"
-
-   # Verify installation
-   lvdb --help
 
 Server Management
 -----------------
