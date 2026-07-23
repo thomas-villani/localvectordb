@@ -1381,7 +1381,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             ]
                             chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
                             if not txn_open:
-                                conn.execute("BEGIN")
+                                # IMMEDIATE: a deferred BEGIN that reads before its first
+                                # write hits SQLITE_BUSY_SNAPSHOT (which busy_timeout does
+                                # NOT retry) if any other connection commits in between --
+                                # e.g. a concurrent backup recording itself in backup_log.
+                                # Taking the write lock up front makes contention surface
+                                # at BEGIN, where busy_timeout handles it.
+                                conn.execute("BEGIN IMMEDIATE")
                                 txn_open = True
                                 txn_faiss_ids.clear()
                                 pending_removals.clear()
@@ -1658,7 +1664,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             ]
                             chunks_data = [(chunk_data["doc_id"], chunk) for chunk in all_chunks]
                             with self.connection_pool.get_connection() as conn:
-                                conn.execute("BEGIN")
+                                conn.execute("BEGIN IMMEDIATE")
                                 # The in-RAM FAISS index is outside this transaction; track
                                 # what we add so a rollback can undo it.
                                 txn_faiss_ids: List[int] = []
@@ -2010,7 +2016,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                 }
 
                 with self.connection_pool.get_connection() as conn:
-                    conn.execute("BEGIN")
+                    conn.execute("BEGIN IMMEDIATE")
                     try:
                         self._store_hierarchical_data(conn, chunk_data, chunks)
                         conn.commit()

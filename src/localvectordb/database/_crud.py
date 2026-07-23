@@ -547,7 +547,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 pending_removals = _PendingFaissRemovals()
                 added_faiss_ids: List[int] = []
                 with self.connection_pool.get_connection() as conn:
-                    conn.execute("BEGIN")
+                    conn.execute("BEGIN IMMEDIATE")
                     try:
                         if changed_embedding_fields:
                             self._remove_metadata_embeddings(conn, doc_id, pending=pending_removals)
@@ -974,7 +974,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 # whose vectors are already gone: dangling rows, recoverable only by
                 # re-embedding. Committing first can only leave orphan vectors, which
                 # `repair` sweeps for free.
-                await conn.execute("BEGIN")
+                await conn.execute("BEGIN IMMEDIATE")
                 try:
                     await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
                     cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
@@ -1174,7 +1174,7 @@ class CrudMixin(LocalVectorDBBase, ABC):
             # concurrent backup snapshot (see _async_write_gate).
             async with self._async_write_gate():
                 async with self.async_connection_pool.get_connection_context() as conn:
-                    await conn.execute("BEGIN")
+                    await conn.execute("BEGIN IMMEDIATE")
                     try:
                         if changed_embedding_fields:
                             await self._remove_metadata_embeddings_async(conn, doc_id, pending=pending_removals)
