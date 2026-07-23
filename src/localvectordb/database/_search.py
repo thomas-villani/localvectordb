@@ -24,14 +24,15 @@ from localvectordb._filters import (
     matches_metadata_filter,
     validate_filter_spec,
 )
-from localvectordb.core import ChunkPosition, DocumentScoringMethod, MetadataFieldType, QueryResult
+from localvectordb.core import ChunkPosition, DocumentScoringMethod, GrepMatch, MetadataFieldType, QueryResult
 from localvectordb.cursor import (
     CursorCandidate,
     CursorConfig,
     QueryCursor,
 )
+from localvectordb.database._utils import glob_escape
 from localvectordb.database.base import LocalVectorDBBase
-from localvectordb.exceptions import _RERANK_STREAMING_UNSUPPORTED, DatabaseError
+from localvectordb.exceptions import _RERANK_STREAMING_UNSUPPORTED, DatabaseError, MetadataFilterError
 
 if TYPE_CHECKING:
     from faiss import Index
@@ -550,6 +551,155 @@ class SearchMixin(LocalVectorDBBase, ABC):
     # -----------------
     # Public search API
     # -----------------
+    def grep(
+        self,
+        pattern: str,
+        *,
+        regex: bool = False,
+        ignore_case: bool = False,
+        whole_word: bool = False,
+        context: int = 0,
+        before_context: Optional[int] = None,
+        after_context: Optional[int] = None,
+        prefix: Optional[str] = None,
+        where: Optional[Dict[str, Any]] = None,
+        max_count: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[GrepMatch]:
+        """Lexical, line-oriented search over document content -- like ``grep``.
+
+        This is exact/regex substring matching, deliberately separate from
+        :meth:`query`. ``query`` does ranked semantic/keyword retrieval; ``grep``
+        finds literal or regex matches and reports *where* they are (document id,
+        line number, column span, and optional surrounding lines). Agents use it
+        alongside vector and keyword search when they know a precise string or
+        pattern to look for. Results are returned in document-id then line order,
+        not by relevance.
+
+        Parameters
+        ----------
+        pattern : str
+            The text to search for. A literal substring by default; a regular
+            expression when ``regex=True``.
+        regex : bool
+            Treat ``pattern`` as a Python regular expression. Default ``False``
+            (literal match).
+        ignore_case : bool
+            Case-insensitive matching. Default ``False``.
+        whole_word : bool
+            Require the match to fall on word boundaries (wraps the pattern in
+            ``\\b...\\b``). Default ``False``.
+        context : int
+            Number of adjacent lines to include both before and after each match
+            (like ``grep -C``). Default ``0``.
+        before_context : Optional[int]
+            Lines of leading context (like ``grep -B``). Overrides ``context`` for
+            the "before" side when set.
+        after_context : Optional[int]
+            Lines of trailing context (like ``grep -A``). Overrides ``context`` for
+            the "after" side when set.
+        prefix : Optional[str]
+            Restrict the scan to documents whose id starts with this literal
+            prefix (case-sensitive). Pair with :meth:`list_prefixes` to grep within
+            a virtual "folder".
+        where : Optional[Dict[str, Any]]
+            Restrict the scan to documents matching this metadata filter (same
+            syntax as :meth:`filter`).
+        max_count : Optional[int]
+            Stop after this many matches *per document* (like ``grep -m``).
+        limit : Optional[int]
+            Stop after this many matches in total across all documents.
+
+        Returns
+        -------
+        List[GrepMatch]
+            One entry per match, in document-id then line-number order.
+
+        Notes
+        -----
+        - Matching runs line-by-line over the stored document content. Narrow the
+          corpus with ``prefix`` / ``where`` on large databases, since every
+          matched document is scanned.
+        """
+        if not pattern:
+            raise ValueError("pattern must be a non-empty string")
+        if limit is not None and limit <= 0:
+            return []
+
+        before_n = before_context if before_context is not None else context
+        after_n = after_context if after_context is not None else context
+        if before_n < 0 or after_n < 0:
+            raise ValueError("context values must be non-negative")
+
+        flags = re.IGNORECASE if ignore_case else 0
+        body = pattern if regex else re.escape(pattern)
+        if whole_word:
+            body = rf"\b(?:{body})\b"
+        try:
+            matcher = re.compile(body, flags)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern: {e}") from e
+
+        conditions: List[str] = []
+        params: List[Any] = []
+        if prefix:
+            conditions.append("id GLOB ?")
+            params.append(glob_escape(prefix) + "*")
+        if where:
+            try:
+                where_clause, where_params = FilterQueryBuilder(self.metadata_schema).build_where_clause(where)
+            except Exception as e:
+                raise MetadataFilterError(f"Error building filter query: {e}") from e
+            if where_clause:
+                conditions.append(f"({where_clause})")
+                params.extend(where_params)
+
+        sql = "SELECT id, content FROM documents"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY id"
+
+        matches: List[GrepMatch] = []
+        with self._read_write_lock.read_lock():
+            with self.connection_pool.get_connection() as conn:
+                cursor = conn.execute(sql, params)
+                try:
+                    rows = cursor.fetchall()
+                finally:
+                    cursor.close()
+
+        for row in rows:
+            doc_id, content = row["id"], row["content"]
+            if content is None:
+                continue
+            lines = content.splitlines()
+            per_doc = 0
+            for line_index, line in enumerate(lines):
+                match = matcher.search(line)
+                if match is None:
+                    continue
+                before = lines[max(0, line_index - before_n) : line_index] if before_n else []
+                after = lines[line_index + 1 : line_index + 1 + after_n] if after_n else []
+                matches.append(
+                    GrepMatch(
+                        doc_id=doc_id,
+                        line_number=line_index + 1,
+                        line=line,
+                        start=match.start(),
+                        end=match.end(),
+                        match=match.group(0),
+                        before=before,
+                        after=after,
+                    )
+                )
+                per_doc += 1
+                if limit is not None and len(matches) >= limit:
+                    return matches
+                if max_count is not None and per_doc >= max_count:
+                    break
+
+        return matches
+
     def query(
         self,
         query: str,

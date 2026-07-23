@@ -8,6 +8,16 @@ code duplication between synchronous and asynchronous database operations.
 from __future__ import annotations
 
 
+def glob_escape(text: str) -> str:
+    """Escape SQLite GLOB metacharacters (``*``, ``?``, ``[``) in a literal string.
+
+    GLOB has no ESCAPE clause, so each metacharacter is neutralized by wrapping it
+    in a single-character class (``*`` -> ``[*]``). Used to turn a literal id
+    prefix into a safe, case-sensitive ``prefix*`` GLOB pattern.
+    """
+    return "".join(f"[{ch}]" if ch in "*?[" else ch for ch in text)
+
+
 class DatabaseExecutor:
     """
     Base abstraction for database operations that differ between sync and async.

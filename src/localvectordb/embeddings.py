@@ -866,6 +866,221 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             return self._postprocess_embeddings(embeddings)
 
 
+class OpenRouterEmbeddings(HTTPEmbeddingProvider):
+    """OpenRouter embedding provider (OpenAI-compatible).
+
+    OpenRouter exposes a single OpenAI-compatible endpoint at
+    ``https://openrouter.ai/api/v1`` that routes embedding requests to many
+    upstream providers (OpenAI, Google, Mistral, Nvidia, ...). Any embedding model
+    listed at https://openrouter.ai/models (filter by the ``embedding`` output
+    modality) can be used by passing its slug as ``model`` -- for example
+    ``"openai/text-embedding-3-small"`` or a free model such as
+    ``"nvidia/nv-embed-v2"``.
+
+    Because the set of models is large and changes over time, dimensions are not
+    hard-coded. Resolution order for the index dimension (first match wins):
+    ``requested_dimensions`` (also asks the API to truncate to that size) ->
+    ``dimension`` (a plain declaration of the model's native size, no payload
+    effect) -> a one-off probe request the first time the dimension is needed.
+    Provide ``dimension`` (or ``requested_dimensions``) to avoid the probe
+    entirely -- useful for offline setup or to keep database creation from making
+    a network call.
+
+    Parameters
+    ----------
+    model : str
+        OpenRouter model slug (e.g. ``"openai/text-embedding-3-small"``).
+    api_key : str, optional
+        API key. If omitted, read from the ``OPENROUTER_API_KEY`` environment
+        variable. A ``"$OTHER_VAR"`` value reads from that environment variable
+        instead. Get a key at https://openrouter.ai/keys
+    base_url : str, optional
+        Override the API base URL. Defaults to ``https://openrouter.ai/api/v1``.
+    dimension : int, optional
+        Declare the model's native embedding dimension. Used as the index
+        dimension and skips the probe; unlike ``requested_dimensions`` it does not
+        alter the request payload. Cannot disagree with ``requested_dimensions``
+        if both are given.
+    requested_dimensions : int, optional
+        Request this output dimension (only honored by models that support
+        Matryoshka truncation) and use it as the index dimension. When omitted,
+        the native dimension is probed unless ``dimension`` is given.
+    normalize : bool, default False
+        Apply L2 normalization to returned embeddings.
+    site_url : str, optional
+        Sent as the ``HTTP-Referer`` header for OpenRouter attribution (optional).
+    app_name : str, optional
+        Sent as the ``X-Title`` header for OpenRouter attribution (optional).
+    timeout : int, default = 90
+        HTTP timeout (seconds).
+    max_retries : int, default = 3
+        Automatic retry attempts.
+    retry_delay : float, default = 1.0
+        Base delay for exponential backoff.
+    max_concurrent_requests : int, default = 5
+        Concurrent requests to the OpenRouter API.
+    """
+
+    DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        timeout: int = 90,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        max_concurrent_requests: int = 5,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        dimension: Optional[int] = None,
+        requested_dimensions: Optional[int] = None,
+        normalize: bool = False,
+        site_url: Optional[str] = None,
+        app_name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            model,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            max_concurrent_requests=max_concurrent_requests,
+            base_url=base_url or self.DEFAULT_BASE_URL,
+            **kwargs,
+        )
+
+        api_key = resolve_env_ref(api_key, what="api_key")
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "OpenRouter API key is required. Set the OPENROUTER_API_KEY environment "
+                "variable or pass api_key=. Get a key at https://openrouter.ai/keys"
+            )
+
+        if dimension is not None and requested_dimensions is not None and dimension != requested_dimensions:
+            raise ValueError(
+                f"dimension ({dimension}) and requested_dimensions ({requested_dimensions}) disagree. "
+                "requested_dimensions already sets the index dimension (and requests API-side truncation); "
+                "pass dimension only to declare the native size and skip the probe."
+            )
+
+        self.requested_dimensions = requested_dimensions
+        self.normalize = normalize
+        self.site_url = site_url
+        self.app_name = app_name
+        # Resolve the index dimension without a network call when we can:
+        # requested_dimensions (also drives API truncation) > declared dimension >
+        # None, which triggers a one-off probe on first get_dimension().
+        self._dimension: Optional[int] = requested_dimensions if requested_dimensions is not None else dimension
+
+    @property
+    def provider_name(self) -> str:
+        return "openrouter"
+
+    @property
+    def max_batch_size(self) -> int:
+        # OpenRouter routes to varied upstreams with different batch ceilings;
+        # keep a conservative default to avoid provider-specific rejections.
+        return 128
+
+    @property
+    def _endpoint(self) -> str:
+        return f"{(self.base_url or self.DEFAULT_BASE_URL).rstrip('/')}/embeddings"
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        # Optional OpenRouter attribution headers.
+        if self.site_url:
+            headers["HTTP-Referer"] = self.site_url
+        if self.app_name:
+            headers["X-Title"] = self.app_name
+        return headers
+
+    def validate_model(self) -> bool:
+        # OpenRouter serves many models across providers; trust the slug and let
+        # the first request surface an invalid-model error.
+        return True
+
+    def get_dimension(self) -> int:
+        """Return the embedding dimension, probing the API once if unknown."""
+        if self._dimension is not None:
+            return self._dimension
+        self._dimension = self._probe_dimension()
+        return self._dimension
+
+    def _probe_dimension(self) -> int:
+        """Determine the native embedding size with a one-off request."""
+        payload = {"model": self.model, "input": ["dimension probe"]}
+        with httpx.Client() as client:
+            resp = client.post(self._endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        self._raise_on_error(data)
+        items = data.get("data", [])
+        if not items:
+            raise RuntimeError("No data returned from OpenRouter during dimension probe")
+        emb = items[0].get("embedding")
+        if not isinstance(emb, list):
+            raise RuntimeError("Unexpected embedding format from OpenRouter (expected float list)")
+        return len(emb)
+
+    @staticmethod
+    def _raise_on_error(data: Any) -> None:
+        """Raise a descriptive error if the response carries an OpenRouter error body."""
+        if isinstance(data, dict) and data.get("error"):
+            err = data["error"]
+            msg = err.get("message") if isinstance(err, dict) and "message" in err else err
+            raise RuntimeError(f"OpenRouter error: {msg}")
+
+    def _build_payload(self, texts: List[str]) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"model": self.model, "input": texts}
+        if self.requested_dimensions is not None:
+            payload["dimensions"] = self.requested_dimensions
+        return payload
+
+    def _postprocess_embeddings(self, embeddings: List[List[float]]) -> List[List[float]]:
+        """Apply optional L2 normalization to embeddings."""
+        if not self.normalize:
+            return embeddings
+        result = []
+        for emb in embeddings:
+            vec = np.array(emb, dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            result.append(vec.tolist())
+        return result
+
+    async def _embed_single_batch(
+        self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
+    ) -> List[List[float]]:
+        if not texts:
+            return []
+        headers = self._headers()
+        payload = self._build_payload(texts)
+
+        async def _do(c: httpx.AsyncClient) -> List[List[float]]:
+            response = await c.post(self._endpoint, headers=headers, json=payload, timeout=self.timeout)
+            if not response.is_success:
+                try:
+                    self._raise_on_error(response.json())
+                except (ValueError, KeyError, TypeError):
+                    # Error body was not the expected JSON shape; fall back to
+                    # raise_for_status() below for a generic HTTP error.
+                    pass
+                response.raise_for_status()
+            data = response.json()
+            self._raise_on_error(data)
+            embeddings = [item["embedding"] for item in data["data"]]
+            return self._postprocess_embeddings(embeddings)
+
+        if client is None:
+            async with httpx.AsyncClient() as owned:
+                return await _do(owned)
+        return await _do(client)
+
+
 class GoogleEmbeddings(HTTPEmbeddingProvider):
     """Google AI (Gemini) embedding provider using the Generative Language API.
 
@@ -1900,6 +2115,7 @@ class EmbeddingRegistry:
 # Auto-register built-in providers
 EmbeddingRegistry.register("ollama", OllamaEmbeddings)
 EmbeddingRegistry.register("openai", OpenAIEmbeddings)
+EmbeddingRegistry.register("openrouter", OpenRouterEmbeddings)
 EmbeddingRegistry.register("mock", MockEmbeddings)
 EmbeddingRegistry.register("google", GoogleEmbeddings)
 EmbeddingRegistry.register("jina", JinaEmbeddings)

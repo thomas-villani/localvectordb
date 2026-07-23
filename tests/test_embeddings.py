@@ -19,6 +19,7 @@ from localvectordb.embeddings import (
     MockEmbeddings,
     OllamaEmbeddings,
     OpenAIEmbeddings,
+    OpenRouterEmbeddings,
     SentenceTransformerEmbeddings,
     create_embedding_provider,
     embed_texts,
@@ -510,6 +511,158 @@ class TestOpenAIEmbeddings:
         # Long text should be truncated
         tokenizer = provider._get_tokenizer()
         assert len(tokenizer.encode(validated[1])) <= provider.max_input_tokens
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+@pytest.mark.network
+class TestOpenRouterEmbeddings:
+    """Test OpenRouterEmbeddings provider (OpenAI-compatible)."""
+
+    def test_create_provider_defaults(self):
+        provider = OpenRouterEmbeddings("openai/text-embedding-3-small", api_key="test-key")
+        assert provider.model == "openai/text-embedding-3-small"
+        assert provider.api_key == "test-key"
+        assert provider.provider_name == "openrouter"
+        assert provider.base_url == "https://openrouter.ai/api/v1"
+        assert provider._endpoint == "https://openrouter.ai/api/v1/embeddings"
+
+    def test_custom_base_url_trailing_slash(self):
+        provider = OpenRouterEmbeddings("m", api_key="k", base_url="https://proxy.example/api/v1/")
+        assert provider._endpoint == "https://proxy.example/api/v1/embeddings"
+
+    def test_missing_api_key_raises(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ValueError, match="OpenRouter API key is required"):
+                OpenRouterEmbeddings("openai/text-embedding-3-small")
+
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "env-key"})
+    def test_api_key_from_environment(self):
+        provider = OpenRouterEmbeddings("openai/text-embedding-3-small")
+        assert provider.api_key == "env-key"
+
+    def test_validate_model_trusts_slug(self):
+        provider = OpenRouterEmbeddings("some/unknown-model", api_key="test")
+        assert provider.validate_model() is True
+
+    def test_requested_dimensions_skips_probe(self):
+        provider = OpenRouterEmbeddings("m", api_key="k", requested_dimensions=256)
+        assert provider.get_dimension() == 256  # no network call
+
+    def test_declared_dimension_skips_probe_without_truncation(self):
+        # `dimension` sets the index size and skips the probe, but must NOT add a
+        # `dimensions` truncation field to the payload (that is requested_dimensions).
+        provider = OpenRouterEmbeddings("nvidia/nv-embed-v2", api_key="k", dimension=1024)
+        assert provider.get_dimension() == 1024
+        assert "dimensions" not in provider._build_payload(["x"])
+
+    def test_requested_dimensions_still_truncates(self):
+        provider = OpenRouterEmbeddings("m", api_key="k", requested_dimensions=256)
+        assert provider._build_payload(["x"])["dimensions"] == 256
+
+    def test_dimension_and_requested_dimensions_agree(self):
+        provider = OpenRouterEmbeddings("m", api_key="k", dimension=256, requested_dimensions=256)
+        assert provider.get_dimension() == 256
+        assert provider._build_payload(["x"])["dimensions"] == 256
+
+    def test_dimension_and_requested_dimensions_conflict_raises(self):
+        with pytest.raises(ValueError, match="disagree"):
+            OpenRouterEmbeddings("m", api_key="k", dimension=1024, requested_dimensions=256)
+
+    def test_dimension_via_config_kwargs(self):
+        # Mirrors how embedding_config flows provider-specific kwargs through.
+        provider = EmbeddingRegistry.create_provider("openrouter", "m", api_key="k", dimension=768)
+        assert provider.get_dimension() == 768
+
+    @patch("httpx.Client")
+    def test_get_dimension_probes_when_unknown(self, mock_client_class):
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {"data": [{"embedding": [0.0] * 384}]}
+        mock_response.raise_for_status = Mock()
+        mock_client.post = Mock(return_value=mock_response)
+        mock_client_class.return_value.__enter__ = Mock(return_value=mock_client)
+        mock_client_class.return_value.__exit__ = Mock(return_value=None)
+
+        provider = OpenRouterEmbeddings("nvidia/nv-embed-v2", api_key="test-key")
+        assert provider.get_dimension() == 384
+        # Probed value is cached; a second call does not re-request.
+        assert provider.get_dimension() == 384
+        assert mock_client.post.call_count == 1
+
+    @patch("httpx.AsyncClient")
+    @pytest.mark.asyncio
+    async def test_embed_batch_success(self, mock_client_class):
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}, {"embedding": [0.4, 0.5, 0.6]}]}
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = OpenRouterEmbeddings("openai/text-embedding-3-small", api_key="test-key")
+        provider._dimension = 3
+
+        texts = ["hello", "world"]
+        embeddings = await provider.embed_batch(texts)
+
+        assert embeddings.shape == (2, 3)
+        mock_client.post.assert_called_once_with(
+            "https://openrouter.ai/api/v1/embeddings",
+            headers={"Authorization": "Bearer test-key", "Content-Type": "application/json"},
+            json={"model": "openai/text-embedding-3-small", "input": texts},
+            timeout=provider.timeout,
+        )
+
+    @patch("httpx.AsyncClient")
+    @pytest.mark.asyncio
+    async def test_attribution_headers_and_dimensions(self, mock_client_class):
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.is_success = True
+        mock_response.json.return_value = {"data": [{"embedding": [0.1, 0.2]}]}
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = OpenRouterEmbeddings(
+            "openai/text-embedding-3-small",
+            api_key="k",
+            requested_dimensions=2,
+            site_url="https://example.com",
+            app_name="MyApp",
+        )
+        await provider.embed_batch(["x"])
+
+        _, kwargs = mock_client.post.call_args
+        assert kwargs["headers"]["HTTP-Referer"] == "https://example.com"
+        assert kwargs["headers"]["X-Title"] == "MyApp"
+        assert kwargs["json"]["dimensions"] == 2
+
+    @patch("httpx.AsyncClient")
+    @pytest.mark.asyncio
+    async def test_error_body_raises(self, mock_client_class):
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.is_success = False
+        mock_response.json.return_value = {"error": {"message": "No endpoints found for model"}}
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = OpenRouterEmbeddings("bad/model", api_key="test-key")
+        provider._dimension = 3
+        with pytest.raises(RuntimeError, match="OpenRouter error: No endpoints found for model"):
+            await provider.embed_batch(["test"])
+
+    def test_registered_in_registry(self):
+        assert "openrouter" in list_providers()
+        provider = EmbeddingRegistry.create_provider("openrouter", "openai/text-embedding-3-small", api_key="k")
+        assert isinstance(provider, OpenRouterEmbeddings)
 
 
 @pytest.mark.unit

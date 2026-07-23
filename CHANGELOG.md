@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lvdb serve` only probes for Ollama when the configured embedding provider
+  is Ollama.** A server backed by OpenAI/Jina/OpenRouter/etc. no longer requires
+  a local Ollama install at startup. `--disable-ollama-check` still overrides the
+  probe when it does run.
+- **The `lvdb` CLI no longer requires a configuration file to operate on a
+  database.** When neither a config file nor `--db-folder` is given, the current
+  working directory is used as the database folder, so `lvdb db <name> ...` works
+  in any folder that contains a database.
 - **`return_type` now defaults to `None`** on `query()`/`query_async()` (local,
   remote, and the `query_database` MCP tool), meaning "the unit `search_level`
   searched": documents for the default chunk search, sections for
@@ -86,9 +94,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The server now logs a prominent startup warning when bound to a non-loopback
   interface with API authentication disabled (open read/write access). Defaults
   are unchanged; see the deployment docs for the hardening checklist.
+- Bumped `setuptools` to `>= 83.0.0` (Dependabot GHSA — MANIFEST.in exclusion
+  bypass via Unicode NFC/NFD collision) and, in the JavaScript SDK, forced
+  `esbuild` to `>= 0.28.1` via an npm override (dev-only arbitrary file read in
+  `esbuild serve` on Windows).
 
 ### Added
 
+- **`LocalVectorDB.grep()`** — lexical, line-oriented content search, distinct
+  from the ranked `query()` retrieval pipeline. Literal or regex matching with
+  `ignore_case`, `whole_word`, and grep-style context (`context` / `before_context`
+  / `after_context`), returning `GrepMatch` objects (document id, 1-based line
+  number, column span, and surrounding lines). Scope the scan with `prefix=` (id
+  prefix) or `where=` (metadata filter), and cap results with `max_count` (per
+  document) / `limit` (total). Exposed on the CLI as `lvdb db <name> grep PATTERN`
+  (`-e/--regex`, `-i`, `-w`, `-A/-B/-C`, `--prefix`, `-m`, `-n`, `-j`). Intended
+  to sit alongside vector and keyword search for agents that know a precise
+  string. Local-library + CLI for now; server/SDK exposure is deferred.
+- **`LocalVectorDB.list_prefixes()`** — S3-style navigation of "filesystem-like"
+  document ids: treats a delimiter (`/` by default) as a virtual path separator
+  and rolls documents up to their immediate children beneath a prefix, returning
+  a `PrefixListing` of virtual folders (common prefixes with recursive counts)
+  and leaf documents. Makes relative-path document ids (`docs/reports/q1`)
+  browsable like folders without any schema change. Exposed as
+  `lvdb db <name> ls [PREFIX]` (`-d/--delimiter`, `-j`). New public types
+  `PrefixListing` / `PrefixEntry` / `GrepMatch`.
+- **OpenRouter embedding provider** (`provider="openrouter"`,
+  `OpenRouterEmbeddings`) — OpenAI-compatible access to OpenRouter's embedding
+  models (OpenAI, Google, Mistral, Nvidia, and free options) through a single
+  endpoint. Pass the model slug (e.g. `openai/text-embedding-3-small`). The index
+  dimension resolves as `requested_dimensions` (also requests API-side Matryoshka
+  truncation) → `dimension` (a plain declaration of the native size, no payload
+  effect) → a one-off probe request; pass either dimension kwarg to skip the
+  probe entirely (e.g. for offline/network-free database creation). Reads
+  `OPENROUTER_API_KEY`, supports optional `HTTP-Referer` / `X-Title` attribution
+  headers and optional L2 `normalize`.
 - **`examples/`** — runnable programs rather than snippets, covered by
   `tests/test_examples.py` so they cannot rot. The first is
   `section_vs_chunk_retrieval.py`, which runs this project's headline retrieval

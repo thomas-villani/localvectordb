@@ -77,6 +77,12 @@ Starting the Server
 - ``--disable-ollama-check, -x``: Skip Ollama availability check
 
 .. note::
+   The Ollama availability check runs on startup only when the configured
+   embedding provider is Ollama. A server backed by OpenAI, Jina, OpenRouter, or
+   any other provider does not require a local Ollama install. ``--disable-ollama-check``
+   still overrides the probe when it would otherwise run.
+
+.. note::
    ``--config, -c``, ``--db-folder, -d``, ``--verbose, -v`` and ``--quiet, -q`` are
    **global** options on the top-level ``lvdb`` group, not on ``serve``. They must be
    given **before** the subcommand, e.g. ``lvdb --config production.toml serve`` or
@@ -90,6 +96,12 @@ Starting the Server
 - ``--verbose, -v``: Enable verbose (DEBUG) logging
 - ``--quiet, -q``: Only log errors (suppress warnings/info)
 - ``--version, -V``: Print the installed ``localvectordb`` version
+
+.. note::
+   A configuration file is not required for database operations. When neither a
+   config file nor ``--db-folder`` is given, the current working directory is used
+   as the database folder, so ``lvdb db <name> ...`` works in any folder that
+   contains a database.
 
 Configuration Management
 ------------------------
@@ -1036,6 +1048,34 @@ List Documents
    # JSON format
    lvdb db my_database list --format json
 
+Browse Document IDs
+"""""""""""""""""""
+
+``ls`` navigates "filesystem-like" document ids S3-style: it treats a delimiter
+(``/`` by default) as a virtual path separator and lists the immediate children of
+a prefix. Virtual folders are shown with a trailing delimiter and a document
+count; leaf documents at the level are shown as-is. Omit the prefix to list the
+top level.
+
+.. code-block:: bash
+
+   # List the top-level "folders" and documents
+   lvdb db my_database ls
+
+   # List the children of a prefix
+   lvdb db my_database ls docs/
+
+   # Use a custom delimiter
+   lvdb db my_database ls "a::" --delimiter "::"
+
+   # JSON output
+   lvdb db my_database ls docs/ --format json
+
+**Options**:
+
+- ``--delimiter, -d``: Virtual path separator (default: ``/``)
+- ``--format, -f``: Output format (``table`` or ``json``, default ``table``); ``-j`` is a shortcut for ``--format json``
+
 Search Operations
 ^^^^^^^^^^^^^^^^^
 
@@ -1117,6 +1157,44 @@ The ``--search-level sections``/``documents`` options and the ``sections`` value
 ``--return-type`` require a database created with ``hierarchical_embeddings=True``. On a
 standard (chunk-only) database, only ``--search-level chunks`` is available. See
 :doc:`hierarchical` for details on hierarchical embeddings.
+
+Lexical Search (grep)
+^^^^^^^^^^^^^^^^^^^^^^
+
+``grep`` performs exact/regex, line-oriented search over document content —
+command-line ``grep`` semantics, distinct from ``search`` (which does ranked
+semantic/keyword retrieval). It reports the document id, line number, and matching
+line, with optional surrounding context. Results are in document-id then line
+order, not by relevance.
+
+.. code-block:: bash
+
+   # Literal substring match
+   lvdb db my_database grep "TODO"
+
+   # Case-insensitive, with two lines of context each side
+   lvdb db my_database grep error -i -C 2
+
+   # Regex, scoped to a document-id prefix
+   lvdb db my_database grep "^def " --regex --prefix code/
+
+   # Whole-word match, capped at 100 total results
+   lvdb db my_database grep error --word --limit 100
+
+   # JSON output
+   lvdb db my_database grep "TODO" --format json
+
+**Options**:
+
+- ``--regex, -e``: Treat the pattern as a regular expression
+- ``--ignore-case, -i``: Case-insensitive matching
+- ``--word, -w``: Match whole words only
+- ``--context, -C``: Lines of context around each match
+- ``--after, -A`` / ``--before, -B``: Trailing / leading context (override ``--context``)
+- ``--prefix, -p``: Only search documents whose id starts with this prefix
+- ``--max-count, -m``: Stop after this many matches per document
+- ``--limit, -n``: Stop after this many matches in total
+- ``--format, -f``: Output format (``grep`` or ``json``, default ``grep``); ``-j`` is a shortcut for ``--format json``
 
 **Example Search Output**:
 

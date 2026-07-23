@@ -158,6 +158,12 @@ def cli(ctx, config, db_folder, verbose, quiet):
         else:
             cfg.database.root_dir = db_folder
 
+    # When neither a config file nor --db-folder supplied a database folder,
+    # assume the current working directory. This lets `lvdb db NAME ...` work in
+    # any folder containing a database without first creating a config file.
+    if not db_folder:
+        db_folder = "."
+
     ctx.obj = {
         "config": cfg,
         "config_path": config_path,

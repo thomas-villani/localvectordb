@@ -72,8 +72,9 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
     Start the LocalVectorDB server.
 
     Launches the LocalVectorDB server using the specified configuration file and options.
-    You can control the network interface, port, logging level, and database folder. By default,
-    the server checks for Ollama installation and service unless explicitly disabled.
+    You can control the network interface, port, logging level, and database folder. When the
+    configured embedding provider is Ollama, the server verifies the Ollama installation and
+    service on startup unless the check is explicitly disabled.
 
     \b
     Examples:
@@ -116,7 +117,10 @@ def serve(ctx, host, port, debug, log_level, disable_ollama_check):
         if db_folder:
             config.database.root_dir = db_folder
 
-        if not disable_ollama_check:
+        # Only probe for Ollama when it is the configured embedding provider.
+        # A server backed by OpenAI/Jina/etc. has no dependency on a local
+        # Ollama install, so requiring one at startup was spurious.
+        if not disable_ollama_check and config.embedding.provider == "ollama":
             from localvectordb.exceptions import OllamaNotFoundError
             from localvectordb_server.utils.checkdeps import check_ollama_installation, check_ollama_service
 

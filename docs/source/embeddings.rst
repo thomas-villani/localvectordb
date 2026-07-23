@@ -10,6 +10,7 @@ Overview
 
 - **Ollama**: Local embeddings without API costs
 - **OpenAI**: Cloud-based embeddings with high quality
+- **OpenRouter**: OpenAI-compatible access to many providers' embedding models through one endpoint
 - **JinaAI**: Advanced cloud-based embedding models with more control
 - **Google**: Cloud-based Gemini Embedding
 - **SentenceTransformers**: Local inference with the sentence-transformers library
@@ -111,6 +112,70 @@ Available Models:
 - ``text-embedding-3-small``: 1536 dimensions, cost-effective
 - ``text-embedding-3-large``: 3072 dimensions, highest quality
 - ``text-embedding-ada-002``: Legacy model, still good quality
+
+OpenRouter Provider
+^^^^^^^^^^^^^^^^^^^
+
+OpenAI-compatible access to many upstream providers' embedding models (OpenAI,
+Google, Mistral, Nvidia, and free options) through a single endpoint.
+
+.. note::
+   The OpenRouter provider is built into LocalVectorDB and requires no additional
+   dependencies. It uses the standard HTTP client already included with
+   LocalVectorDB.
+
+Setup:
+
+.. code-block:: bash
+
+   export OPENROUTER_API_KEY=your_api_key_here
+   # Get a key at: https://openrouter.ai/keys
+
+Configuration:
+
+.. code-block:: python
+
+   # Pass the OpenRouter model slug as the embedding model
+   db = VectorDB(
+       "my_db",
+       "./vector_storage",
+       embedding_provider="openrouter",
+       embedding_model="openai/text-embedding-3-small",
+   )
+
+Because OpenRouter serves a large, changing catalogue of models, the embedding
+dimension is resolved in this order (first match wins):
+
+1. ``requested_dimensions`` — asks the API to truncate to this size (only honored
+   by models that support Matryoshka truncation) *and* uses it as the index size.
+2. ``dimension`` — a plain declaration of the model's native size. Used as the
+   index size with no effect on the request payload.
+3. Otherwise, the native dimension is discovered with a one-off probe request the
+   first time it is needed.
+
+Provide either dimension option to skip the probe entirely — useful for offline
+setup or to keep database creation from making a network call:
+
+.. code-block:: python
+
+   db = VectorDB(
+       "my_db",
+       "./vector_storage",
+       embedding_provider="openrouter",
+       embedding_model="nvidia/nv-embed-v2",
+       embedding_config={
+           "dimension": 4096,        # declare native size; no probe, no truncation
+           "normalize": True,        # optional L2 normalization
+           "site_url": "https://example.com",  # optional attribution (HTTP-Referer)
+           "app_name": "MyApp",                 # optional attribution (X-Title)
+       },
+   )
+
+Available Models:
+
+- Any model listed at https://openrouter.ai/models with an ``embedding`` output
+  modality, referenced by its slug (e.g. ``openai/text-embedding-3-small``,
+  ``nvidia/nv-embed-v2``).
 
 JinaAI Provider
 ^^^^^^^^^^^^^^^

@@ -16,9 +16,9 @@ from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Union
 
 from localvectordb._filters import FilterQueryBuilder
-from localvectordb.core import Chunk, ChunkPosition, Document, MetadataFieldType
+from localvectordb.core import Chunk, ChunkPosition, Document, MetadataFieldType, PrefixEntry, PrefixListing
 from localvectordb.database._ingest import _PendingFaissRemovals
-from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
+from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor, glob_escape
 from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError, PatchConflictError
 from localvectordb.patching import PatchResult, apply_ops
@@ -788,6 +788,102 @@ class CrudMixin(LocalVectorDBBase, ABC):
             finally:
                 cursor.close()
             return self._construct_documents_from_rows(rows)
+
+    def list_prefixes(self, prefix: str = "", delimiter: str = "/") -> PrefixListing:
+        """List the immediate children of a document-id prefix, S3-style.
+
+        Treats ``delimiter`` as a virtual path separator over document ids and
+        rolls documents up to their first segment beneath ``prefix``. A useful
+        pattern is to use relative paths as manual document ids
+        (``docs/reports/q1``) and then navigate them like folders -- there are no
+        real directories, only ids that share a prefix.
+
+        Parameters
+        ----------
+        prefix : str
+            Literal id prefix to list beneath. Pass ``""`` (the default) to list
+            the top level. For folder-like navigation, include the trailing
+            delimiter (``"docs/"`` lists the children of ``docs/``, whereas
+            ``"docs"`` lists children of every id beginning with ``docs``).
+        delimiter : str
+            Virtual path separator. Defaults to ``"/"``.
+
+        Returns
+        -------
+        PrefixListing
+            ``prefixes`` are the virtual sub-folders (common prefixes) with a
+            recursive document ``count``; ``documents`` are the leaf documents
+            that live directly at this level.
+
+        Examples
+        --------
+        ::
+
+            db.upsert(["..."], ids=["docs/reports/q1"])
+            listing = db.list_prefixes("docs/")
+            for folder in listing.prefixes:
+                print(folder.path, folder.count)   # e.g. "docs/reports/" 1
+
+        Notes
+        -----
+        - Matching is case-sensitive (SQLite ``GLOB`` / ``BINARY`` collation),
+          which is the desired behaviour for path-like keys.
+        - A document whose id equals ``prefix`` exactly is not reported as its own
+          child.
+        """
+        if not delimiter:
+            raise ValueError("delimiter must be a non-empty string")
+
+        glob_pattern = glob_escape(prefix) + "*"
+        prefix_len = len(prefix)
+
+        # Strip the prefix in a subquery, then group each remaining id by its
+        # first segment: ids containing the delimiter roll up into a virtual
+        # folder (segment includes the trailing delimiter); ids without it are
+        # leaf documents at this level. instr()/substr() are core SQLite scalar
+        # functions, so the whole roll-up -- including counts -- happens in one
+        # pass regardless of how many documents match.
+        sql = """
+            SELECT
+                CASE WHEN instr(rest, :delim) > 0
+                     THEN substr(rest, 1, instr(rest, :delim) - 1 + :dlen)
+                     ELSE rest END AS segment,
+                CASE WHEN instr(rest, :delim) > 0 THEN 1 ELSE 0 END AS is_prefix,
+                COUNT(*) AS cnt
+            FROM (
+                SELECT substr(id, :restpos) AS rest
+                FROM documents
+                WHERE id GLOB :glob AND length(id) > :plen
+            )
+            GROUP BY segment, is_prefix
+            ORDER BY is_prefix DESC, segment ASC
+        """
+        params = {
+            "delim": delimiter,
+            "dlen": len(delimiter),
+            "restpos": prefix_len + 1,
+            "glob": glob_pattern,
+            "plen": prefix_len,
+        }
+
+        listing = PrefixListing(prefix=prefix, delimiter=delimiter)
+        with self.connection_pool.get_connection() as conn:
+            cursor = conn.execute(sql, params)
+            try:
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+
+        for row in rows:
+            segment, is_prefix, count = row["segment"], row["is_prefix"], row["cnt"]
+            entry = PrefixEntry(
+                name=segment,
+                path=prefix + segment,
+                is_prefix=bool(is_prefix),
+                count=int(count),
+            )
+            (listing.prefixes if entry.is_prefix else listing.documents).append(entry)
+        return listing
 
     # -------------
     # Async CRUD

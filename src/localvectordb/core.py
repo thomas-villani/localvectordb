@@ -428,6 +428,116 @@ class Document:
 
 
 @dataclass
+class GrepMatch:
+    """A single lexical (grep-style) match within a document's content.
+
+    Line-oriented, mirroring command-line ``grep``: each match records the 1-based
+    line number, the full matching line, the column span of the match within that
+    line, and optional context lines before/after.
+    """
+
+    doc_id: str
+    line_number: int  # 1-based line number within the document
+    line: str  # the full matching line (without its trailing newline)
+    start: int  # 0-based column where the match starts within the line
+    end: int  # 0-based column where the match ends (exclusive)
+    match: str  # the matched substring
+    before: List[str] = field(default_factory=list)  # preceding context lines
+    after: List[str] = field(default_factory=list)  # following context lines
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a plain dictionary."""
+        return {
+            "doc_id": self.doc_id,
+            "line_number": self.line_number,
+            "line": self.line,
+            "start": self.start,
+            "end": self.end,
+            "match": self.match,
+            "before": list(self.before),
+            "after": list(self.after),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GrepMatch":
+        """Create a GrepMatch from a dictionary response."""
+        return cls(
+            doc_id=data["doc_id"],
+            line_number=int(data["line_number"]),
+            line=data["line"],
+            start=int(data["start"]),
+            end=int(data["end"]),
+            match=data["match"],
+            before=list(data.get("before", [])),
+            after=list(data.get("after", [])),
+        )
+
+
+@dataclass
+class PrefixEntry:
+    """A single child of a document-id prefix.
+
+    Either a virtual "folder" (a common prefix shared by one or more documents,
+    ``is_prefix=True``) or a leaf document that lives directly at the queried
+    level (``is_prefix=False``). Modelled on S3's ``CommonPrefixes`` / ``Contents``
+    split -- there are no real directories, only document ids that share a prefix.
+    """
+
+    name: str  # segment relative to the queried prefix, e.g. "reports/" or "readme"
+    path: str  # full id prefix, e.g. "docs/reports/" (folder) or "docs/readme" (document)
+    is_prefix: bool  # True for a virtual folder, False for a leaf document
+    count: int  # documents at or beneath this entry (1 for a leaf document)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a plain dictionary."""
+        return {"name": self.name, "path": self.path, "is_prefix": self.is_prefix, "count": self.count}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PrefixEntry":
+        """Create a PrefixEntry from a dictionary response."""
+        return cls(
+            name=data["name"],
+            path=data["path"],
+            is_prefix=bool(data["is_prefix"]),
+            count=int(data["count"]),
+        )
+
+
+@dataclass
+class PrefixListing:
+    """S3-style listing of the immediate children of a document-id prefix.
+
+    ``prefixes`` holds the virtual sub-folders (common prefixes) and ``documents``
+    holds the leaf documents directly at this level. Use the returned ``path`` of a
+    prefix entry as the ``prefix`` argument of a subsequent call to descend.
+    """
+
+    prefix: str
+    delimiter: str
+    prefixes: List["PrefixEntry"] = field(default_factory=list)
+    documents: List["PrefixEntry"] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a plain dictionary."""
+        return {
+            "prefix": self.prefix,
+            "delimiter": self.delimiter,
+            "prefixes": [e.to_dict() for e in self.prefixes],
+            "documents": [e.to_dict() for e in self.documents],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PrefixListing":
+        """Create a PrefixListing from a dictionary response."""
+        return cls(
+            prefix=data.get("prefix", ""),
+            delimiter=data.get("delimiter", "/"),
+            prefixes=[PrefixEntry.from_dict(e) for e in data.get("prefixes", [])],
+            documents=[PrefixEntry.from_dict(e) for e in data.get("documents", [])],
+        )
+
+
+@dataclass
 class QueryResult:
     """Result from a search query"""
 
