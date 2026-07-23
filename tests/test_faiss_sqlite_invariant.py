@@ -488,8 +488,8 @@ class TestRepair:
             # docB's id is unique, so its vector is recovered from the index. docA and
             # docC share id 2 -- reconstruct() cannot say which vector is whose, so both
             # are re-embedded.
-            assert report.reconstructed == 1, report.summary()
-            assert report.reembedded == 2, report.summary()
+            assert report.reconstructed == 1, report.summary
+            assert report.reembedded == 2, report.summary
         finally:
             repairer.close()
 

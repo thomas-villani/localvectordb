@@ -40,9 +40,23 @@ This includes:
 - Basic embedding providers
 - Chunking and search functionality
 
+CLI Installation
+^^^^^^^^^^^^^^^^
+For the ``lvdb`` command-line tool without the HTTP server:
+
+.. code-block:: bash
+
+   pip install "localvectordb[cli]"
+
+This is a light install (click, tomli-w, bcrypt) that runs every ``lvdb``
+command except ``lvdb serve`` — create, inspect, search, chunk, back up,
+migrate, manage auth keys, and configure databases. ``lvdb serve`` prints an
+actionable hint if only this extra is installed; add the ``[server]`` extra to
+run the server.
+
 Server Installation
 ^^^^^^^^^^^^^^^^^^^
-For running the LocalVectorDB HTTP server:
+For running the LocalVectorDB HTTP server (includes the CLI):
 
 .. code-block:: bash
 
@@ -53,7 +67,7 @@ Additional dependencies:
 - FastAPI web framework with Uvicorn ASGI server
 - HTTP client libraries
 - Configuration management
-- CLI tools
+- The ``lvdb`` CLI (via the ``[cli]`` extra)
 
 SentenceTransformers Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

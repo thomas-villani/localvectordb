@@ -738,6 +738,124 @@ class ParagraphChunker(PositionTrackingChunker):
         return sentence_chunks
 
 
+class DelimiterChunker(PositionTrackingChunker):
+    """Split on a literal delimiter sequence, with a character-level fallback.
+
+    The document is cut on every occurrence of ``delimiter`` (a literal string,
+    ``"\\n\\n"`` by default), and the resulting segments are packed into chunks up
+    to ``max_tokens``. A single segment that is *itself* larger than ``max_tokens``
+    becomes its own chunk and is then split character-by-character by the shared
+    :meth:`_ensure_chunks_within_limit` safeguard -- so no chunk ever exceeds the
+    limit even when the delimiter leaves an over-long piece.
+
+    Like :class:`SentenceChunker` and :class:`ParagraphChunker`, each segment owns
+    the delimiter that follows it, so the ``[start, end)`` spans are contiguous and
+    cover the whole document and :func:`reconstruct_document` is exact.
+    """
+
+    def __init__(self, max_tokens: int = 500, overlap: int = 0, delimiter: str = "\n\n", **kwargs):
+        super().__init__(max_tokens, overlap, **kwargs)
+        if not isinstance(delimiter, str) or not delimiter:
+            raise ValueError("`delimiter` must be a non-empty string")
+        self.delimiter = delimiter
+
+    def chunk(self, text: str) -> List[Chunk]:
+        """Split text on the configured delimiter."""
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
+
+        segments = self._split_on_delimiter(text)
+        if not segments:
+            return [self._create_chunk(text, 0, len(text), 0)]
+
+        chunks = []
+        chunk_index = 0
+        i = 0
+
+        while i < len(segments):
+            chunk_segments: list[tuple[int, int, str]] = []
+            chunk_tokens = 0
+            start_idx = i
+
+            while i < len(segments):
+                seg_start, seg_end, seg_text = segments[i]
+                seg_tokens = self.count_tokens(seg_text)
+
+                # A single segment larger than the limit becomes its own chunk;
+                # _ensure_chunks_within_limit then splits it character-by-character.
+                if seg_tokens > self.max_tokens and not chunk_segments:
+                    chunk = self._create_chunk(text, seg_start, seg_end, chunk_index)
+                    chunks.append(chunk)
+                    chunk_index += 1
+                    i += 1
+                    break
+
+                if chunk_tokens + seg_tokens > self.max_tokens and chunk_segments:
+                    break
+
+                chunk_segments.append((seg_start, seg_end, seg_text))
+                chunk_tokens += seg_tokens
+                i += 1
+
+            if chunk_segments:
+                start_pos = chunk_segments[0][0]
+                end_pos = chunk_segments[-1][1]
+                chunk = self._create_chunk(text, start_pos, end_pos, chunk_index)
+                chunks.append(chunk)
+                chunk_index += 1
+
+                # Apply overlap by backing up whole segments (overlap is counted in
+                # delimiter-separated segments here, not tokens).
+                if self.overlap > 0 and i < len(segments):
+                    segments_processed = i - start_idx
+                    overlap_count = min(self.overlap, segments_processed - 1)
+                    i = start_idx + max(1, segments_processed - overlap_count)
+
+        return self._ensure_chunks_within_limit(chunks, text)
+
+    def _split_on_delimiter(self, text: str) -> List[Tuple[int, int, str]]:
+        """Split text on the literal delimiter with positions.
+
+        Spans are contiguous and cover the whole text: each segment owns the
+        delimiter occurrence that follows it (the boundary is the *end* of the
+        delimiter match), and the final span runs to ``len(text)``. As with
+        :meth:`ParagraphChunker._split_into_paragraphs`, this is what makes
+        ``reconstruct_document`` exact. The stripped text in the third field is
+        used only for token counting; ``[start, end)`` is authoritative for
+        content.
+        """
+        segments: List[Tuple[int, int, str]] = []
+        start = 0
+        search = 0
+        dlen = len(self.delimiter)
+
+        while True:
+            idx = text.find(self.delimiter, search)
+            if idx == -1:
+                break
+            cut = idx + dlen
+            seg_text = text[start:cut].strip()
+            if seg_text:
+                segments.append((start, cut, seg_text))
+                start = cut
+            # A delimiter-only / whitespace-only region leaves `start` untouched so
+            # it folds into the next non-empty segment, preserving full coverage.
+            search = cut
+
+        # Trailing remainder. A non-empty tail becomes the final segment; a pure
+        # whitespace/empty tail is folded onto the last span so nothing is lost.
+        if start < len(text):
+            tail = text[start:].strip()
+            if tail:
+                segments.append((start, len(text), tail))
+            elif segments:
+                prev_start, _, prev_text = segments[-1]
+                segments[-1] = (prev_start, len(text), prev_text)
+
+        return segments
+
+
 class SectionChunker(PositionTrackingChunker):
     """Chunk by section headers (markdown-style)"""
 
@@ -1365,6 +1483,7 @@ _OVERLAP_UNIT_NAME: dict[str, str] = {
     "paragraphs": "paragraphs",
     "code-blocks": "lines",
     "sections": "sections",
+    "delimiter": "segments",
 }
 
 # Rough average tokens-per-unit for the count-based methods, used ONLY for a
@@ -1378,6 +1497,9 @@ _APPROX_TOKENS_PER_UNIT: dict[str, float] = {
     "code-blocks": 10.0,
     "paragraphs": 60.0,
     "characters": 0.25,  # ~4 characters per token
+    # Delimiter segments vary widely; treat them like paragraphs for the "overlap
+    # looks too large" heuristic only.
+    "delimiter": 60.0,
 }
 
 
@@ -1393,6 +1515,7 @@ class ChunkerFactory:
         "paragraphs": ParagraphChunker,
         "sections": SectionChunker,
         "code-blocks": CodeBlockChunker,
+        "delimiter": DelimiterChunker,
     }
 
     @classmethod
@@ -1475,6 +1598,9 @@ class ChunkerFactory:
         elif method == "paragraphs":
             return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == "code-blocks":
+            return chunker_class(max_tokens, overlap=overlap, **kwargs)
+        elif method == "delimiter":
+            # `delimiter` (if supplied) rides through **kwargs to DelimiterChunker.
             return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == "sections":
             # Sections typically don't overlap

@@ -10,6 +10,7 @@ from localvectordb.chunking import (
     CharChunker,
     ChunkerFactory,
     CodeBlockChunker,
+    DelimiterChunker,
     LineChunker,
     ParagraphChunker,
     PositionTrackingChunker,
@@ -545,6 +546,80 @@ class TestParagraphChunker:
 
         # Should split the long paragraph
         assert len(chunks) > 1
+
+
+@pytest.mark.unit
+@pytest.mark.chunking
+class TestDelimiterChunker:
+    """Test DelimiterChunker class."""
+
+    def test_create_chunker(self):
+        """Test creating a delimiter chunker with a custom delimiter."""
+        chunker = DelimiterChunker(max_tokens=100, overlap=0, delimiter="\n---\n")
+        assert chunker.max_tokens == 100
+        assert chunker.delimiter == "\n---\n"
+
+    def test_default_delimiter_is_blank_line(self):
+        """The default delimiter is a blank line."""
+        assert DelimiterChunker().delimiter == "\n\n"
+
+    def test_empty_delimiter_rejected(self):
+        """An empty delimiter cannot make progress and is rejected."""
+        with pytest.raises(ValueError):
+            DelimiterChunker(delimiter="")
+
+    def test_via_factory_forwards_delimiter(self):
+        """The factory forwards ``delimiter`` to the delimiter chunker."""
+        chunker = ChunkerFactory.create_chunker("delimiter", max_tokens=50, delimiter="||")
+        assert isinstance(chunker, DelimiterChunker)
+        assert chunker.delimiter == "||"
+
+    def test_splits_on_delimiter(self):
+        """Segments are cut on the delimiter and packed up to max_tokens."""
+        chunker = DelimiterChunker(max_tokens=6, delimiter="\n---\n")
+        text = "Section one.\n---\nSection two is here.\n---\nThree."
+        chunks = chunker.chunk(text)
+        assert len(chunks) == 3
+
+    def test_reconstruction_is_exact(self):
+        """Contiguous spans mean reconstruct_document returns the original text."""
+        chunker = DelimiterChunker(max_tokens=6, delimiter="\n---\n")
+        text = "Section one.\n---\nSection two is here.\n---\nThree."
+        chunks = chunker.chunk(text)
+        assert reconstruct_document(chunks, len(text)) == text
+
+    def test_custom_multichar_delimiter_reconstructs(self):
+        """A multi-character non-newline delimiter also reconstructs exactly."""
+        chunker = DelimiterChunker(max_tokens=4, delimiter="<SEP>")
+        text = "alpha<SEP>beta gamma<SEP>delta"
+        chunks = chunker.chunk(text)
+        assert reconstruct_document(chunks, len(text)) == text
+
+    def test_oversized_segment_falls_back_to_chars(self):
+        """A single segment larger than max_tokens is split character-by-character."""
+        big = "x " * 400
+        text = f"short.\n\n{big}"
+        chunker = DelimiterChunker(max_tokens=20, delimiter="\n\n")
+        chunks = chunker.chunk(text)
+        assert len(chunks) > 1
+        assert all(c.tokens <= 20 for c in chunks)
+        assert reconstruct_document(chunks, len(text)) == text
+
+    def test_empty_and_whitespace_guards(self):
+        """Empty input yields no chunks; whitespace-only yields one (reconstructible)."""
+        chunker = DelimiterChunker(delimiter="\n\n")
+        assert chunker.chunk("") == []
+        ws = chunker.chunk("  \n\n  ")
+        assert len(ws) == 1
+        assert reconstruct_document(ws, len("  \n\n  ")) == "  \n\n  "
+
+    def test_no_delimiter_present(self):
+        """Text without the delimiter becomes a single chunk (if it fits)."""
+        chunker = DelimiterChunker(max_tokens=100, delimiter="\n---\n")
+        text = "No delimiter anywhere in this text."
+        chunks = chunker.chunk(text)
+        assert len(chunks) == 1
+        assert chunks[0].content == text
 
 
 @pytest.mark.unit

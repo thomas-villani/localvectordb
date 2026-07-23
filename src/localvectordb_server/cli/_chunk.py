@@ -50,6 +50,13 @@ from localvectordb_server.cli._utils import (
     help="Token overlap between consecutive chunks (ignored by some strategies).",
 )
 @click.option(
+    "--delimiter",
+    default=None,
+    type=str,
+    help="Delimiter for --method delimiter (default: a blank line). Escapes "
+    r"\n, \t, \r are interpreted; e.g. --delimiter '\n---\n'.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, writable=True),
@@ -61,7 +68,7 @@ from localvectordb_server.cli._utils import (
     default=None,
     help="Force (or disable) text extraction for file inputs. Default: auto.",
 )
-def chunk_command(files_or_text, method, max_tokens, overlap, output, extract):
+def chunk_command(files_or_text, method, max_tokens, overlap, delimiter, output, extract):
     """
     Chunk text and emit JSONL — one JSON object per chunk, no embedding.
 
@@ -121,8 +128,15 @@ def chunk_command(files_or_text, method, max_tokens, overlap, output, extract):
         click.secho("Error: no readable input to chunk.", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    # `delimiter` is only meaningful for the delimiter strategy; forward it there
+    # (other chunkers do not accept it). Interpret common escapes so a newline
+    # delimiter survives a shell that does not, e.g. --delimiter '\n---\n'.
+    chunker_kwargs = {}
+    if method == "delimiter" and delimiter is not None:
+        chunker_kwargs["delimiter"] = delimiter.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
+
     try:
-        chunker = ChunkerFactory.create_chunker(method, max_tokens=max_tokens, overlap=overlap)
+        chunker = ChunkerFactory.create_chunker(method, max_tokens=max_tokens, overlap=overlap, **chunker_kwargs)
     except (ValueError, TypeError) as e:
         click.secho(f"Error: {e}", fg="bright_red", err=True)
         raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
