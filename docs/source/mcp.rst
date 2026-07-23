@@ -284,6 +284,8 @@ Example ``mcp_config.toml``:
        "filter_documents",
        "get_document",
        "check_documents_exist",
+       "grep_documents",
+       "list_prefixes",
        "get_metadata_schema",
        "get_system_info"
    ]
@@ -390,6 +392,42 @@ Available in both read-only and read-write modes:
 
 **check_documents_exist**
    Check if multiple documents exist in the database, returning existence mapping.
+
+**grep_documents**
+   Lexical, line-oriented search over document content — like command-line
+   ``grep``. This is exact or regex substring matching, deliberately separate from
+   ``query_database``: where ``query_database`` does ranked semantic/keyword
+   retrieval, ``grep_documents`` finds literal or regex matches and reports *where*
+   they are (document id, 1-based line number, column span, and optional
+   surrounding lines). Agents use it alongside vector and keyword search when they
+   know a precise string or pattern to look for.
+
+   * ``pattern``: Text to search for — a literal substring by default, or a regular
+     expression when ``regex=True``
+   * ``ignore_case`` / ``whole_word``: Case-insensitive and word-boundary matching
+   * ``context`` (or ``before_context`` / ``after_context``): Include surrounding lines
+   * ``prefix``: Restrict the search to documents whose id starts with this prefix
+   * ``filters``: MongoDB-style metadata filters restricting which documents are searched
+   * ``max_count``: Stop after this many matches per document
+   * ``limit``: Maximum total matches to return (default 50). ``truncated`` is set
+     when the cap is hit — keep it modest, a broad pattern is token-heavy.
+
+**list_prefixes**
+   Browse path-like document ids S3-style, treating a delimiter (default ``/``) as
+   a virtual path separator. Rolls documents up to their first segment beneath a
+   ``prefix`` so ids like ``docs/reports/q1`` can be navigated like folders — there
+   are no real directories, only ids that share a prefix. Returns the immediate
+   sub-prefixes (virtual folders) and leaf documents at that level, with counts;
+   pass a returned prefix's ``path`` back as ``prefix`` to descend.
+
+   * ``prefix``: Id prefix to list beneath (empty lists the top level)
+   * ``delimiter``: Virtual path separator used to split ids (default ``/``)
+
+.. note::
+
+   ``grep_documents`` and ``list_prefixes`` operate on **local** databases. Remote
+   (HTTP) databases do not expose them and the tools return a ``NOT_SUPPORTED``
+   error for such a database.
 
 **get_metadata_schema**
    Get the metadata schema definition for a database, showing field types and constraints.

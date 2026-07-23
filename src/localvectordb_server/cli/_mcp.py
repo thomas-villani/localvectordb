@@ -190,6 +190,8 @@ def tools():
         ("filter_documents", "Filter documents by metadata"),
         ("get_document", "Retrieve a document by ID, or a portion of it"),
         ("check_documents_exist", "Check if documents exist"),
+        ("grep_documents", "Lexical/regex line-oriented search over document content"),
+        ("list_prefixes", "Browse path-like document ids, S3-style (folder navigation)"),
         ("get_metadata_schema", "Get database metadata schema"),
         ("get_system_info", "Get system information"),
     ]

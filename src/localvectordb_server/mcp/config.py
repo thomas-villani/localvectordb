@@ -64,6 +64,8 @@ class MCPConfig:
             "filter_documents",
             "get_document",
             "check_documents_exist",
+            "grep_documents",
+            "list_prefixes",
             "get_metadata_schema",
             "get_system_info",
         ]
