@@ -254,6 +254,8 @@ class TestToolRegistry:
             "filter_documents",
             "get_document",
             "check_documents_exist",
+            "grep_documents",
+            "list_prefixes",
             "get_metadata_schema",
             "get_system_info",
         ]
@@ -847,6 +849,155 @@ class TestCheckDocumentsExistTool:
         mcp_manager_fixture.get_database = AsyncMock(side_effect=RuntimeError("fail"))
         result = _run(check_documents_exist("testdb", ["d1"]))
         assert "error" in result
+
+
+@pytest.mark.unit
+class TestGrepDocumentsTool:
+    def test_basic_grep(self, mcp_manager_fixture):
+        from localvectordb.core import GrepMatch
+        from localvectordb_server.mcp.server import grep_documents
+
+        mock_db = MagicMock()
+        mock_db.grep.return_value = [
+            GrepMatch(doc_id="docs/a", line_number=2, line="TODO: fix", start=0, end=4, match="TODO"),
+        ]
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(grep_documents("testdb", "TODO"))
+        assert result["total_matches"] == 1
+        assert result["matches"][0]["doc_id"] == "docs/a"
+        assert result["matches"][0]["line_number"] == 2
+        assert result["matches"][0]["match"] == "TODO"
+        assert result["pattern"] == "TODO"
+        assert result["truncated"] is False
+
+    def test_forwards_options(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import grep_documents
+
+        mock_db = MagicMock()
+        mock_db.grep.return_value = []
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        _run(
+            grep_documents(
+                "testdb",
+                "foo",
+                regex=True,
+                ignore_case=True,
+                whole_word=True,
+                context=2,
+                prefix="docs/",
+                filters={"id": {"$startswith": "docs/"}},
+                max_count=3,
+                limit=10,
+            )
+        )
+        call = mock_db.grep.call_args
+        assert call[0][0] == "foo"
+        assert call[1]["regex"] is True
+        assert call[1]["ignore_case"] is True
+        assert call[1]["whole_word"] is True
+        assert call[1]["context"] == 2
+        assert call[1]["prefix"] == "docs/"
+        # The tool exposes the filter as `filters` but forwards it as `where`.
+        assert call[1]["where"] == {"id": {"$startswith": "docs/"}}
+        assert call[1]["max_count"] == 3
+        assert call[1]["limit"] == 10
+
+    def test_truncated_flag_when_limit_hit(self, mcp_manager_fixture):
+        from localvectordb.core import GrepMatch
+        from localvectordb_server.mcp.server import grep_documents
+
+        mock_db = MagicMock()
+        mock_db.grep.return_value = [
+            GrepMatch(doc_id="d", line_number=i, line="x", start=0, end=1, match="x") for i in range(1, 3)
+        ]
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(grep_documents("testdb", "x", limit=2))
+        assert result["truncated"] is True
+
+    def test_invalid_regex_is_value_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import grep_documents
+
+        mock_db = MagicMock()
+        mock_db.grep.side_effect = ValueError("bad regex")
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(grep_documents("testdb", "(unclosed", regex=True))
+        assert result["error_type"] == "ValueError"
+
+    def test_not_supported_for_remote(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import grep_documents
+
+        # A remote database has no grep() method -> reported as NOT_SUPPORTED.
+        mock_db = MagicMock(spec=[])
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(grep_documents("testdb", "x"))
+        assert result["error_code"] == "NOT_SUPPORTED"
+
+    def test_database_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import grep_documents
+
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=DatabaseNotFoundError("no db"))
+        result = _run(grep_documents("missing", "x"))
+        assert result["error_code"] == "DATABASE_NOT_FOUND"
+
+
+@pytest.mark.unit
+class TestListPrefixesTool:
+    def test_basic_listing(self, mcp_manager_fixture):
+        from localvectordb.core import PrefixEntry, PrefixListing
+        from localvectordb_server.mcp.server import list_prefixes
+
+        listing = PrefixListing(
+            prefix="docs/",
+            delimiter="/",
+            prefixes=[PrefixEntry(name="reports/", path="docs/reports/", is_prefix=True, count=3)],
+            documents=[PrefixEntry(name="readme", path="docs/readme", is_prefix=False, count=1)],
+        )
+        mock_db = MagicMock()
+        mock_db.list_prefixes.return_value = listing
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(list_prefixes("testdb", prefix="docs/"))
+        assert result["prefix"] == "docs/"
+        assert result["prefix_count"] == 1
+        assert result["document_count"] == 1
+        assert result["prefixes"][0]["path"] == "docs/reports/"
+        assert result["documents"][0]["name"] == "readme"
+
+    def test_forwards_delimiter(self, mcp_manager_fixture):
+        from localvectordb.core import PrefixListing
+        from localvectordb_server.mcp.server import list_prefixes
+
+        mock_db = MagicMock()
+        mock_db.list_prefixes.return_value = PrefixListing(prefix="", delimiter="::")
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        _run(list_prefixes("testdb", prefix="", delimiter="::"))
+        mock_db.list_prefixes.assert_called_once_with(prefix="", delimiter="::")
+
+    def test_empty_delimiter_is_value_error(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import list_prefixes
+
+        mock_db = MagicMock()
+        mock_db.list_prefixes.side_effect = ValueError("delimiter must not be empty")
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(list_prefixes("testdb", delimiter=""))
+        assert result["error_type"] == "ValueError"
+
+    def test_not_supported_for_remote(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import list_prefixes
+
+        mock_db = MagicMock(spec=[])
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+        result = _run(list_prefixes("testdb"))
+        assert result["error_code"] == "NOT_SUPPORTED"
+
+    def test_database_not_found(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import list_prefixes
+
+        mcp_manager_fixture.get_database = AsyncMock(side_effect=DatabaseNotFoundError("no db"))
+        result = _run(list_prefixes("missing"))
+        assert result["error_code"] == "DATABASE_NOT_FOUND"
 
 
 @pytest.mark.unit

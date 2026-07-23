@@ -110,14 +110,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document) / `limit` (total). Exposed on the CLI as `lvdb db <name> grep PATTERN`
   (`-e/--regex`, `-i`, `-w`, `-A/-B/-C`, `--prefix`, `-m`, `-n`, `-j`). Intended
   to sit alongside vector and keyword search for agents that know a precise
-  string. Local-library + CLI for now; server/SDK exposure is deferred.
+  string. Also exposed as the read-only `grep_documents` MCP tool. Local-library
+  + CLI + MCP; HTTP/SDK exposure is deferred.
 - **`LocalVectorDB.list_prefixes()`** — S3-style navigation of "filesystem-like"
   document ids: treats a delimiter (`/` by default) as a virtual path separator
   and rolls documents up to their immediate children beneath a prefix, returning
   a `PrefixListing` of virtual folders (common prefixes with recursive counts)
   and leaf documents. Makes relative-path document ids (`docs/reports/q1`)
   browsable like folders without any schema change. Exposed as
-  `lvdb db <name> ls [PREFIX]` (`-d/--delimiter`, `-j`). New public types
+  `lvdb db <name> ls [PREFIX]` (`-d/--delimiter`, `-j`) and as the read-only
+  `list_prefixes` MCP tool. New public types
   `PrefixListing` / `PrefixEntry` / `GrepMatch`.
 - **OpenRouter embedding provider** (`provider="openrouter"`,
   `OpenRouterEmbeddings`) — OpenAI-compatible access to OpenRouter's embedding

@@ -698,6 +698,141 @@ async def get_metadata_schema(database_name: str) -> Dict[str, Any]:
         return {"error": str(e), "error_type": type(e).__name__}
 
 
+@register_tool("grep_documents", read_only=True)
+async def grep_documents(
+    database_name: str,
+    pattern: str,
+    regex: bool = False,
+    ignore_case: bool = False,
+    whole_word: bool = False,
+    context: int = 0,
+    before_context: Optional[int] = None,
+    after_context: Optional[int] = None,
+    prefix: Optional[str] = None,
+    filters: Optional[Dict[str, Any]] = None,
+    max_count: Optional[int] = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Lexical, line-oriented search over document content -- like ``grep``.
+
+    This is exact/regex substring matching, deliberately separate from
+    ``query_database``: ``query_database`` does ranked semantic/keyword retrieval,
+    while ``grep_documents`` finds literal or regex matches and reports *where*
+    they are (document id, 1-based line number, column span, and optional
+    surrounding lines). Use it alongside vector and keyword search when you know a
+    precise string or pattern to look for. Matches are returned in document-id then
+    line order, not by relevance.
+
+    Args:
+        database_name: Name of the database to search
+        pattern: Text to search for -- a literal substring by default, or a regular
+            expression when regex=True
+        regex: Treat pattern as a regular expression
+        ignore_case: Case-insensitive matching
+        whole_word: Match only whole words (word boundaries around the pattern)
+        context: Number of context lines to include both before and after each match
+        before_context: Context lines before each match (overrides context)
+        after_context: Context lines after each match (overrides context)
+        prefix: Restrict the search to documents whose id starts with this prefix
+            (e.g. 'docs/' when using path-like ids)
+        filters: Metadata filters (MongoDB-style) restricting which documents are
+            searched. Filter fields must exist in the database's metadata schema.
+        max_count: Stop after this many matches per document
+        limit: Maximum total matches to return across all documents (default 50).
+            Keep this modest -- a broad pattern can otherwise return a large,
+            token-heavy result. 'truncated' is True when the cap was hit.
+
+    Returns:
+        Matches with line numbers, column spans, and optional context lines
+    """
+    try:
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
+
+        if not hasattr(db, "grep"):
+            return {
+                "error": "grep is not supported for this database (remote databases do not expose it)",
+                "error_code": "NOT_SUPPORTED",
+            }
+
+        matches = db.grep(
+            pattern,
+            regex=regex,
+            ignore_case=ignore_case,
+            whole_word=whole_word,
+            context=context,
+            before_context=before_context,
+            after_context=after_context,
+            prefix=prefix,
+            where=filters,
+            max_count=max_count,
+            limit=limit,
+        )
+
+        return {
+            "matches": [m.to_dict() for m in matches],
+            "total_matches": len(matches),
+            "pattern": pattern,
+            "truncated": limit is not None and len(matches) >= limit,
+        }
+
+    except DatabaseNotFoundError as e:
+        return {"error": str(e), "error_code": "DATABASE_NOT_FOUND"}
+    except ValueError as e:
+        # Empty pattern, invalid regex, or an unknown metadata filter field/operator.
+        return {"error": str(e), "error_type": "ValueError"}
+    except Exception as e:
+        logger.error(f"Error grepping documents: {e}")
+        return {"error": str(e), "error_type": type(e).__name__}
+
+
+@register_tool("list_prefixes", read_only=True)
+async def list_prefixes(database_name: str, prefix: str = "", delimiter: str = "/") -> Dict[str, Any]:
+    """
+    List the immediate children of a document-id prefix, S3-style.
+
+    Treats path-like document ids (e.g. 'docs/reports/q1') as a virtual folder
+    hierarchy and rolls documents up to their first segment beneath ``prefix``.
+    There are no real directories -- only ids that share a prefix. 'prefixes'
+    holds the virtual sub-folders and 'documents' holds the leaf documents that
+    live directly at this level; pass a returned prefix's 'path' back as ``prefix``
+    to descend one level.
+
+    Args:
+        database_name: Name of the database
+        prefix: Id prefix to list beneath (empty lists the top level)
+        delimiter: Virtual path separator used to split ids into segments (default '/')
+
+    Returns:
+        The immediate sub-prefixes and leaf documents at this level, with counts
+    """
+    try:
+        manager = _get_manager()
+        db = await manager.get_database(database_name)
+
+        if not hasattr(db, "list_prefixes"):
+            return {
+                "error": "list_prefixes is not supported for this database (remote databases do not expose it)",
+                "error_code": "NOT_SUPPORTED",
+            }
+
+        listing = db.list_prefixes(prefix=prefix, delimiter=delimiter)
+        result: Dict[str, Any] = listing.to_dict()
+        result["prefix_count"] = len(listing.prefixes)
+        result["document_count"] = len(listing.documents)
+        return result
+
+    except DatabaseNotFoundError as e:
+        return {"error": str(e), "error_code": "DATABASE_NOT_FOUND"}
+    except ValueError as e:
+        # Empty delimiter, etc.
+        return {"error": str(e), "error_type": "ValueError"}
+    except Exception as e:
+        logger.error(f"Error listing prefixes: {e}")
+        return {"error": str(e), "error_type": type(e).__name__}
+
+
 @register_tool("get_system_info", read_only=True)
 async def get_system_info() -> Dict[str, Any]:
     """
