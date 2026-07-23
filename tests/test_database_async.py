@@ -3,6 +3,7 @@ Tests for async functionality in localvectordb.database module.
 """
 
 import asyncio
+import warnings
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -659,8 +660,8 @@ class TestAsyncKeywordFilterParity:
                 db.connection_pool.close_all()
             if db.async_connection_pool:
                 await db.async_connection_pool.close_all()
-        except Exception:
-            pass
+        except Exception as exc:
+            warnings.warn(f"Fixture cleanup in kw_db failed: {exc!r}", RuntimeWarning)
 
     async def test_dotted_json_path_keyword_does_not_crash(self, kw_db):
         # A dot-notation JSON path is not SQL-expressible; sync declines pushdown
