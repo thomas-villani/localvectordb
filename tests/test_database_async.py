@@ -661,7 +661,7 @@ class TestAsyncKeywordFilterParity:
             if db.async_connection_pool:
                 await db.async_connection_pool.close_all()
         except Exception as exc:
-            warnings.warn(f"Fixture cleanup in kw_db failed: {exc!r}", RuntimeWarning)
+            warnings.warn(f"Fixture cleanup in kw_db failed: {exc!r}", RuntimeWarning, stacklevel=2)
 
     async def test_dotted_json_path_keyword_does_not_crash(self, kw_db):
         # A dot-notation JSON path is not SQL-expressible; sync declines pushdown
