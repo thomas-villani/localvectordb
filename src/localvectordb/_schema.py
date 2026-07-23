@@ -2016,7 +2016,7 @@ class DatabaseSchema:
                 if validation_errors:
                     changes["errors"].extend(validation_errors)
                     return changes
-            await db_connection.execute("BEGIN TRANSACTION")
+            await db_connection.execute("BEGIN IMMEDIATE")
 
             # Process column remapping first
             if column_mapping:

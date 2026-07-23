@@ -212,7 +212,7 @@ class RepairMixin(LocalVectorDBBase, ABC):
                 stacked = self._normalize_for_index(np.vstack(vectors), new_index)
                 new_index.add_with_ids(stacked, np.array(new_ids, dtype=np.int64))
 
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             try:
                 if updates_chunks:
                     conn.executemany("UPDATE chunks SET faiss_id = ? WHERE rowid = ?", updates_chunks)
@@ -289,7 +289,7 @@ class RepairMixin(LocalVectorDBBase, ABC):
                 stacked = self._normalize_for_index(np.vstack(vectors), new_index)
                 new_index.add_with_ids(stacked, np.array(new_ids, dtype=np.int64))
 
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             try:
                 if updates:
                     conn.executemany(f"UPDATE {table} SET {id_column} = ? WHERE {row_key} = ?", updates)
