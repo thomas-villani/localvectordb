@@ -66,6 +66,7 @@ dependencies = [
 [project.entry-points."localvectordb.embedding_providers"]
 ollama = "localvectordb.embeddings:OllamaEmbeddings"
 openai = "localvectordb.embeddings:OpenAIEmbeddings"
+openrouter = "localvectordb.embeddings:OpenRouterEmbeddings"
 mock = "localvectordb.embeddings:MockEmbeddings"
 google = "localvectordb.embeddings:GoogleEmbeddings"
 jina = "localvectordb.embeddings:JinaEmbeddings"

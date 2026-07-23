@@ -239,13 +239,15 @@ for the full tool list, configuration reference, and security guidance.
 ### 🗃️ **Document-First Architecture**
 - **Smart Chunking**: Position-tracking chunking — the default chunker reconstructs documents byte-for-byte from their chunks
 - **Metadata Schema**: Structured, indexed metadata fields with validation
+- **Filesystem-like Document IDs**: Use relative paths as document ids (`docs/reports/q1`) and browse them like folders with `db.list_prefixes()` — S3-style virtual folders over shared id prefixes, no schema change
 - **Unified API**: Single interface for vector, keyword, and hybrid search
 - **In-place Patch API**: Edit a stored document with exact find/replace (or span splice) instead of re-sending the whole content — with an optional `expect_hash` precondition to guard against lost updates. Available in the library, HTTP API, MCP tool, CLI, and JS SDK
 
 ### 🔍 **Advanced Search**
-- **Vector Search**: Semantic similarity via pluggable embedding providers — Ollama, OpenAI, Google, Jina, HuggingFace (Inference API + local), and Sentence Transformers
+- **Vector Search**: Semantic similarity via pluggable embedding providers — Ollama, OpenAI, OpenRouter, Google, Jina, HuggingFace (Inference API + local), and Sentence Transformers
 - **Keyword Search**: Full-text search with SQLite FTS5
 - **Hybrid Search**: Combined vector + keyword with configurable weighting
+- **Lexical (grep) Search**: Exact/regex, line-oriented `db.grep()` with line numbers and surrounding context — a precise-string complement to semantic search that agents combine with vector + keyword to great effect
 - **Reranking**: Optional cross-encoder reranking via Jina, Sentence Transformers, or HuggingFace
 - **Metadata Filtering**: MongoDB-style queries on structured metadata
 - **Document Scoring**: Three chunk-to-document aggregation strategies (`best`, `average`, `frequency_boost`) for tuning relevance

@@ -152,6 +152,131 @@ def list_document_ids(ctx, limit, offset, output, output_format):
         click.echo(output_str)
 
 
+@db_group.command("ls")
+@click.argument("prefix", default="")
+@click.option("--delimiter", "-d", default="/", show_default=True, help="Virtual path separator")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+@click.pass_context
+def list_prefixes_cmd(ctx, prefix, delimiter, output_format):
+    """
+    List the immediate children of a document-id PREFIX, S3-style.
+
+    Treats the delimiter (``/`` by default) as a virtual path separator over
+    document ids, so ids like ``docs/reports/q1`` can be browsed like folders.
+    Virtual folders are shown with a trailing delimiter and a document count;
+    leaf documents at the level are shown as-is. Omit PREFIX to list the top level.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb ls
+        lvdb db mydb ls docs/
+        lvdb db mydb ls docs/ --format json
+    """
+    db = get_ctx_db(ctx)
+    listing = db.list_prefixes(prefix, delimiter=delimiter)
+
+    if output_format == "json":
+        click.echo(json.dumps(listing.to_dict()))
+        return
+
+    click.secho(f"Children of {prefix!r} in {db.name}", fg="cyan", err=True)
+    for folder in listing.prefixes:
+        click.echo(f"{folder.path}  ({folder.count})")
+    for doc in listing.documents:
+        click.echo(doc.path)
+
+
+@db_group.command("grep")
+@click.argument("pattern")
+@click.option("--regex", "-e", is_flag=True, help="Treat PATTERN as a regular expression")
+@click.option("--ignore-case", "-i", is_flag=True, help="Case-insensitive matching")
+@click.option("--word", "-w", "whole_word", is_flag=True, help="Match whole words only")
+@click.option("--context", "-C", type=int, default=0, show_default=True, help="Lines of context around each match")
+@click.option("--after", "-A", "after_context", type=int, default=None, help="Lines of trailing context")
+@click.option("--before", "-B", "before_context", type=int, default=None, help="Lines of leading context")
+@click.option("--prefix", "-p", default=None, help="Only search documents whose id starts with this prefix")
+@click.option("--max-count", "-m", type=int, default=None, help="Stop after this many matches per document")
+@click.option("--limit", "-n", type=int, default=None, help="Stop after this many matches in total")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["grep", "json"]),
+    default="grep",
+    show_default=True,
+    help="Output format",
+)
+@click.option("-j", "output_format", flag_value="json", help="Shortcut for --format json.")
+@click.pass_context
+def grep_documents(
+    ctx,
+    pattern,
+    regex,
+    ignore_case,
+    whole_word,
+    context,
+    after_context,
+    before_context,
+    prefix,
+    max_count,
+    limit,
+    output_format,
+):
+    """
+    Lexical (grep-style) search over document content for PATTERN.
+
+    Exact substring or regex matching, distinct from ``search`` (which does ranked
+    semantic/keyword retrieval). Reports the document id, line number, and matching
+    line, with optional surrounding context. Results are in document-id then line
+    order, not by relevance.
+
+    \b
+    Examples:
+        \b
+        lvdb db mydb grep "TODO"
+        lvdb db mydb grep "^def " --regex --prefix code/
+        lvdb db mydb grep error -i -C 2
+    """
+    db = get_ctx_db(ctx)
+    matches = db.grep(
+        pattern,
+        regex=regex,
+        ignore_case=ignore_case,
+        whole_word=whole_word,
+        context=context,
+        before_context=before_context,
+        after_context=after_context,
+        prefix=prefix,
+        max_count=max_count,
+        limit=limit,
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps([m.to_dict() for m in matches]))
+        return
+
+    if not matches:
+        click.secho("No matches.", fg="yellow", err=True)
+        return
+
+    for m in matches:
+        for offset, ctx_line in enumerate(m.before):
+            click.echo(f"{m.doc_id}:{m.line_number - len(m.before) + offset}-{ctx_line}")
+        click.echo(f"{m.doc_id}:{m.line_number}:{m.line}")
+        for offset, ctx_line in enumerate(m.after):
+            click.echo(f"{m.doc_id}:{m.line_number + 1 + offset}-{ctx_line}")
+
+
 def _render_query_results(results, *, title, output_as_json, output, metadata, pretty):
     """Render a list of ``QueryResult`` objects as text or JSON.
 

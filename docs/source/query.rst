@@ -493,6 +493,63 @@ Performance Considerations
 - Cache frequently-used enriched results
 - Consider ``semantic_dedup_threshold`` for large result sets
 
+Lexical search with ``grep``
+----------------------------
+
+``db.grep()`` is exact/regex, line-oriented search over document content — the
+familiar command-line ``grep``, not ranked retrieval. Use it *alongside*
+``query()`` when you know a precise string or pattern; agents in particular
+combine lexical, keyword, and vector search to great effect. Unlike ``query()``
+it does no embedding or scoring — it reports *where* each match is.
+
+.. code-block:: python
+
+    # Literal match with two lines of surrounding context
+    for m in db.grep("TODO", context=2):
+        print(f"{m.doc_id}:{m.line_number}: {m.line}")
+        print("  before:", m.before)
+        print("  after:", m.after)
+
+    # Regex, case-insensitive, scoped to a document-id prefix
+    hits = db.grep(r"def\s+\w+", regex=True, ignore_case=True, prefix="code/")
+
+    # Whole-word match, capped per document and overall
+    db.grep("error", whole_word=True, max_count=3, limit=100)
+
+Each result is a :class:`~localvectordb.core.GrepMatch` with the document id,
+1-based ``line_number``, the matching ``line``, the ``start``/``end`` column span,
+the matched text, and ``before``/``after`` context lines. Results are returned in
+document-id then line order, not by relevance.
+
+Key options: ``regex``, ``ignore_case``, ``whole_word``; ``context`` /
+``before_context`` / ``after_context`` (like ``grep -C/-B/-A``); ``prefix`` and
+``where`` to narrow the corpus (id prefix and metadata filter respectively); and
+``max_count`` (per document) / ``limit`` (total). On large databases, scope the
+scan with ``prefix`` / ``where`` — every matched document is read.
+
+Navigating document ids with ``list_prefixes``
+----------------------------------------------
+
+A useful convention is to give documents relative-path ids
+(``docs/reports/q1``) and browse them like folders. ``db.list_prefixes()`` treats
+a delimiter (``/`` by default) as a virtual path separator and returns the
+immediate children of a prefix, S3-style — there are no real directories, only
+ids that share a prefix.
+
+.. code-block:: python
+
+    listing = db.list_prefixes("docs/")
+    for folder in listing.prefixes:       # virtual sub-folders
+        print(folder.path, folder.count)  # e.g. "docs/reports/" 12
+    for doc in listing.documents:         # leaf documents at this level
+        print(doc.path)
+
+The result is a :class:`~localvectordb.core.PrefixListing` whose ``prefixes`` are
+common prefixes (each with a recursive document ``count``) and whose ``documents``
+are the leaf documents directly at that level. Pass a prefix ending in the
+delimiter for folder-like navigation; matching is case-sensitive. Combine with
+``grep``, ``query``, or ``filter`` to work within a "folder".
+
 Streaming Large Result Sets
 ---------------------------
 

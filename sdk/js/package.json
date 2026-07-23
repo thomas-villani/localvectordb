@@ -54,6 +54,9 @@
     "typescript": "^5.4.0",
     "vitest": "^3.2.6"
   },
+  "overrides": {
+    "esbuild": "^0.28.1"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
