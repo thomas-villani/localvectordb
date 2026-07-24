@@ -28,7 +28,7 @@ from pathlib import Path
 E2E_DIR = Path(__file__).parent
 FIXTURES_DIR = E2E_DIR / "fixtures"
 
-OLLAMA_MODEL = "nomic-embed-text"
+OLLAMA_MODEL = "embeddinggemma"
 SENTENCE_TRANSFORMERS_MODEL = "all-MiniLM-L6-v2"
 
 

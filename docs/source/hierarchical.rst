@@ -398,7 +398,7 @@ and mean-pools the results rather than truncating, so the whole section is
 represented. But a **short-context encoder is a poor fit**: on a 512-token model,
 long sections are dominated by pooling artefacts and raw-span can lose to the
 centroid. Use a long-context embedding model (e.g. OpenAI ``text-embedding-3-*``
-at 8k tokens, ``nomic-embed-text``, or another 8k+ encoder) when you enable
+at 8k tokens, ``embeddinggemma``, or another 8k+ encoder) when you enable
 ``"rawspan"``. :doc:`hierarchical-evaluation` reports results across OpenAI
 ``text-embedding-3-small`` and several local encoders.
 

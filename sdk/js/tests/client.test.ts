@@ -69,7 +69,7 @@ describe("LocalVectorDBClient", () => {
     );
 
     await client.createDatabase("new_db", {
-      embedding: { provider: "ollama", model: "nomic-embed-text" },
+      embedding: { provider: "ollama", model: "embeddinggemma" },
     });
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];

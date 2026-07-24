@@ -39,7 +39,7 @@ Create ``index_downloads.py``:
        name="downloads_search",
        metadata_schema=metadata_schema,
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
    )
 
    # Find your Downloads folder
@@ -120,7 +120,7 @@ Here's a full-featured version that handles multiple file types:
                base_path="./downloads_db",
                metadata_schema=metadata_schema,
                embedding_provider="ollama",
-               embedding_model="nomic-embed-text"
+               embedding_model="embeddinggemma"
            )
            
            self.downloads_path = Path(downloads_path) if downloads_path else Path.home() / "Downloads"

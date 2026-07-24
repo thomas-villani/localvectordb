@@ -46,7 +46,7 @@ Creating a new database with metadata schema::
             'publish_date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
             'tags': MetadataField(type=MetadataFieldType.JSON)
         },
-        embedding_model="nomic-embed-text",
+        embedding_model="embeddinggemma",
         embedding_provider="ollama",
         chunk_size=512,
         chunking_method="sentences",
@@ -723,7 +723,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
     embedding_provider : str, optional
         Provider for embeddings, by default "ollama"
     embedding_model : str, optional
-        Model to use for embeddings, by default "nomic-embed-text"
+        Model to use for embeddings, by default "embeddinggemma"
     embedding_config : Dict[str, Any], optional
         Configuration for embedding provider
     chunking_method : str, optional
@@ -763,7 +763,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         create_if_not_exists: bool = True,
         metadata_schema: Optional[Dict[str, MetadataField]] = None,
         embedding_provider: str = "ollama",
-        embedding_model: str = "nomic-embed-text",
+        embedding_model: str = "embeddinggemma",
         embedding_config: Optional[Dict[str, Any]] = None,
         chunking_method: str = "sentences",
         chunk_size: int = 500,

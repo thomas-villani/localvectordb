@@ -2006,7 +2006,7 @@ class TestSemanticFilterFunctionality:
 
         # This mock will be called with [concept] first, then [field1, field2]
         # So we need to return different results for different calls
-        def mock_embed_sync(texts):
+        def mock_embed_sync(texts, batch_size=None, **kwargs):
             if len(texts) == 1:  # concept embedding call
                 return [np.array([1.0, 0.0, 0.0])]
             else:  # field embeddings call
@@ -2018,7 +2018,7 @@ class TestSemanticFilterFunctionality:
         embedding_provider.embed_sync.side_effect = mock_embed_sync
 
         # Mock asynchronous embedding methods
-        async def mock_embed_batch(texts):
+        async def mock_embed_batch(texts, batch_size=None, **kwargs):
             if len(texts) == 1:  # concept
                 return [np.array([1.0, 0.0, 0.0])]
             else:  # field contents
@@ -2284,7 +2284,7 @@ class TestSemanticFilterFunctionality:
         from localvectordb.query_builder import SemanticFilter
 
         # Mock embedding provider to raise an error
-        async def failing_embed_batch(texts):
+        async def failing_embed_batch(texts, batch_size=None, **kwargs):
             raise Exception("Async embedding failed")
 
         mock_db.embedding_provider.embed_batch = failing_embed_batch
@@ -2323,7 +2323,7 @@ class TestAsyncQueryExecutorExecution:
         # Mock embedding provider
         embedding_provider = Mock()
 
-        async def mock_embed_batch(texts):
+        async def mock_embed_batch(texts, batch_size=None, **kwargs):
             import numpy as np
 
             return [np.array([0.1, 0.2, 0.3]) for _ in texts]

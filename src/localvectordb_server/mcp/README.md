@@ -72,7 +72,7 @@ Or with Python directly:
         "LVDB_MCP_MODE": "read-write",
         "LVDB_MCP_DATABASES_ROOT": "/path/to/databases",
         "LVDB_MCP_EMBEDDING_PROVIDER": "ollama",
-        "LVDB_MCP_EMBEDDING_MODEL": "nomic-embed-text"
+        "LVDB_MCP_EMBEDDING_MODEL": "embeddinggemma"
       }
     }
   }
@@ -94,7 +94,7 @@ LVDB_MCP_DATABASES_MAP="db1=./path1,db2=http://remote:8000"  # Name mappings
 
 # Default database parameters
 LVDB_MCP_EMBEDDING_PROVIDER="ollama"   # Embedding provider
-LVDB_MCP_EMBEDDING_MODEL="nomic-embed-text"  # Model name
+LVDB_MCP_EMBEDDING_MODEL="embeddinggemma"  # Model name
 LVDB_MCP_CHUNK_SIZE="500"              # Chunk size for documents
 
 # Configuration file
@@ -129,7 +129,7 @@ remote_docs = "http://localhost:8000"
 [defaults]
 # Default parameters for database creation
 embedding_provider = "ollama"
-embedding_model = "nomic-embed-text"
+embedding_model = "embeddinggemma"
 chunk_size = 500
 chunk_overlap = 50
 chunking_method = "sentences"
@@ -227,7 +227,7 @@ root = "./my_vector_databases"
 
 [defaults]
 embedding_provider = "ollama"
-embedding_model = "nomic-embed-text"
+embedding_model = "embeddinggemma"
 ```
 
 ### Using with Remote Server

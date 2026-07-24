@@ -39,7 +39,7 @@ Full Configuration File
 
    [embedding]
    provider = "ollama"
-   model = "nomic-embed-text"
+   model = "embeddinggemma"
    batch_size = 64
    timeout = 30
    max_retries = 3
@@ -201,7 +201,7 @@ Embedding Settings
      - Embedding provider to use (e.g., ``"ollama"``, ``"openai"``).
    * - ``model``
      - str
-     - ``"nomic-embed-text"``
+     - ``"embeddinggemma"``
      - Embedding model name to use with the provider.
    * - ``base_url``
      - str or null
@@ -226,7 +226,11 @@ Embedding Settings
    * - ``config``
      - Dictionary (table) or null
      - ``null``
-     - Additional provider-specific configuration options.
+     - Additional provider-specific configuration options. Applies to every
+       provider: ``document_prefix`` and ``query_prefix`` set the retrieval
+       instruction prefixes (auto-detected from the model name when omitted), and
+       ``auto_prefix = false`` disables that lookup. See
+       :ref:`retrieval-prefixes`.
 
 Server Settings
 ---------------

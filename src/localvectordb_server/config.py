@@ -64,7 +64,7 @@ class EmbeddingSettings(BaseSettings):
     """Settings for embedding providers."""
 
     provider: str = "ollama"  # any provider registered in localvectordb.embeddings.EmbeddingRegistry
-    model: str = "nomic-embed-text"
+    model: str = "embeddinggemma"
     base_url: Optional[str] = None  # Provider-specific base URL
     api_key: Optional[str] = None  # API key for providers that need it
     batch_size: int = 64

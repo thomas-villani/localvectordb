@@ -11,13 +11,18 @@ import logging
 import os
 import threading
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Literal, Optional, Type
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Type
 
 import httpx
 import numpy as np
 
 from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
 from localvectordb.utils import resolve_env_ref
+
+# What a batch of text is being embedded *for*. Asymmetric retrieval models are
+# trained with a different instruction on each side, so the same text embeds to a
+# different vector depending on whether it is being stored or searched with.
+EmbeddingTask = Literal["document", "query"]
 
 # Per-thread persistent event loops for the synchronous embedding path.
 # ``asyncio.run()`` builds and tears down a fresh event loop on every call,
@@ -41,8 +46,110 @@ def _get_sync_event_loop() -> "asyncio.AbstractEventLoop":
 logger = logging.getLogger(__name__)
 
 
+class ModelPrefixes(NamedTuple):
+    """The instruction prefixes an asymmetric embedding model expects.
+
+    ``document`` is prepended to text being embedded for storage; ``query`` is
+    prepended to text being embedded to search with. Either may be empty for a
+    model that only instructs one side (most BERT-era retrievers only prefix the
+    query) or for a symmetric model that wants no prefix at all.
+    """
+
+    document: str = ""
+    query: str = ""
+
+
+# The retrieval prefix each known model was *trained* with. Getting these wrong is
+# not a small loss: an asymmetric model queried without its query instruction puts
+# the query in the wrong region of the space, which shows up as broadly mediocre
+# ranking rather than an error. Matching is substring-based on a normalised model
+# name, longest pattern first, so registry paths, size suffixes and quantisation
+# tags ("hf.co/google/embeddinggemma-300m-Q8_0") all resolve to the base model.
+#
+# A model absent from this table gets no prefix, which is the correct default for
+# symmetric models (bge-m3, the OpenAI text-embedding-3 family, gte-*).
+_BGE_STYLE_QUERY = "Represent this sentence for searching relevant passages: "
+
+_MODEL_PREFIXES: Dict[str, ModelPrefixes] = {
+    # EmbeddingGemma. Unusually prefix-sensitive: it is trained on a structured
+    # "task: ... | ..." template and degrades sharply without it. The document
+    # side is "title: none | text: " when no title is supplied, which is how a
+    # chunk is embedded here.
+    "embeddinggemma": ModelPrefixes(
+        document="title: none | text: ",
+        query="task: search result | query: ",
+    ),
+    "nomic-embed-text": ModelPrefixes(document="search_document: ", query="search_query: "),
+    # Arctic Embed (v1, v1.5 and v2) instruct the query side only.
+    "snowflake-arctic-embed": ModelPrefixes(query=_BGE_STYLE_QUERY),
+    "mxbai-embed-large": ModelPrefixes(query=_BGE_STYLE_QUERY),
+    # BGE v1/v1.5 English models. Deliberately not a bare "bge-" pattern: bge-m3
+    # is symmetric and must stay un-prefixed.
+    "bge-small-en": ModelPrefixes(query=_BGE_STYLE_QUERY),
+    "bge-base-en": ModelPrefixes(query=_BGE_STYLE_QUERY),
+    "bge-large-en": ModelPrefixes(query=_BGE_STYLE_QUERY),
+    # E5 family.
+    "multilingual-e5": ModelPrefixes(document="passage: ", query="query: "),
+    "e5-small": ModelPrefixes(document="passage: ", query="query: "),
+    "e5-base": ModelPrefixes(document="passage: ", query="query: "),
+    "e5-large": ModelPrefixes(document="passage: ", query="query: "),
+}
+
+
+def _normalize_model_name(model: str) -> str:
+    """Reduce a model identifier to a comparable base name.
+
+    Strips a registry/namespace path and an Ollama-style ``:tag``, so
+    ``hf.co/Google/EmbeddingGemma-300M:Q8_0`` and ``embeddinggemma`` compare equal.
+    """
+    name = str(model).strip().lower()
+    name = name.split(":", 1)[0]  # Ollama tag
+    name = name.rsplit("/", 1)[-1]  # registry / namespace path
+    return name
+
+
+def resolve_model_prefixes(model: str) -> ModelPrefixes:
+    """Look up the retrieval prefixes a model was trained with.
+
+    Returns empty prefixes for any model not in the registry -- an unknown model
+    is assumed symmetric rather than guessed at.
+
+    Parameters
+    ----------
+    model : str
+        Model identifier, with or without a registry path or version tag.
+
+    Returns
+    -------
+    ModelPrefixes
+        The document-side and query-side prefixes for the model.
+    """
+    name = _normalize_model_name(model)
+    # Longest pattern first so a specific entry beats a more general one.
+    for pattern in sorted(_MODEL_PREFIXES, key=len, reverse=True):
+        if pattern in name:
+            return _MODEL_PREFIXES[pattern]
+    return ModelPrefixes()
+
+
 class EmbeddingProvider(ABC):
-    """Abstract base class for embedding providers."""
+    """Abstract base class for embedding providers.
+
+    Parameters
+    ----------
+    model : str
+        Model identifier passed to the provider.
+    document_prefix : str, optional
+        Instruction prefix prepended to text embedded for storage. When None
+        (the default) it is taken from the model's known training prefix; pass
+        ``""`` to force no prefix.
+    query_prefix : str, optional
+        Instruction prefix prepended to text embedded as a search query. Same
+        None/``""`` semantics as ``document_prefix``.
+    auto_prefix : bool, default True
+        Whether to look prefixes up by model name when neither prefix is given.
+        Set False to opt out of the registry entirely.
+    """
 
     def __init__(
         self,
@@ -52,6 +159,9 @@ class EmbeddingProvider(ABC):
         max_retries: int = 3,
         retry_delay: float = 1.0,
         max_concurrent_requests: int = 5,
+        document_prefix: Optional[str] = None,
+        query_prefix: Optional[str] = None,
+        auto_prefix: bool = True,
         **kwargs: Any,
     ) -> None:
         self.model = model
@@ -63,18 +173,67 @@ class EmbeddingProvider(ABC):
         self.max_concurrent_requests = max_concurrent_requests
         self._dimension: Optional[int] = None
 
+        # Auto-detection applies only when the caller specified neither side.
+        # Half-specifying is treated as "I know what this model wants", so the
+        # unspecified side stays empty rather than being silently filled in from
+        # the registry -- a mismatched pair is worse than no prefix at all.
+        explicit = document_prefix is not None or query_prefix is not None
+        if explicit or not auto_prefix:
+            detected = ModelPrefixes()
+        else:
+            detected = resolve_model_prefixes(model)
+
+        self.document_prefix: str = document_prefix if document_prefix is not None else detected.document
+        self.query_prefix: str = query_prefix if query_prefix is not None else detected.query
+
     @property
     def async_supported(self) -> bool:
         return True
 
+    @property
+    def uses_prefixes(self) -> bool:
+        """Whether either side of this provider prepends an instruction prefix."""
+        return bool(self.document_prefix or self.query_prefix)
+
+    def prefix_for(self, task: EmbeddingTask) -> str:
+        """Return the instruction prefix for ``task`` ('document' or 'query')."""
+        if task == "query":
+            return self.query_prefix
+        if task == "document":
+            return self.document_prefix
+        raise ValueError(f"Unknown embedding task {task!r}; expected 'document' or 'query'")
+
+    def apply_prefix(self, texts: List[str], task: EmbeddingTask) -> List[str]:
+        """Prepend this provider's ``task`` prefix to each text.
+
+        Returns ``texts`` unchanged when the prefix is empty, so a symmetric model
+        pays nothing for this path.
+        """
+        prefix = self.prefix_for(task)
+        if not prefix:
+            return texts
+        return [prefix + text for text in texts]
+
     async def embed_batch(
-        self, texts: List[str], batch_size: Optional[int] = None, progress_callback: Optional[Callable] = None
+        self,
+        texts: List[str],
+        batch_size: Optional[int] = None,
+        progress_callback: Optional[Callable] = None,
+        *,
+        task: EmbeddingTask = "document",
     ) -> np.ndarray:
-        """Generate embeddings with automatic retry handling."""
+        """Generate embeddings with automatic retry handling.
+
+        ``task`` selects which instruction prefix is applied and defaults to
+        ``"document"``; search paths must pass ``task="query"`` for an asymmetric
+        model to rank correctly.
+        """
+        # Applied once, outside the retry loop, so a retry does not double-prefix.
+        texts = self.apply_prefix(texts, task)
 
         for attempt in range(self.max_retries + 1):
             try:
-                return await self._embed_batch_impl(texts, batch_size, progress_callback)
+                return await self._embed_batch_impl(texts, batch_size, progress_callback, task=task)
             except Exception as e:
                 if not self._should_retry(e, attempt):
                     raise EmbeddingError(f"Error retrieving embeddings: {str(e)}") from e
@@ -113,9 +272,14 @@ class EmbeddingProvider(ABC):
         texts: List[str],
         batch_size: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        *,
+        task: EmbeddingTask = "document",
     ) -> np.ndarray:
         """
         Generate embeddings with progress tracking
+
+        ``texts`` arrives already prefixed by :meth:`embed_batch`; ``task`` is
+        forwarded only for providers with a native task parameter.
 
         Parameters
         ----------
@@ -125,6 +289,8 @@ class EmbeddingProvider(ABC):
             Size of each batch
         progress_callback : Optional[callable]
             Callback function called with (completed_batches, total_batches)
+        task : EmbeddingTask
+            Whether these texts are documents or a query
 
         Returns
         -------
@@ -152,7 +318,7 @@ class EmbeddingProvider(ABC):
 
             async with semaphore:
                 try:
-                    _embeddings = await self._embed_single_batch(batch_texts)
+                    _embeddings = await self._embed_single_batch(batch_texts, task=task)
 
                     # Update progress
                     completed_batches += 1
@@ -170,8 +336,10 @@ class EmbeddingProvider(ABC):
 
         for batch_num, i in enumerate(range(0, len(texts), batch_size)):
             batch = texts[i : i + batch_size]
-            task = process_batch_with_progress(batch, i, batch_num)
-            tasks.append(task)
+            # Deliberately not named `task`: that would rebind the enclosing
+            # `task` parameter this closure reads, handing providers a coroutine.
+            coro = process_batch_with_progress(batch, i, batch_num)
+            tasks.append(coro)
 
         # Execute all batches concurrently
         batch_results = await asyncio.gather(*tasks)
@@ -191,12 +359,27 @@ class EmbeddingProvider(ABC):
 
     @abstractmethod
     async def _embed_single_batch(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
-        """Embed a single batch"""
+        """Embed a single batch.
+
+        ``texts`` already carries the instruction prefix for the task. A ``task``
+        keyword ('document' or 'query') is also passed for providers whose API has
+        a native task parameter; implementations that do not need it should absorb
+        it via ``**kwargs``.
+        """
         pass
 
-    async def embed_async(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+    async def embed_async(
+        self, texts: List[str], batch_size: Optional[int] = None, *, task: EmbeddingTask = "document"
+    ) -> np.ndarray:
         """Generate embeddings for a list of texts."""
-        return await self.embed_batch(texts, batch_size)
+        return await self.embed_batch(texts, batch_size, task=task)
+
+    async def embed_query_async(self, query: str) -> np.ndarray:
+        """Embed a single search query, applying the query-side prefix.
+
+        Returns a 1-D ``(dimension,)`` vector, not a batch of one.
+        """
+        return np.asarray((await self.embed_batch([query], task="query"))[0])
 
     @abstractmethod
     def get_dimension(self) -> int:
@@ -220,7 +403,9 @@ class EmbeddingProvider(ABC):
         """Maximum batch size for this provider"""
         pass
 
-    def embed_sync(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+    def embed_sync(
+        self, texts: List[str], batch_size: Optional[int] = None, *, task: EmbeddingTask = "document"
+    ) -> np.ndarray:
         """Synchronous wrapper for embed_batch with proper event loop handling."""
         try:
             asyncio.get_running_loop()
@@ -235,7 +420,14 @@ class EmbeddingProvider(ABC):
             )
 
         loop = _get_sync_event_loop()
-        return loop.run_until_complete(self.embed_batch(texts, batch_size))
+        return loop.run_until_complete(self.embed_batch(texts, batch_size, task=task))
+
+    def embed_query(self, query: str) -> np.ndarray:
+        """Embed a single search query synchronously, applying the query-side prefix.
+
+        Returns a 1-D ``(dimension,)`` vector, not a batch of one.
+        """
+        return np.asarray(self.embed_sync([query], task="query")[0])
 
 
 class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
@@ -336,6 +528,8 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         texts: List[str],
         batch_size: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        *,
+        task: EmbeddingTask = "document",
     ) -> np.ndarray:
         """
         Generate embeddings with progress tracking
@@ -343,11 +537,13 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         Parameters
         ----------
         texts : List[str]
-            List of texts to embed
+            List of texts to embed, already carrying the task's instruction prefix
         batch_size : Optional[int]
             Size of each batch
         progress_callback : Optional[Callable[[int, int], None]]
             Callback function called with (completed_batches, total_batches)
+        task : EmbeddingTask
+            Whether these texts are documents or a query
 
         Returns
         -------
@@ -357,7 +553,9 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         if not texts:
             return np.array([]).reshape(0, self.get_dimension())
 
-        # Validate and truncate any texts that exceed max_input_tokens
+        # Validate and truncate any texts that exceed max_input_tokens. The prefix
+        # is already attached, so it is counted against the limit as the model
+        # will see it.
         texts = self._validate_and_truncate_texts(texts)
 
         batch_size = batch_size or self.max_batch_size
@@ -378,7 +576,7 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
             async with semaphore:
                 try:
-                    _embeddings = await self._embed_single_batch(batch_texts, _client)
+                    _embeddings = await self._embed_single_batch(batch_texts, _client, task=task)
 
                     # Update progress
                     completed_batches += 1
@@ -397,8 +595,10 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
 
             for batch_num, i in enumerate(range(0, len(texts), batch_size)):
                 batch = texts[i : i + batch_size]
-                task = process_batch_with_progress(batch, client, i, batch_num)
-                tasks.append(task)
+                # Deliberately not named `task`: that would rebind the enclosing
+                # `task` parameter this closure reads, handing providers a coroutine.
+                coro = process_batch_with_progress(batch, client, i, batch_num)
+                tasks.append(coro)
 
             # Execute all batches concurrently
             batch_results = await asyncio.gather(*tasks)
@@ -422,7 +622,10 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
     ) -> List[List[float]]:
         """Embed a batch using asynchronous httpx client.
 
-        The async httpx client is passed in as the `client` kwarg."""
+        The async httpx client is passed in as the `client` kwarg. ``texts``
+        already carries the instruction prefix for the task; a ``task`` keyword
+        ('document' or 'query') is also passed for providers with a native task
+        parameter and should otherwise be absorbed by ``**kwargs``."""
         pass
 
 
@@ -1098,6 +1301,15 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         {"semantic_similarity", "classification", "clustering", "retrieval_document", "retrieval_query",
         "code_retrieval_query", "question_answering", "fact_verification"}
         See: https://ai.google.dev/gemini-api/docs/embeddings#supported-task-types
+        Used for both sides unless overridden by the two parameters below.
+    document_task_type : str, optional
+        Task type to send when embedding for storage (e.g. "retrieval_document").
+        Google's API takes an explicit task type instead of a text prefix, so this
+        is the provider-native form of ``document_prefix``. Defaults to
+        ``task_type``.
+    query_task_type : str, optional
+        Task type to send when embedding a search query (e.g. "retrieval_query").
+        Defaults to ``task_type``.
     requested_dimensions : int, optional
         MRL-controlled output size (128–3072). Defaults to 3072 if not set by API.
         If provided, get_dimension() returns this value without a test call.
@@ -1135,6 +1347,8 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
             "question_answering",
             "fact_verification",
         ] = "semantic_similarity",
+        document_task_type: Optional[str] = None,
+        query_task_type: Optional[str] = None,
         requested_dimensions: Optional[int] = None,
         normalize: bool = True,
         base_url: Optional[str] = None,
@@ -1162,8 +1376,13 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         # API base URL (v1beta as in public docs)
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 
-        # Optional config
+        # Optional config. The per-side task types default to the single
+        # ``task_type`` so existing configurations embed byte-for-byte as before;
+        # set them to switch Google into proper asymmetric retrieval mode
+        # (retrieval_document / retrieval_query).
         self.task_type = str(task_type).upper()
+        self.document_task_type = str(document_task_type).upper() if document_task_type else self.task_type
+        self.query_task_type = str(query_task_type).upper() if query_task_type else self.task_type
         self.requested_dimensions = requested_dimensions
         self.normalize = normalize
 
@@ -1281,9 +1500,12 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
 
         payload: Dict[str, Any] = {"contents": contents}
 
+        task: EmbeddingTask = kwargs.get("task", "document")
+        task_type = self.query_task_type if task == "query" else self.document_task_type
+
         emb_cfg: Dict[str, Any] = {}
-        if self.task_type:
-            emb_cfg["task_type"] = self.task_type
+        if task_type:
+            emb_cfg["task_type"] = task_type
         if self.requested_dimensions:
             emb_cfg["output_dimensionality"] = int(self.requested_dimensions)
         if emb_cfg:
@@ -1379,6 +1601,9 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
               "code2code.query" | "code2code.passage" | "code2nl.query" |
               "code2nl.passage" | "code2completion.query" |
               "code2completion.passage" | "qa.query" | "qa.passage"
+              Used for both sides unless `document_task`/`query_task` override it.
+      - document_task: str, task sent when embedding for storage (e.g. "retrieval.passage")
+      - query_task: str, task sent when embedding a search query (e.g. "retrieval.query")
       - dimensions: int, to truncate output embeddings to this size
       - truncate: bool
       - late_chunking: bool (v4)
@@ -1440,6 +1665,8 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
         max_concurrent_requests: int = 5,
         api_key: Optional[str] = None,
         task: Optional[str] = "auto",
+        document_task: Optional[str] = None,
+        query_task: Optional[str] = None,
         truncate: bool = False,
         late_chunking: bool = False,
         requested_dimensions: Optional[int] = None,
@@ -1482,6 +1709,17 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
                     self.task = None
             elif self.task not in allowed_tasks:
                 raise ValueError(f"`task` must be one of {allowed_tasks} for Jina AI model {model}")
+
+            for label, value in (("document_task", document_task), ("query_task", query_task)):
+                if value is not None and value not in allowed_tasks:
+                    raise ValueError(f"`{label}` must be one of {allowed_tasks} for Jina AI model {model}")
+
+        # Jina takes an explicit task string rather than a text prefix, so these are
+        # the provider-native form of document_prefix/query_prefix. Both default to
+        # the single ``task`` so existing configurations are unchanged; set them
+        # (e.g. retrieval.passage / retrieval.query) for asymmetric retrieval.
+        self.document_task: Optional[str] = document_task if document_task is not None else self.task
+        self.query_task: Optional[str] = query_task if query_task is not None else self.task
 
         self.late_chunking: bool = late_chunking
 
@@ -1574,8 +1812,9 @@ class JinaEmbeddings(HTTPEmbeddingProvider):
             "model": self.model,
             "input": texts,
         }
-        if self.task:
-            payload["task"] = self.task
+        jina_task = self.query_task if kwargs.get("task", "document") == "query" else self.document_task
+        if jina_task:
+            payload["task"] = jina_task
         if self.truncate:
             payload["truncate"] = True
 
@@ -2004,7 +2243,15 @@ class HuggingFaceLocalEmbeddings(EmbeddingProvider):
 
 
 class MockEmbeddings(EmbeddingProvider):
-    """Mock embedding provider for testing"""
+    """Mock embedding provider for testing.
+
+    Prefix auto-detection is off by default here. Mock vectors are seeded from a
+    hash of the text, so an auto-detected prefix would make the query vector for
+    "foo" unrelated to the document vector for "foo" purely because the model name
+    happened to match the registry -- turning a symmetric test double asymmetric.
+    Pass ``document_prefix``/``query_prefix`` explicitly (or ``auto_prefix=True``)
+    to exercise prefix behaviour deliberately.
+    """
 
     def __init__(
         self,
@@ -2015,6 +2262,7 @@ class MockEmbeddings(EmbeddingProvider):
         retry_delay: float = 1.0,
         **kwargs: Any,
     ) -> None:
+        kwargs.setdefault("auto_prefix", False)
         super().__init__(model, timeout=timeout, max_retries=max_retries, retry_delay=retry_delay, **kwargs)
         self._dimension: int = dimension
         self.number_of_calls = 0
@@ -2136,16 +2384,28 @@ def list_providers() -> List[str]:
 
 
 async def embed_texts(
-    texts: List[str], provider: str, model: str, batch_size: Optional[int] = None, **provider_kwargs: Any
+    texts: List[str],
+    provider: str,
+    model: str,
+    batch_size: Optional[int] = None,
+    *,
+    task: EmbeddingTask = "document",
+    **provider_kwargs: Any,
 ) -> np.ndarray:
     """Convenience function to embed texts"""
     embedding_provider = create_embedding_provider(provider, model, **provider_kwargs)
-    return await embedding_provider.embed_batch(texts, batch_size)
+    return await embedding_provider.embed_batch(texts, batch_size, task=task)
 
 
 def embed_texts_sync(
-    texts: List[str], provider: str, model: str, batch_size: Optional[int] = None, **provider_kwargs: Any
+    texts: List[str],
+    provider: str,
+    model: str,
+    batch_size: Optional[int] = None,
+    *,
+    task: EmbeddingTask = "document",
+    **provider_kwargs: Any,
 ) -> np.ndarray:
     """Synchronous convenience function to embed texts"""
     embedding_provider = create_embedding_provider(provider, model, **provider_kwargs)
-    return embedding_provider.embed_sync(texts, batch_size)
+    return embedding_provider.embed_sync(texts, batch_size, task=task)

@@ -44,7 +44,7 @@ Create a client, connect to a database, add documents, and search:
 
    // 2. Create a database
    await client.createDatabase("my_docs", {
-     embedding: { provider: "ollama", model: "nomic-embed-text" },
+     embedding: { provider: "ollama", model: "embeddinggemma" },
      database: { chunk_size: 512, chunking_method: "sentences" },
    });
 

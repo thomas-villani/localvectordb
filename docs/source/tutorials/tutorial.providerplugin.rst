@@ -114,9 +114,23 @@ metadata. Here is the shape of the contract (abbreviated):
            """Largest batch the base class should send to ``_embed_single_batch``."""
 
        # --- Provided FOR you by the base class (do NOT reimplement) --------
-       # async def embed_batch(self, texts: List[str], batch_size=None) -> np.ndarray
-       # async def embed_async(self, texts: List[str], batch_size=None) -> np.ndarray
-       # def embed_sync(self, texts: List[str], batch_size=None) -> np.ndarray
+       # async def embed_batch(self, texts: List[str], batch_size=None, *, task=...) -> np.ndarray
+       # async def embed_async(self, texts: List[str], batch_size=None, *, task=...) -> np.ndarray
+       # def embed_sync(self, texts: List[str], batch_size=None, *, task=...) -> np.ndarray
+
+.. note::
+
+   **Retrieval prefixes are handled by the base class.** If your model is
+   asymmetric — trained with a different instruction on the passage side than the
+   query side — you do not need to do anything: the texts reaching
+   ``_embed_single_batch`` already carry the right prefix. Users set it with
+   ``document_prefix``/``query_prefix``, and you can supply defaults for your own
+   models by passing the prefixes to ``super().__init__()``.
+
+   The base class also forwards a ``task`` keyword (``"document"`` or ``"query"``)
+   to ``_embed_single_batch``. Ignore it unless your backend has a *native* task
+   parameter on the request (as Google's and Jina's do) — but do keep ``**kwargs``
+   in the signature so it is absorbed cleanly.
 
 .. important::
 

@@ -44,7 +44,7 @@ Quick Installation
 .. note::
 
    This example uses the default embedding provider, **Ollama**, which must be
-   running locally with the model pulled (``ollama pull nomic-embed-text``). To
+   running locally with the model pulled (``ollama pull embeddinggemma``). To
    use a different backend, pass ``embedding_provider=`` (e.g. ``"openai"``,
    ``"sentence_transformers"``) with the matching ``embedding_model``. See
    :doc:`embeddings` for all providers.
@@ -67,7 +67,7 @@ Quick Installation
             'date': MetadataField(type=MetadataFieldType.DATE, indexed=True),
             'tags': MetadataField(type=MetadataFieldType.JSON)
         },
-        embedding_model="nomic-embed-text",
+        embedding_model="embeddinggemma",
         chunk_size=500
     )
 
@@ -133,7 +133,7 @@ Server Example
     lvdb serve --host 127.0.0.1 --port 8000
 
     # Create database via CLI
-    lvdb create my_database --embedding-model nomic-embed-text
+    lvdb create my_database --embedding-model embeddinggemma
 
     # Add documents
     lvdb db my_database add document.txt

@@ -108,7 +108,7 @@ Create a new vector database with optional configuration.
      },
      "embedding": {
         "provider": "ollama",
-        "model": "nomic-embed-text"
+        "model": "embeddinggemma"
      },
      "database": {
         "chunk_size": 500,
@@ -133,7 +133,7 @@ Create a new vector database with optional configuration.
          "journal": {"type": "text", "indexed": true}
        },
        "embedding": {
-         "model": "nomic-embed-text"
+         "model": "embeddinggemma"
        },
        "database": {
          "chunk_size": 600
@@ -160,7 +160,7 @@ Create a new vector database with optional configuration.
                "journal": {"type": "text", "indexed": True}
            },
            "embedding": {
-               "model": "nomic-embed-text"
+               "model": "embeddinggemma"
            },
            "database": {
                "chunk_size": 600
@@ -180,7 +180,7 @@ Create a new vector database with optional configuration.
      "config": {
        "name": "research_papers",
        "embedding_provider": "ollama",
-       "embedding_model": "nomic-embed-text",
+       "embedding_model": "embeddinggemma",
        "embedding_dimension": 768,
        "chunking_method": "sentences",
        "chunk_size": 600,
@@ -270,7 +270,7 @@ Retrieve detailed information about a specific database.
      },
      "config": {
        "embedding_provider": "ollama",
-       "embedding_model": "nomic-embed-text",
+       "embedding_model": "embeddinggemma",
        "chunking_method": "sentences",
        "chunk_size": 600,
        "metadata_schema": {
@@ -1921,7 +1921,7 @@ Generate embeddings using a specified provider and model.
    {
      "texts": ["Text to embed"],
      "provider": "ollama",
-     "model": "nomic-embed-text"
+     "model": "embeddinggemma"
    }
 
 **curl Example**:

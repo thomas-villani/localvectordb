@@ -38,7 +38,7 @@ Perfect setup for academic papers with rich metadata and optimized chunking for 
                'abstract': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
            },
            embedding_provider="ollama",
-           embedding_model="nomic-embed-text",
+           embedding_model="embeddinggemma",
            chunking_method="paragraphs",
            chunk_size=800,
            chunk_overlap=0,
@@ -83,7 +83,7 @@ Optimized for source code files and technical documentation with code-aware chun
                'line_count': MetadataField(type=MetadataFieldType.INTEGER)
            },
            embedding_provider="ollama",
-           embedding_model="nomic-embed-text",
+           embedding_model="embeddinggemma",
            chunking_method="code-blocks",
            chunk_size=1000,
            chunk_overlap=5,
@@ -113,7 +113,7 @@ For support tickets, FAQs, and knowledge base articles with categorization.
                'created_by': MetadataField(type=MetadataFieldType.TEXT, indexed=True)
            },
            embedding_provider="ollama",
-           embedding_model="nomic-embed-text",
+           embedding_model="embeddinggemma",
            chunking_method="sentences",
            chunk_size=400,
            chunk_overlap=50,
@@ -432,7 +432,7 @@ Enable embeddings on metadata fields to search across both content and metadata:
                'tags': MetadataField(type=MetadataFieldType.JSON, embedding_enabled=True)
            },
            embedding_provider="ollama",
-           embedding_model="nomic-embed-text"
+           embedding_model="embeddinggemma"
        )
 
    # Usage example
@@ -530,7 +530,7 @@ Complete example for searching academic papers across multiple fields:
                    embedding_enabled=True  # JSON fields can have embeddings too
                )
            },
-           embedding_model="nomic-embed-text",
+           embedding_model="embeddinggemma",
            chunk_size=1000
        )
        return db
@@ -713,7 +713,7 @@ Complete JavaScript examples for interacting with the LocalVectorDB server.
                    metadata_schema: config.metadata_schema || {},
                    embedding: {
                        provider: config.embedding_provider || 'ollama',
-                       model: config.embedding_model || 'nomic-embed-text'
+                       model: config.embedding_model || 'embeddinggemma'
                    },
                    database: {
                        chunking_method: config.chunking_method || 'sentences',

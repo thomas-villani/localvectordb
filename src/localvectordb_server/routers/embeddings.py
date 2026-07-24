@@ -2,7 +2,7 @@
 """Embedding generation routes (Pydantic request/response models + dependency injection)."""
 
 import logging
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends
 from starlette.concurrency import run_in_threadpool
@@ -28,6 +28,9 @@ class DbEmbeddingsBody(StrictModel):
 
     ids: Optional[Union[str, List[str]]] = None
     texts: Optional[Union[str, List[str]]] = None
+    #: Which instruction prefix to apply. Use "query" to reproduce the vector a
+    #: search would build; "document" (the default) matches stored chunks.
+    task: Literal["document", "query"] = "document"
 
 
 class DbEmbeddingsResponse(StrictModel):
@@ -42,6 +45,11 @@ class EmbeddingsBody(StrictModel):
     provider: str
     model: str
     texts: Union[str, List[str]]
+    #: Which instruction prefix to apply for models with known retrieval prefixes.
+    task: Literal["document", "query"] = "document"
+    #: Explicit prefix overrides, bypassing the model-name lookup.
+    document_prefix: Optional[str] = None
+    query_prefix: Optional[str] = None
 
 
 class EmbeddingsResponse(StrictModel):
@@ -95,7 +103,7 @@ async def get_embeddings_for_db(db_name: str, body: DbEmbeddingsBody, db=Depends
                         details={"missing_fields": ["texts"]},
                     )
                 texts = [body.texts] if isinstance(body.texts, str) else body.texts
-                embeddings = (await db.embedding_provider.embed_batch(texts)).tolist()
+                embeddings = (await db.embedding_provider.embed_batch(texts, task=body.task)).tolist()
 
             return {
                 "embeddings": embeddings,
@@ -121,7 +129,7 @@ async def get_embeddings(body: EmbeddingsBody):
 
         {
             "provider": "ollama",
-            "model": "nomic-embed-text",
+            "model": "embeddinggemma",
             "texts": ["The first text", "The second text", ...]
         }
 
@@ -146,8 +154,14 @@ async def get_embeddings(body: EmbeddingsBody):
             )
 
         try:
-            embedding_provider = EmbeddingRegistry.create_provider(provider, model)
-            embeddings = await embedding_provider.embed_batch(texts)
+            provider_kwargs = {}
+            if body.document_prefix is not None:
+                provider_kwargs["document_prefix"] = body.document_prefix
+            if body.query_prefix is not None:
+                provider_kwargs["query_prefix"] = body.query_prefix
+
+            embedding_provider = EmbeddingRegistry.create_provider(provider, model, **provider_kwargs)
+            embeddings = await embedding_provider.embed_batch(texts, task=body.task)
 
             return {"embeddings": embeddings.tolist()}
 

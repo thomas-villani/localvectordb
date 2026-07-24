@@ -172,7 +172,7 @@ Local databases are stored as files on your filesystem and provide the fastest p
        base_path="./vector_data",           # Directory to store database files
        metadata_schema=schema,
        embedding_provider="ollama",         # Local embedding provider
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
        chunk_size=500,
        chunking_method="sentences"
    )
@@ -540,7 +540,7 @@ LocalVectorDB supports multiple embedding providers through a plugin architectur
    db_ollama = VectorDB(
        "my_db", "./data",
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
        embedding_config={"base_url": "http://localhost:11434"}
    )
 
@@ -593,7 +593,7 @@ Performance Optimization
 
        # Embedding settings
        embedding_provider="ollama", 
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
 
        # Chunking optimization
        chunking_method="sentences",
@@ -645,7 +645,7 @@ Database Operations
 
    # List and create databases
    lvdb list --details
-   lvdb create mydatabase --embedding-model nomic-embed-text
+   lvdb create mydatabase --embedding-model embeddinggemma
 
    # Add and search documents  
    lvdb db mydatabase add document.txt

@@ -33,8 +33,9 @@ Setup:
    curl -fsSL https://ollama.ai/install.sh | sh
 
    # Pull embedding models
-   ollama pull nomic-embed-text        # 137M parameters, good quality
-   ollama pull mxbai-embed-large       # 334M parameters, highest quality
+   ollama pull embeddinggemma          # 300M parameters, default
+   ollama pull snowflake-arctic-embed2 # 568M parameters, strong retrieval
+   ollama pull mxbai-embed-large       # 334M parameters
    ollama pull all-minilm              # 23M parameters, fastest
 
 Configuration:
@@ -48,7 +49,7 @@ Configuration:
        "my_db",
        "./vector_storage",
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
        embedding_config={
            "base_url": "http://127.0.0.1:11434"  # Default Ollama URL
        }
@@ -68,10 +69,11 @@ Configuration:
 
 Available Models:
 
-- ``nomic-embed-text``: General-purpose, good balance of speed/quality
-- ``mxbai-embed-large``: Highest quality, slower
+- ``embeddinggemma``: Default. Strong all-round quality for its size, but
+  **prefix-sensitive** -- see :ref:`retrieval-prefixes` below.
+- ``snowflake-arctic-embed2``: Strong retrieval quality, larger and slower
+- ``mxbai-embed-large``: Good quality, query-prefixed
 - ``all-minilm``: Fastest, lower quality
-- ``snowflake-arctic-embed``: Optimized for retrieval tasks
 
 OpenAI Provider
 ^^^^^^^^^^^^^^^
@@ -447,7 +449,7 @@ This reduces storage and speeds up similarity search.
        "my_db",
        "./vector_storage",
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
        embedding_config={
            "requested_dimensions": 256,
            "normalize": True
@@ -514,6 +516,120 @@ Custom Provider Example
        }
    )
 
+.. _retrieval-prefixes:
+
+Retrieval Prefixes
+------------------
+
+Many retrieval models are *asymmetric*: they are trained with a different
+instruction prepended to a stored passage than to a search query. Embedding both
+sides identically is not an error -- nothing raises, and the vectors look fine --
+it simply puts queries in the wrong region of the space and ranks worse across the
+board. The default model, ``embeddinggemma``, is unusually sensitive to this.
+
+LocalVectorDB applies the correct prefix automatically, based on the model name:
+
+.. code-block:: python
+
+   from localvectordb import VectorDB
+
+   db = VectorDB("my_db", "./vector_storage", embedding_model="embeddinggemma")
+
+   db.embedding_provider.document_prefix   # 'title: none | text: '
+   db.embedding_provider.query_prefix      # 'task: search result | query: '
+
+Ingestion embeds chunks with the document prefix and ``query()`` embeds the query
+string with the query prefix; nothing else is required.
+
+Models with known prefixes
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+============================== ============================= ==================================
+Model                          Document prefix               Query prefix
+============================== ============================= ==================================
+``embeddinggemma``             ``title: none | text:``       ``task: search result | query:``
+``nomic-embed-text``           ``search_document:``          ``search_query:``
+``snowflake-arctic-embed*``    *(none)*                      ``Represent this sentence ...``
+``mxbai-embed-large``          *(none)*                      ``Represent this sentence ...``
+``bge-*-en``                   *(none)*                      ``Represent this sentence ...``
+``e5-*`` / ``multilingual-e5`` ``passage:``                  ``query:``
+============================== ============================= ==================================
+
+Matching ignores registry paths and version tags, so ``embeddinggemma:300m`` and
+``hf.co/google/EmbeddingGemma-300M`` resolve the same way. A model that is not
+listed gets no prefix -- symmetric models such as ``bge-m3``, ``gte-*`` and the
+OpenAI ``text-embedding-3`` family are correct as-is, and an unknown model is
+assumed symmetric rather than guessed at.
+
+Setting prefixes explicitly
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Pass them through ``embedding_config`` for a model the registry does not know, or
+to override what it does:
+
+.. code-block:: python
+
+   db = VectorDB(
+       "my_db",
+       "./vector_storage",
+       embedding_model="my-private-encoder",
+       embedding_config={
+           "document_prefix": "passage: ",
+           "query_prefix": "query: ",
+       },
+   )
+
+Or from the CLI at creation time:
+
+.. code-block:: bash
+
+   lvdb create my_db --embedding-model my-private-encoder \
+       --document-prefix 'passage: ' --query-prefix 'query: '
+
+An empty string is a real value meaning "no prefix", distinct from omitting the
+option (auto-detect). Pass ``embedding_config={"auto_prefix": False}`` to disable
+the lookup entirely.
+
+Specifying only one side leaves the other empty rather than auto-filling it, since
+pairing a caller's prefix with a detected one would mix instructions from two
+different conventions.
+
+Prefixes are part of the vector space
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A database stores the prefixes its vectors were built with and reuses them on
+reopen, exactly as it does the embedding model. Two consequences:
+
+* **Databases created before this feature keep working unchanged.** They have no
+  saved prefixes, so they stay un-prefixed even on a model that would otherwise
+  auto-detect. Their existing vectors contain no instruction, and re-deriving one
+  from the model name would silently mismatch every query against them. To adopt
+  prefixes on such a database, re-ingest its documents.
+* **Changing a prefix on a populated database invalidates its vectors.** Passing
+  an explicit prefix that differs from the saved one is allowed and logs a warning;
+  re-ingest so stored chunks and queries share a space again.
+
+Provider-native task parameters
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Google and Jina take an explicit task on the API request instead of a text prefix.
+These are configured per side and default to the single-task setting, so existing
+configurations are unaffected:
+
+.. code-block:: python
+
+   # Google
+   embedding_config={
+       "document_task_type": "retrieval_document",
+       "query_task_type": "retrieval_query",
+   }
+
+   # Jina
+   embedding_config={
+       "document_task": "retrieval.passage",
+       "query_task": "retrieval.query",
+   }
+
 Direct Embedding API
 --------------------
 
@@ -526,7 +642,7 @@ Use embedding providers directly without a database:
    # Create provider
    provider = EmbeddingRegistry.create_provider(
        "ollama",
-       "nomic-embed-text"
+       "embeddinggemma"
    )
 
    # Generate embeddings
@@ -554,6 +670,23 @@ embedding jobs:
 The module-level helpers :func:`~localvectordb.embeddings.embed_texts` (async)
 and :func:`~localvectordb.embeddings.embed_texts_sync` (synchronous) create a
 provider and embed in one call, without instantiating a database.
+
+Every embedding call takes a ``task`` selecting which side of an asymmetric model
+is being embedded (see :ref:`retrieval-prefixes`). It defaults to ``"document"``,
+so text embedded for storage needs nothing extra — but a vector you intend to
+*search* with must be embedded as a query, or it will not match the stored chunks:
+
+.. code-block:: python
+
+   stored = provider.embed_sync(texts)                    # task="document"
+   searched = provider.embed_sync([q], task="query")
+
+   # Convenience wrappers for the single-query case; both return a 1-D vector
+   vector = provider.embed_query(q)
+   vector = await provider.embed_query_async(q)
+
+This only matters when embedding by hand. ``db.query()`` already embeds its query
+argument as a query.
 
 Provider Comparison
 -------------------
@@ -590,7 +723,7 @@ Performance Comparison
    # Test different providers
    test_texts = ["Example text " + str(i) for i in range(100)]
 
-   benchmark_provider("ollama", "nomic-embed-text", test_texts)
+   benchmark_provider("ollama", "embeddinggemma", test_texts)
    benchmark_provider("ollama", "all-minilm", test_texts)
    benchmark_provider("openai", "text-embedding-3-small", test_texts)
    benchmark_provider("jina", "jina-embeddings-v4", test_texts)
@@ -602,7 +735,9 @@ Quality Considerations
 +----------------------+----------------------------+------------+-----------+-----------------+
 | Provider             | Model                      | Dimensions | Speed     | Cost            |
 +======================+============================+============+===========+=================+
-| Ollama               | nomic-embed-text           | 768        | Medium    | Free            |
+| Ollama               | embeddinggemma             | 768        | Fast      | Free            |
++----------------------+----------------------------+------------+-----------+-----------------+
+| Ollama               | snowflake-arctic-embed2    | 1024       | Medium    | Free            |
 +----------------------+----------------------------+------------+-----------+-----------------+
 | Ollama               | mxbai-embed-large          | 1024       | Medium    | Free            |
 +----------------------+----------------------------+------------+-----------+-----------------+
@@ -733,7 +868,7 @@ Batch Processing
        "my_db",
        "./vector_storage",
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
        batch_size=32,         # Texts per embedding call (DB-level argument)
        embedding_config={
            "timeout": 120     # Longer timeout for large batches
@@ -783,7 +918,7 @@ Provider Selection Strategy
        """Create database with provider fallback"""
 
        providers_to_try = [
-           ("ollama", "nomic-embed-text"),
+           ("ollama", "embeddinggemma"),
            ("ollama", "all-minilm"),
            ("openai", "text-embedding-3-small")
        ]
@@ -919,11 +1054,11 @@ Ollama connection errors:
    from localvectordb.embeddings import EmbeddingRegistry
 
    try:
-       provider = EmbeddingRegistry.create_provider("ollama", "nomic-embed-text")
+       provider = EmbeddingRegistry.create_provider("ollama", "embeddinggemma")
        if provider.validate_model():
            print("Ollama working correctly")
        else:
-           print("Model not available, try: ollama pull nomic-embed-text")
+           print("Model not available, try: ollama pull embeddinggemma")
    except Exception as e:
        print(f"Ollama error: {e}")
        print("Check if Ollama is running: ollama list")
@@ -948,7 +1083,7 @@ Dimension mismatch errors:
 .. code-block:: python
 
    # Check embedding dimensions
-   provider = EmbeddingRegistry.create_provider("ollama", "nomic-embed-text")
+   provider = EmbeddingRegistry.create_provider("ollama", "embeddinggemma")
    dimension = provider.get_dimension()
    print(f"Model dimension: {dimension}")
 

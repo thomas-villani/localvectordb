@@ -12,8 +12,8 @@ tree is excluded from the sdist).
 
 A real embedding backend, auto-detected in this order:
 
-1. **Ollama** (preferred): `ollama serve` running with `nomic-embed-text`
-   pulled (`ollama pull nomic-embed-text`).
+1. **Ollama** (preferred): `ollama serve` running with `embeddinggemma`
+   pulled (`ollama pull embeddinggemma`).
 2. **sentence-transformers** (fallback, fully local): installed by
    `uv sync --dev`; uses `all-MiniLM-L6-v2` (downloaded from HF on first use).
 

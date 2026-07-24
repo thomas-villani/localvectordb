@@ -71,7 +71,7 @@ Embedding Configuration
    [embedding]
    # Primary embedding provider
    provider = "ollama"                  # ollama, openai
-   model = "nomic-embed-text"           # Model name
+   model = "embeddinggemma"           # Model name
    base_url = "http://localhost:11434"  # Provider-specific URL
    api_key = "api-key-here"             # API key for cloud providers
    batch_size = 64                      # Batch size for embedding generation
@@ -195,7 +195,7 @@ High-Performance Setup
 
    [embedding]
    provider = "ollama"
-   model = "nomic-embed-text"
+   model = "embeddinggemma"
    base_url = "http://ollama-cluster:11434"
    batch_size = 128
    timeout = 60

@@ -37,7 +37,7 @@ Examples:
 
     Create a database::
 
-        $ lvdb create mydatabase --embedding-model nomic-embed-text --chunk-size 500
+        $ lvdb create mydatabase --embedding-model embeddinggemma --chunk-size 500
 
     Add documents to a database::
 

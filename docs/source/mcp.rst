@@ -45,7 +45,7 @@ Use the ``lvdb`` CLI to create and populate specialized databases:
 .. code-block:: bash
 
    # Create a specialized knowledge base
-   lvdb create technical_docs --embedding-model nomic-embed-text
+   lvdb create technical_docs --embedding-model embeddinggemma
 
    # Add documents using the CLI (the command is `add`; it accepts files, globs, or stdin)
    lvdb db technical_docs add ./docs/user_guide.md
@@ -176,7 +176,7 @@ For read-write access with custom embedding settings:
          "env": {
            "LVDB_MCP_DATABASES_ROOT": "/path/to/databases",
            "LVDB_MCP_EMBEDDING_PROVIDER": "ollama",
-           "LVDB_MCP_EMBEDDING_MODEL": "nomic-embed-text"
+           "LVDB_MCP_EMBEDDING_MODEL": "embeddinggemma"
          }
        }
      }
@@ -250,7 +250,7 @@ Configure the MCP server using environment variables:
 
    # Default database parameters
    LVDB_MCP_EMBEDDING_PROVIDER="ollama"   # Embedding provider
-   LVDB_MCP_EMBEDDING_MODEL="nomic-embed-text"  # Model name
+   LVDB_MCP_EMBEDDING_MODEL="embeddinggemma"  # Model name
    LVDB_MCP_CHUNK_SIZE="500"              # Chunk size for documents
 
    # Configuration file
@@ -311,7 +311,7 @@ Example ``mcp_config.toml``:
    [defaults]
    # Default parameters for database creation
    embedding_provider = "ollama"
-   embedding_model = "nomic-embed-text"
+   embedding_model = "embeddinggemma"
    chunk_size = 500
    chunk_overlap = 1
    chunking_method = "sentences"
@@ -532,7 +532,7 @@ Configure for local database access:
 
    [defaults]
    embedding_provider = "ollama"
-   embedding_model = "nomic-embed-text"
+   embedding_model = "embeddinggemma"
 
 Remote Server Integration
 -------------------------

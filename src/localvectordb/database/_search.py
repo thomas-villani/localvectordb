@@ -1121,13 +1121,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
             # is not starved before the cursor hydrates (T1.3); hydration still
             # applies the filter as the authority.
             if search_type == "vector":
-                query_embeddings = self.embedding_provider.embed_sync([query])
+                query_embeddings = self.embedding_provider.embed_sync([query], task="query")
                 query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
                 candidates = self._collect_vector_candidates(query_embedding, initial_k, score_threshold, filters)
             elif search_type == "keyword":
                 candidates = self._collect_keyword_candidates(query, initial_k, score_threshold, filters)
             elif search_type == "hybrid":
-                query_embeddings = self.embedding_provider.embed_sync([query])
+                query_embeddings = self.embedding_provider.embed_sync([query], task="query")
                 query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
                 candidates = self._collect_hybrid_candidates(
                     query, query_embedding, initial_k, score_threshold, vector_weight, filters
@@ -1227,7 +1227,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # pushed into the index/FTS so a selective filter is not starved before
         # the cursor hydrates (T1.3); hydration remains the filter authority.
         if search_type == "vector":
-            query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
+            query_embedding = await self.embedding_provider.embed_query_async(query)
             query_embedding_np = np.array(query_embedding).reshape(1, -1)
 
             def protected_vector_search():
@@ -1248,7 +1248,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         elif search_type == "hybrid":
             # Run vector and keyword in parallel
-            query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
+            query_embedding = await self.embedding_provider.embed_query_async(query)
             query_embedding_np = np.array(query_embedding).reshape(1, -1)
 
             def protected_vector_search():
@@ -1500,7 +1500,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # A caller (the fused path) may pass a pre-computed query embedding to avoid
         # embedding the query twice; None preserves the default path byte-for-byte.
         if query_embedding is None:
-            query_embeddings = self.embedding_provider.embed_sync([query])
+            query_embeddings = self.embedding_provider.embed_sync([query], task="query")
             query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
@@ -1864,7 +1864,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         does for ``search_level='fused'``. It used to be accepted and ignored
         here, so ``return_type='documents'`` quietly handed back sections.
         """
-        query_embeddings = self.embedding_provider.embed_sync([query])
+        query_embeddings = self.embedding_provider.embed_sync([query], task="query")
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
 
         if search_level == "sections":
@@ -2171,7 +2171,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         match-quality gate.
         """
         # Embed once and share the vector across both legs.
-        query_embedding = np.array(self.embedding_provider.embed_sync([query])[0]).reshape(1, -1)
+        query_embedding = np.array(self.embedding_provider.embed_sync([query], task="query")[0]).reshape(1, -1)
         pool_k = k * 2
 
         chunk_hits = self._vector_search(
@@ -3202,10 +3202,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         self, query: str, field_name: str, k: int, score_threshold: float, filters: Optional[Dict[str, Any]]
     ) -> List[QueryResult]:
         # Generate query embedding
-        if hasattr(self.embedding_provider, "embed_query"):
-            query_embedding = self.embedding_provider.embed_query(query)
-        else:
-            query_embedding = self.embedding_provider.embed_sync([query])[0]
+        query_embedding = self.embedding_provider.embed_query(query)
 
         # Use shared business logic for SQL construction
         sql, params = self._build_metadata_field_search_sql(field_name)
@@ -3436,7 +3433,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         query_embedding: Optional[np.ndarray] = None
         if search_type in ["vector", "hybrid"]:
-            query_embedding = (await self.embedding_provider.embed_batch([query]))[0]
+            query_embedding = await self.embedding_provider.embed_query_async(query)
         results = await self._search_with_embedding_async(
             query,
             query_embedding,
@@ -4474,8 +4471,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results for this field
         """
         # Generate query embedding asynchronously
-        embeddings = await self.embedding_provider.embed_batch([query])
-        query_embedding = embeddings[0]
+        query_embedding = await self.embedding_provider.embed_query_async(query)
 
         # Use shared business logic for SQL construction
         sql, params = self._build_metadata_field_search_sql(field_name)

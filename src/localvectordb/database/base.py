@@ -707,7 +707,7 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         doc_id_pattern: str = "doc_{idx}",
         # Embedding configuration
         embedding_provider: str = "ollama",
-        embedding_model: str = "nomic-embed-text",
+        embedding_model: str = "embeddinggemma",
         embedding_config: Optional[Dict[str, Any]] = None,
         # Chunking configuration
         chunking_method: Union[str, Any] = "sentences",
