@@ -578,7 +578,7 @@ def _interactive_config_init(format, output):
 
     # Model prompts are provider-specific; new providers need a branch here.
     if provider == "ollama":
-        model = click.prompt("Ollama model", default="nomic-embed-text")
+        model = click.prompt("Ollama model", default="embeddinggemma")
         config.embedding.model = model
     elif provider == "openai":
         model = click.prompt("OpenAI model", default="text-embedding-3-small")

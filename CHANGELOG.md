@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Retrieval prefixes for asymmetric embedding models.** Most modern retrieval
+  encoders are trained with a different instruction prepended to a stored passage
+  than to a search query; embedding both sides identically raises nothing and
+  simply ranks worse. Ingestion now embeds with a `document_prefix` and `query()`
+  with a `query_prefix`, both resolved automatically from the model name for
+  `embeddinggemma`, `nomic-embed-text`, `snowflake-arctic-embed*`,
+  `mxbai-embed-large`, `bge-*-en` and `e5-*`/`multilingual-e5`. Model matching
+  ignores registry paths and version tags, so `hf.co/google/EmbeddingGemma-300M`
+  and `embeddinggemma:300m` resolve alike. Set them yourself for an unrecognised
+  model via `embedding_config={"document_prefix": ..., "query_prefix": ...}`, the
+  new `lvdb create --document-prefix/--query-prefix` flags, or the `[embedding]`
+  `config` table; `""` forces no prefix and `auto_prefix=False` disables the
+  lookup. Every embedding call takes a `task` (`"document"` by default, or
+  `"query"`), and providers gain `embed_query()`/`embed_query_async()` returning a
+  single 1-D vector.
+
+  A model not in the registry gets no prefix — symmetric models such as `bge-m3`,
+  `gte-*` and OpenAI's `text-embedding-3` family are correct as-is, and an unknown
+  model is assumed symmetric rather than guessed at.
+- **Per-side task parameters for Google and Jina**, whose APIs take an explicit
+  task instead of a text prefix: `document_task_type`/`query_task_type` and
+  `document_task`/`query_task` respectively. Both default to the existing
+  single-task setting, so current configurations embed exactly as before.
+
 ### Changed
+
+- **The default embedding model is now `embeddinggemma`** (was
+  `nomic-embed-text`), which measures substantially better in our retrieval
+  evaluations at the same 768 dimensions. `ollama pull embeddinggemma` to follow
+  the quickstart. This only affects databases created *without* an explicit
+  `embedding_model`; existing databases keep the model recorded in their config.
+
+  EmbeddingGemma is markedly prefix-sensitive, which is what motivated the prefix
+  support above — it is applied automatically, so no extra configuration is
+  needed.
 
 - **A lighter `cli` install extra.** The `lvdb` command now installs with just
   `pip install "localvectordb[cli]"` (click + tomli-w + bcrypt) — enough to
@@ -72,6 +108,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Metadata-field vector search no longer probes for a non-existent
+  `embed_query`.** `_metadata_field_search` branched on
+  `hasattr(provider, "embed_query")`, which no provider implemented — dead code
+  that would have started returning a batch-shaped array the moment one did. It
+  now calls the real `embed_query()`, which also gives that path the query prefix
+  it was missing.
 - **Whitespace-only documents now reconstruct byte-for-byte.** Every
   general-purpose chunker emits a single chunk for whitespace-only input instead
   of dropping it, restoring the reconstruction invariant (truly empty input

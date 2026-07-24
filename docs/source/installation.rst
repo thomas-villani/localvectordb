@@ -148,7 +148,7 @@ For local embeddings without API keys:
    # Download from https://ollama.ai/download
 
    # Pull embedding model
-   ollama pull nomic-embed-text
+   ollama pull embeddinggemma
 
 Tesseract (Optional, for OCR)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -245,7 +245,7 @@ First-Time Setup
 
       # Test Ollama
       try:
-          provider = EmbeddingRegistry.create_provider("ollama", "nomic-embed-text")
+          provider = EmbeddingRegistry.create_provider("ollama", "embeddinggemma")
           if provider.validate_model():
               print("Ollama setup successful!")
       except Exception as e:

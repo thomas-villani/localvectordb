@@ -12,7 +12,7 @@ one of:
 ```bash
 # Option A - Ollama (the library default)
 ollama serve
-ollama pull nomic-embed-text
+ollama pull embeddinggemma
 
 # Option B - fully local, no server
 pip install sentence-transformers

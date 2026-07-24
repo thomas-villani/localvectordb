@@ -55,7 +55,7 @@ Create Database
    await client.createDatabase("products", {
      embedding: {
        provider: "ollama",
-       model: "nomic-embed-text",
+       model: "embeddinggemma",
      },
      database: {
        chunk_size: 512,
@@ -132,7 +132,7 @@ Generate embeddings without inserting documents:
    const { embeddings } = await client.embeddings(
      ["text to embed", "another text"],
      "ollama",
-     "nomic-embed-text"
+     "embeddinggemma"
    );
    // embeddings: number[][] (one vector per input text)
 

@@ -28,7 +28,7 @@ db = LocalVectorDB(
         "tags": MetadataField(type=MetadataFieldType.JSON),
     },
     embedding_provider="ollama",       # or "openai", "mock"
-    embedding_model="nomic-embed-text",
+    embedding_model="embeddinggemma",
     chunking_method="sentences",       # or "tokens", "paragraphs", "code_blocks"
     chunk_size=500,
     chunk_overlap=1,

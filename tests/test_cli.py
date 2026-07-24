@@ -67,7 +67,7 @@ def fake_config(tmp_db_folder):
     @dataclass
     class _Embedding:
         provider: str = "ollama"
-        model: str = "nomic-embed-text"
+        model: str = "embeddinggemma"
         base_url: Optional[str] = None
         api_key: Optional[str] = None
         batch_size: int = 64

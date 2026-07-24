@@ -22,7 +22,7 @@ const client = new LocalVectorDBClient({
 
 // Create a database
 await client.createDatabase("my_docs", {
-  embedding: { provider: "ollama", model: "nomic-embed-text" },
+  embedding: { provider: "ollama", model: "embeddinggemma" },
 });
 
 // Get a database handle
@@ -65,7 +65,7 @@ await client.listDatabases();
 await client.createDatabase("name", options);
 await client.deleteDatabase("name");
 await client.globalSearch("query", options);
-await client.embeddings(["text"], "ollama", "nomic-embed-text");
+await client.embeddings(["text"], "ollama", "embeddinggemma");
 ```
 
 ### Database operations

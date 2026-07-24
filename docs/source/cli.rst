@@ -159,7 +159,7 @@ View Configuration
 
    [embedding]
    provider = "ollama"
-   model = "nomic-embed-text"
+   model = "embeddinggemma"
    batch_size = 64
    timeout = 30
    max_retries = 3
@@ -802,9 +802,9 @@ The database folder and config file are selected with the **global** options
    Databases in /home/user/.lvdb
    Name                     Documents Chunks    Model                   Method
    ====================================================================================
-   research_papers         1250      8500      nomic-embed-text        sentences
+   research_papers         1250      8500      embeddinggemma        sentences
    customer_support        845       3200      all-minilm              sentences
-   code_documentation      324       2100      nomic-embed-text        code-blocks
+   code_documentation      324       2100      embeddinggemma        code-blocks
 
 Create Database
 ^^^^^^^^^^^^^^^
@@ -816,7 +816,7 @@ Create Database
 
    # With custom configuration
    lvdb create research_db \
-     --embedding-model nomic-embed-text \
+     --embedding-model embeddinggemma \
      --chunk-size 600 \
      --chunking-method sections \
      --metadata-schema research_papers
@@ -884,7 +884,7 @@ Database Information
    -------------
      Database: research_papers
      Path: /home/user/.lvdb
-     Embedding model: nomic-embed-text
+     Embedding model: embeddinggemma
      Embedding provider: ollama
      Chunk size: 500
      Chunking method: sentences
@@ -1745,7 +1745,7 @@ Document Operations Examples
    research_papers> stats
    Database Statistics:
    Documents: 1253, Chunks: 8521, Avg chunks/doc: 6.80
-   Embedding model: nomic-embed-text
+   Embedding model: embeddinggemma
    Provider: ollama
    Chunk size: 500, Overlap: 50
    FTS enabled: True
@@ -1754,7 +1754,7 @@ Document Operations Examples
    Database Info
    -------------
      Database: research_papers
-     Embedding model: nomic-embed-text
+     Embedding model: embeddinggemma
      Total Documents: 1253
      Total Chunks: 8521
      Schema fields: 6
@@ -2173,7 +2173,7 @@ Pipeline Integration
    # (file_path, created_at, last_modified, file_size_bytes, ...) is only available
    # via `lvdb config init --schema files`; create a config with it first if you need
    # those fields, since metadata not present in the schema is ignored on insert.
-   lvdb create research_pipeline --embedding-model nomic-embed-text --metadata-schema documents
+   lvdb create research_pipeline --embedding-model embeddinggemma --metadata-schema documents
 
    # Process incoming documents
    find /incoming/documents -name "*.txt" -newer /tmp/last_processed | while IFS= read -r file; do

@@ -24,7 +24,7 @@ Create a file called ``faq_bot.py``:
 
    # Create database and load FAQ documents
    print("Loading FAQ bot...")
-   db = LocalVectorDB(name="faq_bot", embedding_provider="ollama", embedding_model="nomic-embed-text")
+   db = LocalVectorDB(name="faq_bot", embedding_provider="ollama", embedding_model="embeddinggemma")
 
    # Sample FAQ content (replace with your own)
    faqs = [
@@ -161,7 +161,7 @@ Want a slightly more sophisticated bot? Here's an enhanced version:
                name="enhanced_faq",
                metadata_schema=metadata_schema,
                embedding_provider="ollama",
-               embedding_model="nomic-embed-text",
+               embedding_model="embeddinggemma",
            )
            self.load_faqs(faq_data)
        

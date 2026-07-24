@@ -56,7 +56,7 @@ Create a new Python file called ``quick_start.py`` and copy this code:
        name="my_first_db",
        base_path="./my_first_db",
        embedding_provider="ollama",  # Uses local Ollama
-       embedding_model="nomic-embed-text"
+       embedding_model="embeddinggemma"
    )
 
    # Add some sample documents
@@ -143,7 +143,7 @@ You should see output like this:
      "index_vectors": 5,
      "embedding_dimension": 768,
      "embedding_provider": "ollama",
-     "embedding_model": "nomic-embed-text",
+     "embedding_model": "embeddinggemma",
      "chunking_method": "sentences",
      "chunk_size": 500,
      "chunk_overlap": 1,
@@ -235,7 +235,7 @@ Or install Ollama for free local embeddings:
    curl -fsSL https://ollama.ai/install.sh | sh
 
    # Pull the embedding model
-   ollama pull nomic-embed-text
+   ollama pull embeddinggemma
 
 What's Next?
 ============

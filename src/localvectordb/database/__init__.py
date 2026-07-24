@@ -40,9 +40,22 @@ class LocalVectorDB(
     embedding_provider : str, optional
         Embedding provider name, by default "ollama"
     embedding_model : str, optional
-        Embedding model name, by default "nomic-embed-text"
+        Embedding model name, by default "embeddinggemma"
     embedding_config : Dict[str, Any], optional
-        Configuration for embedding provider
+        Configuration passed to the embedding provider. Beyond provider-specific
+        options (``base_url``, ``api_key``, ...), two keys apply to every provider:
+
+        ``document_prefix`` / ``query_prefix``
+            Instruction prefixes for asymmetric retrieval models, prepended when
+            embedding for storage and for search respectively. Both default to the
+            model's known training prefix (``embeddinggemma``, ``nomic-embed-text``,
+            ``snowflake-arctic-embed*``, ``bge-*-en``, ``e5-*``); an unrecognised
+            model gets none. Pass ``""`` to force no prefix, or
+            ``auto_prefix=False`` to disable the lookup.
+
+        An existing database reuses the prefixes it was built with -- they are part
+        of its vector space -- so these take effect on a new database, or on a
+        re-ingest. See the Embeddings guide for details.
     chunking_method : str, optional
         Chunking method, by default "sentences"
     chunk_size : int, optional

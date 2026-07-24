@@ -267,8 +267,8 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
                 if field_contents:
                     # Generate embeddings using database's embedding provider
                     embedding_provider = db.embedding_provider
-                    concept_embedding = (await embedding_provider.embed_batch([concept]))[0]
-                    field_embeddings = await embedding_provider.embed_batch(field_contents)
+                    concept_embedding = await embedding_provider.embed_query_async(concept)
+                    field_embeddings = await embedding_provider.embed_batch(field_contents, task="document")
 
                     # Apply similarity filtering based on metric
                     import numpy as np

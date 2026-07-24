@@ -785,7 +785,7 @@ Build a Retrieval-Augmented Generation system::
                     'section': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
                     'last_updated': MetadataField(type=MetadataFieldType.DATE, indexed=True)
                 },
-                embedding_model="nomic-embed-text",
+                embedding_model="embeddinggemma",
                 chunk_size=512,
                 chunk_overlap=50
             )
@@ -1065,7 +1065,7 @@ RemoteVectorDB supports URI-based connections::
     # With query parameters
     db = from_uri(
         "lvdb+https://vectordb.company.com/mydb?"
-        "chunk_size=1000&embedding_model=nomic-embed-text"
+        "chunk_size=1000&embedding_model=embeddinggemma"
     )
 
 Best Practices

@@ -26,7 +26,7 @@ Usage
 Requirements
 ------------
 A real embedding backend: either Ollama (``ollama serve`` and
-``ollama pull nomic-embed-text``) or the ``sentence-transformers`` package.
+``ollama pull embeddinggemma``) or the ``sentence-transformers`` package.
 Auto-detected, override with ``--provider``.
 
 **Not** the ``mock`` provider, and this script refuses to use it. MockEmbeddings
@@ -60,7 +60,7 @@ HERE = Path(__file__).resolve().parent
 SAMPLE_CORPUS = HERE / "sample_corpus"
 SAMPLE_JUDGMENTS = SAMPLE_CORPUS / "judgments.json"
 
-OLLAMA_MODEL = "nomic-embed-text"
+OLLAMA_MODEL = "embeddinggemma"
 SENTENCE_TRANSFORMERS_MODEL = "all-MiniLM-L6-v2"
 
 K = 10

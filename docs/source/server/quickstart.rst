@@ -31,7 +31,7 @@ Basic API Usage
      -d '{
        "name": "my_database",
        "embedding": {
-         "model": "nomic-embed-text"
+         "model": "embeddinggemma"
        },
        "database": {
          "chunk_size": 500

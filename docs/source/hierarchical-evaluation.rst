@@ -153,7 +153,7 @@ technique tuned on OpenAI generalizes:
    * - encoder
      - ``num_ctx``
      - note
-   * - ``nomic-embed-text``
+   * - ``embeddinggemma``
      - 2048
      - architecture-capped at 2048
    * - ``embeddinggemma:300m``

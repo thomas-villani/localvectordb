@@ -21,7 +21,7 @@ db = LocalVectorDB(
     name="my_docs",
     base_path="./vector_db",
     embedding_provider="ollama",
-    embedding_model="nomic-embed-text",
+    embedding_model="embeddinggemma",
 )
 
 # Add some documents

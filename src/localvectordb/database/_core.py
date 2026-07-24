@@ -93,7 +93,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         metadata_schema: Optional[Dict[str, Any]] = None,
         doc_id_pattern: str = "doc_{idx}",
         embedding_provider: str = "ollama",
-        embedding_model: str = "nomic-embed-text",
+        embedding_model: str = "embeddinggemma",
         embedding_config: Optional[Dict[str, Any]] = None,
         chunking_method: Union[str, Any] = "sentences",
         chunk_size: int = 500,
@@ -269,8 +269,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                     # Re-create chunker with loaded configuration
                     self.chunker = self._build_chunker()
 
-                    # Re-create embedding provider with loaded configuration
-                    embedding_config = embedding_config or {}
+                    # Re-create embedding provider with loaded configuration.
+                    embedding_config = self._resolve_saved_prefixes(embedding_config, loaded_config)
                     self._embedding_provider = EmbeddingRegistry.create_provider(
                         embedding_provider, embedding_model, **embedding_config
                     )
@@ -1239,11 +1239,62 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
 
         retry_on_locked(_write)
 
+    @staticmethod
+    def _resolve_saved_prefixes(
+        embedding_config: Optional[Dict[str, Any]], loaded_config: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Pin the embedding prefixes an existing database's vectors were built with.
+
+        The retrieval prefix is part of the vector space, so reopening a database
+        must reproduce it rather than re-deriving it from the model name. Two cases
+        matter:
+
+        * A database written before prefixes existed has no saved keys. It must stay
+          un-prefixed -- auto-detecting from the model name would embed queries in a
+          different space than the stored chunks and quietly degrade every search on
+          an index that is otherwise perfectly good.
+        * A caller who passes a prefix explicitly is overriding on purpose (typically
+          alongside a re-ingest), so that wins, with a warning when it diverges from
+          what is on disk.
+
+        A database that has never been configured is left alone entirely. Schema
+        initialisation writes ``db_version`` rows, so ``loaded_config`` is already
+        truthy on a brand-new database; keying off ``embedding_model`` -- written only
+        by ``_save_config`` -- is what actually distinguishes "reopened" from "fresh".
+        Without that check a new database would pin itself to empty prefixes and
+        auto-detection would never fire at all.
+        """
+        resolved = dict(embedding_config or {})
+        if "embedding_model" not in loaded_config:
+            return resolved
+
+        for kwarg, key in (
+            ("document_prefix", "embedding_document_prefix"),
+            ("query_prefix", "embedding_query_prefix"),
+        ):
+            saved = loaded_config.get(key, "")
+            override = resolved.get(kwarg)
+            if override is None:
+                resolved[kwarg] = saved
+            elif override != saved:
+                logger.warning(
+                    f"{kwarg}={override!r} overrides the {saved!r} this database was built with. "
+                    f"Existing vectors were embedded with the saved prefix; re-ingest to keep "
+                    f"queries and stored chunks in the same space."
+                )
+        return resolved
+
     def _save_config(self):
         config = {
             "embedding_provider": self.embedding_provider.provider_name,
             "embedding_model": self.embedding_provider.model,
             "embedding_dimension": self.embedding_dimension,
+            # The retrieval prefixes are part of the vector space this index was
+            # built in, exactly like the model is. Persist the resolved values --
+            # not whether they were auto-detected -- so a later release changing a
+            # default prefix cannot silently re-point queries at a different space.
+            "embedding_document_prefix": self.embedding_provider.document_prefix,
+            "embedding_query_prefix": self.embedding_provider.query_prefix,
             "chunking_method": self.chunking_method,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,

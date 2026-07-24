@@ -31,7 +31,7 @@ db = LocalVectorDB(
     name="knowledge_base",
     base_path="./kb",
     embedding_provider="ollama",
-    embedding_model="nomic-embed-text",
+    embedding_model="embeddinggemma",
 )
 
 db.upsert(

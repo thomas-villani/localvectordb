@@ -140,7 +140,7 @@ class DatabaseManagerMock:
         db.embedding_provider.embed_documents = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
         db.embedding_provider.embed_query = Mock(return_value=np.array([0.1, 0.2, 0.3]))
 
-        async def mock_embed_batch(texts, batch_size=None):
+        async def mock_embed_batch(texts, batch_size=None, **kwargs):
             return np.array([[0.1, 0.2, 0.3] for _ in texts])
 
         db.embedding_provider.embed_batch = mock_embed_batch

@@ -64,12 +64,34 @@ LocalVectorDB needs an embedding provider. By default it embeds through
 [Ollama](https://ollama.com) running locally:
 
 ```bash
-ollama pull nomic-embed-text
+ollama pull embeddinggemma
 ```
 
-Any other provider works via `embedding_provider=` — OpenAI, Google, Jina,
-HuggingFace (Inference API or local), or Sentence Transformers. See the
+Any other provider works via `embedding_provider=` — OpenAI, OpenRouter, Google,
+Jina, HuggingFace (Inference API or local), or Sentence Transformers. See the
 [Embeddings guide](https://thomas-villani.github.io/localvectordb/embeddings.html).
+
+**Retrieval prefixes are handled for you.** Many retrieval models — including the
+default `embeddinggemma` — are trained with a different instruction prepended to a
+stored passage than to a search query, and rank noticeably worse if you embed both
+sides the same way. LocalVectorDB looks the prefixes up from the model name and
+applies them automatically on ingest and on query. For a model it doesn't know,
+set them yourself:
+
+<!-- test: verify-api -->
+```python
+db = VectorDB(
+    "my_docs", "./data",
+    embedding_model="my-private-encoder",
+    embedding_config={"document_prefix": "passage: ", "query_prefix": "query: "},
+)
+```
+
+Databases created before this feature keep their existing behaviour: they store
+the prefixes they were built with, so an old index is never silently re-embedded
+into a different space. See the
+[Embeddings guide](https://thomas-villani.github.io/localvectordb/embeddings.html#retrieval-prefixes)
+for the full model table.
 
 **No provider handy?** The built-in `mock` provider needs no service and ships in
 the base install, so you can verify the install and explore the API immediately:
@@ -93,7 +115,7 @@ retrieval quality.
 ```python
 from localvectordb import VectorDB
 
-# Create or connect to a database (defaults to Ollama + nomic-embed-text)
+# Create or connect to a database (defaults to Ollama + embeddinggemma)
 db = VectorDB("my_docs", "./data")
 
 # Add documents
@@ -180,7 +202,7 @@ Build a knowledge base with the CLI first (rich formats like PDF and DOCX are
 extracted to Markdown automatically):
 
 ```bash
-lvdb create technical_docs --embedding-model nomic-embed-text
+lvdb create technical_docs --embedding-model embeddinggemma
 lvdb db technical_docs add ./docs/*.md ./manual.pdf
 ```
 
@@ -332,7 +354,7 @@ chunk_overlap = 1
 
 [embedding]
 provider = "ollama"
-model = "nomic-embed-text"
+model = "embeddinggemma"
 
 [server]
 host = "0.0.0.0"
@@ -528,7 +550,7 @@ curl -X POST http://localhost:8000/api/v1/databases/my_db/query \
 lvdb list --details
 
 # Create database
-lvdb create mydb --embedding-model nomic-embed-text --chunk-size 500
+lvdb create mydb --embedding-model embeddinggemma --chunk-size 500
 
 # Delete database
 lvdb delete mydb --confirm
@@ -661,10 +683,11 @@ response = requests.post(
 - `default_metadata_schema`: Schema for new databases
 
 ### Embedding Settings
-- `provider`: Embedding provider — one of `ollama`, `openai`, `google`, `jina`, `huggingface`, `huggingface_local`, or `sentence_transformers`
-- `model`: Model name (e.g., "nomic-embed-text")
+- `provider`: Embedding provider — one of `ollama`, `openai`, `openrouter`, `google`, `jina`, `huggingface`, `huggingface_local`, or `sentence_transformers`
+- `model`: Model name (e.g., "embeddinggemma")
 - `base_url`: Custom API endpoint
 - `api_key`: API key for providers requiring authentication
+- `document_prefix` / `query_prefix`: Retrieval instruction prefixes (see below)
 
 ### Server Settings
 - `host` / `port`: Server binding
@@ -756,7 +779,7 @@ uvicorn "localvectordb_server.app:create_app" --factory --host 0.0.0.0 --port 80
 export LVDB_SERVER_CONFIG="/path/to/config.toml"
 export LVDB_DATABASE_ROOT_DIR="/data/databases"
 export LVDB_EMBEDDING_PROVIDER="ollama"
-export LVDB_EMBEDDING_MODEL="nomic-embed-text"
+export LVDB_EMBEDDING_MODEL="embeddinggemma"
 export OPENAI_API_KEY="your-openai-key"  # if using OpenAI
 ```
 

@@ -606,7 +606,7 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
             raise ValueError("No document embeddings available to visualise")
 
         # Embed queries
-        query_embeddings = self.embedding_provider.embed_sync(queries)
+        query_embeddings = self.embedding_provider.embed_sync(queries, task="query")
         query_embs = np.array(query_embeddings, dtype=np.float32)
 
         # Compute similarity scores for each query against all docs

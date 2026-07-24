@@ -166,8 +166,11 @@ class SemanticFilter:
 
             # Generate embeddings - prefer async methods if available
 
-            concept_embedding = (await embedding_provider.embed_batch([self.concept]))[0]
-            field_embeddings = await embedding_provider.embed_batch(field_contents)
+            # The concept is the search side and the field contents the stored
+            # side, so they must be embedded with their respective prefixes for
+            # an asymmetric model to score them against each other correctly.
+            concept_embedding = (await embedding_provider.embed_batch([self.concept], task="query"))[0]
+            field_embeddings = await embedding_provider.embed_batch(field_contents, task="document")
 
         except Exception as e:
             logger.error(f"Async embedding generation failed: {e}")
@@ -211,8 +214,8 @@ class SemanticFilter:
             return []
 
         # Use embedding provider directly
-        concept_embedding = db.embedding_provider.embed_sync([self.concept])[0]
-        field_embeddings = db.embedding_provider.embed_sync(field_contents)
+        concept_embedding = db.embedding_provider.embed_sync([self.concept], task="query")[0]
+        field_embeddings = db.embedding_provider.embed_sync(field_contents, task="document")
 
         if len(field_embeddings) != len(valid_docs):
             raise ValueError(

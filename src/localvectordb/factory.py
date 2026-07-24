@@ -72,7 +72,7 @@ def VectorDB(name: str, base_path: Union[str, Path], **kwargs) -> Union[LocalVec
                 'author': MetadataField(type=MetadataFieldType.TEXT, indexed=True),
                 'date': MetadataField(type=MetadataFieldType.DATE, indexed=True)
             },
-            embedding_model="nomic-embed-text",
+            embedding_model="embeddinggemma",
             chunk_size=500
         )
 

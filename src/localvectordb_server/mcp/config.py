@@ -32,7 +32,7 @@ class MCPConfig:
     db_defaults: Dict[str, Any] = field(
         default_factory=lambda: {
             "embedding_provider": "ollama",
-            "embedding_model": "nomic-embed-text",
+            "embedding_model": "embeddinggemma",
             "chunk_size": 500,
             # Overlap is in *sentences* for the "sentences" method (not tokens),
             # so keep it small — matches the core LocalVectorDB default.

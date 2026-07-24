@@ -40,7 +40,7 @@ Next, ensure Ollama is running and pull the required models:
    ollama serve
 
    # Pull the embedding model
-   ollama pull nomic-embed-text
+   ollama pull embeddinggemma
 
    # Pull a chat model
    ollama pull llama3.2
@@ -94,7 +94,7 @@ Let's start by creating our vector database with a proper metadata schema for do
        base_path="./vector_storage",
        metadata_schema=metadata_schema,
        embedding_provider="ollama",
-       embedding_model="nomic-embed-text",
+       embedding_model="embeddinggemma",
        chunking_method="sentences",
        chunk_size=500,
        chunk_overlap=2,

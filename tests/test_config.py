@@ -73,7 +73,7 @@ class TestEmbeddingSettings:
         settings = EmbeddingSettings()
 
         assert settings.provider == "ollama"
-        assert settings.model == "nomic-embed-text"
+        assert settings.model == "embeddinggemma"
         assert settings.base_url is None
         assert settings.api_key is None
         assert settings.batch_size == 64

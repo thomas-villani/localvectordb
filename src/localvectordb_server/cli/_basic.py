@@ -279,6 +279,20 @@ def list_databases(ctx, details):
     type=click.Choice(["files", "documents", "research_papers", "code_repository", "customer_support"]),
     help="Predefined metadata schema to use",
 )
+@click.option(
+    "--document-prefix",
+    default=None,
+    type=str,
+    help="Instruction prefix prepended to text when embedding it for storage. "
+    "Defaults to the model's known training prefix; pass '' to force none.",
+)
+@click.option(
+    "--query-prefix",
+    default=None,
+    type=str,
+    help="Instruction prefix prepended to a search query before embedding. "
+    "Defaults to the model's known training prefix; pass '' to force none.",
+)
 @click.pass_context
 def create_vector_database(
     ctx,
@@ -290,6 +304,8 @@ def create_vector_database(
     chunk_overlap,
     chunk_delimiter,
     metadata_schema,
+    document_prefix,
+    query_prefix,
 ):
     """
     Create a new vector database.
@@ -300,8 +316,9 @@ def create_vector_database(
     \b
     Examples:
         \b
-        lvdb create mydb --embedding-model nomic-embed-text --chunk-size 500
+        lvdb create mydb --embedding-model embeddinggemma --chunk-size 500
         lvdb create mydb --metadata-schema research_papers
+        lvdb create mydb --embedding-model my-encoder --query-prefix 'query: ' --document-prefix 'passage: '
 
     """
     require_config(ctx)
@@ -327,7 +344,7 @@ def create_vector_database(
     os.makedirs(db_folder, exist_ok=True)
 
     # Set defaults
-    embedding_model = embedding_model or "nomic-embed-text"
+    embedding_model = embedding_model or "embeddinggemma"
     embedding_provider = embedding_provider or "ollama"
     chunk_size = chunk_size or 500
     chunking_method = chunking_method or "sentences"
@@ -365,6 +382,17 @@ def create_vector_database(
     if chunk_delimiter is not None:
         extra_kwargs["chunk_delimiter"] = chunk_delimiter
 
+    # Forwarded only when supplied so the model's known prefixes are auto-detected
+    # otherwise. An explicitly empty string is a real value here (force no prefix),
+    # so test against None rather than truthiness.
+    embedding_config = {}
+    if document_prefix is not None:
+        embedding_config["document_prefix"] = document_prefix
+    if query_prefix is not None:
+        embedding_config["query_prefix"] = query_prefix
+    if embedding_config:
+        extra_kwargs["embedding_config"] = embedding_config
+
     try:
         from localvectordb.database import LocalVectorDB
 
@@ -380,11 +408,19 @@ def create_vector_database(
             **extra_kwargs,
         )
         resolved_delimiter = db.chunk_delimiter
+        resolved_doc_prefix = db.embedding_provider.document_prefix
+        resolved_query_prefix = db.embedding_provider.query_prefix
         db.close()
 
         click.secho(f"Created database '{name}' in {os.path.abspath(db_folder)}", fg="green")
         click.echo(f"   embedding_model: {embedding_model}")
         click.echo(f"   embedding_provider: {embedding_provider}")
+        # Surfaced whenever non-empty, including when auto-detected, so it is
+        # obvious the model is being instructed and with what.
+        if resolved_doc_prefix:
+            click.echo(f"   document_prefix: {resolved_doc_prefix!r}")
+        if resolved_query_prefix:
+            click.echo(f"   query_prefix: {resolved_query_prefix!r}")
         click.echo(f"   chunk_size: {chunk_size}")
         click.echo(f"   chunking_method: {chunking_method}")
         click.echo(f"   chunk_overlap: {chunk_overlap}")
