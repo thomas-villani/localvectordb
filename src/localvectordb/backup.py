@@ -396,7 +396,10 @@ class BackupManager:
         manifest: Dict[str, Any] = {"documents": {}}
 
         try:
-            with sqlite3.connect(db_path) as conn:
+            # closing(): ``with sqlite3.connect(...)`` only commits, it does not close,
+            # and a lingering handle on the temp-dir snapshot this reads breaks
+            # TemporaryDirectory cleanup on Windows.
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 # Get all documents with their metadata
                 doc_cursor = conn.execute("""
                     SELECT id, content_hash, updated_at
@@ -550,19 +553,28 @@ class BackupManager:
                 # Create manifest
                 metadata = self._create_backup_manifest(backup_id, backup_type, temp_dir, parent_backup_id)
 
+                # The ID list and manifest below describe the SNAPSHOT, so they must be
+                # read from the copied file, not the live database: a write landing
+                # after the quiesce would otherwise put documents in the manifest that
+                # are absent from the archive, corrupting incremental diffs. Reading the
+                # copy also keeps backup connections off the live database entirely.
+                snapshot_db_path = temp_dir / f"{self.database_name}.sqlite"
+
                 # Add document IDs to metadata for optimization (helps detect deletions in future incremental backups)
                 try:
-                    with sqlite3.connect(self.database_path) as conn:
+                    # closing(): a lingering handle on a temp-dir file breaks
+                    # TemporaryDirectory cleanup on Windows.
+                    with contextlib.closing(sqlite3.connect(snapshot_db_path)) as conn:
                         cursor = conn.execute("SELECT id FROM documents")
                         document_ids = [row[0] for row in cursor.fetchall()]
-                        metadata.metadata["document_ids"] = document_ids
-                        logger.debug(f"Added {len(document_ids)} document IDs to backup metadata")
+                    metadata.metadata["document_ids"] = document_ids
+                    logger.debug(f"Added {len(document_ids)} document IDs to backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document IDs to metadata: {e}")
 
                 # Add comprehensive document manifest for fast diffing without extraction
                 try:
-                    metadata.metadata["document_manifest"] = self._generate_document_manifest(self.database_path)
+                    metadata.metadata["document_manifest"] = self._generate_document_manifest(snapshot_db_path)
                     logger.debug("Added document manifest to backup metadata")
                 except Exception as e:
                     logger.warning(f"Could not add document manifest to metadata: {e}")
