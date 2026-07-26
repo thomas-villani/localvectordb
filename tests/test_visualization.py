@@ -23,6 +23,7 @@ from localvectordb.visualization import (  # noqa: E402
     reduce_dimensions,
 )
 from localvectordb.visualization._dimensionality import project_new_points  # noqa: E402
+from localvectordb.visualization._graph import _spring_positions  # noqa: E402
 from localvectordb.visualization.types import ClusterResult, EmbeddingProjection, QueryOverlay  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -220,6 +221,24 @@ class TestPlotEmbeddingMap:
 
         plt.close(fig)
 
+    def test_color_by_and_queries_share_one_legend(self, sample_embeddings, sample_doc_ids):
+        # A second ax.legend() call replaces the first, so colouring by category
+        # *and* overlaying queries used to silently drop the category key.
+        proj = reduce_dimensions(sample_embeddings, method="pca", doc_ids=sample_doc_ids)
+        labels = ["A" if i < 10 else "B" for i in range(20)]
+        q = QueryOverlay(
+            query_text="test query",
+            query_embedding=np.random.randn(64).astype(np.float32),
+            scores=np.random.rand(20).astype(np.float32),
+        )
+        fig = plot_embedding_map(proj, color_by=labels, queries=[q])
+        entries = {t.get_text() for t in fig.axes[0].get_legend().get_texts()}
+        assert {"A", "B"} <= entries
+        assert any(e.startswith("Q: test query") for e in entries)
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
     def test_empty_projection(self):
         proj = EmbeddingProjection(
             coordinates=np.array([]).reshape(0, 2),
@@ -327,6 +346,81 @@ class TestPlotSimilarityGraph:
 
         plt.close(fig)
 
+    def test_mds_layout(self, sample_sim_matrix):
+        fig = plot_similarity_graph(sample_sim_matrix, threshold=0.3, layout="mds")
+        assert fig is not None
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_unknown_layout_raises(self, sample_sim_matrix):
+        with pytest.raises(ValueError, match="Unknown layout"):
+            plot_similarity_graph(sample_sim_matrix, layout="circular")
+
+
+@pytest.mark.unit
+class TestSpringPositions:
+    """The force-directed layout behind ``layout="spring"``."""
+
+    @staticmethod
+    def _two_triangles():
+        """Two disconnected triangles plus four isolated nodes."""
+        weights = np.zeros((10, 10))
+        for a, b in [(0, 1), (1, 2), (0, 2), (5, 6), (6, 7), (5, 7)]:
+            weights[a, b] = weights[b, a] = 0.9
+        return weights
+
+    def test_finite_positions(self):
+        # A zero self-weight against an infinite self-distance produced NaN for
+        # every node; the layout must stay finite for any weight matrix.
+        pos = _spring_positions(self._two_triangles())
+        assert pos.shape == (10, 2)
+        assert np.isfinite(pos).all()
+
+    def test_no_edges_is_finite(self):
+        pos = _spring_positions(np.zeros((6, 6)))
+        assert np.isfinite(pos).all()
+
+    def test_connected_nodes_are_closer_than_unconnected(self):
+        pos = _spring_positions(self._two_triangles())
+        within = np.linalg.norm(pos[0] - pos[1])
+        across = np.linalg.norm(pos[0] - pos[5])
+        assert within < across
+
+    def test_gravity_keeps_isolates_in_frame(self):
+        # Isolated nodes feel only repulsion; without gravity they accelerate off
+        # to the rim and squash the connected structure into a dot.
+        pos = _spring_positions(self._two_triangles())
+        radii = np.linalg.norm(pos - pos.mean(axis=0), axis=1)
+        assert radii.max() < 10 * np.median(radii)
+
+    def test_deterministic(self):
+        weights = self._two_triangles()
+        assert np.allclose(_spring_positions(weights), _spring_positions(weights))
+
+    def test_spread_loosens_the_connected_core(self):
+        weights = self._two_triangles()
+
+        def closest_gap(spread):
+            pos = _spring_positions(weights, spread=spread)
+            extent = float(np.ptp(pos, axis=0).max())
+            gaps = [float(np.min(np.linalg.norm(pos[i] - np.delete(pos, i, axis=0), axis=1))) for i in range(len(pos))]
+            return min(gaps) / extent
+
+        assert closest_gap(3.0) > closest_gap(1.0)
+
+    def test_tuning_is_reachable_from_plot(self, sample_sim_matrix):
+        # gravity/spread used to be swallowed by **kwargs, leaving them unusable.
+        tight = plot_similarity_graph(sample_sim_matrix, threshold=0.3, gravity=0.3, spread=1.0)
+        loose = plot_similarity_graph(sample_sim_matrix, threshold=0.3, gravity=1.5, spread=3.0)
+        assert tight.axes[0].collections[0].get_offsets().data.tolist() != (
+            loose.axes[0].collections[0].get_offsets().data.tolist()
+        )
+        import matplotlib.pyplot as plt
+
+        plt.close(tight)
+        plt.close(loose)
+
 
 # ---------------------------------------------------------------------------
 # Synteny diagram
@@ -420,6 +514,41 @@ class TestPlotSynteny:
 
         plt.close(fig)
 
+    @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+    def test_text_labels_are_drawn(self, cross_doc_chunk_sim, orientation):
+        fig = plot_synteny(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            orientation=orientation,
+            labels_1=[f"Section {i}" for i in range(8)],
+            labels_2=[f"Part {j}" for j in range(6)],
+        )
+        drawn = {t.get_text() for t in fig.axes[0].texts}
+        assert "Section 3" in drawn
+        assert "Part 5" in drawn
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_labels_override_chunk_labels(self, cross_doc_chunk_sim):
+        fig = plot_synteny(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            chunk_labels=True,
+            labels_1=[f"S{i}" for i in range(8)],
+        )
+        drawn = {t.get_text() for t in fig.axes[0].texts}
+        assert "S0" in drawn
+        # labels_2 was not given, so the second track falls back to its indices.
+        assert "5" in drawn
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_label_length_mismatch_raises(self, cross_doc_chunk_sim):
+        with pytest.raises(ValueError, match="expected 8 chunk labels, got 3"):
+            plot_synteny(cross_doc_chunk_sim, labels_1=["a", "b", "c"])
+
 
 @pytest.mark.unit
 class TestPlotChord:
@@ -456,6 +585,135 @@ class TestPlotChord:
     def test_rejects_cross_document(self, cross_doc_chunk_sim):
         with pytest.raises(ValueError, match="self-comparison"):
             plot_chord(cross_doc_chunk_sim)
+
+    def test_text_labels_are_drawn(self, self_chunk_sim):
+        n = self_chunk_sim.matrix.shape[0]
+        fig = plot_chord(
+            self_chunk_sim,
+            similarity_threshold=0.4,
+            labels=[f"Heading {i}" for i in range(n)],
+        )
+        drawn = {t.get_text() for t in fig.axes[0].texts}
+        assert f"Heading {n - 1}" in drawn
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_label_length_mismatch_raises(self, self_chunk_sim):
+        with pytest.raises(ValueError, match="chunk labels"):
+            plot_chord(self_chunk_sim, labels=["only-one"])
+
+
+# ---------------------------------------------------------------------------
+# Interactive (plotly) ribbon diagrams
+#
+# These had no coverage at all, which is how `chunk_labels` sat here for so long
+# accepted-and-ignored. Assert on rendered annotation text, not just that a
+# figure comes back, or a silently-dropped label looks identical to a drawn one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestInteractiveRibbons:
+    @staticmethod
+    def _annotations(fig):
+        return {a.text for a in fig.layout.annotations}
+
+    @pytest.fixture(autouse=True)
+    def _require_plotly(self):
+        pytest.importorskip("plotly")
+
+    @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+    def test_synteny_chunk_labels_draw_indices(self, cross_doc_chunk_sim, orientation):
+        from localvectordb.visualization import plot_synteny_interactive
+
+        fig = plot_synteny_interactive(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            orientation=orientation,
+            chunk_labels=True,
+        )
+        drawn = self._annotations(fig)
+        assert "0" in drawn and "7" in drawn  # doc 1 has 8 chunks
+        assert "5" in drawn  # doc 2 has 6
+
+    @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+    def test_synteny_text_labels(self, cross_doc_chunk_sim, orientation):
+        from localvectordb.visualization import plot_synteny_interactive
+
+        fig = plot_synteny_interactive(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            orientation=orientation,
+            labels_1=[f"Section {i}" for i in range(8)],
+            labels_2=[f"Part {j}" for j in range(6)],
+        )
+        drawn = self._annotations(fig)
+        assert "Section 3" in drawn
+        assert "Part 5" in drawn
+
+    def test_synteny_labels_reach_hover_text(self, cross_doc_chunk_sim):
+        from localvectordb.visualization import plot_synteny_interactive
+
+        fig = plot_synteny_interactive(
+            cross_doc_chunk_sim,
+            similarity_threshold=0.4,
+            labels_1=[f"Section {i}" for i in range(8)],
+        )
+        hover = [t for trace in fig.data for t in (trace.hovertext or [])]
+        assert any("Section 3" in h for h in hover)
+
+    def test_synteny_no_labels_by_default(self, cross_doc_chunk_sim):
+        from localvectordb.visualization import plot_synteny_interactive
+
+        fig = plot_synteny_interactive(cross_doc_chunk_sim, similarity_threshold=0.4)
+        # Only the two document names should be annotated.
+        assert self._annotations(fig) == {"doc_alpha", "doc_beta"}
+
+    def test_synteny_label_length_mismatch_raises(self, cross_doc_chunk_sim):
+        from localvectordb.visualization import plot_synteny_interactive
+
+        with pytest.raises(ValueError, match="expected 8 chunk labels, got 2"):
+            plot_synteny_interactive(cross_doc_chunk_sim, labels_1=["a", "b"])
+
+    def test_chord_chunk_labels_draw_indices(self, self_chunk_sim):
+        from localvectordb.visualization import plot_chord_interactive
+
+        n = self_chunk_sim.matrix.shape[0]
+        fig = plot_chord_interactive(self_chunk_sim, similarity_threshold=0.4, chunk_labels=True)
+        assert {"0", str(n - 1)} <= self._annotations(fig)
+
+    def test_chord_text_labels(self, self_chunk_sim):
+        from localvectordb.visualization import plot_chord_interactive
+
+        n = self_chunk_sim.matrix.shape[0]
+        fig = plot_chord_interactive(
+            self_chunk_sim,
+            similarity_threshold=0.4,
+            labels=[f"Heading {i}" for i in range(n)],
+        )
+        drawn = self._annotations(fig)
+        assert f"Heading {n - 1}" in drawn
+        hover = [t for trace in fig.data for t in (trace.hovertext or [])]
+        assert any("Heading 0" in h for h in hover)
+
+    def test_chord_no_labels_by_default(self, self_chunk_sim):
+        from localvectordb.visualization import plot_chord_interactive
+
+        fig = plot_chord_interactive(self_chunk_sim, similarity_threshold=0.4)
+        assert self._annotations(fig) == set()
+
+    def test_chord_label_length_mismatch_raises(self, self_chunk_sim):
+        from localvectordb.visualization import plot_chord_interactive
+
+        with pytest.raises(ValueError, match="chunk labels"):
+            plot_chord_interactive(self_chunk_sim, labels=["only-one"])
+
+    def test_chord_rejects_cross_document(self, cross_doc_chunk_sim):
+        from localvectordb.visualization import plot_chord_interactive
+
+        with pytest.raises(ValueError, match="self-comparison"):
+            plot_chord_interactive(cross_doc_chunk_sim)
 
     def test_empty(self):
         csm = ChunkSimilarityMatrix(

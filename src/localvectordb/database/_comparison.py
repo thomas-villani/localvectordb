@@ -659,6 +659,11 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
             Label each chunk segment with its index.
         interactive : bool
             Use plotly instead of matplotlib.
+        **kwargs
+            Forwarded to the plotting function -- notably ``labels_1`` and
+            ``labels_2``, which put arbitrary text (a section heading, say) on
+            each chunk segment instead of its index, in both the matplotlib and
+            the interactive renderer.
 
         Returns
         -------
@@ -708,6 +713,11 @@ class ComparisonMixin(LocalVectorDBBase, ABC):
             Label each arc segment with its index.
         interactive : bool
             Use plotly instead of matplotlib.
+        **kwargs
+            Forwarded to the plotting function -- notably ``labels``, which puts
+            arbitrary text (the section each chunk falls in, say) on each arc
+            instead of its index, in both the matplotlib and the interactive
+            renderer.
 
         Returns
         -------

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 
 from localvectordb.core import ChunkSimilarityMatrix, DocumentSimilarityMatrix
 from localvectordb.visualization._dimensionality import project_new_points
-from localvectordb.visualization._ribbons import _alpha_from_similarity
+from localvectordb.visualization._ribbons import _alpha_from_similarity, _resolve_labels
 from localvectordb.visualization.types import ClusterResult, EmbeddingProjection, QueryOverlay
 
 try:
@@ -219,6 +219,8 @@ def plot_synteny_interactive(
     similarity_threshold: float = 0.7,
     orientation: str = "horizontal",
     chunk_labels: bool = False,
+    labels_1: Optional[Sequence[str]] = None,
+    labels_2: Optional[Sequence[str]] = None,
     title: Optional[str] = None,
     **kwargs,
 ) -> go.Figure:
@@ -234,17 +236,34 @@ def plot_synteny_interactive(
         ``"horizontal"`` or ``"vertical"``.
     chunk_labels : bool
         If ``True``, label each chunk segment with its index.
+    labels_1, labels_2 : sequence of str, optional
+        Text to draw on each chunk segment of the first/second document instead
+        of its index. Must be exactly one entry per chunk. Supplying either turns
+        labelling on regardless of ``chunk_labels``, moves the labels outside the
+        track, and adds them to the segment hover text.
     title : str, optional
         Plot title.
 
     Returns
     -------
     plotly.graph_objects.Figure
+
+    Raises
+    ------
+    ValueError
+        If ``labels_1``/``labels_2`` do not match the chunk count.
     """
     import matplotlib.pyplot as _plt  # noqa: F811 – for colormap access only
 
     matrix = chunk_sim.matrix
     n1, n2 = matrix.shape
+
+    text_1 = _resolve_labels(n1, chunk_sim.chunk_indices_1, labels_1, chunk_labels, "labels_1")
+    text_2 = _resolve_labels(n2, chunk_sim.chunk_indices_2, labels_2, chunk_labels, "labels_2")
+    outside = labels_1 is not None or labels_2 is not None
+    # Outside labels stand on end past the ends of the track; without extra room
+    # on the label axis they run into the title and the figure edge.
+    pad = 0.45 if outside else 0.15
 
     if title is None:
         title = f"Synteny: {chunk_sim.doc_id_1} vs {chunk_sim.doc_id_2}"
@@ -253,23 +272,73 @@ def plot_synteny_interactive(
     cmap = _plt.colormaps.get_cmap("viridis")
 
     if orientation == "horizontal":
-        _draw_synteny_horizontal_plotly(fig, chunk_sim, matrix, n1, n2, cmap, similarity_threshold, chunk_labels)
+        _draw_synteny_horizontal_plotly(
+            fig, chunk_sim, matrix, n1, n2, cmap, similarity_threshold, text_1, text_2, outside
+        )
         fig.update_layout(
-            xaxis=dict(range=[-0.05, 1.05], visible=False),
-            yaxis=dict(range=[-0.15, 1.15], scaleanchor="x", visible=False),
+            xaxis=dict(range=[-0.35 if outside else -0.05, 1.05], visible=False),
+            yaxis=dict(range=[-pad, 1.0 + pad], scaleanchor="x", visible=False),
         )
     else:
-        _draw_synteny_vertical_plotly(fig, chunk_sim, matrix, n1, n2, cmap, similarity_threshold, chunk_labels)
+        _draw_synteny_vertical_plotly(
+            fig, chunk_sim, matrix, n1, n2, cmap, similarity_threshold, text_1, text_2, outside
+        )
         fig.update_layout(
-            xaxis=dict(range=[-0.15, 1.15], visible=False),
-            yaxis=dict(range=[-0.05, 1.05], scaleanchor="x", visible=False),
+            xaxis=dict(range=[-pad, 1.0 + pad], visible=False),
+            yaxis=dict(range=[-0.05, 1.15], scaleanchor="x", visible=False),
         )
 
     fig.update_layout(title=title, showlegend=False)
     return fig
 
 
-def _draw_synteny_horizontal_plotly(fig, chunk_sim, matrix, n1, n2, cmap, threshold, chunk_labels):
+def _hover(doc_id, chunk_index, texts, position, outside):
+    """Hover string for a chunk segment, naming its label when there is one."""
+    base = f"{doc_id} chunk {chunk_index}"
+    return f"{base}<br>{texts[position]}" if outside and texts is not None else base
+
+
+# Rough width of one character as a fraction of the font size, for the default
+# sans-serif face. Only used to estimate a label's run in pixels.
+_CHAR_WIDTH_RATIO = 0.55
+
+
+def _label_offset(text: str, font_size: float, cos_a: float, sin_a: float, pad: float = 4.0):
+    """Pixel shift putting the *near* end of a rotated label at its anchor point.
+
+    Plotly rotates an annotation about its centre no matter what ``xanchor`` says,
+    so a rotated label anchored at the ring drifts outward by half its own
+    length -- long labels visibly further than short ones. Anchoring at the
+    centre and shifting by half the label's run along ``(cos_a, sin_a)`` puts
+    every label the same distance from its segment regardless of length.
+    """
+    half = 0.5 * len(text) * font_size * _CHAR_WIDTH_RATIO + pad
+    return half * cos_a, half * sin_a
+
+
+def _segment_annotation(fig, x, y, text, outside, font_size, direction):
+    """One chunk-segment label: inside the coloured bar, or on end just outside it."""
+    if not outside:
+        fig.add_annotation(x=x, y=y, text=text, showarrow=False, font=dict(size=8, color="white"))
+        return
+    cos_a, sin_a = direction
+    x_shift, y_shift = _label_offset(text, font_size, cos_a, sin_a)
+    fig.add_annotation(
+        x=x,
+        y=y,
+        text=text,
+        showarrow=False,
+        # -90 reads bottom-to-top, matching the matplotlib renderer.
+        textangle=-90,
+        xanchor="center",
+        yanchor="middle",
+        xshift=x_shift,
+        yshift=y_shift,
+        font=dict(size=font_size, color="black"),
+    )
+
+
+def _draw_synteny_horizontal_plotly(fig, chunk_sim, matrix, n1, n2, cmap, threshold, text_1, text_2, outside):
     """Plotly horizontal synteny with SVG path ribbons."""
     bar_height = 0.08
     y_top = 1.0
@@ -346,7 +415,7 @@ def _draw_synteny_horizontal_plotly(fig, chunk_sim, matrix, n1, n2, cmap, thresh
     # Hover traces for chunks
     doc1_x = [(i + 0.5) * width1 for i in range(n1)]
     doc1_y = [y_top - bar_height / 2] * n1
-    doc1_text = [f"{chunk_sim.doc_id_1} chunk {chunk_sim.chunk_indices_1[i]}" for i in range(n1)]
+    doc1_text = [_hover(chunk_sim.doc_id_1, chunk_sim.chunk_indices_1[i], text_1, i, outside) for i in range(n1)]
     fig.add_trace(
         go.Scatter(
             x=doc1_x,
@@ -361,7 +430,7 @@ def _draw_synteny_horizontal_plotly(fig, chunk_sim, matrix, n1, n2, cmap, thresh
 
     doc2_x = [(j + 0.5) * width2 for j in range(n2)]
     doc2_y = [y_bottom + bar_height / 2] * n2
-    doc2_text = [f"{chunk_sim.doc_id_2} chunk {chunk_sim.chunk_indices_2[j]}" for j in range(n2)]
+    doc2_text = [_hover(chunk_sim.doc_id_2, chunk_sim.chunk_indices_2[j], text_2, j, outside) for j in range(n2)]
     fig.add_trace(
         go.Scatter(
             x=doc2_x,
@@ -374,24 +443,68 @@ def _draw_synteny_horizontal_plotly(fig, chunk_sim, matrix, n1, n2, cmap, thresh
         )
     )
 
-    # Labels
-    fig.add_annotation(
-        x=0.5,
-        y=y_top + 0.03,
-        text=chunk_sim.doc_id_1,
-        showarrow=False,
-        font=dict(size=12, color="black"),
-    )
-    fig.add_annotation(
-        x=0.5,
-        y=y_bottom - 0.03,
-        text=chunk_sim.doc_id_2,
-        showarrow=False,
-        font=dict(size=12, color="black"),
-    )
+    # Chunk-segment labels, running straight up from the top track and straight
+    # down from the bottom one.
+    if text_1 is not None:
+        for i in range(n1):
+            _segment_annotation(
+                fig,
+                (i + 0.5) * width1,
+                y_top + 0.015 if outside else y_top - bar_height / 2,
+                text_1[i],
+                outside,
+                9,
+                (0.0, 1.0),
+            )
+    if text_2 is not None:
+        for j in range(n2):
+            _segment_annotation(
+                fig,
+                (j + 0.5) * width2,
+                y_bottom - 0.015 if outside else y_bottom + bar_height / 2,
+                text_2[j],
+                outside,
+                9,
+                (0.0, -1.0),
+            )
+
+    # Document names. Centred above/below the track normally; off to the left
+    # when outside labels already occupy those margins.
+    if outside:
+        fig.add_annotation(
+            x=-0.01,
+            y=y_top - bar_height / 2,
+            text=chunk_sim.doc_id_1,
+            showarrow=False,
+            xanchor="right",
+            font=dict(size=12, color="black"),
+        )
+        fig.add_annotation(
+            x=-0.01,
+            y=y_bottom + bar_height / 2,
+            text=chunk_sim.doc_id_2,
+            showarrow=False,
+            xanchor="right",
+            font=dict(size=12, color="black"),
+        )
+    else:
+        fig.add_annotation(
+            x=0.5,
+            y=y_top + 0.03,
+            text=chunk_sim.doc_id_1,
+            showarrow=False,
+            font=dict(size=12, color="black"),
+        )
+        fig.add_annotation(
+            x=0.5,
+            y=y_bottom - 0.03,
+            text=chunk_sim.doc_id_2,
+            showarrow=False,
+            font=dict(size=12, color="black"),
+        )
 
 
-def _draw_synteny_vertical_plotly(fig, chunk_sim, matrix, n1, n2, cmap, threshold, chunk_labels):
+def _draw_synteny_vertical_plotly(fig, chunk_sim, matrix, n1, n2, cmap, threshold, text_1, text_2, outside):
     """Plotly vertical synteny with SVG path ribbons."""
     bar_width = 0.08
     x_left = 0.0
@@ -463,22 +576,70 @@ def _draw_synteny_vertical_plotly(fig, chunk_sim, matrix, n1, n2, cmap, threshol
 
     fig.update_layout(shapes=shapes)
 
-    fig.add_annotation(
-        x=x_left - 0.03,
-        y=0.5,
-        text=chunk_sim.doc_id_1,
-        showarrow=False,
-        textangle=-90,
-        font=dict(size=12),
-    )
-    fig.add_annotation(
-        x=x_right + 0.03,
-        y=0.5,
-        text=chunk_sim.doc_id_2,
-        showarrow=False,
-        textangle=90,
-        font=dict(size=12),
-    )
+    # Hover traces for chunks
+    for doc_id, count, height, x_centre, texts, indices in (
+        (chunk_sim.doc_id_1, n1, height1, x_left + bar_width / 2, text_1, chunk_sim.chunk_indices_1),
+        (chunk_sim.doc_id_2, n2, height2, x_right - bar_width / 2, text_2, chunk_sim.chunk_indices_2),
+    ):
+        fig.add_trace(
+            go.Scatter(
+                x=[x_centre] * count,
+                y=[1.0 - (i + 0.5) * height for i in range(count)],
+                mode="markers",
+                marker=dict(size=1, opacity=0),
+                hovertext=[_hover(doc_id, indices[i], texts, i, outside) for i in range(count)],
+                hoverinfo="text",
+                showlegend=False,
+            )
+        )
+
+    # Chunk-segment labels. Unrotated here -- the bars are already stacked
+    # vertically, so text reads straight out from each one and a plain anchor is
+    # enough (nothing is rotated, so nothing drifts).
+    for texts, count, height, inside_x, outside_x, anchor in (
+        (text_1, n1, height1, x_left + bar_width / 2, x_left - 0.015, "right"),
+        (text_2, n2, height2, x_right - bar_width / 2, x_right + 0.015, "left"),
+    ):
+        if texts is None:
+            continue
+        for i in range(count):
+            y = 1.0 - (i + 0.5) * height
+            if outside:
+                fig.add_annotation(
+                    x=outside_x,
+                    y=y,
+                    text=texts[i],
+                    showarrow=False,
+                    xanchor=anchor,
+                    font=dict(size=9, color="black"),
+                )
+            else:
+                fig.add_annotation(x=inside_x, y=y, text=texts[i], showarrow=False, font=dict(size=8, color="white"))
+
+    if outside:
+        fig.add_annotation(
+            x=x_left + bar_width / 2, y=1.02, text=chunk_sim.doc_id_1, showarrow=False, font=dict(size=12)
+        )
+        fig.add_annotation(
+            x=x_right - bar_width / 2, y=1.02, text=chunk_sim.doc_id_2, showarrow=False, font=dict(size=12)
+        )
+    else:
+        fig.add_annotation(
+            x=x_left - 0.03,
+            y=0.5,
+            text=chunk_sim.doc_id_1,
+            showarrow=False,
+            textangle=-90,
+            font=dict(size=12),
+        )
+        fig.add_annotation(
+            x=x_right + 0.03,
+            y=0.5,
+            text=chunk_sim.doc_id_2,
+            showarrow=False,
+            textangle=90,
+            font=dict(size=12),
+        )
 
 
 # ------------------------------------------------------------------ #
@@ -491,6 +652,7 @@ def plot_chord_interactive(
     similarity_threshold: float = 0.7,
     min_chunk_distance: int = 3,
     chunk_labels: bool = False,
+    labels: Optional[Sequence[str]] = None,
     title: Optional[str] = None,
     **kwargs,
 ) -> go.Figure:
@@ -506,12 +668,23 @@ def plot_chord_interactive(
         Minimum index distance between chunks.
     chunk_labels : bool
         If ``True``, label each arc segment.
+    labels : sequence of str, optional
+        Text to draw on each arc instead of its index. Must be exactly one entry
+        per chunk. Supplying it turns labelling on regardless of
+        ``chunk_labels``, rotates the labels to follow the circle, and adds them
+        to the arc hover text.
     title : str, optional
         Plot title.
 
     Returns
     -------
     plotly.graph_objects.Figure
+
+    Raises
+    ------
+    ValueError
+        If ``chunk_sim`` is not a self-comparison, or ``labels`` does not match
+        the chunk count.
     """
     import matplotlib.pyplot as _plt  # noqa: F811
 
@@ -520,6 +693,9 @@ def plot_chord_interactive(
 
     matrix = chunk_sim.matrix
     n = matrix.shape[0]
+
+    text = _resolve_labels(n, chunk_sim.chunk_indices_1, labels, chunk_labels, "labels")
+    rotate_labels = labels is not None
 
     if title is None:
         title = f"Self-similarity: {chunk_sim.doc_id_1}"
@@ -614,7 +790,14 @@ def plot_chord_interactive(
     hover_r = (outer_r + inner_r) / 2
     hover_x = [hover_r * np.cos(a) for a in mid_angles]
     hover_y = [hover_r * np.sin(a) for a in mid_angles]
-    hover_text = [f"Chunk {chunk_sim.chunk_indices_1[i]}" for i in range(n)]
+    hover_text = [
+        (
+            f"Chunk {chunk_sim.chunk_indices_1[i]}<br>{text[i]}"
+            if rotate_labels and text is not None
+            else f"Chunk {chunk_sim.chunk_indices_1[i]}"
+        )
+        for i in range(n)
+    ]
 
     fig.add_trace(
         go.Scatter(
@@ -628,7 +811,42 @@ def plot_chord_interactive(
         )
     )
 
-    margin = outer_r * 0.25
+    # Arc labels. Plotly's textangle runs clockwise where matplotlib's rotation
+    # runs anticlockwise, hence the negation; the left-half flip keeps any label
+    # from ending up upside-down. The label is centred on a point shifted half
+    # its own length outward along the radius, so every label starts the same
+    # distance from its arc -- see _label_offset.
+    if text is not None:
+        for i in range(n):
+            if rotate_labels:
+                degrees = float(np.degrees(mid_angles[i]) % 360.0)
+                flip = 90.0 < degrees < 270.0
+                cos_a, sin_a = float(np.cos(mid_angles[i])), float(np.sin(mid_angles[i]))
+                x_shift, y_shift = _label_offset(text[i], 9, cos_a, sin_a)
+                fig.add_annotation(
+                    x=outer_r * cos_a,
+                    y=outer_r * sin_a,
+                    text=text[i],
+                    showarrow=False,
+                    textangle=-(degrees - 180.0) if flip else -degrees,
+                    xanchor="center",
+                    yanchor="middle",
+                    xshift=x_shift,
+                    yshift=y_shift,
+                    font=dict(size=9, color="black"),
+                )
+            else:
+                label_r = outer_r + 0.06
+                fig.add_annotation(
+                    x=label_r * np.cos(mid_angles[i]),
+                    y=label_r * np.sin(mid_angles[i]),
+                    text=text[i],
+                    showarrow=False,
+                    font=dict(size=8, color="black"),
+                )
+
+    # Rotated names run well past the circle, so they need a wider frame.
+    margin = outer_r * (0.7 if rotate_labels else 0.25)
     fig.update_layout(
         title=title,
         showlegend=False,

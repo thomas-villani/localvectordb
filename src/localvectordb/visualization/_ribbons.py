@@ -11,7 +11,7 @@ circle with interior ribbons connecting self-similar regions.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Sequence, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,6 +24,42 @@ from localvectordb.core import ChunkSimilarityMatrix
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
+
+
+def _resolve_labels(
+    count: int,
+    indices: Sequence[int],
+    labels: Optional[Sequence[str]],
+    show_indices: bool,
+    side: str,
+) -> Optional[List[str]]:
+    """Resolve the text to draw on each chunk segment, or ``None`` for no labels.
+
+    Explicit ``labels`` win over ``chunk_labels``; a length mismatch is raised
+    rather than truncated, since silently dropping the tail would mislabel every
+    segment after the first missing one.
+    """
+    if labels is not None:
+        if len(labels) != count:
+            raise ValueError(f"{side}: expected {count} chunk labels, got {len(labels)}")
+        return [str(x) for x in labels]
+    if show_indices:
+        return [str(i) for i in indices]
+    return None
+
+
+def _title_pad(texts: Optional[Sequence[str]], fontsize: float = 7.0) -> float:
+    """Title padding, in points, that clears labels standing on end above the plot.
+
+    Outside labels are drawn rotated and unclipped, so at the top of a chord
+    circle or a synteny track they run straight into the title. Estimate the
+    label's run from the longest one (~0.5 * fontsize per character), less the
+    margin the axes already leave above the plotted area.
+    """
+    if not texts:
+        return 20.0
+    run = 0.5 * fontsize * max(len(t) for t in texts)
+    return float(np.clip(run - 36.0, 20.0, 150.0))
 
 
 def _alpha_from_similarity(similarity: float, threshold: float) -> float:
@@ -149,6 +185,8 @@ def plot_synteny(
     similarity_threshold: float = 0.7,
     orientation: str = "horizontal",
     chunk_labels: bool = False,
+    labels_1: Optional[Sequence[str]] = None,
+    labels_2: Optional[Sequence[str]] = None,
     title: Optional[str] = None,
     save_path: Optional[Union[str, Path]] = None,
     figsize: Optional[tuple] = None,
@@ -172,6 +210,12 @@ def plot_synteny(
         (doc1 left, doc2 right).
     chunk_labels : bool
         If ``True``, label each chunk segment with its index.
+    labels_1, labels_2 : sequence of str, optional
+        Text to draw on each chunk segment of the first/second document, instead
+        of its index -- section headings, for instance. Must be exactly one entry
+        per chunk. Supplying either turns labelling on regardless of
+        ``chunk_labels``, and moves the labels outside the track (index numerals
+        fit inside a segment; a heading does not).
     title : str, optional
         Plot title.  Auto-generated if ``None``.
     save_path : str or Path, optional
@@ -184,9 +228,18 @@ def plot_synteny(
     Returns
     -------
     matplotlib.figure.Figure
+
+    Raises
+    ------
+    ValueError
+        If ``labels_1``/``labels_2`` do not match the chunk count.
     """
     matrix = chunk_sim.matrix
     n1, n2 = matrix.shape
+
+    text_1 = _resolve_labels(n1, chunk_sim.chunk_indices_1, labels_1, chunk_labels, "labels_1")
+    text_2 = _resolve_labels(n2, chunk_sim.chunk_indices_2, labels_2, chunk_labels, "labels_2")
+    outside = labels_1 is not None or labels_2 is not None
 
     if title is None:
         title = f"Synteny: {chunk_sim.doc_id_1} vs {chunk_sim.doc_id_2}"
@@ -197,14 +250,14 @@ def plot_synteny(
         if figsize is None:
             figsize = (max(10, max(n1, n2) * 0.8), 6)
         fig, ax = plt.subplots(figsize=figsize)
-        _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, similarity_threshold, chunk_labels)
+        _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, similarity_threshold, text_1, text_2, outside)
     else:
         if figsize is None:
             figsize = (6, max(10, max(n1, n2) * 0.8))
         fig, ax = plt.subplots(figsize=figsize)
-        _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, similarity_threshold, chunk_labels)
+        _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, similarity_threshold, text_1, text_2, outside)
 
-    ax.set_title(title)
+    ax.set_title(title, pad=_title_pad(text_1) if outside else 6.0)
     ax.axis("off")
     fig.tight_layout()
 
@@ -214,7 +267,7 @@ def plot_synteny(
     return fig
 
 
-def _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, threshold, chunk_labels):
+def _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, threshold, text_1, text_2, outside):
     """Draw horizontal synteny: doc1 on top, doc2 on bottom."""
     bar_height = 0.08
     y_top = 1.0
@@ -236,16 +289,30 @@ def _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, threshold,
             linewidth=0.5,
         )
         ax.add_patch(rect)
-        if chunk_labels:
-            ax.text(
-                x + width1 / 2,
-                y_top - bar_height / 2,
-                str(chunk_sim.chunk_indices_1[i]),
-                ha="center",
-                va="center",
-                fontsize=6,
-                color="white",
-            )
+        if text_1 is not None:
+            if outside:
+                # clip_on=False + a tight bbox at save time lets a long heading
+                # run past the axes rather than being cut off mid-word.
+                ax.text(
+                    x + width1 / 2,
+                    y_top + 0.015,
+                    text_1[i],
+                    ha="left",
+                    va="center",
+                    fontsize=7,
+                    rotation=90,
+                    clip_on=False,
+                )
+            else:
+                ax.text(
+                    x + width1 / 2,
+                    y_top - bar_height / 2,
+                    text_1[i],
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    color="white",
+                )
 
     # Doc2 chunks (bottom)
     for j in range(n2):
@@ -260,16 +327,28 @@ def _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, threshold,
             linewidth=0.5,
         )
         ax.add_patch(rect)
-        if chunk_labels:
-            ax.text(
-                x + width2 / 2,
-                y_bottom + bar_height / 2,
-                str(chunk_sim.chunk_indices_2[j]),
-                ha="center",
-                va="center",
-                fontsize=6,
-                color="white",
-            )
+        if text_2 is not None:
+            if outside:
+                ax.text(
+                    x + width2 / 2,
+                    y_bottom - 0.015,
+                    text_2[j],
+                    ha="right",
+                    va="center",
+                    fontsize=7,
+                    rotation=90,
+                    clip_on=False,
+                )
+            else:
+                ax.text(
+                    x + width2 / 2,
+                    y_bottom + bar_height / 2,
+                    text_2[j],
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    color="white",
+                )
 
     # Ribbons
     ribbon_top = y_top - bar_height
@@ -292,14 +371,20 @@ def _draw_synteny_horizontal(ax, chunk_sim, matrix, n1, n2, colormap, threshold,
             )
             ax.add_patch(PathPatch(path, facecolor=(*color[:3], alpha), edgecolor="none"))
 
-    # Labels
-    ax.text(0.5, y_top + 0.02, chunk_sim.doc_id_1, ha="center", va="bottom", fontsize=10, fontweight="bold")
-    ax.text(0.5, y_bottom - 0.02, chunk_sim.doc_id_2, ha="center", va="top", fontsize=10, fontweight="bold")
+    # Document names. Centred above/below the track normally -- but that is
+    # exactly where outside chunk labels live, so shift them off to the left.
+    if outside:
+        name_kw = dict(ha="right", va="center", fontsize=10, fontweight="bold")
+        ax.text(-0.01, y_top - bar_height / 2, chunk_sim.doc_id_1, **name_kw)
+        ax.text(-0.01, y_bottom + bar_height / 2, chunk_sim.doc_id_2, **name_kw)
+    else:
+        ax.text(0.5, y_top + 0.02, chunk_sim.doc_id_1, ha="center", va="bottom", fontsize=10, fontweight="bold")
+        ax.text(0.5, y_bottom - 0.02, chunk_sim.doc_id_2, ha="center", va="top", fontsize=10, fontweight="bold")
     ax.set_xlim(-0.05, 1.05)
     ax.set_ylim(-0.12, 1.12)
 
 
-def _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, threshold, chunk_labels):
+def _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, threshold, text_1, text_2, outside):
     """Draw vertical synteny: doc1 on left, doc2 on right."""
     bar_width = 0.08
     x_left = 0.0
@@ -321,16 +406,19 @@ def _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, threshold, c
             linewidth=0.5,
         )
         ax.add_patch(rect)
-        if chunk_labels:
-            ax.text(
-                x_left + bar_width / 2,
-                y + height1 / 2,
-                str(chunk_sim.chunk_indices_1[i]),
-                ha="center",
-                va="center",
-                fontsize=6,
-                color="white",
-            )
+        if text_1 is not None:
+            if outside:
+                ax.text(x_left - 0.015, y + height1 / 2, text_1[i], ha="right", va="center", fontsize=7, clip_on=False)
+            else:
+                ax.text(
+                    x_left + bar_width / 2,
+                    y + height1 / 2,
+                    text_1[i],
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    color="white",
+                )
 
     # Doc2 chunks (right bar)
     for j in range(n2):
@@ -345,16 +433,19 @@ def _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, threshold, c
             linewidth=0.5,
         )
         ax.add_patch(rect)
-        if chunk_labels:
-            ax.text(
-                x_right - bar_width / 2,
-                y + height2 / 2,
-                str(chunk_sim.chunk_indices_2[j]),
-                ha="center",
-                va="center",
-                fontsize=6,
-                color="white",
-            )
+        if text_2 is not None:
+            if outside:
+                ax.text(x_right + 0.015, y + height2 / 2, text_2[j], ha="left", va="center", fontsize=7, clip_on=False)
+            else:
+                ax.text(
+                    x_right - bar_width / 2,
+                    y + height2 / 2,
+                    text_2[j],
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    color="white",
+                )
 
     # Ribbons
     ribbon_left = x_left + bar_width
@@ -374,27 +465,36 @@ def _draw_synteny_vertical(ax, chunk_sim, matrix, n1, n2, colormap, threshold, c
             path = _make_ribbon_path_vertical(y1_top, y1_bottom, ribbon_left, y2_top, y2_bottom, ribbon_right)
             ax.add_patch(PathPatch(path, facecolor=(*color[:3], alpha), edgecolor="none"))
 
-    # Labels
-    ax.text(
-        x_left - 0.02,
-        0.5,
-        chunk_sim.doc_id_1,
-        ha="right",
-        va="center",
-        fontsize=10,
-        fontweight="bold",
-        rotation=90,
-    )
-    ax.text(
-        x_right + 0.02,
-        0.5,
-        chunk_sim.doc_id_2,
-        ha="left",
-        va="center",
-        fontsize=10,
-        fontweight="bold",
-        rotation=270,
-    )
+    # Document names. The rotated side placement collides with outside chunk
+    # labels, which occupy the same margins; sit them above each track instead.
+    if outside:
+        ax.text(
+            x_left + bar_width / 2, 1.02, chunk_sim.doc_id_1, ha="center", va="bottom", fontsize=10, fontweight="bold"
+        )
+        ax.text(
+            x_right - bar_width / 2, 1.02, chunk_sim.doc_id_2, ha="center", va="bottom", fontsize=10, fontweight="bold"
+        )
+    else:
+        ax.text(
+            x_left - 0.02,
+            0.5,
+            chunk_sim.doc_id_1,
+            ha="right",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            rotation=90,
+        )
+        ax.text(
+            x_right + 0.02,
+            0.5,
+            chunk_sim.doc_id_2,
+            ha="left",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            rotation=270,
+        )
     ax.set_xlim(-0.15, 1.15)
     ax.set_ylim(-0.05, 1.05)
 
@@ -409,6 +509,7 @@ def plot_chord(
     similarity_threshold: float = 0.7,
     min_chunk_distance: int = 3,
     chunk_labels: bool = False,
+    labels: Optional[Sequence[str]] = None,
     title: Optional[str] = None,
     save_path: Optional[Union[str, Path]] = None,
     figsize: tuple = (10, 10),
@@ -431,6 +532,11 @@ def plot_chord(
         Filters out trivially similar adjacent chunks.
     chunk_labels : bool
         If ``True``, label each arc segment with its index.
+    labels : sequence of str, optional
+        Text to draw on each arc instead of its index -- the section each chunk
+        falls in, for instance. Must be exactly one entry per chunk. Supplying
+        it turns labelling on regardless of ``chunk_labels``, and rotates the
+        labels to follow the circle so long names stay legible.
     title : str, optional
         Plot title.  Auto-generated if ``None``.
     save_path : str or Path, optional
@@ -443,6 +549,12 @@ def plot_chord(
     Returns
     -------
     matplotlib.figure.Figure
+
+    Raises
+    ------
+    ValueError
+        If ``chunk_sim`` is not a self-comparison, or ``labels`` does not match
+        the chunk count.
     """
     if chunk_sim.doc_id_1 != chunk_sim.doc_id_2:
         raise ValueError(
@@ -453,6 +565,9 @@ def plot_chord(
 
     matrix = chunk_sim.matrix
     n = matrix.shape[0]
+
+    text = _resolve_labels(n, chunk_sim.chunk_indices_1, labels, chunk_labels, "labels")
+    rotate_labels = labels is not None
 
     if title is None:
         title = f"Self-similarity: {chunk_sim.doc_id_1}"
@@ -496,17 +611,35 @@ def plot_chord(
             edgecolor="white",
             linewidth=0.5,
         )
-        if chunk_labels:
+        if text is not None:
             mid_theta = (arc_starts[i] + arc_ends[i]) / 2
-            label_r = outer_r + 0.06
-            ax.text(
-                label_r * np.cos(mid_theta),
-                label_r * np.sin(mid_theta),
-                str(chunk_sim.chunk_indices_1[i]),
-                ha="center",
-                va="center",
-                fontsize=6,
-            )
+            if rotate_labels:
+                # Read outward along the radius, flipped on the left half so no
+                # label is upside-down. clip_on=False keeps long names whole; a
+                # tight bbox at save time makes room for them.
+                degrees = np.degrees(mid_theta) % 360.0
+                flip = 90.0 < degrees < 270.0
+                ax.text(
+                    (outer_r + 0.02) * np.cos(mid_theta),
+                    (outer_r + 0.02) * np.sin(mid_theta),
+                    text[i],
+                    ha="right" if flip else "left",
+                    va="center",
+                    fontsize=7,
+                    rotation=degrees - 180.0 if flip else degrees,
+                    rotation_mode="anchor",
+                    clip_on=False,
+                )
+            else:
+                label_r = outer_r + 0.06
+                ax.text(
+                    label_r * np.cos(mid_theta),
+                    label_r * np.sin(mid_theta),
+                    text[i],
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                )
 
     # Draw chords
     ribbon_half = chunk_angle * 0.35
@@ -535,7 +668,7 @@ def plot_chord(
     margin = outer_r * 0.25
     ax.set_xlim(-outer_r - margin, outer_r + margin)
     ax.set_ylim(-outer_r - margin, outer_r + margin)
-    ax.set_title(title, pad=20)
+    ax.set_title(title, pad=_title_pad(text) if rotate_labels else 20.0)
     ax.axis("off")
 
     if save_path:
