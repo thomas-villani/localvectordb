@@ -286,18 +286,27 @@ Configuration:
        embedding_model="gemini-embedding-001"
    )
 
-   # Advanced configuration with task optimization
+   # Advanced configuration
    db = VectorDB(
        "my_db",
        "./vector_storage",
        embedding_provider="google",
        embedding_model="gemini-embedding-001",
        embedding_config={
-           "api_key": "your_api_key_here",     # Or better yet, use GEMINI_API_KEY environment variable instead
-           "task_type": "retrieval_document",  # Optimize for document storage
-           "requested_dimensions": 1536,       # Control output size
-           "normalize": True                    # L2-normalize vectors
+           "api_key": "your_api_key_here",  # Or better yet, use GEMINI_API_KEY environment variable instead
+           "requested_dimensions": 1536,    # Control output size
+           "normalize": True                 # L2-normalize vectors
        }
+   )
+
+   # Force one task type on both sides -- for clustering or classification,
+   # where a query and a passage should be embedded the same way.
+   db = VectorDB(
+       "my_db",
+       "./vector_storage",
+       embedding_provider="google",
+       embedding_model="gemini-embedding-001",
+       embedding_config={"task_type": "clustering"}
    )
 
 Available Models:
@@ -306,20 +315,28 @@ Available Models:
 
 Task Types:
 
-- ``semantic_similarity``: General text similarity (default)
+- ``retrieval_document``: For documents being indexed (default on the ingest side)
+- ``retrieval_query``: For search queries (default on the query side)
+- ``semantic_similarity``: General text similarity
 - ``classification``: Text classification tasks
 - ``clustering``: Document clustering
-- ``retrieval_document``: For documents being indexed
-- ``retrieval_query``: For search queries
 - ``code_retrieval_query``: Code search queries
 - ``question_answering``: Q&A systems
 - ``fact_verification``: Fact-checking tasks
+
+Google takes the task on the API request rather than as a text prefix, so this is
+the provider-native form of :ref:`retrieval prefixes <retrieval-prefixes>` — and
+it defaults the same way, asymmetrically. Set ``document_task_type`` /
+``query_task_type`` to choose the two sides independently, or ``task_type`` to
+force one task on both.
 
 Configuration Options:
 
 - ``requested_dimensions``: Output size (128-3072), defaults to 3072
 - ``normalize``: L2-normalize vectors (recommended for non-3072 outputs)
-- ``task_type``: Task-specific optimization
+- ``document_task_type``: Task type for ingest (default ``retrieval_document``)
+- ``query_task_type``: Task type for search (default ``retrieval_query``)
+- ``task_type``: Force a single task type on both sides
 
 SentenceTransformers Provider
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -613,12 +630,12 @@ Provider-native task parameters
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Google and Jina take an explicit task on the API request instead of a text prefix.
-These are configured per side and default to the single-task setting, so existing
-configurations are unaffected:
+These are configured per side. Google defaults to asymmetric retrieval; Jina
+defaults to its single-task setting. Both can be set explicitly:
 
 .. code-block:: python
 
-   # Google
+   # Google -- these two are the defaults
    embedding_config={
        "document_task_type": "retrieval_document",
        "query_task_type": "retrieval_query",
@@ -815,7 +832,11 @@ plus provider-specific options.
 | Google AI            | ``api_key``                   | API key (default: ``$GEMINI_API_KEY`` or                 |
 |                      |                               | ``$GOOGLE_API_KEY``)                                     |
 +----------------------+-------------------------------+----------------------------------------------------------+
-| Google AI            | ``task_type``                 | Task-specific optimization (see Google AI section above) |
+| Google AI            | ``task_type``                 | Force one task type on both sides (see Google AI above)  |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``document_task_type``        | Ingest-side task (default ``retrieval_document``)        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Google AI            | ``query_task_type``           | Query-side task (default ``retrieval_query``)            |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | Google AI            | ``requested_dimensions``      | Output size (128-3072)                                   |
 +----------------------+-------------------------------+----------------------------------------------------------+

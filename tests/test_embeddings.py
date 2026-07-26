@@ -976,7 +976,7 @@ class TestGoogleEmbeddings:
         expected_contents = [{"parts": [{"text": "hello"}]}, {"parts": [{"text": "world"}]}]
         expected_payload = {
             "contents": expected_contents,
-            "embedding_config": {"task_type": "SEMANTIC_SIMILARITY", "output_dimensionality": 3},
+            "embedding_config": {"task_type": "RETRIEVAL_DOCUMENT", "output_dimensionality": 3},
         }
         mock_client.post.assert_called_once_with(
             f"{provider.base_url}/models/{provider.model}:embedContent",

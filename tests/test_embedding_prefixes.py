@@ -13,6 +13,7 @@ on the exact text handed to the provider rather than on results.
 """
 
 import asyncio
+import inspect
 import sqlite3
 from pathlib import Path
 from typing import Any, List
@@ -106,6 +107,41 @@ class TestModelPrefixResolution:
 
 @pytest.mark.unit
 @pytest.mark.embedding
+class TestEveryProviderAcceptsPrefixKwargs:
+    """Every registered provider must accept the prefix kwargs in ``__init__``.
+
+    Reopening a database re-creates its provider with the prefixes saved in the
+    config table (see ``_resolve_saved_prefixes``), so a provider whose
+    ``__init__`` lacks ``**kwargs`` raises TypeError and the database cannot be
+    opened at all. This shipped broken for ``ollama`` -- the default provider --
+    because the prefix tests all used a Mock subclass, which absorbs anything.
+    Assert against the registry so a provider added later is covered too.
+    """
+
+    @pytest.mark.parametrize("name", sorted(EmbeddingRegistry._providers))
+    @pytest.mark.parametrize("kwarg", ["document_prefix", "query_prefix", "auto_prefix"])
+    def test_init_signature_accepts(self, name, kwarg):
+        cls = EmbeddingRegistry._providers[name]
+        if isinstance(cls, str):  # lazily-imported entry point; nothing to inspect
+            pytest.skip(f"{name} is a lazy entry point")
+        params = inspect.signature(cls.__init__).parameters
+        accepted = kwarg in params or any(p.kind is p.VAR_KEYWORD for p in params.values())
+        assert accepted, f"{cls.__name__}.__init__ rejects {kwarg!r}; reopening its databases will raise TypeError"
+
+    def test_ollama_constructs_with_saved_prefixes(self):
+        """The default provider, built the way a reopen builds it."""
+        from localvectordb.embeddings import OllamaEmbeddings
+
+        provider = OllamaEmbeddings("embeddinggemma:300m", document_prefix=GEMMA_DOC, query_prefix=GEMMA_QUERY)
+        assert (provider.document_prefix, provider.query_prefix) == (GEMMA_DOC, GEMMA_QUERY)
+
+    def test_openai_constructs_with_saved_prefixes(self):
+        from localvectordb.embeddings import OpenAIEmbeddings
+
+        provider = OpenAIEmbeddings("text-embedding-3-small", api_key="k", document_prefix="D: ", query_prefix="Q: ")
+        assert (provider.document_prefix, provider.query_prefix) == ("D: ", "Q: ")
+
+
 class TestProviderPrefixConfiguration:
     def test_auto_detected_from_model_name(self):
         provider = MockEmbeddings("embeddinggemma", auto_prefix=True)
@@ -228,12 +264,20 @@ class TestNativeTaskProviders:
         with pytest.raises(ValueError, match="query_task"):
             JinaEmbeddings("jina-embeddings-v4", api_key="k", query_task="not-a-task")
 
-    def test_google_defaults_both_sides_to_task_type(self):
+    def test_google_defaults_to_asymmetric_retrieval(self):
         from localvectordb.embeddings import GoogleEmbeddings
 
         provider = GoogleEmbeddings("gemini-embedding-001", api_key="k", requested_dimensions=8)
-        assert provider.document_task_type == provider.task_type == "SEMANTIC_SIMILARITY"
-        assert provider.query_task_type == "SEMANTIC_SIMILARITY"
+        assert provider.task_type is None
+        assert provider.document_task_type == "RETRIEVAL_DOCUMENT"
+        assert provider.query_task_type == "RETRIEVAL_QUERY"
+
+    def test_google_single_task_type_forces_both_sides(self):
+        """The escape hatch for non-retrieval work: clustering both sides alike."""
+        from localvectordb.embeddings import GoogleEmbeddings
+
+        provider = GoogleEmbeddings("gemini-embedding-001", api_key="k", task_type="clustering")
+        assert provider.document_task_type == provider.query_task_type == "CLUSTERING"
 
     def test_google_per_side_task_types(self):
         from localvectordb.embeddings import GoogleEmbeddings
