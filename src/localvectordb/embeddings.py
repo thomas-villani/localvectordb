@@ -685,6 +685,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
         num_ctx: Optional[int] = None,
         num_batch: Optional[int] = None,
         truncate: bool = True,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             model,
@@ -693,6 +694,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
             retry_delay=retry_delay,
             max_concurrent_requests=max_concurrent_requests,
             base_url=base_url,
+            **kwargs,
         )
         # 127.0.0.1 rather than localhost: Ollama binds IPv4 only by default,
         # and on Windows "localhost" tries ::1 first, stalling ~2.5s per
@@ -907,6 +909,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         base_url: Optional[str] = None,
         requested_dimensions: Optional[int] = None,
         normalize: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             model,
@@ -915,6 +918,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             retry_delay=retry_delay,
             max_concurrent_requests=max_concurrent_requests,
             base_url=base_url,
+            **kwargs,
         )
 
         api_key = resolve_env_ref(api_key, what="api_key")
@@ -1301,15 +1305,17 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         {"semantic_similarity", "classification", "clustering", "retrieval_document", "retrieval_query",
         "code_retrieval_query", "question_answering", "fact_verification"}
         See: https://ai.google.dev/gemini-api/docs/embeddings#supported-task-types
-        Used for both sides unless overridden by the two parameters below.
+        Setting this forces the *same* task type on both sides, which turns off
+        the asymmetric retrieval default. Use it for non-retrieval workloads
+        (clustering, classification); for search, leave it unset.
     document_task_type : str, optional
-        Task type to send when embedding for storage (e.g. "retrieval_document").
-        Google's API takes an explicit task type instead of a text prefix, so this
-        is the provider-native form of ``document_prefix``. Defaults to
-        ``task_type``.
+        Task type to send when embedding for storage. Google's API takes an
+        explicit task type instead of a text prefix, so this is the
+        provider-native form of ``document_prefix``. Defaults to
+        ``"retrieval_document"``, or to ``task_type`` if that was given.
     query_task_type : str, optional
-        Task type to send when embedding a search query (e.g. "retrieval_query").
-        Defaults to ``task_type``.
+        Task type to send when embedding a search query. Defaults to
+        ``"retrieval_query"``, or to ``task_type`` if that was given.
     requested_dimensions : int, optional
         MRL-controlled output size (128–3072). Defaults to 3072 if not set by API.
         If provided, get_dimension() returns this value without a test call.
@@ -1337,16 +1343,18 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         retry_delay: float = 1.0,
         max_concurrent_requests: int = 5,
         api_key: Optional[str] = None,
-        task_type: Literal[
-            "semantic_similarity",
-            "classification",
-            "clustering",
-            "retrieval_document",
-            "retrieval_query",
-            "code_retrieval_query",
-            "question_answering",
-            "fact_verification",
-        ] = "semantic_similarity",
+        task_type: Optional[
+            Literal[
+                "semantic_similarity",
+                "classification",
+                "clustering",
+                "retrieval_document",
+                "retrieval_query",
+                "code_retrieval_query",
+                "question_answering",
+                "fact_verification",
+            ]
+        ] = None,
         document_task_type: Optional[str] = None,
         query_task_type: Optional[str] = None,
         requested_dimensions: Optional[int] = None,
@@ -1376,13 +1384,17 @@ class GoogleEmbeddings(HTTPEmbeddingProvider):
         # API base URL (v1beta as in public docs)
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 
-        # Optional config. The per-side task types default to the single
-        # ``task_type`` so existing configurations embed byte-for-byte as before;
-        # set them to switch Google into proper asymmetric retrieval mode
-        # (retrieval_document / retrieval_query).
-        self.task_type = str(task_type).upper()
-        self.document_task_type = str(document_task_type).upper() if document_task_type else self.task_type
-        self.query_task_type = str(query_task_type).upper() if query_task_type else self.task_type
+        # Google takes an explicit task type instead of a text prefix, so this is
+        # its form of document_prefix/query_prefix -- and the same asymmetry
+        # applies: a query and the passage that answers it are different kinds of
+        # text and should not be embedded identically. Default accordingly.
+        # A single ``task_type`` still forces both sides, for the non-retrieval
+        # workloads (clustering, classification) where that is the right call.
+        self.task_type = str(task_type).upper() if task_type else None
+        default_document = self.task_type or "RETRIEVAL_DOCUMENT"
+        default_query = self.task_type or "RETRIEVAL_QUERY"
+        self.document_task_type = str(document_task_type).upper() if document_task_type else default_document
+        self.query_task_type = str(query_task_type).upper() if query_task_type else default_query
         self.requested_dimensions = requested_dimensions
         self.normalize = normalize
 

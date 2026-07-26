@@ -30,8 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model is assumed symmetric rather than guessed at.
 - **Per-side task parameters for Google and Jina**, whose APIs take an explicit
   task instead of a text prefix: `document_task_type`/`query_task_type` and
-  `document_task`/`query_task` respectively. Both default to the existing
-  single-task setting, so current configurations embed exactly as before.
+  `document_task`/`query_task` respectively.
+- **A worked visualization gallery in the docs.** The comparison/visualization
+  page now shows real output for every plot type — embedding map, clusters,
+  similarity heatmap, similarity graph, synteny and chord — over 60 Qasper papers
+  encoded with `embeddinggemma:300m`, plus a cross-encoder comparison of the same
+  corpus under four models with query overlays. Regenerate with
+  `python -m benchmarks.doc_figures`, which reads the existing benchmark
+  embedding cache and makes no API calls.
+- **Text labels on synteny and chord diagrams.** `plot_synteny(labels_1=,
+  labels_2=)` and `plot_chord(labels=)` take one string per chunk — a section
+  heading, say — instead of the chunk index, which is what turns a chord from
+  "chunk 17 resembles chunk 3" into "the evaluation section restates the
+  introduction". Text labels are drawn outside the track and, on a chord, rotated
+  to follow the circle. Supported by the interactive renderers too, where they
+  additionally appear in each segment's hover text, and reachable through
+  `db.visualize_synteny()` / `db.visualize_chord()` with or without
+  `interactive=True`.
 
 ### Changed
 
@@ -44,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EmbeddingGemma is markedly prefix-sensitive, which is what motivated the prefix
   support above — it is applied automatically, so no extra configuration is
   needed.
+
+- **Google embeddings now default to asymmetric retrieval task types**
+  (`retrieval_document` on ingest, `retrieval_query` on search) instead of
+  `semantic_similarity` on both sides. `semantic_similarity` is the wrong setting
+  for search, and was silently costing relevance on every Google-backed database.
+  Passing a single `task_type` still forces that one task on both sides, which is
+  what you want for clustering or classification. Databases built on the old
+  default should be re-ingested to move their stored vectors into the new space.
 
 - **A lighter `cli` install extra.** The `lvdb` command now installs with just
   `pip install "localvectordb[cli]"` (click + tomli-w + bcrypt) — enough to
@@ -108,6 +131,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`plot_similarity_graph(layout="spring")` now runs a force-directed layout.**
+  It previously ignored `layout` entirely and always embedded the full
+  similarity matrix with MDS, which places every node by its distance to every
+  other whether or not an edge is drawn — so thresholded-away similarities still
+  dragged nodes around and connected components never visibly grouped. The
+  Fruchterman-Reingold layout added here only feels the edges that survive the
+  threshold, and takes `gravity`/`spread` to trade label legibility against how
+  sharply clusters separate. The previous behaviour is still available as
+  `layout="mds"`; an unrecognised layout now raises instead of silently falling
+  back.
+- **`chunk_labels` now does something in the interactive synteny and chord
+  plots.** Both accepted the parameter, documented it, and never drew anything —
+  they had no test coverage at all, so nothing caught it.
+- **`plot_embedding_map()` no longer drops the category legend when queries are
+  overlaid.** Colouring by category and passing `queries=` both called
+  `ax.legend()`, and the second call replaced the first, so the category key
+  silently vanished from exactly the plot that needed it most.
 - **Metadata-field vector search no longer probes for a non-existent
   `embed_query`.** `_metadata_field_search` branched on
   `hasattr(provider, "embed_query")`, which no provider implemented — dead code
