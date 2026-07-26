@@ -16,6 +16,7 @@ from localvectordb.chunking import (
     PositionTrackingChunker,
     SectionChunker,
     SentenceChunker,
+    StructureChunker,
     TokenChunker,
     WordChunker,
     reconstruct_document,
@@ -1128,3 +1129,148 @@ class TestCodeBlockReconstruction:
         chunks = chunker.chunk(text)
         assert len(chunks) == 1
         assert reconstruct_document(chunks, len(text)) == text
+
+
+@pytest.mark.unit
+@pytest.mark.chunking
+class TestStructureChunker:
+    """``structure`` cuts at the strongest human-authored boundary in budget.
+
+    The point of the strategy is that a cut lands where the *document* says a
+    thought ends, so these tests assert on where the boundaries fall, not merely
+    that chunking succeeded. Reconstruction fidelity is covered generically by
+    TestReconstructionFidelity (which parametrizes over every registered method).
+    """
+
+    def test_heading_finder_supplies_non_markdown_headings(self):
+        """A caller-supplied finder promotes positions to heading strength.
+
+        The built-in pattern is markdown-only, so plain-text documents (contracts,
+        RFCs, statutes) carry no heading at all and the chunker silently degrades
+        to a paragraph splitter. This is the escape hatch for that.
+
+        The clause line sits after a *single* newline while an earlier paragraph
+        break competes inside the same budget, so the default chunker cuts at the
+        paragraph and only promotion to heading strength moves the cut.
+        """
+        text = (
+            "Alpha alpha alpha.\n\nBeta beta beta.\nARTICLE II\n" "Gamma gamma gamma gamma gamma gamma gamma gamma.\n"
+        )
+        article_at = text.index("ARTICLE II")
+        paragraph_at = text.index("Beta")
+
+        plain = StructureChunker(max_tokens=12, min_fill=0.0).chunk(text)
+        assert [c.position.start for c in plain] == [0, paragraph_at, 47]
+
+        found = StructureChunker(max_tokens=12, min_fill=0.0, heading_finder=lambda t: [t.index("ARTICLE II")]).chunk(
+            text
+        )
+        assert [c.position.start for c in found] == [0, article_at, 47]
+        assert "".join(c.content for c in found) == text, "tiling must stay exact"
+
+    def test_heading_finder_must_be_callable(self):
+        with pytest.raises(ValueError, match="callable"):
+            StructureChunker(max_tokens=100, heading_finder=[1, 2, 3])
+
+    def test_prefers_heading_over_weaker_boundaries(self):
+        """A heading in the window beats paragraph/line/sentence breaks.
+
+        The budget (25) comfortably spans the heading, and there are stronger-
+        filling sentence and paragraph breaks before it, so cutting at the
+        heading is a genuine precedence choice rather than the only option.
+        """
+        body = "Alpha sentence here. Beta sentence here. Gamma sentence here.\n\nDelta paragraph text.\n"
+        text = f"{body}\n## Heading Two\n\nEpsilon paragraph text that continues on for a while.\n"
+        chunker = StructureChunker(max_tokens=25, min_fill=0.0)
+        chunks = chunker.chunk(text)
+
+        heading_at = text.index("## Heading Two")
+        starts = [c.position.start for c in chunks]
+        assert len(chunks) > 1, "text must split for the precedence check to mean anything"
+        assert heading_at in starts, f"expected a chunk to open at the heading; starts={starts}"
+
+    def test_prefers_paragraph_over_line_break(self):
+        """With no heading available, the blank-line break wins over a newline."""
+        text = "alpha line one\nalpha line two\n\nbeta paragraph starts here and runs on\n"
+        chunker = StructureChunker(max_tokens=12, min_fill=0.0)
+        chunks = chunker.chunk(text)
+
+        para_end = text.index("beta")
+        assert para_end in [c.position.start for c in chunks]
+
+    def test_respects_max_tokens(self):
+        text = ("This is a sentence with a reasonable number of words in it. " * 60).strip()
+        chunker = StructureChunker(max_tokens=50)
+        chunks = chunker.chunk(text)
+
+        assert len(chunks) > 1
+        for c in chunks:
+            assert chunker.count_tokens(c.content.strip()) <= 50
+
+    def test_min_fill_prevents_sliver_chunks(self):
+        """An early boundary must not produce a tiny chunk when min_fill is set."""
+        text = "Tiny.\n\n" + ("Body sentence that continues for a while. " * 40)
+        lax = StructureChunker(max_tokens=100, min_fill=0.0).chunk(text)
+        strict = StructureChunker(max_tokens=100, min_fill=0.5).chunk(text)
+
+        assert lax[0].tokens < strict[0].tokens
+        assert strict[0].tokens >= 50 * 0.5
+
+    def test_text_without_boundaries_still_chunks(self):
+        """No newline, no sentence end: falls back to an in-budget hard cut."""
+        text = "wordy " * 400
+        chunker = StructureChunker(max_tokens=30)
+        chunks = chunker.chunk(text)
+
+        assert len(chunks) > 1
+        assert reconstruct_document(chunks, len(text)) == text
+        for c in chunks:
+            assert chunker.count_tokens(c.content.strip()) <= 30
+
+    def test_does_not_cut_inside_fenced_code(self):
+        """Positions inside a fence are not candidates, so a fence stays whole."""
+        text = (
+            "Intro paragraph before the code.\n\n"
+            "```python\n"
+            "# Heading-like comment\n"
+            "def f():\n"
+            "    return 1\n"
+            "\n"
+            "def g():\n"
+            "    return 2\n"
+            "```\n\n"
+            "Trailing paragraph after the code.\n"
+        )
+        chunker = StructureChunker(max_tokens=60, min_fill=0.0)
+        chunks = chunker.chunk(text)
+
+        fence_start = text.index("```python")
+        fence_end = text.index("```\n\n") + len("```")
+        for c in chunks:
+            assert not (fence_start < c.position.start < fence_end), (
+                f"chunk boundary at {c.position.start} falls inside the fenced block " f"({fence_start}..{fence_end})"
+            )
+
+    def test_overlap_must_be_zero(self):
+        with pytest.raises(ValueError, match="overlap"):
+            StructureChunker(max_tokens=100, overlap=2)
+
+    def test_invalid_min_fill_rejected(self):
+        with pytest.raises(ValueError, match="min_fill"):
+            StructureChunker(max_tokens=100, min_fill=1.0)
+
+    def test_factory_creates_and_forces_zero_overlap(self):
+        """Like ``sections``, a global chunk_overlap must not break the method."""
+        chunker = ChunkerFactory.create_chunker("structure", max_tokens=200, overlap=3)
+        assert isinstance(chunker, StructureChunker)
+        assert chunker.overlap == 0
+        assert "structure" in ChunkerFactory.list_methods()
+
+    def test_factory_passes_min_fill(self):
+        chunker = ChunkerFactory.create_chunker("structure", max_tokens=200, overlap=0, min_fill=0.6)
+        assert chunker.min_fill == 0.6
+
+    def test_empty_and_whitespace_inputs(self):
+        assert StructureChunker().chunk("") == []
+        ws = StructureChunker().chunk("  \n\n ")
+        assert reconstruct_document(ws, len("  \n\n ")) == "  \n\n "
