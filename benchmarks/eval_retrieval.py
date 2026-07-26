@@ -189,11 +189,24 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def _database_key(dataset: str, model: str, index_type: str, chunking: Dict[str, Any], max_docs: Optional[int]) -> str:
-    parts = [dataset, model.replace("/", "_"), index_type]
+def _database_key(
+    dataset: str,
+    model: str,
+    index_type: str,
+    chunking: Dict[str, Any],
+    max_docs: Optional[int],
+    *,
+    no_prefix: bool = False,
+) -> str:
+    parts = [dataset, model.replace("/", "_").replace(":", "-"), index_type]
     parts += [f"{k}={v}" for k, v in sorted(chunking.items())]
     if max_docs is not None:
         parts.append(f"max{max_docs}")
+    if no_prefix:
+        # Prefixes change the stored vectors, so the two arms cannot share a
+        # cache entry -- and must not, or an A/B silently compares a build to
+        # itself. See project note on the cache key ignoring code changes.
+        parts.append("noprefix")
     return "__".join(parts)
 
 
@@ -206,6 +219,7 @@ def build_database(
     chunking: Dict[str, Any],
     max_docs: Optional[int],
     rebuild: bool,
+    no_prefix: bool = False,
 ):
     """Build (or reopen) the evaluation database. Returns an open LocalVectorDB.
 
@@ -217,7 +231,8 @@ def build_database(
     """
     from localvectordb import LocalVectorDB
 
-    key = _database_key(dataset.name, model, index_type, chunking, max_docs)
+    key = _database_key(dataset.name, model, index_type, chunking, max_docs, no_prefix=no_prefix)
+    embedding_config = {"auto_prefix": False} if no_prefix else None
     base = DATA_DIR / "db"
     base.mkdir(parents=True, exist_ok=True)
     sentinel = base / f"{key}.complete"
@@ -236,7 +251,13 @@ def build_database(
     if sentinel.exists():
         logger.info("Reusing cached database %s", key)
         return LocalVectorDB(
-            key, base, embedding_provider=provider, embedding_model=model, faiss_index_type=index_type, **chunking
+            key,
+            base,
+            embedding_provider=provider,
+            embedding_model=model,
+            embedding_config=embedding_config,
+            faiss_index_type=index_type,
+            **chunking,
         )
 
     if any(base.glob(f"{key}.*")):
@@ -248,7 +269,18 @@ def build_database(
 
     logger.info("Building database %s (%d documents) -- this is the slow part", key, len(dataset.corpus))
     db = LocalVectorDB(
-        key, base, embedding_provider=provider, embedding_model=model, faiss_index_type=index_type, **chunking
+        key,
+        base,
+        embedding_provider=provider,
+        embedding_model=model,
+        embedding_config=embedding_config,
+        faiss_index_type=index_type,
+        **chunking,
+    )
+    logger.info(
+        "  prefixes: document=%r query=%r",
+        db.embedding_provider.document_prefix,
+        db.embedding_provider.query_prefix,
     )
     doc_ids = list(dataset.corpus)
     # One upsert call rewrites the whole FAISS file once (see T2.4), so ingest in
@@ -304,7 +336,17 @@ def format_table(results: Dict[str, Dict[str, float]], *, default_label: Optiona
     return "\n".join([header, rule, *rows])
 
 
-def build_report(dataset, results: Dict[str, Dict[str, float]], *, k: int, index_type: str, chunking, model, provider):
+def build_report(
+    dataset,
+    results: Dict[str, Dict[str, float]],
+    *,
+    k: int,
+    index_type: str,
+    chunking,
+    model,
+    provider,
+    prefixes: Optional[Dict[str, str]] = None,
+):
     default = next((c.label for c in build_sweep(all_scoring=False, rerank=False) if c.is_library_default), None)
     return {
         "schema": 1,
@@ -315,7 +357,7 @@ def build_report(dataset, results: Dict[str, Dict[str, float]], *, k: int, index
             "documents": len(dataset.corpus),
             "queries": len(dataset.queries),
         },
-        "embedding": {"provider": provider, "model": model},
+        "embedding": {"provider": provider, "model": model, **(prefixes or {})},
         "index": {"faiss_index_type": index_type},
         "chunking": dict(chunking),
         "k": k,
@@ -374,6 +416,10 @@ examples:
   python benchmarks/eval_retrieval.py --all-scoring        # evidence for T1.6
   python benchmarks/eval_retrieval.py --rerank             # evidence for T1.2 (slow)
   python benchmarks/eval_retrieval.py --max-docs 500 --max-queries 30   # smoke test
+
+  # A/B a prefix-sensitive model against itself (each arm caches separately):
+  python benchmarks/eval_retrieval.py --embedding-provider ollama --embedding-model embeddinggemma:300m
+  python benchmarks/eval_retrieval.py --embedding-provider ollama --embedding-model embeddinggemma:300m --no-prefix
 """,
     )
     p.add_argument("--dataset", default=EVAL_DATASET, choices=("scifact", "nfcorpus"))
@@ -388,6 +434,11 @@ examples:
     )
     p.add_argument("--rerank", action="store_true", help="Add cross-encoder reranked variants (T1.2). Slow on CPU.")
     p.add_argument("--rebuild", action="store_true", help="Discard the cached database and re-ingest.")
+    p.add_argument(
+        "--no-prefix",
+        action="store_true",
+        help="Disable automatic retrieval prefixes. The control arm when measuring what the prefix is worth.",
+    )
     p.add_argument("--download-only", action="store_true")
     p.add_argument("--save-baseline", action="store_true", help=f"Write {BASELINE_JSON.name} (tracked in git).")
     p.add_argument("--check", action="store_true", help="Compare against the committed baseline; non-zero on drop.")
@@ -431,7 +482,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         chunking=chunking,
         max_docs=args.max_docs,
         rebuild=args.rebuild,
+        no_prefix=args.no_prefix,
     )
+
+    # Read from the open database, not from args: a reopened cache reproduces the
+    # prefixes it was *built* with, which is the thing the numbers reflect.
+    prefixes = {
+        "document_prefix": db.embedding_provider.document_prefix,
+        "query_prefix": db.embedding_provider.query_prefix,
+    }
+    logger.info("Prefixes in use: document=%r query=%r", prefixes["document_prefix"], prefixes["query_prefix"])
 
     reranker = _make_reranker() if args.rerank else None
     configs = build_sweep(all_scoring=args.all_scoring, rerank=args.rerank)
@@ -453,6 +513,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         chunking=chunking,
         model=args.embedding_model,
         provider=args.embedding_provider,
+        prefixes=prefixes,
     )
 
     print()
