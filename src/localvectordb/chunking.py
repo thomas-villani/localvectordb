@@ -5,10 +5,11 @@ This module provides chunkers that track exact positions in the original documen
 enabling perfect reconstruction and precise highlighting.
 """
 
+import bisect
 import logging
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 import tiktoken
 
@@ -1470,6 +1471,172 @@ class CodeBlockChunker(PositionTrackingChunker):
         return [chunk for chunk in chunks if chunk.content.strip()]
 
 
+class StructureChunker(PositionTrackingChunker):
+    """Cut at the strongest human-authored boundary inside the size envelope.
+
+    Fixed-size chunkers cut at a token count and hope the cut lands somewhere
+    harmless. This one collects the boundaries a human actually wrote -- headings,
+    blank-line paragraph breaks, line breaks, sentence ends -- ranks them by
+    strength, and cuts at the strongest one still inside the token budget. A
+    chunk therefore ends where the document says a thought ends, and only falls
+    back to an arbitrary cut when the span offers no boundary at all.
+
+    Why this shape (measured, see ``experiments/span-length-crossover-findings.md``):
+
+    * Retrieval quality rises monotonically as chunks shrink, but the return per
+      stored vector collapses after ~500 tokens (Qasper/openai: 1000 -> 500 buys
+      +0.056 nDCG, 500 -> 250 buys +0.017 for 2.4x the vectors). ``max_tokens``
+      is a budget knob; the boundary choice is what is free.
+    * Past roughly 2k tokens a single embedding of a span is beaten by an average
+      of its parts, so oversized chunks are not merely wasteful, they are worse.
+      Keeping chunks inside the envelope is a correctness property, not a
+      preference.
+
+    ``overlap`` must be 0, as for :class:`SectionChunker`: these chunks are
+    logical units, and re-emitting the tail of one inside the next would break
+    the boundary alignment that is the entire point. Reconstruction is exact --
+    chunks tile the source contiguously, separators folded onto the preceding
+    chunk.
+
+    Parameters
+    ----------
+    max_tokens : int
+        Upper bound on chunk size; the cut is chosen at or before this budget.
+    min_fill : float
+        Fraction of ``max_tokens`` a chunk must reach before a boundary is
+        eligible, so a heading two lines in cannot produce a sliver. Set to 0 to
+        always cut at the earliest strongest boundary.
+    heading_finder : Callable[[str], Iterable[int]], optional
+        Supplies extra heading-strength cut positions, for documents whose
+        structure is not markdown. The built-in ``_HEADING`` recognises markdown
+        ATX only; a corpus of plain-text contracts, RFCs, or statutes carries no
+        ``#`` at all, and on such text this chunker silently degrades to a
+        paragraph splitter (measured: no better than fixed-size, and worse once
+        its under-fill is counted). Positions from this callable are *added* to
+        the markdown ones, never replace them.
+
+        Detecting such headings well is not a matter of a wider regex --
+        numbered headings collide with cross-references ("pursuant to Section
+        2.05") and with a table of contents that repeats every heading verbatim,
+        so a usable finder needs its own precision filtering. That belongs to
+        the caller who knows the document family, not here.
+    """
+
+    # Cut BEFORE a heading so it opens the next chunk; cut AFTER the other
+    # separators so they close the preceding one. Both keep the tiling exact.
+    _HEADING = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+\S", re.MULTILINE)
+    _PARAGRAPH = re.compile(r"\n[ \t]*\n[ \t\r\n]*")
+    _LINE = re.compile(r"\n")
+    _SENTENCE = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+
+    STRENGTH_HEADING = 4
+    STRENGTH_PARAGRAPH = 3
+    STRENGTH_LINE = 2
+    STRENGTH_SENTENCE = 1
+
+    def __init__(
+        self,
+        max_tokens: int = 500,
+        overlap: int = 0,
+        min_fill: float = 0.35,
+        heading_finder: Optional[Callable[[str], Iterable[int]]] = None,
+        **kwargs,
+    ):
+        if overlap != 0:
+            raise ValueError("`overlap` must be 0 for StructureChunker")
+        if not 0.0 <= min_fill < 1.0:
+            raise ValueError(f"`min_fill` must be in [0.0, 1.0), found: {min_fill}")
+        if heading_finder is not None and not callable(heading_finder):
+            raise ValueError("`heading_finder` must be callable")
+        super().__init__(max_tokens, 0, **kwargs)
+        self.min_fill = min_fill
+        self.heading_finder = heading_finder
+
+    def _boundaries(self, text: str) -> List[Tuple[int, int]]:
+        """Sorted (position, strength) cut candidates; strongest wins a tie."""
+        found: dict[int, int] = {}
+        fence_spans = find_code_fence_spans(text)
+
+        def add(pos: int, strength: int) -> None:
+            # A cut inside a fenced code block would split a construct the author
+            # deliberately kept whole, so those positions are not candidates.
+            if 0 < pos < len(text) and not _position_in_spans(pos, fence_spans):
+                if found.get(pos, 0) < strength:
+                    found[pos] = strength
+
+        for m in self._HEADING.finditer(text):
+            add(m.start(), self.STRENGTH_HEADING)
+        if self.heading_finder is not None:
+            for pos in self.heading_finder(text):
+                add(int(pos), self.STRENGTH_HEADING)
+        for m in self._PARAGRAPH.finditer(text):
+            add(m.end(), self.STRENGTH_PARAGRAPH)
+        for m in self._LINE.finditer(text):
+            add(m.end(), self.STRENGTH_LINE)
+        for m in self._SENTENCE.finditer(text):
+            add(m.end(), self.STRENGTH_SENTENCE)
+        return sorted(found.items())
+
+    def _chars_per_token(self, text: str) -> float:
+        """Calibrate the char/token ratio on this document (one tokenisation)."""
+        total = self.count_tokens(text)
+        return (len(text) / total) if total else 4.0
+
+    def _budget_end(self, text: str, start: int, cpt: float) -> int:
+        """Furthest offset from ``start`` that still fits ``max_tokens``."""
+        end = min(len(text), start + max(1, int(self.max_tokens * cpt)))
+        # Shrink while over budget, then grow while comfortably under. Both loops
+        # are bounded; `_ensure_chunks_within_limit` is the final safety net.
+        for _ in range(24):
+            if end <= start + 1:
+                break
+            over = self.count_tokens(text[start:end]) - self.max_tokens
+            if over <= 0:
+                break
+            end = max(start + 1, end - max(1, int(over * cpt)))
+        for _ in range(24):
+            if end >= len(text):
+                break
+            step = max(1, int((self.max_tokens - self.count_tokens(text[start:end])) * cpt))
+            probe = min(len(text), end + step)
+            if probe == end or self.count_tokens(text[start:probe]) > self.max_tokens:
+                break
+            end = probe
+        return end
+
+    def chunk(self, text: str) -> List[Chunk]:
+        guard = self._empty_guard(text)
+        if guard is not None:
+            return guard
+
+        cpt = self._chars_per_token(text)
+        boundaries = self._boundaries(text)
+        positions = [p for p, _ in boundaries]
+
+        chunks: List[Chunk] = []
+        pos = 0
+        while pos < len(text):
+            end = self._budget_end(text, pos, cpt)
+            if end >= len(text):
+                chunks.append(self._create_chunk(text, pos, len(text), len(chunks)))
+                break
+
+            floor = pos + int(self.max_tokens * self.min_fill * cpt)
+            lo = bisect.bisect_right(positions, floor)
+            hi = bisect.bisect_right(positions, end)
+            cut = end
+            if lo < hi:
+                # Strongest boundary in the window; latest position breaks ties so
+                # the chunk is as full as that strength allows.
+                cut = max(boundaries[lo:hi], key=lambda b: (b[1], b[0]))[0]
+            if cut <= pos:  # never stall
+                cut = end
+            chunks.append(self._create_chunk(text, pos, cut, len(chunks)))
+            pos = cut
+
+        return self._ensure_chunks_within_limit(chunks, text)
+
+
 # The unit `chunk_overlap` is measured in, per chunking method. IMPORTANT: only
 # "tokens" shares its unit with `chunk_size` (which is always a token budget) —
 # for every other method `overlap` is a count of that method's own unit, so an
@@ -1484,6 +1651,9 @@ _OVERLAP_UNIT_NAME: dict[str, str] = {
     "code-blocks": "lines",
     "sections": "sections",
     "delimiter": "segments",
+    # StructureChunker requires overlap == 0 (logical units, like "sections"),
+    # so the unit name exists only for error/warning message consistency.
+    "structure": "boundaries",
 }
 
 # Rough average tokens-per-unit for the count-based methods, used ONLY for a
@@ -1514,6 +1684,7 @@ class ChunkerFactory:
         "characters": CharChunker,
         "paragraphs": ParagraphChunker,
         "sections": SectionChunker,
+        "structure": StructureChunker,
         "code-blocks": CodeBlockChunker,
         "delimiter": DelimiterChunker,
     }
@@ -1604,6 +1775,11 @@ class ChunkerFactory:
             return chunker_class(max_tokens, overlap=overlap, **kwargs)
         elif method == "sections":
             # Sections typically don't overlap
+            return chunker_class(max_tokens, overlap=0, **kwargs)
+        elif method == "structure":
+            # Logical units, like `sections`: forced to 0 here so a global
+            # `chunk_overlap` doesn't make switching method an error.
+            # `min_fill` (if supplied) rides through **kwargs.
             return chunker_class(max_tokens, overlap=0, **kwargs)
         else:
             return chunker_class(max_tokens, overlap, **kwargs)
