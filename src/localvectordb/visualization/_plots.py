@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -63,18 +63,21 @@ def plot_embedding_map(
         # Scale: base_size to 4x for high scores
         sizes = base_size + max_scores * base_size * 3
 
+    # Legend entries are collected rather than drawn as we go: a second
+    # ax.legend() call replaces the first, so colouring by category *and*
+    # overlaying queries would otherwise silently drop the category key.
+    handles: List[Any] = []
+
     if color_by is not None:
         unique_labels = sorted(set(color_by))
         cmap = plt.colormaps.get_cmap("tab10").resampled(len(unique_labels))
         label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
         colors = [label_to_idx[lbl] for lbl in color_by]
         ax.scatter(coords[:, 0], coords[:, 1], c=colors, s=sizes, cmap=cmap, alpha=0.7, edgecolors="w", linewidth=0.5)
-        # Legend
         handles = [
             plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=cmap(i), markersize=8, label=lbl)
             for i, lbl in enumerate(unique_labels)
         ]
-        ax.legend(handles=handles, title="Category", loc="best")
     else:
         ax.scatter(coords[:, 0], coords[:, 1], s=sizes, alpha=0.7, edgecolors="w", linewidth=0.5)
 
@@ -89,17 +92,21 @@ def plot_embedding_map(
             q_emb = q.query_embedding.reshape(1, -1)
             q_coords = project_new_points(projection, q_emb)
             marker = query_markers[qi % len(query_markers)]
-            ax.scatter(
-                q_coords[0, 0],
-                q_coords[0, 1],
-                marker=marker,
-                s=200,
-                edgecolors="black",
-                linewidth=1.5,
-                zorder=5,
-                label=f"Q: {q.query_text[:30]}",
+            handles.append(
+                ax.scatter(
+                    q_coords[0, 0],
+                    q_coords[0, 1],
+                    marker=marker,
+                    s=200,
+                    edgecolors="black",
+                    linewidth=1.5,
+                    zorder=5,
+                    label=f"Q: {q.query_text[:30]}",
+                )
             )
-        ax.legend(loc="best")
+
+    if handles:
+        ax.legend(handles=handles, title="Category" if color_by is not None else None, loc="best")
 
     ax.set_title(title)
     ax.set_xlabel("Component 1")
