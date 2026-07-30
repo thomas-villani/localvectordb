@@ -138,7 +138,9 @@ def setup(args: argparse.Namespace) -> Corpus:
         qids=units.query_ids,
         poolers={
             ("chunk", "doc"): ed.Pooler(units.chunk_doc),
-            ("chunk", "section"): ed.Pooler(units.chunk_section),
+            # Only the chunk->section roll-up is affected by attribution; a
+            # chunk's DOCUMENT is unambiguous, and section->* is identity.
+            ("chunk", "section"): ed.make_pooler(units, assign=getattr(args, "assign", "midpoint")),
             ("section", "doc"): ed.Pooler(units.section_doc),
             ("section", "section"): ed.Pooler(units.section_ids),
         },
@@ -213,6 +215,118 @@ def _splits_gold(starts: Dict[str, List[int]], doc: str, s: int, e: int) -> bool
     return i < len(b) and b[i] < e
 
 
+def _rank_diag(
+    units_sorted: Sequence[str],
+    pooled: np.ndarray,
+    qids: Sequence[str],
+    qrels: Dict[str, Dict[str, int]],
+    k: int = ed.PRIMARY_K,
+) -> Dict[str, Dict[str, float]]:
+    """Per-query retrieval geometry: where gold lands, and how crowded it is above.
+
+    Motivated by the `both_whole` cell -- queries where NEITHER arm cut the gold
+    evidence, which carry 65% of the gain at 1000 tokens and which splitting
+    therefore cannot explain. Distractor suppression is the surviving candidate:
+    the same gold unit ranks higher because fewer non-gold units outscore it.
+
+    nDCG alone cannot separate that from the gold score simply rising, because
+    both move the rank. These three do separate them:
+
+    ``gold_rank``    rank of the best-scoring gold unit (1 = top). A pure
+                     distractor effect moves this without touching ``gold_score``.
+    ``margin``       best_gold - best_nongold. Sign flips exactly when gold takes
+                     top-1; magnitude says how contested the top of the list is.
+    ``n_nongold_topk`` non-gold units inside the cut-off. The direct reading of
+                     "does this chunker generate more high-scoring false hits?"
+
+    ``gold_score`` is reported alongside so a rank change can be attributed to
+    the numerator or the denominator rather than assumed.
+
+    ``gold_rank`` is reported but is the WRONG statistic to conclude from: over
+    Qasper's ~4k sections its mean sits near 190, so it is dominated by queries
+    whose gold is nowhere near the cut-off and cannot move nDCG@k at all. Two
+    companions are commensurate with the metric and should carry the reading:
+
+    ``gold_hit_k``   gold inside the top k (the only queries nDCG@k can see).
+    ``gold_rr``      reciprocal rank, which discounts the tail the way nDCG does.
+    """
+    if ed.SCOPE_QID is not None:
+        pooled = np.where(ed._scope_mask(qids, units_sorted), pooled, -np.inf)
+    idx = {u: i for i, u in enumerate(units_sorted)}
+
+    gold_mask = np.zeros(pooled.shape, dtype=bool)
+    has_gold = np.zeros(len(qids), dtype=bool)
+    for qi, qid in enumerate(qids):
+        for unit, rel in (qrels.get(qid) or {}).items():
+            j = idx.get(unit)
+            if rel > 0 and j is not None:
+                gold_mask[qi, j] = True
+                has_gold[qi] = True
+
+    gold_only = np.where(gold_mask, pooled, -np.inf)
+    nongold_only = np.where(gold_mask, -np.inf, pooled)
+    best_gold = gold_only.max(axis=1)
+    best_nongold = nongold_only.max(axis=1)
+    # Strict `>` so ties do not inflate the rank; matches argsort's stable order.
+    n_above = (nongold_only > best_gold[:, None]).sum(axis=1)
+
+    topk = np.argsort(-pooled, axis=1)[:, :k]
+    n_gold_topk = gold_mask[np.arange(len(qids))[:, None], topk].sum(axis=1)
+
+    out: Dict[str, Dict[str, float]] = {}
+    for qi, qid in enumerate(qids):
+        if not has_gold[qi]:
+            continue
+        rank = float(n_above[qi] + 1)
+        out[qid] = {
+            "gold_rank": rank,
+            "gold_rr": 1.0 / rank,
+            "gold_hit_k": float(rank <= k),
+            "gold_score": float(best_gold[qi]),
+            "margin": float(best_gold[qi] - best_nongold[qi]),
+            # The only MULTI-gold statistic here, and the one commensurate with
+            # nDCG@k on this data: 27.7% of Qasper queries carry >=2 gold sections
+            # (mean 1.39, max 19), so every `best gold` statistic above can move
+            # OPPOSITE to nDCG -- an arm may rank its single best gold slightly
+            # worse while placing more golds inside the cut-off. Observed, not
+            # hypothetical (§6.18). Read this row when comparing against nDCG.
+            "n_gold_topk": float(n_gold_topk[qi]),
+            "n_nongold_topk": float(k - n_gold_topk[qi]),
+        }
+    return out
+
+
+_DIAG_KEYS = (
+    "gold_rank",
+    "gold_rr",
+    "gold_hit_k",
+    "gold_score",
+    "margin",
+    "n_gold_topk",
+    "n_nongold_topk",
+)
+
+
+def _reach_stats(units: ed.CorpusUnits, pooler: ed.Pooler) -> Dict[str, float]:
+    """How much of the section pool this assignment can actually retrieve.
+
+    A section with no member chunk is not merely disadvantaged -- it is absent
+    from the ranking, so no query can ever retrieve it however good its text is.
+    Midpoint attribution strands ~20% of Qasper sections and ~32% of MAUD's this
+    way, and that stranding has already contaminated two analyses as a confound
+    (span-length §2, dual §4/2). Overlap assignment should shrink it toward zero;
+    reporting it makes the mechanism visible rather than inferred.
+    """
+    real = set(units.section_ids)
+    reachable = real & set(pooler.units)
+    return {
+        "sections": float(len(real)),
+        "reachable": float(len(reachable)),
+        "unreachable_pct": 100.0 * (len(real) - len(reachable)) / len(real) if real else 0.0,
+        "mean_members": float(len(pooler.src) / len(pooler.units)) if pooler.units else 0.0,
+    }
+
+
 def run_split(
     corpus: Corpus,
     mkey: str,
@@ -222,6 +336,7 @@ def run_split(
     allow_embed: bool,
     heading_finder: Optional[Callable[[str], Iterable[int]]] = None,
     pooling: str = "max",
+    assign: str = "midpoint",
 ) -> Dict:
     if len(arms) != 2:
         raise SystemExit("split needs exactly two arms: --chunk-methods 'baseline,candidate'")
@@ -230,16 +345,21 @@ def run_split(
     detector = _section_detector(corpus)
 
     pq: Dict[str, Dict[str, float]] = {}
+    diag: Dict[str, Dict[str, Dict[str, float]]] = {}
+    reach: Dict[str, Dict[str, float]] = {}
     starts: Dict[str, Dict[str, List[int]]] = {}
     base_chunks: Dict[str, List[Tuple[int, int, str]]] = {}
     for arm in arms:
         ckw = {"heading_finder": heading_finder} if (heading_finder and arm.method == "structure") else None
         units = ed.load_units(corpus.bench, arm.size_for(ck), detector, arm.method, arm.overlap, ckw)
         vec = load_vectors(mkey, units, allow_embed)
-        pooler = ed.Pooler(units.chunk_section, mode=pooling)
+        pooler = ed.make_pooler(units, mode=pooling, assign=assign)
         sims = (_unit(vec.queries) @ _unit(vec.chunks).T).astype(np.float32)
-        s, _ = ed.score_arm(pooler.units, pooler.pool(sims), units.query_ids, corpus.bench.section_qrels)
+        pooled = pooler.pool(sims)
+        reach[arm.label] = _reach_stats(units, pooler)
+        s, _ = ed.score_arm(pooler.units, pooled, units.query_ids, corpus.bench.section_qrels)
         pq[arm.label] = dict(zip(units.query_ids, s, strict=True))
+        diag[arm.label] = _rank_diag(pooler.units, pooled, units.query_ids, corpus.bench.section_qrels)
         starts[arm.label] = _chunk_starts(corpus.bench, arm, ck, heading_finder)
         if arm is arms[0]:  # baseline attribution, for the per-query recoverability split
             for (a, b), doc, sid in zip(units.chunk_spans, units.chunk_doc, units.chunk_section, strict=True):
@@ -271,7 +391,7 @@ def run_split(
         sb = any(_splits_gold(starts[base], d, s, e) for d, s, e in sp)
         sc = any(_splits_gold(starts[cand], d, s, e) for d, s, e in sp)
         scattered, most = _base_split_shape(sp)
-        rows.append((sb, sc, pq[base][qid], pq[cand][qid], scattered, most))
+        rows.append((sb, sc, pq[base][qid], pq[cand][qid], scattered, most, qid))
 
     grand = float(np.mean([r[3] - r[2] for r in rows]))
     cells = {
@@ -297,11 +417,19 @@ def run_split(
         "base": base,
         "candidate": cand,
         "chunk_tokens": ck,
+        "assign": assign,
+        "pooling": pooling,
+        "reach": reach,
         "n_queries": len(rows),
         "gold_split_rate": {
             base: float(np.mean([r[0] for r in rows])),
             cand: float(np.mean([r[1] for r in rows])),
         },
+        # Per-arm absolute means. Needed because `assign` moves BOTH arms, so the
+        # candidate-minus-baseline delta alone cannot show that an assignment
+        # change lifted the whole board.
+        "base_ndcg_all": float(np.mean([r[2] for r in rows])),
+        "cand_ndcg_all": float(np.mean([r[3] for r in rows])),
         "overall": ed.paired_bootstrap(np.array([r[3] for r in rows]), np.array([r[2] for r in rows])),
         "cells": {},
     }
@@ -311,7 +439,7 @@ def run_split(
             out["cells"][name] = {"n": 0}  # type: ignore[index]
             continue
         b = ed.paired_bootstrap(np.array([r[3] for r in sel]), np.array([r[2] for r in sel]))
-        out["cells"][name] = {  # type: ignore[index]
+        cell: Dict[str, Any] = {
             "n": len(sel),
             "base_ndcg": float(np.mean([r[2] for r in sel])),
             "cand_ndcg": float(np.mean([r[3] for r in sel])),
@@ -319,6 +447,24 @@ def run_split(
             # Fraction of the OVERALL delta this cell accounts for.
             "share_of_gain": float((len(sel) / len(rows)) * b["delta"] / grand) if grand else float("nan"),
         }
+        # Rank geometry for the same queries, paired over the arms. Only queries
+        # both arms produced a diagnostic for -- an arm can drop one if its unit
+        # set never contains the gold section.
+        paired = [r[6] for r in sel if r[6] in diag[base] and r[6] in diag[cand]]
+        if paired:
+            cell["diag_n"] = len(paired)
+            cell["diag"] = {
+                key: {
+                    "base": float(np.mean([diag[base][q][key] for q in paired])),
+                    "cand": float(np.mean([diag[cand][q][key] for q in paired])),
+                    **ed.paired_bootstrap(
+                        np.array([diag[cand][q][key] for q in paired]),
+                        np.array([diag[base][q][key] for q in paired]),
+                    ),
+                }
+                for key in _DIAG_KEYS
+            }
+        out["cells"][name] = cell  # type: ignore[index]
     return out
 
 
@@ -327,8 +473,14 @@ def print_split(res: Dict[str, Any]) -> None:
     print("GOLD-EVIDENCE SPLIT: is the win 'did not cut the relevant span in half'?")
     print("=" * 92)
     print(f"  {res['candidate']} vs {res['base']} @ {res['chunk_tokens']} tokens, {res['n_queries']} queries")
+    print(f"  assign={res.get('assign', 'midpoint')}  pooling={res.get('pooling', 'max')}")
     for k, v in res["gold_split_rate"].items():
         print("    gold split rate  %-18s %5.1f%%" % (k, 100 * v))
+    for k, r in (res.get("reach") or {}).items():
+        print(
+            "    reachability     %-18s %5.1f%% unreachable  (%d/%d sections, %.2f chunks each)"
+            % (k, r["unreachable_pct"], r["reachable"], r["sections"], r["mean_members"])
+        )
     print("\n  %-26s %6s %8s %8s %9s %19s %6s %8s" % ("cell", "n", "base", "cand", "delta", "95% CI", "p_win", "share"))
     for name, c in res["cells"].items():
         if not c["n"]:
@@ -349,7 +501,31 @@ def print_split(res: Dict[str, Any]) -> None:
             )
         )
     o = res["overall"]
-    print("\n  overall %+.4f [%+.4f,%+.4f] p_win %.2f" % (o["delta"], o["ci_lo"], o["ci_hi"], o["p_win"]))
+    nan = float("nan")
+    print(
+        "\n  ABSOLUTE  %s %.4f   %s %.4f"
+        % (res["base"], res.get("base_ndcg_all", nan), res["candidate"], res.get("cand_ndcg_all", nan))
+    )
+    print("  overall %+.4f [%+.4f,%+.4f] p_win %.2f" % (o["delta"], o["ci_lo"], o["ci_hi"], o["p_win"]))
+
+    # Rank geometry. `both_whole` is the cell that matters: splitting is excluded
+    # there by construction, so anything moving is a different mechanism.
+    print("\n" + "-" * 92)
+    print("RANK GEOMETRY -- what moves when the gold span was never cut?")
+    print("-" * 92)
+    print("  %-26s %-16s %8s %8s %9s %19s %6s" % ("cell", "signal", "base", "cand", "delta", "95% CI", "p_win"))
+    for name, c in res["cells"].items():
+        if not c.get("diag"):
+            continue
+        for key, d in c["diag"].items():
+            print(
+                "  %-26s %-16s %8.3f %8.3f %+9.3f  [%+.3f,%+.3f] %6.2f"
+                % (name, key, d["base"], d["cand"], d["delta"], d["ci_lo"], d["ci_hi"], d["p_win"])
+            )
+        print()
+    print("  Reading: gold_hit_k/gold_rr UP with n_nongold_topk DOWN = distractor suppression.")
+    print("  gold_score UP with gold_hit_k/gold_rr flat = the gold vector simply got better.")
+    print("  gold_rank is tail-dominated (mean ~190 of ~4k units) -- do NOT conclude from it.")
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +745,7 @@ class Centroids:
     n_chunks: np.ndarray
 
 
-def section_centroids(chunk_vecs: np.ndarray, units: ed.CorpusUnits) -> Centroids:
+def section_centroids(chunk_vecs: np.ndarray, units: ed.CorpusUnits, assign: str = "midpoint") -> Centroids:
     """Mean of member chunk vectors per section, in ``units.section_ids`` row order.
 
     Members are unit-normalised before averaging so a long chunk cannot dominate
@@ -583,12 +759,23 @@ def section_centroids(chunk_vecs: np.ndarray, units: ed.CorpusUnits) -> Centroid
     acc = np.zeros((len(units.section_ids), chunk_vecs.shape[1]), dtype=np.float64)
     cnt = np.zeros(len(units.section_ids), dtype=np.int64)
     member = _unit(chunk_vecs.astype(np.float64))
-    for j, sid in enumerate(units.chunk_section):
-        i = row.get(sid)
-        if i is None:  # chunk owned by a heading-less span (never embedded as a section)
-            continue
-        acc[i] += member[j]
-        cnt[i] += 1
+    # `overlap` makes a chunk a member of every section it touches, so a section
+    # that owns nothing by midpoint still gets a centroid. That removes the
+    # chunkless-section confound (§2) at its source instead of filtering around
+    # it, which is what the published correction had to do.
+    if assign == "overlap":
+        membership: Sequence[Sequence[str]] = units.chunk_sections_all
+    elif assign == "midpoint":
+        membership = [[sid] for sid in units.chunk_section]
+    else:
+        raise ValueError(f"unknown assignment {assign!r}")
+    for j, sids in enumerate(membership):
+        for sid in sids:
+            i = row.get(sid)
+            if i is None:  # heading-less span (never embedded as a section)
+                continue
+            acc[i] += member[j]
+            cnt[i] += 1
     nonempty = cnt > 0
     acc[nonempty] /= cnt[nonempty, None]
     coherence = np.linalg.norm(acc, axis=1)  # pre-normalisation norm == part agreement
@@ -704,7 +891,52 @@ def did_pooling(
     }
 
 
-def run_hier(corpus: Corpus, model_keys: List[str], allow_embed: bool) -> Dict[str, object]:
+def rank_diag_by_band(
+    scored: Dict[str, ed.ArmScores],
+    corpus: Corpus,
+    target: str,
+    bands: Dict[str, str],
+) -> Dict[str, Any]:
+    """§3.1 T3's requested diagnostic: gold rank + distractors above it, by band
+    and representation.
+
+    T3 tried a *distribution* statistic -- the z-score of the gold section against
+    its own pool -- and it did NOT flip with the outcome: raw-span's margin stayed
+    higher than the centroid's in EVERY band, including >8k where it loses nDCG by
+    0.26. T3's own diagnosis was that a mean-margin statistic summarises the whole
+    pool while nDCG is decided at the top of the ranking, and it asked for a
+    rank-based probe instead.
+
+    This is that probe. The falsifiable expectation: if the crossover is a ranking
+    phenomenon, ``gold_rr`` / ``gold_hit_k`` must flip sign where nDCG flips --
+    favouring rawspan in <=2k and the centroid in 2k-8k. If they do NOT flip, the
+    crossover is not explained by where gold lands relative to distractors, and no
+    fifth mechanism story should be attached (§6.6's rule).
+    """
+    qrels = corpus.qrels_by_target[target]
+    diags = {name: _rank_diag(a.units, a.mat, corpus.qids, qrels) for name, a in scored.items()}
+    out: Dict[str, Any] = {}
+    for band, _, _ in BANDS:
+        qs = [q for q in corpus.qids if bands[q] == band and all(q in d for d in diags.values())]
+        if len(qs) < 10:
+            continue
+        cell: Dict[str, Any] = {
+            "n": len(qs),
+            "arms": {name: {k: float(np.mean([diags[name][q][k] for q in qs])) for k in _DIAG_KEYS} for name in scored},
+        }
+        if "section_rawspan" in scored and "section_centroid" in scored:
+            cell["rawspan_minus_centroid"] = {
+                k: ed.paired_bootstrap(
+                    np.array([diags["section_rawspan"][q][k] for q in qs]),
+                    np.array([diags["section_centroid"][q][k] for q in qs]),
+                )
+                for k in _DIAG_KEYS
+            }
+        out[band] = cell
+    return out
+
+
+def run_hier(corpus: Corpus, model_keys: List[str], allow_embed: bool, assign: str = "midpoint") -> Dict[str, object]:
     bands, band_counts = query_bands(corpus)
     logger.info("Query bands by longest gold section: %s", band_counts)
 
@@ -715,6 +947,7 @@ def run_hier(corpus: Corpus, model_keys: List[str], allow_embed: bool) -> Dict[s
         "bands": {name: {"lo": lo, "hi": None if hi == float("inf") else hi} for name, lo, hi in BANDS},
         "query_band_counts": band_counts,
         "section_band_counts": section_band_counts,
+        "assign": assign,
         "models": {},
     }
     per_model_pq: Dict[str, Dict[str, np.ndarray]] = {}
@@ -722,7 +955,7 @@ def run_hier(corpus: Corpus, model_keys: List[str], allow_embed: bool) -> Dict[s
     for mkey in model_keys:
         logger.info("=== %s ===", mkey)
         vec = load_vectors(mkey, corpus.units, allow_embed)
-        cstats = section_centroids(vec.chunks, corpus.units)
+        cstats = section_centroids(vec.chunks, corpus.units, assign)
         cent, empty = cstats.vectors, cstats.empty
         n_empty = int(empty.sum())
 
@@ -773,6 +1006,13 @@ def run_hier(corpus: Corpus, model_keys: List[str], allow_embed: bool) -> Dict[s
                 "boot_banded_rawspan_vs_centroid": {
                     name: _band_boot(raw.pq_ndcg, ctr.pq_ndcg, corpus.qids, bands, name) for name, _, _ in BANDS
                 },
+                # §3.1 T3: the rank-based probe T3 asked for, by band and arm.
+                "rank_diag": rank_diag_by_band(
+                    {"chunk": chunk, "section_rawspan": raw, "section_centroid": ctr},
+                    corpus,
+                    target,
+                    bands,
+                ),
             }
             per_model_pq.setdefault(target, {})[f"{mkey}/section_rawspan"] = raw.pq_ndcg
             per_model_pq[target][f"{mkey}/chunk"] = chunk.pq_ndcg
@@ -1540,6 +1780,37 @@ def run_route(corpus: Corpus, pairs: List[Tuple[str, str]], allow_embed: bool) -
 # ---------------------------------------------------------------------------
 
 
+def _print_rank_diag(t: Dict[str, Any], target: str) -> None:
+    """§3.1 T3's probe. The reading is a SIGN TEST, not a magnitude test.
+
+    nDCG flips across ~2k (rawspan wins <=2k, loses 2k-8k), so a statistic that
+    explains the outcome must flip with it.
+
+    **Read `n_gold_topk` first.** It is the only multi-gold row, and 27.7% of
+    Qasper queries have >=2 gold sections. The `gold_*` rows all describe the
+    single BEST gold and provably fail to track nDCG here: they stay one sign
+    across both bands while nDCG flips (§6.18). That is the same defect T3's
+    z-margin had -- wrong statistic for the metric -- not a fact about the
+    representations.
+    """
+    rd = t.get("rank_diag") or {}
+    if not rd:
+        return
+    print("\n      RANK GEOMETRY (T3 probe) -- rawspan minus centroid, per band")
+    print("      %-8s %5s %-14s %9s %21s %6s" % ("band", "n", "signal", "delta", "95% CI", "p_win"))
+    for band, cell in rd.items():
+        rmc = cell.get("rawspan_minus_centroid") or {}
+        for key in ("n_gold_topk", "gold_rr", "gold_hit_k", "gold_rank"):
+            d = rmc.get(key)
+            if not d:
+                continue
+            print(
+                "      %-8s %5d %-14s %+9.4f  [%+.4f,%+.4f] %6.2f"
+                % (band, cell["n"], key, d["delta"], d["ci_lo"], d["ci_hi"], d["p_win"])
+            )
+        print()
+
+
 def print_hier(res: Dict[str, Any]) -> None:
     print("\n" + "=" * 78)
     print("SECTION REPRESENTATION: raw-span vs centroid, banded by gold-section length")
@@ -1584,6 +1855,7 @@ def print_hier(res: Dict[str, Any]) -> None:
                         "      band %-6s %+.4f [%+.4f,%+.4f] p(win)=%.2f"
                         % (name, bb["delta"], bb["ci_lo"], bb["ci_hi"], bb["p_win"])
                     )
+            _print_rank_diag(t, target)
 
     if res["pooling_did"]:
         print("\n" + "-" * 78)
@@ -1740,6 +2012,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     sub = ap.add_subparsers(dest="cmd", required=True)
     h = sub.add_parser("hier", parents=[common], help="Centroid vs raw-span sections, banded by span length.")
     h.add_argument("--models", default="openai,egemma", help="Comma-separated model keys.")
+    h.add_argument(
+        "--assign",
+        choices=("midpoint", "overlap"),
+        default="midpoint",
+        help="Chunk->section attribution for BOTH the centroid members and the chunk roll-up. "
+        "'overlap' removes chunkless sections outright, so the §2 confound needs no filtering.",
+    )
     r = sub.add_parser("route", parents=[common], help="Per-query routing/weighting vs a global weight.")
     r.add_argument("--pairs", default=ed.P2_DEFAULT_PAIRS, help="chunkmodel:sectionmodel pairs, comma-separated.")
     d = sub.add_parser("diag", parents=[common], help="Why raw-span loses past ~2k + dynamic-chunking criterion.")
@@ -1771,6 +2050,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default="max",
         help="Chunk->section pooling. 'mean' tests mechanisms that rest on max-pooling redundancy.",
     )
+    sp.add_argument(
+        "--assign",
+        choices=("midpoint", "overlap"),
+        default="midpoint",
+        help="Chunk->section attribution. 'overlap' credits a chunk to EVERY section it touches.",
+    )
     ra = sub.add_parser("ratio", parents=[common], help="Sweep chunk:section ratio; recoverability and benefit vs it.")
     ra.add_argument("--models", default="openai", help="Single model key (only used with --score).")
     ra.add_argument("--chunk-sizes", default="125,250,500,1000", help="Comma-separated chunk token sizes.")
@@ -1794,7 +2079,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"Unknown model keys: {unknown}", file=sys.stderr)
             return 1
         if args.cmd == "hier":
-            res = run_hier(corpus, keys, args.allow_embed)
+            res = run_hier(corpus, keys, args.allow_embed, args.assign)
             print_hier(res)
         elif args.cmd == "diag":
             res = run_diag(corpus, keys, args.allow_embed)
@@ -1812,6 +2097,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 args.allow_embed,
                 HEADING_FINDERS[args.heading_finder],
                 args.pooling,
+                args.assign,
             )
             print_split(res)
         elif args.cmd == "ratio":
