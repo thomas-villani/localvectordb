@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Typ
 import httpx
 import numpy as np
 
-from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
+from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError, ProviderHTTPError
 from localvectordb.utils import resolve_env_ref
 
 # What a batch of text is being embedded *for*. Asymmetric retrieval models are
@@ -296,6 +296,13 @@ class EmbeddingProvider(ABC):
         if isinstance(error, httpx.HTTPStatusError):
             # Retry on 429 (rate limit) and 5xx (server errors)
             return bool(error.response.status_code == 429 or 500 <= error.response.status_code < 600)
+
+        # Providers that render an API error body into a message must still carry
+        # the status (ProviderHTTPError). Without this branch a 429 raised as a
+        # plain message is invisible here and a bulk ingest dies on a rate limit.
+        status = getattr(error, "status_code", None)
+        if isinstance(status, int):
+            return status == 429 or 500 <= status < 600
 
         # Retry on general connection/timeout issues
         if isinstance(error, (ConnectionError, TimeoutError)):
@@ -1098,7 +1105,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                         error_data = response.json()
                         if "error" in error_data:
                             error_msg = error_data["error"].get("message", str(error_data["error"]))
-                            raise RuntimeError(f"OpenAI error: {error_msg}")
+                            raise ProviderHTTPError(f"OpenAI error: {error_msg}", status_code=response.status_code)
                     except (ValueError, KeyError, TypeError):
                         # Error body was not the expected JSON shape; fall back
                         # to raise_for_status() below for a generic HTTP error.
@@ -1118,7 +1125,7 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
                     error_data = response.json()
                     if "error" in error_data:
                         error_msg = error_data["error"].get("message", str(error_data["error"]))
-                        raise RuntimeError(f"OpenAI error: {error_msg}")
+                        raise ProviderHTTPError(f"OpenAI error: {error_msg}", status_code=response.status_code)
                 except (ValueError, KeyError, TypeError):
                     # Error body was not the expected JSON shape; fall back
                     # to raise_for_status() below for a generic HTTP error.

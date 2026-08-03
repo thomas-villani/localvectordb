@@ -113,6 +113,26 @@ class EmbeddingError(BaseLocalVectorDBException, RuntimeError):
     """Raised when an embedding provider fails to generate embeddings."""
 
 
+class ProviderHTTPError(EmbeddingError):
+    """A provider HTTP failure that *keeps* its status code.
+
+    Providers used to report an API error as a bare ``RuntimeError`` built from
+    the JSON error message, discarding the status. That made the error
+    unclassifiable: ``EmbeddingProvider._should_retry`` matches on ``httpx``
+    types and a status code, so a **429 was never retried** despite
+    ``max_retries=3`` and a docstring promising "automatic retry handling" -- a
+    bulk ingest died on a rate limit whose own message said "try again in
+    174ms".
+
+    Subclasses :class:`EmbeddingError` (and therefore ``RuntimeError``), so any
+    caller already catching those is unaffected.
+    """
+
+    def __init__(self, message: str, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class OllamaNotFoundError(EmbeddingError):
     """Raised when Ollama is not installed or not running."""
 
