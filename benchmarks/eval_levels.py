@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import dataclasses
 import json
 import logging
 import sys
@@ -2019,6 +2020,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Chunk->section attribution for BOTH the centroid members and the chunk roll-up. "
         "'overlap' removes chunkless sections outright, so the §2 confound needs no filtering.",
     )
+    h.add_argument(
+        "--window-chars",
+        type=int,
+        default=None,
+        help="Override every model's section window (chars), turning pooling granularity into a "
+        "swept variable. section_rawspan mean-pools a section over window-sized pieces, so as this "
+        "shrinks the rawspan arm converges on section_centroid -- they are ONE operator at two "
+        "granularities, not two representations. Also clears window_tokens so the override is not "
+        "silently outranked. Needs --allow-embed: a new window regroups long spans into different "
+        "window texts, which are cache misses (~one pass over the section corpus).",
+    )
     r = sub.add_parser("route", parents=[common], help="Per-query routing/weighting vs a global weight.")
     r.add_argument("--pairs", default=ed.P2_DEFAULT_PAIRS, help="chunkmodel:sectionmodel pairs, comma-separated.")
     d = sub.add_parser("diag", parents=[common], help="Why raw-span loses past ~2k + dynamic-chunking criterion.")
@@ -2079,7 +2091,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"Unknown model keys: {unknown}", file=sys.stderr)
             return 1
         if args.cmd == "hier":
+            if getattr(args, "window_chars", None):
+                # Rebind the pool entries for this process only. window_tokens must
+                # be cleared or it outranks the override (CachedEncoder prefers the
+                # exact token budget), which would silently sweep nothing on openai.
+                for k in keys:
+                    ed.MODEL_POOL[k] = dataclasses.replace(
+                        ed.MODEL_POOL[k], window_chars=args.window_chars, window_tokens=None
+                    )
+                logger.info("Window override: %d chars for %s", args.window_chars, ",".join(keys))
             res = run_hier(corpus, keys, args.allow_embed, args.assign)
+            res["window_chars"] = args.window_chars
             print_hier(res)
         elif args.cmd == "diag":
             res = run_diag(corpus, keys, args.allow_embed)
