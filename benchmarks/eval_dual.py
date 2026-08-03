@@ -137,6 +137,10 @@ class ModelSpec:
     # when num_ctx was None), which hid the fact that openai pools too. Stated
     # explicitly here at the SAME values, so no cached vectors are orphaned.
     window_chars: int = 24_000
+    # Exact token budget, used INSTEAD of window_chars when the encoder's real
+    # tokenizer is available (openai -> cl100k_base). Removes the chars/token
+    # guess entirely; see CachedEncoder._windows_by_tokens.
+    window_tokens: Optional[int] = None
     # Frozen cache-dir suffix. Defaults below reproduce the historical derivation
     # (f"__ctx{num_ctx}" or ""); changing one orphans that model's cached vectors.
     cache_suffix: str = ""
@@ -155,10 +159,16 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         model="text-embedding-3-small",
         dim=1536,
         mrl_dims=(1536, 768, 512, 256, 128),
-        # 24k chars ~= 6857 band-tokens, NOT 8192: openai window-pools every
-        # section in the >8k band and the top ~16% of the 2k-8k band. Historical
-        # value, kept so the 17,685 cached vectors stay valid.
+        # Was 24k chars ~= 6857 band-tokens, NOT 8192, so openai window-pooled
+        # every section in the >8k band and the top ~16% of 2k-8k -- the rawspan
+        # arm was a pool exactly where the study reads it as a single embedding.
+        # No char window can fix this: the >8k band IS sections over ~28.7k chars,
+        # while worst-case density (3.427 measured on MAUD) caps a safe char
+        # window at ~28.1k. Budgeting real tokens instead lifts the pooling
+        # threshold to ~40k chars at median density, so the >8k band is finally
+        # embedded in one pass. Short texts keep their existing cache entries.
         window_chars=24_000,
+        window_tokens=8_191,
         cache_suffix="",
         forward_num_ctx=False,
         max_inputs=512,
@@ -265,6 +275,7 @@ class PrefixedEncoder(CachedEncoder):
             window_chars=spec.window_chars,
             cache_suffix=spec.cache_suffix,
             forward_num_ctx=spec.forward_num_ctx,
+            window_tokens=spec.window_tokens,
         )
         self.prefix = prefix
         # Small request batches bound cache loss and keep progress observable on

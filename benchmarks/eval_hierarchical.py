@@ -165,6 +165,7 @@ class CachedEncoder:
         window_chars: Optional[int] = None,
         cache_suffix: Optional[str] = None,
         forward_num_ctx: Optional[bool] = None,
+        window_tokens: Optional[int] = None,
     ) -> None:
         # The provider is constructed lazily, on the first cache miss only. A
         # fully-cached sweep (every span seen on a prior run) then needs no live
@@ -194,6 +195,13 @@ class CachedEncoder:
             if window_chars is not None
             else (int(num_ctx * _WINDOW_CHARS_PER_TOKEN) if num_ctx else _DEFAULT_WINDOW_CHARS)
         )
+        # Exact token budget, when the encoder's real tokenizer is available.
+        # Takes precedence over window_chars. Note this needs NO cache suffix:
+        # _path() hashes the WINDOW text, so a text short enough to be one window
+        # under either scheme hashes identically and still hits cache, while a
+        # long text simply produces different windows and re-embeds. Only num_ctx
+        # needs a suffix, because it changes the vector of an UNCHANGED input.
+        self.window_tokens = window_tokens
         # The window changes the vectors of any over-long span, so it MUST key the
         # cache -- otherwise the same model at two windows silently shares vectors
         # and the two arms are indistinguishable.
@@ -237,8 +245,41 @@ class CachedEncoder:
         h = hashlib.sha256(f"{self.model}\x00{text}".encode("utf-8")).hexdigest()
         return self.cache_dir / f"{h}.npy"
 
+    @staticmethod
+    def _token_encoder():
+        import tiktoken
+
+        return tiktoken.get_encoding("cl100k_base")
+
+    def _windows_by_tokens(self, text: str, budget: int) -> List[str]:
+        """Split on the encoder's REAL tokenizer rather than a chars/token guess.
+
+        A char window cannot express "8191 tokens": sized for the worst-case
+        density it wastes ~40% of the context on typical text, and sized for
+        typical text it overflows on dense text (silently -- Ollama truncates
+        server-side, OpenAI truncates behind a warning). For openai the guess is
+        unnecessary, since cl100k_base IS its tokenizer.
+
+        This is what lets the >8k band be tested unpooled: a section at the 8192
+        band-token edge is ~28.7k chars, which is ~5.9k REAL tokens at the
+        measured median density of 4.88 -- comfortably inside the 8191 cap, but
+        far outside any char window a worst-case density would permit.
+        """
+        enc = self._token_encoder()
+        ids = enc.encode(text)
+        if len(ids) <= budget:
+            return [text]
+        out: List[str] = []
+        for i in range(0, len(ids), budget):
+            piece = enc.decode(ids[i : i + budget])
+            if piece:
+                out.append(piece)
+        return out
+
     def _windows(self, text: str) -> List[str]:
         """Split ``text`` into <= window-sized pieces, breaking on whitespace when possible."""
+        if self.window_tokens is not None:
+            return self._windows_by_tokens(text, self.window_tokens)
         window = self.window_chars
         if len(text) <= window:
             return [text]
