@@ -130,6 +130,22 @@ class ModelSpec:
     query_prefix: str = ""
     doc_prefix: str = ""
     note: str = ""
+    # Harness-side window, in CHARS. A span longer than this is embedded in
+    # windows and mean-pooled, so it is the real boundary between "one global
+    # embedding" and "a pool of locals" -- the exact thing the rawspan-vs-centroid
+    # study measures. It was previously implicit (num_ctx * 3.0, or a bare 24_000
+    # when num_ctx was None), which hid the fact that openai pools too. Stated
+    # explicitly here at the SAME values, so no cached vectors are orphaned.
+    window_chars: int = 24_000
+    # Frozen cache-dir suffix. Defaults below reproduce the historical derivation
+    # (f"__ctx{num_ctx}" or ""); changing one orphans that model's cached vectors.
+    cache_suffix: str = ""
+    # Only Ollama has a real options.num_ctx; hosted HTTP providers reject it.
+    forward_num_ctx: bool = True
+    # Request batching. Local CPU encoders want small batches (bounded cache loss,
+    # observable progress); hosted APIs want large ones.
+    max_inputs: int = 32
+    max_req_tokens: int = 25_000
 
 
 MODEL_POOL: Dict[str, ModelSpec] = {
@@ -139,6 +155,14 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         model="text-embedding-3-small",
         dim=1536,
         mrl_dims=(1536, 768, 512, 256, 128),
+        # 24k chars ~= 6857 band-tokens, NOT 8192: openai window-pools every
+        # section in the >8k band and the top ~16% of the 2k-8k band. Historical
+        # value, kept so the 17,685 cached vectors stay valid.
+        window_chars=24_000,
+        cache_suffix="",
+        forward_num_ctx=False,
+        max_inputs=512,
+        max_req_tokens=150_000,
         note="8k ctx; MRL via `dimensions`; continuity reference (cached study vectors)",
     ),
     "nomic": ModelSpec(
@@ -151,6 +175,8 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         timeout=600,
         query_prefix="search_query: ",
         doc_prefix="search_document: ",
+        window_chars=6_144,  # 2048*3.0; ~1755 band-tokens
+        cache_suffix="__ctx2048",
         note="v1.5; 2k arch cap; short/chunk leg",
     ),
     "egemma": ModelSpec(
@@ -163,6 +189,8 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         timeout=600,
         query_prefix="task: search result | query: ",
         doc_prefix="title: none | text: ",
+        window_chars=6_144,  # 2048*3.0; ~1755 band-tokens -- pools the TOP of the <=2k band
+        cache_suffix="__ctx2048",
         note="2k arch cap; short/chunk leg",
     ),
     "arctic": ModelSpec(
@@ -175,6 +203,8 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         timeout=1800,
         query_prefix="query: ",
         doc_prefix="",
+        window_chars=24_576,  # 8192*3.0; ~7022 band-tokens
+        cache_suffix="__ctx8192",
         note="m-v2.0; 8k ctx; long/section leg (official MRL dim: 256)",
     ),
     "qwen3": ModelSpec(
@@ -187,7 +217,31 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         timeout=1800,
         query_prefix=("Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "),
         doc_prefix="",
+        window_chars=24_576,  # 8192*3.0; ~7022 band-tokens
+        cache_suffix="__ctx8192",
         note="32k-capable, run @8k (memory); long/section leg; instruction-aware queries",
+    ),
+    # The only genuinely non-pooling long-context arm available: 32k context, so
+    # every MAUD/Qasper section is a SINGLE forward pass. openai cannot play this
+    # role -- its 24k-char window pools the entire >8k band -- so until this arm
+    # runs, "one global embedding vs pooled locals" has never been tested above 8k
+    # on any encoder. Same family as the local qwen3 0.6b arm, so the instruction
+    # prefix and MRL ladder carry over and a within-family scale contrast is free.
+    "qwen3lc": ModelSpec(
+        key="qwen3lc",
+        provider="openrouter",
+        model="qwen/qwen3-embedding-8b",
+        dim=4096,
+        mrl_dims=(4096, 2048, 1024, 512, 256, 128),
+        window_chars=98_304,  # 32768*3.0; ~28k band-tokens -- above every section in either corpus
+        cache_suffix="__w98304",
+        forward_num_ctx=False,
+        max_inputs=512,
+        max_req_tokens=150_000,
+        timeout=600,
+        query_prefix=("Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "),
+        doc_prefix="",
+        note="hosted 32k; non-pooling long/section leg; $0.01/M in (OpenRouter)",
     ),
 }
 
@@ -203,14 +257,21 @@ class PrefixedEncoder(CachedEncoder):
     """
 
     def __init__(self, spec: ModelSpec, prefix: str) -> None:
-        super().__init__(spec.provider, spec.model, num_ctx=spec.num_ctx, timeout=spec.timeout)
+        super().__init__(
+            spec.provider,
+            spec.model,
+            num_ctx=spec.num_ctx,
+            timeout=spec.timeout,
+            window_chars=spec.window_chars,
+            cache_suffix=spec.cache_suffix,
+            forward_num_ctx=spec.forward_num_ctx,
+        )
         self.prefix = prefix
         # Small request batches bound cache loss and keep progress observable on
-        # CPU-bound Ollama encoders; OpenAI tolerates far bigger requests.
-        if spec.provider == "openai":
-            self.max_inputs, self.max_tokens = 512, 150_000
-        else:
-            self.max_inputs, self.max_tokens = 32, 25_000
+        # CPU-bound Ollama encoders; hosted APIs tolerate far bigger requests.
+        # Declared per-spec rather than inferred from the provider name, which
+        # silently gave any new hosted provider the slow local-encoder batching.
+        self.max_inputs, self.max_tokens = spec.max_inputs, spec.max_req_tokens
 
     def _windows(self, text: str) -> List[str]:
         return [self.prefix + w for w in super()._windows(text)]
