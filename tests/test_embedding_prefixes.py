@@ -185,6 +185,29 @@ class TestProviderPrefixConfiguration:
         texts = ["a", "b"]
         assert provider.apply_prefix(texts, "query") is texts
 
+    def test_apply_prefix_is_idempotent_same_task(self):
+        provider = MockEmbeddings("embeddinggemma", auto_prefix=True)
+        once = provider.apply_prefix(["hi"], "document")
+        assert provider.apply_prefix(once, "document") == once
+
+    def test_apply_prefix_does_not_wrap_a_query_in_the_document_prefix(self):
+        """The cross-task case, and the damaging one.
+
+        A caller that already applied the query prefix and then embeds through a
+        document path would otherwise get
+        "title: none | text: task: search result | query: ...", putting the query
+        in document space. Checking only the prefix being applied would miss this,
+        since a query-prefixed text does not start with the document prefix.
+        """
+        provider = MockEmbeddings("embeddinggemma", auto_prefix=True)
+        prefixed_query = GEMMA_QUERY + "who signed it"
+        assert provider.apply_prefix([prefixed_query], "document") == [prefixed_query]
+
+    def test_apply_prefix_still_prefixes_unprefixed_neighbours(self):
+        provider = MockEmbeddings("embeddinggemma", auto_prefix=True)
+        out = provider.apply_prefix([GEMMA_DOC + "already", "fresh"], "document")
+        assert out == [GEMMA_DOC + "already", GEMMA_DOC + "fresh"]
+
     def test_unknown_task_rejected(self):
         with pytest.raises(ValueError, match="Unknown embedding task"):
             MockEmbeddings("m").prefix_for("passage")  # type: ignore[arg-type]
@@ -209,6 +232,22 @@ class TestEmbedTaskPlumbing:
         vector = asyncio.run(provider.embed_query_async("hello"))
         assert vector.ndim == 1
         assert provider.texts_for("query") == [GEMMA_QUERY + "hello"]
+
+    def test_embed_queries_uses_the_query_side_in_bulk(self):
+        """The batch entry points default to task='document'.
+
+        Bulk-embedding queries through embed_sync() therefore applies the DOCUMENT
+        prefix and collapses the asymmetry, with no error and no warning. These
+        methods exist so the correct path cannot be missed.
+        """
+        provider = SpyEmbeddings("embeddinggemma", auto_prefix=True)
+        provider.embed_queries(["a", "b"])
+        assert provider.texts_for("query") == [GEMMA_QUERY + "a", GEMMA_QUERY + "b"]
+
+    def test_embed_queries_async_matches_sync(self):
+        provider = SpyEmbeddings("embeddinggemma", auto_prefix=True)
+        asyncio.run(provider.embed_queries_async(["a", "b"]))
+        assert provider.texts_for("query") == [GEMMA_QUERY + "a", GEMMA_QUERY + "b"]
 
     def test_task_survives_multiple_batches(self):
         """Regression: the batch loop's local shadowed the `task` parameter.
