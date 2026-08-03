@@ -161,6 +161,10 @@ class CachedEncoder:
         model: str,
         num_ctx: Optional[int] = None,
         timeout: Optional[int] = None,
+        *,
+        window_chars: Optional[int] = None,
+        cache_suffix: Optional[str] = None,
+        forward_num_ctx: Optional[bool] = None,
     ) -> None:
         # The provider is constructed lazily, on the first cache miss only. A
         # fully-cached sweep (every span seen on a prior run) then needs no live
@@ -174,12 +178,31 @@ class CachedEncoder:
         # num_batch (e.g. bge-m3@8192) can exceed the 300s provider default on a
         # CPU-only box and die with httpx.ReadTimeout -> raise it for the 8k arm.
         self.timeout = timeout
-        # Window sized to the encoder's context; unknown context -> 8k default.
-        self.window_chars = int(num_ctx * _WINDOW_CHARS_PER_TOKEN) if num_ctx else _DEFAULT_WINDOW_CHARS
-        # num_ctx changes the encoder's effective input (and so the vectors of any
-        # over-long span), so it MUST key the cache -- otherwise a nomic@2k and a
-        # nomic@8k run silently share vectors and the two arms are indistinguishable.
-        ctx_suffix = f"__ctx{num_ctx}" if num_ctx else ""
+        # num_ctx used to do three jobs at once: size the harness window, key the
+        # cache, and get forwarded to the provider. That conflation is why openai
+        # (num_ctx=None -> implicit 24k-char window) window-pooled its whole >8k
+        # band with nothing in MODEL_POOL saying so. The three are now separable,
+        # and every default below reproduces the previous value exactly so no
+        # existing cache directory is orphaned.
+        #
+        # `window_chars` is stated in CHARS, not tokens: the old token form went
+        # through _WINDOW_CHARS_PER_TOKEN=3.0 while bands measure length with
+        # _CHARS_PER_TOKEN=3.5, so every model began pooling ~14-16% BELOW its
+        # nominal band edge. Chars are what _windows() actually cuts on.
+        self.window_chars = (
+            window_chars
+            if window_chars is not None
+            else (int(num_ctx * _WINDOW_CHARS_PER_TOKEN) if num_ctx else _DEFAULT_WINDOW_CHARS)
+        )
+        # The window changes the vectors of any over-long span, so it MUST key the
+        # cache -- otherwise the same model at two windows silently shares vectors
+        # and the two arms are indistinguishable.
+        ctx_suffix = cache_suffix if cache_suffix is not None else (f"__ctx{num_ctx}" if num_ctx else "")
+        # Only Ollama has a real `options.num_ctx`. HTTP providers (Jina,
+        # OpenRouter) forward unknown kwargs into the request body, where it is at
+        # best ignored and at worst a 4xx -- so a hosted long-context spec sets
+        # forward_num_ctx=False and sizes its window with window_chars alone.
+        self.forward_num_ctx = (num_ctx is not None) if forward_num_ctx is None else forward_num_ctx
         # ':' (e.g. "embeddinggemma:300m") and '/' are illegal in Windows paths.
         safe_model = model.replace("/", "_").replace(":", "-")
         self.cache_dir = CACHE_DIR / "hier_embed" / f"{provider_name}__{safe_model}{ctx_suffix}"
@@ -194,10 +217,20 @@ class CachedEncoder:
         if self._provider is None:
             from localvectordb.embeddings import EmbeddingRegistry
 
-            kwargs = {"num_ctx": self.num_ctx} if self.num_ctx else {}
+            kwargs = {"num_ctx": self.num_ctx} if (self.num_ctx and self.forward_num_ctx) else {}
             if self.timeout is not None:
                 kwargs["timeout"] = self.timeout
-            self._provider = EmbeddingRegistry.create_provider(self.provider_name, self.model, **kwargs)
+            # auto_prefix MUST be off. The provider's prefix registry (added
+            # d005c37) resolves by model name and prepends its own instruction
+            # prefix on top of the one this harness already applied -- and it does
+            # so AFTER _path() hashed the text, so the cache key cannot see it.
+            # For embeddinggemma that produced doubled document prefixes and, on
+            # the query side, a query wrapped in the DOCUMENT prefix. Prefixes are
+            # an experimental variable here (ModelSpec.query_prefix/doc_prefix);
+            # the harness owns them, and src/ must not add a second layer.
+            self._provider = EmbeddingRegistry.create_provider(
+                self.provider_name, self.model, auto_prefix=False, **kwargs
+            )
         return self._provider
 
     def _path(self, text: str) -> Path:
