@@ -61,7 +61,7 @@ import os
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
@@ -150,6 +150,14 @@ class ModelSpec:
     # observable progress); hosted APIs want large ones.
     max_inputs: int = 32
     max_req_tokens: int = 25_000
+    # Window applied to the SECTION arm only, leaving chunks (and therefore
+    # section_centroid) untouched. Sweeping window_chars alone re-windows chunks
+    # too, which is harmless while the window stays above the longest chunk but
+    # destroys the sweep's control below it: on MAUD@500 tokens, 0/11,900 chunks
+    # pool at 6,000 chars and 1 at 3,000, but 6,015 (51%) pool at 2,100. A
+    # matched-granularity rung (W ~ mean chunk length, ~1,833 chars) is only
+    # meaningful through this override -- see §6.21.
+    section_window_chars: Optional[int] = None
 
 
 MODEL_POOL: Dict[str, ModelSpec] = {
@@ -479,12 +487,22 @@ def embed_model(
 ) -> Tuple[Optional[ModelVectors], Dict[str, object]]:
     doc_enc = PrefixedEncoder(spec, spec.doc_prefix)
     qry_enc = PrefixedEncoder(spec, spec.query_prefix)
+    # Section-only re-windowing. Same model, same prefix, same cache dir: _path()
+    # hashes the WINDOW text, so a section short enough to be one window under
+    # either scheme still hits its existing entry, and a section that splits
+    # differently simply produces different windows. Nothing is orphaned.
+    sec_enc = doc_enc
+    if spec.section_window_chars is not None:
+        sec_enc = PrefixedEncoder(
+            replace(spec, window_chars=spec.section_window_chars, window_tokens=None),
+            spec.doc_prefix,
+        )
 
     if dry_run:
         stats: Dict[str, object] = {}
         for name, enc, texts in (
             ("chunks", doc_enc, units.chunk_texts),
-            ("sections", doc_enc, units.section_texts),
+            ("sections", sec_enc, units.section_texts),
             ("queries", qry_enc, units.query_texts),
         ):
             hits, misses = enc.count_misses(texts)
@@ -494,15 +512,16 @@ def embed_model(
     logger.info("[%s] chunks: %d texts ...", spec.key, len(units.chunk_texts))
     chunks = doc_enc.encode(units.chunk_texts, normalize=False)
     logger.info("[%s] sections: %d texts ...", spec.key, len(units.section_texts))
-    sections = doc_enc.encode(units.section_texts, normalize=False)
+    sections = sec_enc.encode(units.section_texts, normalize=False)
     logger.info("[%s] queries: %d texts ...", spec.key, len(units.query_texts))
     queries = qry_enc.encode(units.query_texts, normalize=False)
     if chunks.shape[1] != spec.dim:
         logger.warning("[%s] dim %d != expected %d", spec.key, chunks.shape[1], spec.dim)
+    extra = (sec_enc,) if sec_enc is not doc_enc else ()
     embed_stats = {
-        "embedded": doc_enc.n_embedded + qry_enc.n_embedded,
-        "cached": doc_enc.n_cached + qry_enc.n_cached,
-        "pooled": doc_enc.n_pooled + qry_enc.n_pooled,
+        "embedded": doc_enc.n_embedded + qry_enc.n_embedded + sum(e.n_embedded for e in extra),
+        "cached": doc_enc.n_cached + qry_enc.n_cached + sum(e.n_cached for e in extra),
+        "pooled": doc_enc.n_pooled + qry_enc.n_pooled + sum(e.n_pooled for e in extra),
         "dim": int(chunks.shape[1]),
     }
     logger.info("[%s] done: %s", spec.key, embed_stats)

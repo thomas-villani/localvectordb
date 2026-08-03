@@ -14,13 +14,22 @@ free, since a centroid is the mean of chunk vectors already in the cache -- and
 reads every arm inside gold-section length bands.
 
 The bands do double duty. Each model window-mean-pools any span past its context
-cap, so a band straddling a model's cap is a **natural experiment on context
-length**: over MAUD@50 egemma (2k ctx) pools 755 sections while openai (8k ctx)
-pools 77, which makes the 2k-8k band exactly the set where egemma pools and
-openai does not. Comparing the egemma-vs-openai gap inside that band against the
-same gap in the <=2k band (where neither pools) is a difference-in-differences
-estimate of what pooling costs -- the question ``dual-embedding-findings.md`` §2
-records Qasper as structurally unable to answer.
+cap, so a band straddling a model's cap was intended as a **natural experiment on
+context length**: over MAUD@50 egemma (2k ctx) pools 755 sections while openai
+(8k ctx, token-exact) pools 44, which makes the 2k-8k band the set where egemma
+pools (542/542 sections) and openai does not (0/542). Comparing the
+egemma-vs-openai gap inside that band against the same gap in the <=2k band is a
+difference-in-differences estimate -- the question ``dual-embedding-findings.md``
+§2 records Qasper as structurally unable to answer.
+
+**Read the DiD with §6.21 in hand.** Two things measurement has since established.
+(1) The <=2k band is NOT a clean control: egemma pools 154/4108 sections there,
+and 40/239 queries have their longest gold section pooled, so the baseline
+already contains the treatment. (2) The estimate is *positive*, and always has
+been, which under the literal reading below would mean pooling helps. It is
+better read as what §6.20 showed it to be -- a **granularity** contrast with
+encoder identity confounded, not a context-length one. The unconfounded version
+is ``hier --window-chars``, which sweeps granularity inside a single encoder.
 
 ``route`` -- **can a label-free per-query signal beat a single global fusion
 weight?** Three independent threads converged on one wall: fusion realizes only
@@ -870,6 +879,15 @@ def did_pooling(
     retrieval quality; ~zero says pooling is benign and the "context length is
     not the bottleneck" reading survives on a corpus that could have refuted it.
     Bands are resampled independently (they are disjoint query sets).
+
+    CAVEAT (§6.21) -- that literal reading does not survive. On MAUD@50 the
+    estimate is strongly POSITIVE (+0.1861), i.e. the pooling model *gains*
+    exactly where it pools, because pooling is not only a context workaround but
+    a change of representation granularity, and on long spans finer wins (§6.20).
+    Worse, the inner band is not a clean control: egemma pools for 40/239 of its
+    queries. This statistic conflates granularity with encoder identity and
+    cannot license a claim about context length in either direction. Prefer
+    ``hier --window-chars``, which moves granularity within one encoder.
     """
     si = np.array([bands[q] == inner for q in qids])
     so = np.array([bands[q] == outer for q in qids])
@@ -2029,7 +2047,21 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "shrinks the rawspan arm converges on section_centroid -- they are ONE operator at two "
         "granularities, not two representations. Also clears window_tokens so the override is not "
         "silently outranked. Needs --allow-embed: a new window regroups long spans into different "
-        "window texts, which are cache misses (~one pass over the section corpus).",
+        "window texts, which are cache misses (~one pass over the section corpus). NOTE this also "
+        "re-windows CHUNKS; harmless above the longest chunk (0/11,900 pool at 6,000 chars on MAUD, "
+        "1 at 3,000) but it moves section_centroid below that. Use --section-window-chars there.",
+    )
+    h.add_argument(
+        "--section-window-chars",
+        type=int,
+        default=None,
+        help="Like --window-chars but applied to the SECTION arm ONLY, leaving chunk vectors and "
+        "therefore section_centroid untouched. Required for the matched-granularity rung (W ~ mean "
+        "chunk length, ~1,833 chars on MAUD@500): at that size --window-chars would pool ~65%% of "
+        "chunks and degrade the control arm at the same time. With granularity matched, rawspan and "
+        "centroid differ only in boundary placement (arbitrary char cuts vs sentence-aligned chunks) "
+        "and cross-section leakage (overlap attribution feeds a chunk to every section it touches; "
+        "a window never leaves its own section) -- i.e. in STRUCTURE ALIGNMENT. Needs --allow-embed.",
     )
     r = sub.add_parser("route", parents=[common], help="Per-query routing/weighting vs a global weight.")
     r.add_argument("--pairs", default=ed.P2_DEFAULT_PAIRS, help="chunkmodel:sectionmodel pairs, comma-separated.")
@@ -2100,8 +2132,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         ed.MODEL_POOL[k], window_chars=args.window_chars, window_tokens=None
                     )
                 logger.info("Window override: %d chars for %s", args.window_chars, ",".join(keys))
+            if getattr(args, "section_window_chars", None):
+                # Section arm only, so section_centroid stays fixed and the sweep
+                # keeps its control. window_tokens is deliberately NOT cleared
+                # here: embed_model clears it on the section encoder alone, so the
+                # chunk encoder keeps token-exact windows and every cached chunk
+                # vector still hits. Clearing it here would re-embed all chunks.
+                for k in keys:
+                    ed.MODEL_POOL[k] = dataclasses.replace(
+                        ed.MODEL_POOL[k], section_window_chars=args.section_window_chars
+                    )
+                logger.info("Section-only window override: %d chars for %s", args.section_window_chars, ",".join(keys))
             res = run_hier(corpus, keys, args.allow_embed, args.assign)
             res["window_chars"] = args.window_chars
+            res["section_window_chars"] = args.section_window_chars
             print_hier(res)
         elif args.cmd == "diag":
             res = run_diag(corpus, keys, args.allow_embed)
