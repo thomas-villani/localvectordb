@@ -185,6 +185,9 @@ class EmbeddingProvider(ABC):
 
         self.document_prefix: str = document_prefix if document_prefix is not None else detected.document
         self.query_prefix: str = query_prefix if query_prefix is not None else detected.query
+        # apply_prefix() warns at most once per provider when it skips an
+        # already-prefixed text; a per-batch warning would drown an ingest log.
+        self._prefix_skip_warned = False
 
     @property
     def async_supported(self) -> bool:
@@ -208,11 +211,42 @@ class EmbeddingProvider(ABC):
 
         Returns ``texts`` unchanged when the prefix is empty, so a symmetric model
         pays nothing for this path.
+
+        Idempotent: a text that already opens with *either* of this model's known
+        prefixes is left alone. Checking both sides matters, because the damaging
+        case is cross-task rather than same-task -- a caller that has already
+        applied the query prefix and then embeds through a document path would
+        otherwise produce ``"title: none | text: task: search result | query: ..."``,
+        putting a query in document space, which is the exact asymmetry the
+        prefixes exist to create. Same-task doubling is milder but equally
+        pointless. The skip is warned about once per provider rather than done
+        silently, since it means the caller is also managing prefixes and one of
+        the two layers is redundant.
+
+        A document that genuinely opens with a prefix string is left unprefixed.
+        That is rare, and far cheaper than the alternative failure.
         """
         prefix = self.prefix_for(task)
         if not prefix:
             return texts
-        return [prefix + text for text in texts]
+        known = tuple(p for p in (self.document_prefix, self.query_prefix) if p)
+        out: List[str] = []
+        n_skipped = 0
+        for text in texts:
+            if text.startswith(known):
+                n_skipped += 1
+                out.append(text)
+            else:
+                out.append(prefix + text)
+        if n_skipped and not self._prefix_skip_warned:
+            self._prefix_skip_warned = True
+            logger.warning(
+                f"{n_skipped}/{len(texts)} texts already begin with a known instruction prefix for "
+                f"'{self.model}'; not adding another. The caller appears to be applying prefixes too "
+                f"-- pass auto_prefix=False (or document_prefix=''/query_prefix='') to own them "
+                f"explicitly and silence this."
+            )
+        return out
 
     async def embed_batch(
         self,
@@ -226,7 +260,9 @@ class EmbeddingProvider(ABC):
 
         ``task`` selects which instruction prefix is applied and defaults to
         ``"document"``; search paths must pass ``task="query"`` for an asymmetric
-        model to rank correctly.
+        model to rank correctly. For a batch of queries prefer
+        :meth:`embed_queries_async` / :meth:`embed_queries`, which cannot be
+        reached with the wrong task by accident.
         """
         # Applied once, outside the retry loop, so a retry does not double-prefix.
         texts = self.apply_prefix(texts, task)
@@ -381,6 +417,18 @@ class EmbeddingProvider(ABC):
         """
         return np.asarray((await self.embed_batch([query], task="query"))[0])
 
+    async def embed_queries_async(self, queries: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+        """Embed many search queries, applying the query-side prefix to each.
+
+        The batch entry points (:meth:`embed_batch`, :meth:`embed_async`,
+        :meth:`embed_sync`) default to ``task="document"``, so bulk-embedding
+        queries through them silently applies the DOCUMENT prefix and collapses
+        the query/document asymmetry -- with no error and no warning, just
+        quietly worse ranking. Use this instead of passing ``task="query"`` by
+        hand.
+        """
+        return await self.embed_batch(queries, batch_size, task="query")
+
     @abstractmethod
     def get_dimension(self) -> int:
         """Get the embedding dimension for this model"""
@@ -428,6 +476,15 @@ class EmbeddingProvider(ABC):
         Returns a 1-D ``(dimension,)`` vector, not a batch of one.
         """
         return np.asarray(self.embed_sync([query], task="query")[0])
+
+    def embed_queries(self, queries: List[str], batch_size: Optional[int] = None) -> np.ndarray:
+        """Embed many search queries synchronously, applying the query-side prefix.
+
+        Synchronous counterpart to :meth:`embed_queries_async`. Prefer this over
+        ``embed_sync(queries)``, which defaults to ``task="document"`` and would
+        prefix a query as though it were a passage.
+        """
+        return self.embed_sync(queries, batch_size, task="query")
 
 
 class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
