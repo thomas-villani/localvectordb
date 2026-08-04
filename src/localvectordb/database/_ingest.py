@@ -42,6 +42,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _section_centroids(
+    section_boundaries: List[Any],
+    chunk_to_section_map: Dict[int, List[int]],
+    chunk_index_to_embedding: Dict[int, np.ndarray],
+    chunk_spans: Dict[int, Tuple[int, int]],
+    dimension: int,
+) -> np.ndarray:
+    """Mean of each section's chunk vectors, with an overlap fallback for empties.
+
+    :meth:`SectionDetector.assign_chunks_to_sections` credits a chunk to the one
+    section containing its **midpoint**. That starves sections whenever chunks are
+    larger than sections -- which is the *default* configuration, not a corner
+    case: at ``chunk_size=500`` tokens (~1,750 chars) against Qasper dev's
+    1,316-char median section, one chunk spans several sections and only one of
+    them is credited. Measured on Qasper dev: **38% of sections own no chunk, and
+    26.3% of gold sections** would get a zero vector -- and a zero vector in a
+    unit-normalised inner-product index scores 0 against every query, so those
+    sections are not merely down-ranked, they are unreachable.
+
+    Midpoint attribution is deliberately kept for sections that do own chunks: it
+    is what the stored chunk<->section mapping reports, and it measured ~+0.02
+    nDCG over overlap attribution where the two are both defined. The fallback
+    only fires for a section that would otherwise be empty, and then takes every
+    chunk merely *overlapping* its span. The change is therefore strictly
+    additive -- no section that already had a vector gets a different one.
+
+    A section with no overlapping chunk at all (empty or degenerate span) still
+    yields a zero row, which is the honest representation of "no content".
+    """
+    out: List[np.ndarray] = []
+    for section in section_boundaries:
+        indices = chunk_to_section_map.get(section.index, [])
+        vecs = [chunk_index_to_embedding[i] for i in indices if i in chunk_index_to_embedding]
+        if not vecs:
+            vecs = [
+                emb
+                for i, emb in chunk_index_to_embedding.items()
+                if i in chunk_spans and chunk_spans[i][0] < section.end_pos and section.start_pos < chunk_spans[i][1]
+            ]
+        out.append(np.mean(vecs, axis=0) if vecs else np.zeros(dimension))
+    return np.array(out, dtype=np.float32)
+
+
 def _finalize_ingest_result(
     result_ids: List[str],
     failures: Dict[str, str],
@@ -1202,15 +1245,17 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             self.embedding_provider, section_texts, self.embedding_dimension
                         )
                     else:
-                        section_embeddings = []
-                        for section in section_boundaries:
-                            chunk_indices = chunk_to_section_map.get(section.index, [])
-                            vecs = [chunk_embeddings[ci] for ci in chunk_indices if ci in chunk_embeddings]
-                            if vecs:
-                                section_embeddings.append(np.mean(vecs, axis=0))
-                            else:
-                                section_embeddings.append(np.zeros(self.embedding_dimension))
-                        doc_data["section_embeddings"] = np.array(section_embeddings, dtype=np.float32)
+                        chunk_spans = {
+                            c.index: (c.position.start, c.position.end)
+                            for c in list(unchanged_chunks) + list(chunks_needing_embedding)
+                        }
+                        doc_data["section_embeddings"] = _section_centroids(
+                            section_boundaries,
+                            chunk_to_section_map,
+                            chunk_embeddings,
+                            chunk_spans,
+                            self.embedding_dimension,
+                        )
 
                     # Compute document centroid
                     all_vecs = list(chunk_embeddings.values())
@@ -1993,15 +2038,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         self.embedding_provider, section_texts, self.embedding_dimension
                     )
                 else:
-                    section_embeddings = []
-                    for section in section_boundaries:
-                        c_indices = chunk_to_section_map.get(section.index, [])
-                        vecs = [chunk_idx_to_emb[ci] for ci in c_indices if ci in chunk_idx_to_emb]
-                        if vecs:
-                            section_embeddings.append(np.mean(vecs, axis=0))
-                        else:
-                            section_embeddings.append(np.zeros(self.embedding_dimension))
-                    section_embeddings_arr = np.array(section_embeddings, dtype=np.float32)
+                    section_embeddings_arr = _section_centroids(
+                        section_boundaries,
+                        chunk_to_section_map,
+                        chunk_idx_to_emb,
+                        {c.index: (c.position.start, c.position.end) for c in chunks},
+                        self.embedding_dimension,
+                    )
 
                 all_vecs = list(chunk_idx_to_emb.values())
                 doc_embedding = np.mean(all_vecs, axis=0).reshape(1, -1).astype(np.float32) if all_vecs else None

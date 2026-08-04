@@ -1289,3 +1289,156 @@ class TestSectionSearchReturnType:
                 assert [r.id for r in async_results] == [r.id for r in sync_results]
             finally:
                 db.close()
+
+
+class TestChunklessSectionCentroids:
+    """A section owning no chunk must not get a zero (unretrievable) vector.
+
+    ``SectionDetector.assign_chunks_to_sections`` credits a chunk to the single
+    section holding its *midpoint*. Whenever chunks are larger than sections --
+    the DEFAULT configuration, ``chunk_size=500`` tokens against Qasper dev's
+    1,316-char median section -- one chunk spans several sections and only one is
+    credited. Measured on Qasper dev with the real ``src/`` chunker and detector:
+    38% of sections owned no chunk and 26.3% of *gold* sections would have been
+    given a zero vector. A zero vector scores 0 against every query in a
+    unit-normalised inner-product index, so those sections were unreachable, not
+    merely down-ranked.
+    """
+
+    @staticmethod
+    def _boundary(index, start, end):
+        return SectionBoundary(index=index, heading=f"S{index}", heading_level=1, start_pos=start, end_pos=end)
+
+    def test_midpoint_owner_wins_and_overlap_only_fills_empties(self):
+        import numpy as np
+
+        from localvectordb.database._ingest import _section_centroids
+
+        # One 100-char chunk straddling three 40-char sections; its midpoint (50)
+        # lands in section 1, so sections 0 and 2 own nothing under midpoint.
+        sections = [self._boundary(0, 0, 40), self._boundary(1, 40, 80), self._boundary(2, 80, 120)]
+        chunk_to_section = {0: [], 1: [0], 2: []}
+        embeddings = {0: np.array([1.0, 0.0], dtype=np.float32)}
+        spans = {0: (0, 100)}
+
+        out = _section_centroids(sections, chunk_to_section, embeddings, spans, dimension=2)
+
+        assert out.shape == (3, 2)
+        # Every section is now representable; none is a zero row.
+        assert not np.allclose(out[0], 0.0), "section 0 owned no chunk and stayed unreachable"
+        assert not np.allclose(out[2], 0.0), "section 2 owned no chunk and stayed unreachable"
+        assert np.allclose(out[1], [1.0, 0.0])
+
+    def test_sections_owning_chunks_are_unchanged_by_the_fallback(self):
+        """The fallback is strictly additive -- a populated section keeps its centroid."""
+        import numpy as np
+
+        from localvectordb.database._ingest import _section_centroids
+
+        sections = [self._boundary(0, 0, 50), self._boundary(1, 50, 100)]
+        # Section 0 owns chunks 0 and 1; both also overlap section 1's span, so an
+        # unconditional overlap rule would change section 0's *and* 1's vectors.
+        chunk_to_section = {0: [0, 1], 1: [2]}
+        embeddings = {
+            0: np.array([1.0, 0.0], dtype=np.float32),
+            1: np.array([0.0, 1.0], dtype=np.float32),
+            2: np.array([0.0, -1.0], dtype=np.float32),
+        }
+        spans = {0: (0, 60), 1: (10, 70), 2: (50, 100)}
+
+        out = _section_centroids(sections, chunk_to_section, embeddings, spans, dimension=2)
+
+        assert np.allclose(out[0], [0.5, 0.5]), "populated section must keep its midpoint centroid"
+        assert np.allclose(out[1], [0.0, -1.0])
+
+    def test_section_with_no_overlapping_chunk_stays_zero(self):
+        """ "No content" is still honestly represented as a zero row."""
+        import numpy as np
+
+        from localvectordb.database._ingest import _section_centroids
+
+        sections = [self._boundary(0, 0, 10), self._boundary(1, 500, 600)]
+        out = _section_centroids(
+            sections,
+            {0: [0], 1: []},
+            {0: np.array([1.0, 0.0], dtype=np.float32)},
+            {0: (0, 10)},
+            dimension=2,
+        )
+        assert np.allclose(out[1], 0.0)
+
+    def test_end_to_end_no_zero_section_vectors_when_chunks_exceed_sections(self):
+        """Through the real ingest path: big chunks over small sections, no dead vectors."""
+        import numpy as np
+
+        from localvectordb.database import LocalVectorDB
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = LocalVectorDB(
+                name="chunkless",
+                base_path=tmpdir,
+                embedding_provider="mock",
+                embedding_model="mock",
+                hierarchical_embeddings=True,
+                section_vector_strategy="centroid",
+                chunk_size=400,  # far larger than any section below
+                chunk_overlap=0,
+            )
+            try:
+                db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+                with db.connection_pool.get_connection() as conn:
+                    rows = conn.execute("SELECT heading, faiss_id FROM sections").fetchall()
+                assert rows, "no sections were stored"
+                dead = [
+                    r["heading"]
+                    for r in rows
+                    if r["faiss_id"] is not None and np.allclose(db.section_index.reconstruct(int(r["faiss_id"])), 0.0)
+                ]
+                assert not dead, f"sections with zero (unretrievable) vectors: {dead}"
+            finally:
+                db.close()
+
+
+class TestLocalProviderContextWindow:
+    """Local providers must report their context so span windows are sized to it.
+
+    ``_span_embed`` asks the provider for its context window and falls back to a
+    fixed 24,000-char (~6,857-token) window when it gets nothing. Neither local
+    provider exposed one, so for ``all-MiniLM-L6-v2`` (``max_seq_length`` 256)
+    each 24,000-char window was handed to a model that silently truncates at 256
+    tokens: a 24.5k-char section had **7.3%** of its text encoded and the rest
+    discarded, while the code's docstring promised it was "never truncated".
+    """
+
+    def test_sentence_transformer_reports_max_seq_length(self):
+        pytest.importorskip("sentence_transformers")
+        from localvectordb.database._span_embed import _DEFAULT_WINDOW_CHARS, _window_chars_for
+        from localvectordb.embeddings import SentenceTransformerEmbeddings
+
+        provider = SentenceTransformerEmbeddings("all-MiniLM-L6-v2")
+        assert provider.max_input_tokens == 256
+        window = _window_chars_for(provider)
+        assert window < _DEFAULT_WINDOW_CHARS
+        # A window must fit the model's real context, else it is truncated anyway.
+        assert window <= 256 * 4
+
+    def test_long_span_is_pooled_in_full_not_truncated(self):
+        """Every character of an over-window span lands in some window."""
+        from localvectordb.database._span_embed import _windows
+
+        text = "word " * 6000  # 30k chars
+        windows = _windows(text, 768)
+        assert len(windows) > 1
+        assert "".join(windows) == text, "windowing dropped or duplicated text"
+        assert max(len(w) for w in windows) <= 768
+
+    def test_unspecified_huggingface_context_falls_back(self):
+        """HF's sentinel model_max_length must not be trusted as a real window."""
+        from localvectordb.database._span_embed import _DEFAULT_WINDOW_CHARS, _window_chars_for
+        from localvectordb.embeddings import HuggingFaceLocalEmbeddings
+
+        provider = HuggingFaceLocalEmbeddings("dummy-model")
+        provider._tokenizer = type("T", (), {"model_max_length": 1000000000000000019884624838656})()
+        provider._transformer_model = object()
+        assert provider.max_input_tokens is None
+        assert _window_chars_for(provider) == _DEFAULT_WINDOW_CHARS
