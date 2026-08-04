@@ -2001,6 +2001,26 @@ class SentenceTransformerEmbeddings(EmbeddingProvider):
         return "sentence_transformers"
 
     @property
+    def max_input_tokens(self) -> Optional[int]:
+        """The model's context window, from its own ``max_seq_length``.
+
+        Read by :mod:`localvectordb.database._span_embed` to size the windows a
+        long section is split into before mean-pooling. Without it that code
+        falls back to a fixed 24,000-char (~6,857-token) window, and every window
+        is then silently truncated by the model: for ``all-MiniLM-L6-v2``
+        (``max_seq_length`` 256) a 24.5k-char section had **7.3% of its text
+        encoded** and the rest discarded.
+
+        This class does not inherit ``HTTPEmbeddingProvider``'s
+        ``_validate_and_truncate_texts``, so the value only sizes span windows --
+        it does not add a truncation pass to ordinary chunk embedding, which
+        sentence-transformers already handles internally.
+        """
+        model = self._load_model()
+        value = getattr(model, "max_seq_length", None)
+        return value if isinstance(value, int) and value > 0 else None
+
+    @property
     def max_batch_size(self) -> int:
         return 256
 
@@ -2254,6 +2274,25 @@ class HuggingFaceLocalEmbeddings(EmbeddingProvider):
     @property
     def provider_name(self) -> str:
         return "huggingface_local"
+
+    @property
+    def max_input_tokens(self) -> Optional[int]:
+        """The model's context window, from the tokenizer's ``model_max_length``.
+
+        Same purpose as the sentence-transformers property of this name: it sizes
+        the windows :mod:`localvectordb.database._span_embed` splits a long
+        section into, so the section is pooled in full rather than truncated to a
+        fixed 24,000-char guess.
+
+        HuggingFace uses a sentinel ``model_max_length`` (a very large int) to mean
+        "unspecified"; treat anything implausible as unknown so the caller falls
+        back to its default rather than trusting a bogus window.
+        """
+        tokenizer, _ = self._load_model()
+        value = getattr(tokenizer, "model_max_length", None)
+        if isinstance(value, int) and 0 < value <= 1_000_000:
+            return value
+        return None
 
     @property
     def max_batch_size(self) -> int:

@@ -15,18 +15,49 @@ gate drives the **real** ``LocalVectorDB.query()`` path -- ingest, FAISS section
 index, ``search_level``, the lot -- so it fails when ``src/`` breaks, not when a
 harness diverges.
 
-COVERAGE, STATED HONESTLY
--------------------------
-The Qasper leg covers the **short-section** regime only: Qasper sections average
-~190 tokens, so a raw-span section vector really is one global embedding and
-never window-pools. That is the regime F2 was measured in, and where raw-span is
-defensible (egemma +0.0818, §6.23).
+THE TWO LEGS
+------------
+``qasper``
+    Real NLP papers, sections averaging ~190 tokens. The **short-section**
+    regime, where a raw-span section vector really is one global embedding that
+    never window-pools, and where raw-span is defensible (egemma +0.0818, §6.23).
 
-It therefore does **NOT** cover the regime the headline finding is about --
-sections past ~2k tokens, where raw-span loses 0.25-0.36 nDCG to the centroid.
-Catching *that* needs a long-section leg (MAUD section-target, or a third
-corpus). Until one lands, a green run here is evidence about short sections and
-nothing else. Do not read it as blanket cover for a section-level change.
+``superdocs``
+    Synthetic FiQA super-documents, sections of ~24k chars (~7k tokens). The
+    **long-section** regime the headline finding is actually about, where
+    raw-span loses 0.25-0.36 nDCG to the centroid.
+
+Why synthetic for the long leg: §6.30 established that ``src/``'s
+``SectionDetector`` is a two-group, line-anchored Markdown regex, so it finds
+essentially no sections in MAUD contracts -- the corpus the long-section result
+was measured on cannot be used to gate ``src/`` at all. ``superdocs.py`` emits
+``## Section N`` headings and *asserts* every gold span aligns to a
+detector-assigned section, so the ground truth is src-detectable by construction.
+A gate needs sensitivity to the change under test, not external validity; the
+external-validity claim lives in the findings doc, on real corpora.
+
+READ THE LONG LEG'S DELTAS, NOT ITS ABSOLUTE NUMBERS
+----------------------------------------------------
+``mode="point"`` places **one** gold passage per super-document, so the answer is
+a median 825 chars inside a ~24.5k-char section (**3.4%**) and a 74k-char
+document (**1.1%**). Every arm is therefore scored under near-worst-case
+dilution, and the section arms sit low in absolute terms by construction -- that
+is the design, not a defect, because a gate needs to move when ``src/`` changes,
+not to flatter the section level. The question "can a section vector ever beat a
+diluted chunk average when the gold is *dense*" is a different experiment
+(``mode="section"`` clusters a query's golds into one section); it is not what
+this file measures.
+
+WHAT THE LONG LEG IS SENSITIVE TO
+---------------------------------
+With the default eval model (all-MiniLM-L6-v2, ``max_seq_length`` 256) the
+raw-span path currently encodes **7.3%** of a 24.5k-char section: ``_span_embed``
+asks the provider for its context window, ``SentenceTransformerEmbeddings``
+exposes neither ``num_ctx`` nor ``max_input_tokens``, so the fixed 24,000-char
+default wins and each window is then truncated to 256 tokens by the model. Both
+pending ``src/`` fixes -- the ``section_vector_strategy`` default and the window
+sizing -- move this leg hard and move the qasper leg barely at all. That contrast
+is the point of having two legs rather than one.
 """
 
 from __future__ import annotations
@@ -38,7 +69,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -53,6 +84,25 @@ BASELINE_JSON = _ROOT / "benchmarks" / "hier_gate_baseline.json"
 RECALL_K = (1, 5, 10)
 K = 10
 TOLERANCE = 0.005
+
+# Long-leg grid. S x P FiQA passages (~767 chars each) per super-document, so
+# P=32 puts a section at ~24.5k chars -- just past the 24,000-char window
+# ``_span_embed`` falls back to, which is what makes the leg exercise multi-window
+# pooling and not only truncation. 200 queries keeps a rebuild near ~8 min/arm on
+# CPU at ~8.8k tok/s; the distractor pool needs S*P*queries <= 57,638 passages.
+SUPERDOC_SECTIONS = 3
+SUPERDOC_PASSAGES = 32
+SUPERDOC_QUERIES = 200
+SUPERDOC_SEED = 0
+
+
+@dataclass(frozen=True)
+class Leg:
+    """One corpus the gate scores, with the cache key that identifies its index."""
+
+    name: str
+    cache_key: str
+    load: Callable[[], Any]
 
 
 @dataclass(frozen=True)
@@ -75,24 +125,49 @@ def build_configs() -> List[HierConfig]:
     return out
 
 
-def build_db(bench, *, provider: str, model: str, strategy: str, rebuild: bool, max_papers: Optional[int]):
+def qasper_leg(max_papers: Optional[int]) -> Leg:
+    from benchmarks.qasper_data import load_qasper
+
+    key = "qasper" if max_papers is None else f"qasper_max{max_papers}"
+    return Leg(name="qasper", cache_key=key, load=lambda: load_qasper(split="dev", max_papers=max_papers))
+
+
+def superdocs_leg(sections: int, passages: int, max_queries: int, seed: int) -> Leg:
+    from benchmarks import beir_data
+    from benchmarks.superdocs import build_synthetic_benchmark
+
+    def _load():
+        source = beir_data.load("fiqa")
+        return build_synthetic_benchmark(
+            source,
+            sections_per_doc=sections,
+            passages_per_section=passages,
+            seed=seed,
+            max_queries=max_queries,
+            mode="point",
+        )
+
+    key = f"superdocs_fiqa_s{sections}p{passages}q{max_queries}seed{seed}"
+    return Leg(name="superdocs", cache_key=key, load=_load)
+
+
+def build_db(bench, *, leg: Leg, provider: str, model: str, strategy: str, rebuild: bool):
     """Build (or reopen) a hierarchical DB for one section_vector_strategy.
 
     The strategy is baked in at ingest -- section vectors are written once -- so
     each arm needs its own database, and the key must carry the strategy or the
     two arms silently share an index and the A/B compares a build to itself.
 
-    The key must ALSO carry ``max_papers``. Omitting it made a ``--max-papers 12``
-    smoke build get reused by the full 275-paper run: 263 gold documents were
-    simply absent from the index and every arm scored at chance (nDCG 0.0357 ~=
-    10/275) while looking like a real result. Anything that changes the CONTENT
-    of the index belongs in the key.
+    The key must ALSO carry every parameter that changes the CONTENT of the
+    index. Omitting ``max_papers`` once made a ``--max-papers 12`` smoke build get
+    reused by the full 275-paper run: 263 gold documents were simply absent and
+    every arm scored at chance (nDCG 0.0357 ~= 10/275) while looking like a real
+    result. ``Leg.cache_key`` carries those parameters now, so a new grid cannot
+    collide with an old one.
     """
     from localvectordb import LocalVectorDB
 
-    key = f"hiergate__qasper__{model.replace('/', '_').replace(':', '-')}__{strategy}"
-    if max_papers is not None:
-        key += f"__max{max_papers}"
+    key = f"hiergate__{leg.cache_key}__{model.replace('/', '_').replace(':', '-')}__{strategy}"
     base = DATA_DIR / "db"
     base.mkdir(parents=True, exist_ok=True)
     sentinel = base / f"{key}.complete"
@@ -157,23 +232,87 @@ def run_config(db, bench, config: HierConfig) -> Dict[str, float]:
     return {m: (sum(v) / len(v) if v else 0.0) for m, v in scores.items()}
 
 
-def compare_to_baseline(results: Dict[str, Dict[str, float]], path: Path, tolerance: float) -> int:
+def run_leg(leg: Leg, args: argparse.Namespace) -> Dict[str, Any]:
+    """Load one corpus, build both strategy DBs, and score every arm."""
+    bench = leg.load()
+    logger.info("[%s] %d docs, %d queries", leg.name, len(bench.corpus), len(bench.queries))
+
+    dbs = {
+        s: build_db(
+            bench,
+            leg=leg,
+            provider=args.embedding_provider,
+            model=args.embedding_model,
+            strategy=s,
+            rebuild=args.rebuild,
+        )
+        for s in ("rawspan", "centroid")
+    }
+
+    # Belt and braces on the cache key: assert the index actually holds the corpus
+    # being scored. A stale-but-valid database is the failure mode here -- it does
+    # not error, it just returns chance-level numbers that read as a real result.
+    for strategy, db in dbs.items():
+        n = db.count()
+        if n != len(bench.corpus):
+            raise RuntimeError(
+                f"[{leg.name}] DB[{strategy}] holds {n} documents but the benchmark has "
+                f"{len(bench.corpus)}. Stale cached index -- re-run with --rebuild."
+            )
+    logger.info("[%s] index check: both DBs hold %d documents", leg.name, len(bench.corpus))
+
+    results: Dict[str, Dict[str, float]] = {}
+    for config in build_configs():
+        m = run_config(dbs[config.strategy], bench, config)
+        results[config.label] = m
+        logger.info(
+            "[%s] %-24s ndcg@10 %.4f  r@1 %.4f  r@10 %.4f",
+            leg.name,
+            config.label,
+            m["ndcg@10"],
+            m["recall@1"],
+            m["recall@10"],
+        )
+    return {"n_docs": len(bench.corpus), "n_queries": len(bench.queries), "results": results}
+
+
+def compare_to_baseline(legs: Dict[str, Any], path: Path, tolerance: float) -> int:
     if not path.exists():
         print(f"No baseline at {path}; run with --save-baseline first.", file=sys.stderr)
         return 1
-    base = json.loads(path.read_text(encoding="utf-8"))["results"]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    base = payload.get("legs", {})
+    if not base:
+        # The pre-two-leg format stored a flat top-level "results". Reading it as
+        # a leg map yields {}, every arm reports "NEW ... not gated", and --check
+        # returns 0 -- a gate that passes because it compared nothing. Fail loudly.
+        print(
+            f"Baseline {path} has no 'legs' section"
+            + (" (pre-two-leg format)" if "results" in payload else "")
+            + "; regenerate it with --leg both --save-baseline.",
+            file=sys.stderr,
+        )
+        return 1
     worst, failed = 0.0, []
-    for label, metrics in results.items():
-        if label not in base:
-            print(f"  NEW  {label} (not in baseline)")
+    for leg_name, payload in legs.items():
+        print(f"\n{leg_name}:")
+        if leg_name not in base:
+            print(f"  NEW  leg {leg_name} (not in baseline) -- not gated")
             continue
-        delta = metrics["ndcg@10"] - base[label]["ndcg@10"]
-        worst = min(worst, delta)
-        flag = "FAIL" if delta < -tolerance else "ok"
-        if delta < -tolerance:
-            failed.append(label)
-        print(f"  {flag:4s} {label:28s} {metrics['ndcg@10']:.4f}  ({delta:+.4f})")
+        base_results = base[leg_name]["results"]
+        for label, metrics in payload["results"].items():
+            if label not in base_results:
+                print(f"  NEW  {label} (not in baseline)")
+                continue
+            delta = metrics["ndcg@10"] - base_results[label]["ndcg@10"]
+            worst = min(worst, delta)
+            flag = "FAIL" if delta < -tolerance else "ok"
+            if delta < -tolerance:
+                failed.append(f"{leg_name}/{label}")
+            print(f"  {flag:4s} {label:24s} {metrics['ndcg@10']:.4f}  ({delta:+.4f})")
     print(f"\nworst delta {worst:+.4f} (tolerance {tolerance})")
+    if failed:
+        print("REGRESSED: " + ", ".join(failed))
     return 1 if failed else 0
 
 
@@ -181,7 +320,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--embedding-provider", default=EVAL_EMBEDDING_PROVIDER)
     p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
-    p.add_argument("--max-papers", type=int, default=None)
+    p.add_argument("--leg", choices=("qasper", "superdocs", "both"), default="both")
+    p.add_argument("--max-papers", type=int, default=None, help="qasper leg: cap papers (smoke only)")
+    p.add_argument("--sections", type=int, default=SUPERDOC_SECTIONS, help="superdocs leg: sections per doc")
+    p.add_argument("--passages", type=int, default=SUPERDOC_PASSAGES, help="superdocs leg: passages per section")
+    p.add_argument("--max-queries", type=int, default=SUPERDOC_QUERIES, help="superdocs leg: docs to build")
+    p.add_argument("--seed", type=int, default=SUPERDOC_SEED)
     p.add_argument("--rebuild", action="store_true")
     p.add_argument("--save-baseline", action="store_true")
     p.add_argument("--check", action="store_true")
@@ -196,66 +340,56 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # LocalVectorDB.__init__ turns ANY provider failure into a bare "model is not
     # available" (a cold HF cache included), so surface the real error first.
     from benchmarks.eval_retrieval import preflight_embedding_model
-    from benchmarks.qasper_data import load_qasper
 
     preflight_embedding_model(args.embedding_provider, args.embedding_model)
 
-    bench = load_qasper(split="dev", max_papers=args.max_papers)
-    logger.info("Qasper dev: %d docs, %d queries", len(bench.corpus), len(bench.queries))
+    wanted = ("qasper", "superdocs") if args.leg == "both" else (args.leg,)
+    legs: List[Leg] = []
+    if "qasper" in wanted:
+        legs.append(qasper_leg(args.max_papers))
+    if "superdocs" in wanted:
+        legs.append(superdocs_leg(args.sections, args.passages, args.max_queries, args.seed))
 
-    dbs = {
-        s: build_db(
-            bench,
-            provider=args.embedding_provider,
-            model=args.embedding_model,
-            strategy=s,
-            rebuild=args.rebuild,
-            max_papers=args.max_papers,
-        )
-        for s in ("rawspan", "centroid")
-    }
+    payloads: Dict[str, Any] = {leg.name: run_leg(leg, args) for leg in legs}
 
-    # Belt and braces on the cache key: assert the index actually holds the corpus
-    # being scored. A stale-but-valid database is the failure mode here -- it does
-    # not error, it just returns chance-level numbers that read as a real result.
-    for strategy, db in dbs.items():
-        n = db.count()
-        if n != len(bench.corpus):
-            raise RuntimeError(
-                f"DB[{strategy}] holds {n} documents but the benchmark has "
-                f"{len(bench.corpus)}. Stale cached index -- re-run with --rebuild."
+    print("\n" + "=" * 72)
+    for leg_name, payload in payloads.items():
+        print(f"{leg_name}  ({payload['n_docs']} docs, {payload['n_queries']} queries)")
+        print(f"  {'arm':24s} {'ndcg@10':>9s} {'r@1':>8s} {'r@5':>8s} {'r@10':>8s}")
+        for label, m in payload["results"].items():
+            print(
+                f"  {label:24s} {m['ndcg@10']:9.4f} {m['recall@1']:8.4f} " f"{m['recall@5']:8.4f} {m['recall@10']:8.4f}"
             )
-    logger.info("Index check: both DBs hold %d documents", len(bench.corpus))
-
-    results: Dict[str, Dict[str, float]] = {}
-    for config in build_configs():
-        m = run_config(dbs[config.strategy], bench, config)
-        results[config.label] = m
-        logger.info(
-            "%-28s ndcg@10 %.4f  r@1 %.4f  r@10 %.4f",
-            config.label,
-            m["ndcg@10"],
-            m["recall@1"],
-            m["recall@10"],
-        )
-
-    print("\n" + "=" * 66)
-    print(f"{'arm':28s} {'ndcg@10':>9s} {'r@1':>8s} {'r@5':>8s} {'r@10':>8s}")
-    for label, m in results.items():
-        print(f"{label:28s} {m['ndcg@10']:9.4f} {m['recall@1']:8.4f} {m['recall@5']:8.4f} {m['recall@10']:8.4f}")
-    print("=" * 66)
+    print("=" * 72)
 
     if args.save_baseline:
+        if args.leg != "both":
+            # A partial save would silently drop the other leg's baseline and
+            # leave it ungated from then on, with nothing in the file to say so.
+            print("Refusing to save a partial baseline; re-run with --leg both.", file=sys.stderr)
+            return 1
         args.baseline.write_text(
             json.dumps(
                 {
                     "generated": datetime.now(timezone.utc).isoformat(),
                     "model": args.embedding_model,
-                    "dataset": "qasper-dev",
-                    "n_docs": len(bench.corpus),
-                    "n_queries": len(bench.queries),
-                    "coverage": "SHORT sections only (~190 tok mean); no long-span leg yet",
-                    "results": results,
+                    "legs": {
+                        "qasper": {
+                            "dataset": "qasper-dev",
+                            "regime": "SHORT sections (~190 tok mean); raw-span never window-pools",
+                            **payloads["qasper"],
+                        },
+                        "superdocs": {
+                            "dataset": (
+                                f"fiqa-superdocs s{args.sections}p{args.passages} " f"seed{args.seed} (SYNTHETIC)"
+                            ),
+                            "regime": (
+                                f"LONG sections (~{args.passages * 767 // 1000}k chars); "
+                                "raw-span truncates and window-pools"
+                            ),
+                            **payloads["superdocs"],
+                        },
+                    },
                 },
                 indent=2,
             ),
@@ -263,7 +397,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         print(f"Wrote baseline {args.baseline}")
     if args.check:
-        return compare_to_baseline(results, args.baseline, args.tolerance)
+        return compare_to_baseline(payloads, args.baseline, args.tolerance)
     return 0
 
 

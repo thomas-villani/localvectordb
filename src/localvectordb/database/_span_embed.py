@@ -1,19 +1,38 @@
 """Raw-span level-vector embedding (window-mean-pooled).
 
 Represents a section by the embedding of its **own text** rather than the
-centroid (mean) of its chunk vectors. An experiment (``hierarchical-test-*``)
-measured that this raw-span representation beats the centroid on real long
-documents and section-structured data, standalone and fused with chunk
-retrieval (findings F2/F3).
+centroid (mean) of its chunk vectors.
 
-The math here mirrors ``benchmarks/eval_hierarchical.py`` ``CachedEncoder``
-exactly so ``src/`` reproduces the measured harness numbers. In particular a
-span longer than the encoder's context window is embedded in **windows and
-mean-pooled** -- never truncated -- so a long section is represented in full
-(truncation would silently drop the section's tail, and the section vector is
-the key arm). Vectors are returned **raw** (not unit-normalised); the caller's
-``_add_vectors_to_section_index`` unit-normalises at the write, matching the
-harness ``_unit(mean(...))``.
+WHEN THIS WINS, AND WHEN IT LOSES
+---------------------------------
+This module used to cite findings F2/F3 -- "raw-span beats the centroid on real
+long documents" -- as blanket justification. **That is only true for short
+sections.** Later work established that a raw-span vector and a centroid are one
+operator at two granularities, and that the coarser one degrades as the span
+grows: measured on long sections (median >8k tokens), raw-span lost **0.25-0.36
+nDCG** to the centroid on every encoder tested, while on short sections (~190
+tokens) it still won. The span length, not the representation, is the axis.
+
+Callers should therefore not read ``section_vector_strategy="rawspan"`` as the
+generally-better arm; it is the better arm for sections that fit comfortably
+inside the encoder's context.
+
+A span longer than that context is embedded in **windows and mean-pooled** --
+never truncated -- so a long section is represented in full. That promise was
+not kept until 2026-08-04: the window was sized from the provider's reported
+context, and local providers reported none, so a fixed 24,000-char window was
+handed to models with far smaller contexts and silently truncated by them (7.3%
+of a 24.5k-char section survived on ``all-MiniLM-L6-v2``). Windows are now sized
+from the provider's real context; see ``EmbeddingProvider.max_input_tokens``.
+
+``_WINDOW_CHARS_PER_TOKEN`` (3.0) is deliberately below ``_CHARS_PER_TOKEN``
+(3.5). The harness needed token-exact windows to locate the pooling threshold
+precisely, but ``src/`` needs only "never truncate", and erring small is both
+safe and -- since finer granularity is what helps on long spans -- the harmless
+direction to err in.
+
+Vectors are returned **raw** (not unit-normalised); the caller's
+``_add_vectors_to_section_index`` unit-normalises at the write.
 """
 
 from __future__ import annotations
