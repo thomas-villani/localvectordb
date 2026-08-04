@@ -1997,7 +1997,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
         starve_k = warn_k if warn_k is not None else k
         if not exact and filters and len(results) < starve_k:
             self._warn_filter_starved(len(results), starve_k)
-        results.sort(key=lambda x: x.score, reverse=True)
+        # Ties are STRUCTURAL at this level: sections that own no chunk of their own
+        # inherit their neighbours' chunk vectors, so 17.9% of section vectors on
+        # Qasper dev are exact duplicates and score identically. Python's sort is
+        # stable, so those ties kept FAISS order -- i.e. faiss_id order, which the
+        # threaded ingest assigns differently on every build. Identical queries on
+        # identically-built databases therefore returned different orderings (0.011
+        # nDCG spread across rebuilds). The id is intrinsic, so it breaks ties the
+        # same way everywhere, forever.
+        results.sort(key=lambda x: (-x.score, x.id))
         return results[:k]
 
     def _document_level_search(
@@ -2078,7 +2086,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         if not exact and filters and len(results) < k:
             self._warn_filter_starved(len(results), k)
-        results.sort(key=lambda x: x.score, reverse=True)
+        # Ties are STRUCTURAL at this level: sections that own no chunk of their own
+        # inherit their neighbours' chunk vectors, so 17.9% of section vectors on
+        # Qasper dev are exact duplicates and score identically. Python's sort is
+        # stable, so those ties kept FAISS order -- i.e. faiss_id order, which the
+        # threaded ingest assigns differently on every build. Identical queries on
+        # identically-built databases therefore returned different orderings (0.011
+        # nDCG spread across rebuilds). The id is intrinsic, so it breaks ties the
+        # same way everywhere, forever.
+        results.sort(key=lambda x: (-x.score, x.id))
         return results[:k]
 
     def _assemble_section_results(self, chunk_results: List[QueryResult], k: int) -> List[QueryResult]:
@@ -2142,7 +2158,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
                             section_results[section_key].score = result.score
 
         results = list(section_results.values())
-        results.sort(key=lambda x: x.score, reverse=True)
+        # Ties are STRUCTURAL at this level: sections that own no chunk of their own
+        # inherit their neighbours' chunk vectors, so 17.9% of section vectors on
+        # Qasper dev are exact duplicates and score identically. Python's sort is
+        # stable, so those ties kept FAISS order -- i.e. faiss_id order, which the
+        # threaded ingest assigns differently on every build. Identical queries on
+        # identically-built databases therefore returned different orderings (0.011
+        # nDCG spread across rebuilds). The id is intrinsic, so it breaks ties the
+        # same way everywhere, forever.
+        results.sort(key=lambda x: (-x.score, x.id))
         return results[:k]
 
     def _fused_search(
@@ -3087,6 +3111,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 metadata=doc_metadata,
             )
             document_results.append(doc_result)
+        # NOT tie-broken on id, unlike the section-level sorts. Here the incoming
+        # order is MEANINGFUL -- it carries keyword/BM25 rank -- and Python's stable
+        # sort preserves it for equal scores. Sorting ties by id instead cost
+        # keyword+frequency_boost 0.4664 nDCG on SciFact (0.6577 -> 0.1914), caught
+        # by eval_retrieval.py --check. Ties are common here because frequency_boost
+        # scores are near-integral; they are arbitrary only at the section level,
+        # where tied candidates arrive in FAISS index order and carry no signal.
         document_results.sort(key=lambda x: x.score, reverse=True)
         return document_results
 
