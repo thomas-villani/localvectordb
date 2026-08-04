@@ -193,6 +193,8 @@ def build_synthetic_benchmark(
     max_queries: Optional[int] = None,
     mode: str = "point",
     min_section_gold: int = 2,
+    min_query_gold: int = 1,
+    max_section_gold: Optional[int] = None,
 ) -> SyntheticBenchmark:
     """Fabricate multi-section super-documents from a judged passage corpus.
 
@@ -220,6 +222,18 @@ def build_synthetic_benchmark(
         ``"section"`` mode only: the minimum number of in-corpus gold passages a
         query must have to be placed. Higher means denser gold sections but fewer
         eligible queries.
+    min_query_gold
+        Eligibility filter applied in **both** modes: skip any query with fewer
+        than this many in-corpus golds. Default 1 keeps every answerable query,
+        which is the historical behaviour. Its purpose is to let a ``"point"``
+        arm and a ``"section"`` arm run over the **identical query set** -- the
+        density contrast is only interpretable if the queries are matched, since
+        multi-gold queries are not a random sample of the corpus.
+    max_section_gold
+        ``"section"`` mode only: cap on how many golds are actually placed
+        (default: ``passages_per_section``, i.e. as many as the query has).
+        Capping is what makes gold density a *controlled* variable rather than
+        one that varies per query with its own gold count.
 
     Returns
     -------
@@ -241,17 +255,22 @@ def build_synthetic_benchmark(
     # places one; section mode places up to P (clustered into one section) and
     # needs at least ``min_section_gold`` to be worth building. Sort for
     # determinism before any sampling.
+    gold_cap = passages_per_section if max_section_gold is None else min(max_section_gold, passages_per_section)
+    if gold_cap < 1:
+        raise ValueError(f"max_section_gold must be >= 1, got {max_section_gold!r}")
     answerable: List[Tuple[str, List[str]]] = []  # (query_id, gold_passage_ids)
     for query_id in sorted(source.qrels):
         golds = sorted(pid for pid, grade in source.qrels[query_id].items() if grade > 0 and pid in source.corpus)
-        if not golds:
+        if not golds or len(golds) < min_query_gold:
             continue
         if mode == "point":
             answerable.append((query_id, golds[:1]))
         elif len(golds) >= min_section_gold:
-            answerable.append((query_id, golds[:passages_per_section]))
+            answerable.append((query_id, golds[:gold_cap]))
     if not answerable:
         detail = "" if mode == "point" else f" with >= {min_section_gold} in-corpus gold passages"
+        if min_query_gold > 1:
+            detail += f" (min_query_gold={min_query_gold})"
         raise ValueError(f"{source.name}: no answerable queries{detail}")
     if max_queries is not None:
         answerable = answerable[:max_queries]
@@ -353,7 +372,14 @@ def build_synthetic_benchmark(
 
     return SyntheticBenchmark(
         name=f"{source.name}_super_s{sections_per_doc}p{passages_per_section}_{mode}",
-        params={"sections": sections_per_doc, "passages": passages_per_section, "seed": seed, "mode": mode},
+        params={
+            "sections": sections_per_doc,
+            "passages": passages_per_section,
+            "seed": seed,
+            "mode": mode,
+            "min_query_gold": min_query_gold,
+            "gold_placed": 1 if mode == "point" else gold_cap,
+        },
         corpus=corpus,
         queries=queries,
         doc_qrels=doc_qrels,
@@ -445,6 +471,30 @@ def _self_test() -> int:
         assert set(sec.passage_qrels[query_id]) == {loc.passage_id for loc in locs}
         assert list(sec.section_qrels[query_id]) == [section_qrel_id(doc_id, locs[0].section_index)]
     print(f"OK section-mode: {len(sec.gold_locations)} multi-gold queries clustered into one gold-dense section each.")
+
+    # --- matched query sets: the density contrast is only readable if the point
+    # and section arms cover the SAME queries with a DIFFERENT number of golds ---
+    common = dict(sections_per_doc=2, passages_per_section=3, seed=1, min_query_gold=3)
+    pt = build_synthetic_benchmark(source, mode="point", **common)
+    dn = build_synthetic_benchmark(source, mode="section", min_section_gold=3, max_section_gold=3, **common)
+    assert set(pt.queries) == set(dn.queries), "matched arms must cover the same queries"
+    assert all(len(v) == 1 for v in pt.gold_locations.values()), "point mode places exactly one gold"
+    assert all(len(v) == 3 for v in dn.gold_locations.values()), "section mode places max_section_gold golds"
+    assert pt.params["gold_placed"] == 1 and dn.params["gold_placed"] == 3
+    # Capping must bind: without it the query below would place all its golds.
+    capped = build_synthetic_benchmark(
+        source,
+        mode="section",
+        min_section_gold=2,
+        max_section_gold=2,
+        sections_per_doc=2,
+        passages_per_section=3,
+        seed=1,
+    )
+    assert all(len(v) == 2 for v in capped.gold_locations.values()), "max_section_gold did not bind"
+    # min_query_gold=1 must leave the historical corpus byte-identical.
+    assert build_synthetic_benchmark(source, sections_per_doc=2, passages_per_section=2, seed=1).corpus == bench.corpus
+    print(f"OK density knobs: {len(pt.queries)} matched queries, 1 vs 3 golds placed at identical geometry.")
 
     # Show one rendered doc so the shape is reviewable.
     sample_doc = next(iter(bench.corpus.values()))
