@@ -51,9 +51,32 @@ strategies, selected by the ``section_vector_strategy`` constructor argument.
 
 ``"centroid"``
     The section's vector is the **mean** of its member chunk embeddings. This is
-    free (no extra embedding calls) but is the weaker representation; it is the
-    legacy behaviour and the automatic choice for databases created before the
-    strategy option existed.
+    free (no extra embedding calls). It is the legacy behaviour and the automatic
+    choice for databases created before the strategy option existed.
+
+.. important::
+
+   **Which of these is stronger depends on how long your sections are.** Raw-span
+   wins on short sections, but the two are a single operator at two granularities,
+   and the coarser one degrades as the span grows: on sections whose median length
+   is past roughly 2,000 tokens, raw-span has measured **0.25–0.36 nDCG below** the
+   centroid across several encoders. If your documents have long sections, do not
+   take the default on faith — measure both.
+
+   Two further cautions for long-section corpora, both measured rather than
+   assumed:
+
+   - A **single vector of any kind** is a weak representation of a long section.
+     In our own regression suite, chunk-level retrieval beat every single-vector
+     section arm on both a short-section and a long-section corpus. The section
+     level earns its place mainly *fused* with chunk retrieval, not standing alone.
+   - **Chunks larger than sections starve the centroid.** Chunks are assigned to
+     the section containing their midpoint, so if ``chunk_size`` exceeds your
+     typical section, one chunk is credited to a single section and its neighbours
+     get nothing. Sections that would otherwise end up empty are filled from the
+     chunks overlapping them, but those sections then share a vector and become
+     indistinguishable. If you rely on section-level retrieval, set ``chunk_size``
+     comfortably below your median section length.
 
 Why the default is raw-span
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -65,11 +88,19 @@ text keeps that structure.
 
 We measured this before changing the default, on real embeddings across Qasper
 (real NLP papers) and synthetic section corpora built from BEIR — and again
-across several local encoders. Raw-span sections beat both the chunk baseline and
-the centroid at every meaningful target; averaging genuinely discards signal the
-span embedding keeps, and on some corpora the centroid section scored *below*
-chunk-only while the raw-span section scored well above it. The full tables,
-encoders, and methodology are in :doc:`hierarchical-evaluation`.
+across several local encoders. Raw-span sections beat the centroid at every
+target in that study; averaging genuinely discards signal the span embedding
+keeps. The full tables, encoders, and methodology are in
+:doc:`hierarchical-evaluation`.
+
+**The scope of that result is narrower than it first appeared, and later work
+narrowed it further.** Every corpus in the original study has *short* sections —
+Qasper's average about 190 tokens. On sections an order of magnitude longer the
+comparison reverses, for a reason the short-section study had no way to see: once
+a span exceeds the encoder's context it must be split and its window embeddings
+averaged, at which point "raw-span" is itself a centroid, just a coarser one. The
+default is retained for the short-section case it was measured in; it is not a
+general claim, and the ``.. important::`` note above says where it fails.
 
 Cost and back-compatibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -85,6 +85,26 @@ RECALL_K = (1, 5, 10)
 K = 10
 TOLERANCE = 0.005
 
+# Per-metric tolerance, set from MEASURED rebuild variance rather than taste.
+#
+# Two independent rebuilds of the same code (§6.31/5) agree exactly at document
+# level -- 0.1838 and every recall identical -- but differ by 0.0044 on
+# ndcg@10_sections. The cause is exact ties: sections that own no chunk of their
+# own inherit their neighbours' chunk vectors, so 17.9% of qasper's section
+# vectors are duplicates. Ordering *within* the returned candidates is now
+# deterministic (results sort on (-score, id)), but which tied candidates FAISS
+# RETURNS at the top-k boundary still depends on index order, which the threaded
+# ingest assigns differently per build.
+#
+# So the section metric gets a tolerance above its noise floor, and is reported
+# as advisory rather than authoritative. Do not tighten it without either
+# over-fetching and selecting ties deterministically, or making faiss_id
+# assignment reproducible -- otherwise the gate will fail on rebuilds that
+# changed nothing. A corpus with no duplicate section vectors (superdocs: 0
+# duplicates) is exactly reproducible and does not need the headroom.
+SECTION_TOLERANCE = 0.015
+METRIC_TOLERANCE = {"ndcg@10_sections": SECTION_TOLERANCE}
+
 # Long-leg grid. S x P FiQA passages (~767 chars each) per super-document, so
 # P=32 puts a section at ~24.5k chars -- just past the 24,000-char window
 # ``_span_embed`` falls back to, which is what makes the leg exercise multi-window
@@ -211,10 +231,35 @@ def build_db(bench, *, leg: Leg, provider: str, model: str, strategy: str, rebui
     return db
 
 
+def _section_qrel_id(result_id: str) -> str:
+    """``{doc}:section:{i}`` (what ``query`` returns) -> ``{doc}#s{i}`` (what qrels use)."""
+    doc_id, _, index = result_id.rpartition(":section:")
+    return f"{doc_id}#s{index}"
+
+
 def run_config(db, bench, config: HierConfig) -> Dict[str, float]:
-    """Score one arm at DOCUMENT level so every arm is measured in one unit."""
+    """Score one arm at document level, and -- where meaningful -- at section level.
+
+    Document level is the common unit every arm can be measured in, so it is the
+    primary metric. But it is **structurally blind to whether a given section is
+    retrievable at all**: ``search_level="sections", return_type="documents"``
+    rolls a document up to the score of its *best* section, so a document with one
+    good section is found whether its other nine are reachable or dead. A defect
+    that makes 26% of gold sections unretrievable therefore barely moves this
+    number -- which is exactly what happened when the chunkless-section fix landed
+    (-0.0066 on qasper, entirely from added vectors reshuffling the ranking).
+
+    ``ndcg@10_sections`` scores the sections themselves against ``section_qrels``.
+    It is the only metric here that can see a section become reachable, so any
+    change to section *vectors* must be read on it rather than on the doc-level
+    column. Only computed for ``search_level="sections"``: ``fused`` mixes chunk
+    and section hits and has no section-level ground truth to be scored against.
+    """
     scores: Dict[str, List[float]] = {f"recall@{k}": [] for k in RECALL_K}
     scores["ndcg@10"] = []
+    section_scores: List[float] = []
+    score_sections = config.search_level == "sections" and bool(getattr(bench, "section_qrels", None))
+
     for qid, text in bench.queries.items():
         rel = bench.doc_qrels.get(qid, {})
         if not any(r > 0 for r in rel.values()):
@@ -229,7 +274,18 @@ def run_config(db, bench, config: HierConfig) -> Dict[str, float]:
         scores["ndcg@10"].append(ndcg_at_k(ranked, rel, K))
         for k in RECALL_K:
             scores[f"recall@{k}"].append(recall_at_k(ranked, rel, k))
-    return {m: (sum(v) / len(v) if v else 0.0) for m, v in scores.items()}
+
+        if score_sections:
+            sec_rel = bench.section_qrels.get(qid, {})
+            if any(r > 0 for r in sec_rel.values()):
+                sec_hits = db.query(text, search_level="sections", k=K)
+                sec_ranked = [_section_qrel_id(h.id) for h in sec_hits]
+                section_scores.append(ndcg_at_k(sec_ranked, sec_rel, K))
+
+    out = {m: (sum(v) / len(v) if v else 0.0) for m, v in scores.items()}
+    if section_scores:
+        out["ndcg@10_sections"] = sum(section_scores) / len(section_scores)
+    return out
 
 
 def run_leg(leg: Leg, args: argparse.Namespace) -> Dict[str, Any]:
@@ -266,12 +322,13 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Dict[str, Any]:
         m = run_config(dbs[config.strategy], bench, config)
         results[config.label] = m
         logger.info(
-            "[%s] %-24s ndcg@10 %.4f  r@1 %.4f  r@10 %.4f",
+            "[%s] %-24s ndcg@10 %.4f  r@1 %.4f  r@10 %.4f%s",
             leg.name,
             config.label,
             m["ndcg@10"],
             m["recall@1"],
             m["recall@10"],
+            f"  sec-ndcg {m['ndcg@10_sections']:.4f}" if "ndcg@10_sections" in m else "",
         )
     return {"n_docs": len(bench.corpus), "n_queries": len(bench.queries), "results": results}
 
@@ -304,12 +361,20 @@ def compare_to_baseline(legs: Dict[str, Any], path: Path, tolerance: float) -> i
             if label not in base_results:
                 print(f"  NEW  {label} (not in baseline)")
                 continue
-            delta = metrics["ndcg@10"] - base_results[label]["ndcg@10"]
-            worst = min(worst, delta)
-            flag = "FAIL" if delta < -tolerance else "ok"
-            if delta < -tolerance:
-                failed.append(f"{leg_name}/{label}")
-            print(f"  {flag:4s} {label:24s} {metrics['ndcg@10']:.4f}  ({delta:+.4f})")
+            # Both metrics are gated. Document level alone would miss a change that
+            # makes sections unreachable, because a rolled-up document takes the max
+            # over its sections and survives losing most of them.
+            for metric in ("ndcg@10", "ndcg@10_sections"):
+                if metric not in metrics or metric not in base_results[label]:
+                    continue
+                delta = metrics[metric] - base_results[label][metric]
+                limit = METRIC_TOLERANCE.get(metric, tolerance)
+                worst = min(worst, delta)
+                flag = "FAIL" if delta < -limit else "ok"
+                if delta < -limit:
+                    failed.append(f"{leg_name}/{label}/{metric}")
+                suffix = "" if metric == "ndcg@10" else " [sec]"
+                print(f"  {flag:4s} {label:24s}{suffix:6s} {metrics[metric]:.4f}  ({delta:+.4f})")
     print(f"\nworst delta {worst:+.4f} (tolerance {tolerance})")
     if failed:
         print("REGRESSED: " + ", ".join(failed))
@@ -355,10 +420,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("\n" + "=" * 72)
     for leg_name, payload in payloads.items():
         print(f"{leg_name}  ({payload['n_docs']} docs, {payload['n_queries']} queries)")
-        print(f"  {'arm':24s} {'ndcg@10':>9s} {'r@1':>8s} {'r@5':>8s} {'r@10':>8s}")
+        print(f"  {'arm':24s} {'ndcg@10':>9s} {'r@1':>8s} {'r@5':>8s} {'r@10':>8s} {'sec-ndcg':>9s}")
         for label, m in payload["results"].items():
+            sec = f"{m['ndcg@10_sections']:9.4f}" if "ndcg@10_sections" in m else f"{'-':>9s}"
             print(
-                f"  {label:24s} {m['ndcg@10']:9.4f} {m['recall@1']:8.4f} " f"{m['recall@5']:8.4f} {m['recall@10']:8.4f}"
+                f"  {label:24s} {m['ndcg@10']:9.4f} {m['recall@1']:8.4f} "
+                f"{m['recall@5']:8.4f} {m['recall@10']:8.4f} {sec}"
             )
     print("=" * 72)
 
