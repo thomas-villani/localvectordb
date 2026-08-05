@@ -91,8 +91,12 @@ def _score(db, queries, *, fetch: int, **query_kwargs) -> Dict[str, float]:
 
 def run_leg(leg: Leg, args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     missing = [s for s in STRATEGIES if not _is_cached(leg, args.embedding_model, s)]
-    if missing:
-        logger.warning("[%s] skipping: no cached DB for %s", leg.name, ", ".join(missing))
+    if missing and not args.allow_build:
+        logger.warning(
+            "[%s] skipping: no cached DB for %s. Re-run with --allow-build to spend the build.",
+            leg.name,
+            ", ".join(missing),
+        )
         return None
 
     bench = leg.load()
@@ -110,6 +114,7 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Optional[Dict[str, Any]]:
             model=args.embedding_model,
             strategy=s,
             rebuild=False,
+            embedding_config=_embedding_config(args),
         )
         for s in STRATEGIES
     }
@@ -133,10 +138,28 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     return out
 
 
+def _embedding_config(args: argparse.Namespace) -> Dict[str, Any]:
+    """Transport-only overrides; see ``build_db``'s allowlist."""
+    return {"max_concurrent_requests": args.embed_concurrency} if args.embed_concurrency else {}
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--embedding-provider", default=EVAL_EMBEDDING_PROVIDER)
     p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
+    p.add_argument(
+        "--allow-build",
+        action="store_true",
+        help="permit building a leg whose DB is not cached (slow); off by default",
+    )
+    p.add_argument(
+        "--embed-concurrency",
+        type=int,
+        default=None,
+        help="override the provider's max_concurrent_requests (transport only). Worth ~10-20%% against "
+        "ollama, NOT the 2x an isolated one-text-per-request benchmark suggests: the provider already "
+        "batches 64 texts per call, which amortizes almost all of the per-request overhead.",
+    )
     p.add_argument(
         "--legs",
         nargs="+",

@@ -145,6 +145,13 @@ def build_configs() -> List[HierConfig]:
     return out
 
 
+# Settings that change only how we TALK to the provider, never what it returns.
+# See the cache-key discussion in build_db before adding to this set.
+_TRANSPORT_ONLY_EMBEDDING_KEYS = frozenset(
+    {"max_concurrent_requests", "timeout", "max_retries", "retry_delay", "base_url"}
+)
+
+
 def qasper_leg(max_papers: Optional[int]) -> Leg:
     from benchmarks.qasper_data import load_qasper
 
@@ -180,6 +187,7 @@ def build_db(
     strategy: str,
     rebuild: bool,
     chunk_size: Optional[int] = None,
+    embedding_config: Optional[Dict[str, Any]] = None,
 ):
     """Build (or reopen) a hierarchical DB for one section_vector_strategy.
 
@@ -199,6 +207,15 @@ def build_db(
     historical key and every already-built gate/density index still hits cache.
     The consequence is that ``chunk_size=None`` and ``chunk_size=500`` are two
     keys for the same content; pass ``None`` unless you are deliberately sweeping.
+
+    ``embedding_config`` is the opposite case: it is deliberately kept OUT of the
+    key, because it may only carry TRANSPORT settings (how fast we talk to the
+    provider), which cannot change a single stored vector. Ollama's default of 3
+    concurrent requests leaves this box at ~250 tok/s against ~600 available, so
+    a build that should take an hour takes two and a half. The allowlist below is
+    what keeps that shortcut honest -- anything content-affecting (a prefix, a
+    dimension, a task type) would produce different vectors under an unchanged
+    key, which is precisely the cache poisoning the key rules exist to prevent.
     """
     from localvectordb import LocalVectorDB
 
@@ -224,6 +241,14 @@ def build_db(
     )
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
+    if embedding_config:
+        unsafe = set(embedding_config) - _TRANSPORT_ONLY_EMBEDDING_KEYS
+        if unsafe:
+            raise ValueError(
+                f"embedding_config carries content-affecting keys {sorted(unsafe)}; these would change "
+                "the stored vectors without changing the cache key. Add them to the key, not the allowlist."
+            )
+        kwargs["embedding_config"] = dict(embedding_config)
     if sentinel.exists():
         logger.info("Reusing cached DB %s", key)
         return LocalVectorDB(key, base, **kwargs)
