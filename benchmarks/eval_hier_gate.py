@@ -171,7 +171,16 @@ def superdocs_leg(sections: int, passages: int, max_queries: int, seed: int) -> 
     return Leg(name="superdocs", cache_key=key, load=_load)
 
 
-def build_db(bench, *, leg: Leg, provider: str, model: str, strategy: str, rebuild: bool):
+def build_db(
+    bench,
+    *,
+    leg: Leg,
+    provider: str,
+    model: str,
+    strategy: str,
+    rebuild: bool,
+    chunk_size: Optional[int] = None,
+):
     """Build (or reopen) a hierarchical DB for one section_vector_strategy.
 
     The strategy is baked in at ingest -- section vectors are written once -- so
@@ -184,10 +193,18 @@ def build_db(bench, *, leg: Leg, provider: str, model: str, strategy: str, rebui
     every arm scored at chance (nDCG 0.0357 ~= 10/275) while looking like a real
     result. ``Leg.cache_key`` carries those parameters now, so a new grid cannot
     collide with an old one.
+
+    ``chunk_size`` follows the same rule but suffixes the key **only when set**,
+    so ``None`` (= "whatever the library defaults to", currently 500) keeps the
+    historical key and every already-built gate/density index still hits cache.
+    The consequence is that ``chunk_size=None`` and ``chunk_size=500`` are two
+    keys for the same content; pass ``None`` unless you are deliberately sweeping.
     """
     from localvectordb import LocalVectorDB
 
     key = f"hiergate__{leg.cache_key}__{model.replace('/', '_').replace(':', '-')}__{strategy}"
+    if chunk_size is not None:
+        key += f"__c{chunk_size}"
     base = DATA_DIR / "db"
     base.mkdir(parents=True, exist_ok=True)
     sentinel = base / f"{key}.complete"
@@ -205,6 +222,8 @@ def build_db(bench, *, leg: Leg, provider: str, model: str, strategy: str, rebui
         hierarchical_embeddings=True,
         section_vector_strategy=strategy,
     )
+    if chunk_size is not None:
+        kwargs["chunk_size"] = chunk_size
     if sentinel.exists():
         logger.info("Reusing cached DB %s", key)
         return LocalVectorDB(key, base, **kwargs)
@@ -227,6 +246,10 @@ def build_db(bench, *, leg: Leg, provider: str, model: str, strategy: str, rebui
     got = getattr(db, "section_vector_strategy", None)
     if got != strategy:
         raise RuntimeError(f"DB reports section_vector_strategy={got!r}, expected {strategy!r}")
+    # Same reasoning for the sweep parameter: a silently-defaulted chunk_size
+    # would make every rung of a chunk_size ladder the same build.
+    if chunk_size is not None and db.chunk_size != chunk_size:
+        raise RuntimeError(f"DB reports chunk_size={db.chunk_size!r}, expected {chunk_size!r}")
     sentinel.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     return db
 
