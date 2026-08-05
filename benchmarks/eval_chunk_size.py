@@ -1,0 +1,316 @@
+"""DIAGNOSTIC: sweep ``chunk_size`` at a fixed encoder to find the r~=1 crossover.
+
+THE RULE UNDER TEST. ``section_rawspan`` and ``section_centroid`` are one
+mean-pooling operator at two granularities, and the finer pool wins. That makes
+the winner predictable from configuration alone:
+
+    rawspan piece = max_input_tokens x 3.0   (_span_embed._WINDOW_CHARS_PER_TOKEN)
+    centroid piece = chunk_size      x 3.5   (_CHARS_PER_TOKEN)
+    r = rawspan / centroid   ->   r < 1 favours rawspan, r > 1 favours centroid
+
+It has been checked at exactly **two** points, on opposite sides of r=1 across a
+32x range -- MiniLM @ chunk 500 (r=0.44, rawspan won 6/6, §6.32) and openai @ an
+8,191-token window (r=14.0, centroid won by 0.36, §6.20) -- and **never near
+r=1**, which is the only place a tuning guide actually gets consulted. Neither
+point varied ``chunk_size``. This file varies it, holding the encoder fixed, so
+the crossover is measured rather than interpolated.
+
+THE CONFOUND THE RULE MISSES. ``all-MiniLM-L6-v2`` has ``max_seq_length`` 256 and
+sentence-transformers truncates internally, so a chunk vector encodes at most
+~896 chars **no matter how large chunk_size is**. Above ~256 tokens the centroid
+piece stops getting coarser as text and only gets coarser as *attribution*. So
+the shipped ``chunk_size=500`` is r=0.44 nominal but r=0.86 effective, and the
+existing two-point fit cannot tell which quantity governs. The grid straddles
+both thresholds deliberately:
+
+    C=64,128       nominal r > 1, no truncation      -> centroid predicted
+    C=219          nominal r = 1.00, no truncation   -> predicted TIE
+    C=256          r=0.86, truncation just binding
+    C=500,1000     nominal r 0.44/0.22, effective r pinned at 0.86
+
+If nominal chunk_size governs, rawspan's margin keeps widening from 256 to 1000.
+If the encoded piece governs, the margin flattens there. The two rungs above 256
+are the discriminator, and they cost the least (truncation means less text is
+actually encoded).
+
+r IS COMPUTED FROM MEASURED CHUNK LENGTHS, not from the 3.5 chars/token constant.
+``chunk_overlap`` is 1 *sentence*, which is a few percent of a 500-token chunk but
+a large fraction of a 64-token one, so the nominal size overstates how much fresh
+text small chunks cover. The mean chunk length is read back out of each built DB
+and both r values are reported from it.
+
+LEG. The §6.32 density ladder at its top rung (12.5% gold, 100 queries), because
+that is where the section arms score highest and the rawspan-vs-centroid gap is
+most resolvable. Its ``chunk_size=500`` DBs are already built, so that rung is
+free and reproduces published numbers (rawspan 0.4536 / centroid 0.3537 doc,
+0.4426 / 0.3308 section) as a cache-integrity check on the whole sweep.
+
+Zero API spend (local sentence-transformers). 10 builds, ~1-2 h on CPU.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from benchmarks.config import EVAL_EMBEDDING_MODEL, EVAL_EMBEDDING_PROVIDER  # noqa: E402
+from benchmarks.eval_hier_gate import Leg, build_configs, build_db, run_config  # noqa: E402
+
+logger = logging.getLogger("eval_chunk_size")
+
+SECTIONS = 3
+PASSAGES = 32
+QUERIES = 100
+GOLD = 4
+MIN_QUERY_GOLD = 4
+SEED = 0
+
+LIBRARY_DEFAULT_CHUNK_SIZE = 500
+# Ordered by information value, not by size: the free cache-anchored rung first,
+# then the predicted crossover, then the truncation discriminator. A run cut
+# short still answers the question it was launched for.
+CHUNK_SIZES: Tuple[int, ...] = (500, 219, 128, 1000, 256, 64)
+
+_WINDOW_CHARS_PER_TOKEN = 3.0  # mirrors _span_embed
+_CHARS_PER_TOKEN = 3.5  # mirrors _span_embed
+
+
+def density_leg() -> Leg:
+    from benchmarks import beir_data
+    from benchmarks.superdocs import build_synthetic_benchmark
+
+    def _load():
+        return build_synthetic_benchmark(
+            beir_data.load("fiqa"),
+            sections_per_doc=SECTIONS,
+            passages_per_section=PASSAGES,
+            seed=SEED,
+            max_queries=QUERIES,
+            mode="section",
+            min_section_gold=MIN_QUERY_GOLD,
+            min_query_gold=MIN_QUERY_GOLD,
+            max_section_gold=GOLD,
+        )
+
+    key = f"density_fiqa_s{SECTIONS}p{PASSAGES}q{QUERIES}g{GOLD}seed{SEED}"
+    return Leg(name="density_g4", cache_key=key, load=_load)
+
+
+def _corpus_shape(db) -> Dict[str, float]:
+    """Measured chunk/section geometry of a built index.
+
+    The *nominal* chunk_size overstates how much distinct text a chunk covers,
+    because ``chunk_overlap=1`` is one sentence regardless of chunk size. Reading
+    the real mean back out is what makes the reported r a measurement.
+    """
+    with db.connection_pool.get_connection() as conn:
+        chunks = conn.execute("SELECT COUNT(*) AS n, AVG(LENGTH(content)) AS mean FROM chunks").fetchone()
+        sections = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()
+    return {
+        "n_chunks": int(chunks["n"] or 0),
+        "mean_chunk_chars": float(chunks["mean"] or 0.0),
+        "n_sections": int(sections["n"] or 0),
+    }
+
+
+def _r_values(mean_chunk_chars: float, window_chars: int, encoder_cap_chars: float) -> Dict[str, float]:
+    """Nominal and effective granularity ratios from the measured chunk length."""
+    nominal = window_chars / mean_chunk_chars if mean_chunk_chars else float("nan")
+    encoded = min(mean_chunk_chars, encoder_cap_chars)
+    return {
+        "r_nominal": nominal,
+        "r_effective": window_chars / encoded if encoded else float("nan"),
+        "encoded_chunk_chars": encoded,
+        "truncated": mean_chunk_chars > encoder_cap_chars,
+    }
+
+
+def _encoder_geometry(db) -> Tuple[int, float, int]:
+    """(context_tokens, encoder_cap_chars, window_chars) from a DB's live provider.
+
+    Read off the opened database rather than a freshly constructed provider for
+    two reasons. It is the object ``_span_embed`` will actually interrogate, so
+    the window size reported here is the one the section vectors were built with,
+    not a re-derivation that could drift. And constructing a provider here
+    directly triggers ``transformers``' lazy ``trainer`` import, which resolves
+    ``import datasets`` to ``benchmarks/datasets.py`` -- the script's own
+    directory is ``sys.path[0]`` -- and dies.
+    """
+    # src/'s own sizing, imported rather than mirrored: a copy would silently
+    # stop matching the moment _WINDOW_CHARS_PER_TOKEN changed.
+    from localvectordb.database._span_embed import _provider_context_tokens, _window_chars_for
+
+    provider = db.embedding_provider
+    tokens = _provider_context_tokens(provider)
+    if not tokens:
+        raise SystemExit(
+            f"{provider!r} reports no context window; the r rule is undefined without it "
+            "(and _span_embed would fall back to a fixed 24,000-char window)"
+        )
+    # The window uses the conservative 3.0; the cap on how much of a CHUNK the
+    # model actually encodes is the same context measured in ordinary text, 3.5.
+    return tokens, tokens * _CHARS_PER_TOKEN, _window_chars_for(provider)
+
+
+def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict[str, Any]:
+    # None means "library default", which is the key every already-built DB used.
+    key_size = None if chunk_size == LIBRARY_DEFAULT_CHUNK_SIZE else chunk_size
+
+    dbs = {
+        s: build_db(
+            bench,
+            leg=leg,
+            provider=args.embedding_provider,
+            model=args.embedding_model,
+            strategy=s,
+            rebuild=args.rebuild,
+            chunk_size=key_size,
+        )
+        for s in ("rawspan", "centroid")
+    }
+    for strategy, db in dbs.items():
+        if db.count() != len(bench.corpus):
+            raise RuntimeError(
+                f"DB[{strategy}] c={chunk_size} holds {db.count()} documents, "
+                f"benchmark has {len(bench.corpus)}. Stale cached index -- re-run with --rebuild."
+            )
+
+    tokens, encoder_cap_chars, window_chars = _encoder_geometry(dbs["rawspan"])
+    shape = _corpus_shape(dbs["centroid"])
+    rung: Dict[str, Any] = {
+        "chunk_size": chunk_size,
+        "encoder_context_tokens": tokens,
+        "window_chars": window_chars,
+        "encoder_cap_chars": encoder_cap_chars,
+        **shape,
+        **_r_values(shape["mean_chunk_chars"], window_chars, encoder_cap_chars),
+    }
+    logger.info(
+        "[c=%d] %d chunks, mean %.0f chars (encoded %.0f), r_nom %.2f r_eff %.2f",
+        chunk_size,
+        rung["n_chunks"],
+        rung["mean_chunk_chars"],
+        rung["encoded_chunk_chars"],
+        rung["r_nominal"],
+        rung["r_effective"],
+    )
+
+    for cfg in build_configs():
+        scores = run_config(dbs[cfg.strategy], bench, cfg)
+        rung[cfg.label] = scores
+        logger.info(
+            "[c=%d] %-24s ndcg@10=%.4f  sec=%s",
+            chunk_size,
+            cfg.label,
+            scores["ndcg@10"],
+            f"{scores['ndcg@10_sections']:.4f}" if "ndcg@10_sections" in scores else "-",
+        )
+    for db in dbs.values():
+        db.close()
+    return rung
+
+
+def _check_anchor(rung: Dict[str, Any]) -> List[str]:
+    """The cached c=500 rung must reproduce §6.32, or the whole sweep is suspect."""
+    published = {
+        ("sections · rawspan", "ndcg@10"): 0.4536,
+        ("sections · centroid", "ndcg@10"): 0.3537,
+        ("sections · rawspan", "ndcg@10_sections"): 0.4426,
+        ("sections · centroid", "ndcg@10_sections"): 0.3308,
+    }
+    problems = []
+    for (label, metric), expected in published.items():
+        got = rung.get(label, {}).get(metric)
+        if got is None:
+            problems.append(f"{label}/{metric} missing")
+        elif abs(got - expected) > 0.0005:
+            problems.append(f"{label}/{metric} {got:.4f} != published {expected:.4f}")
+    return problems
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--embedding-provider", default=EVAL_EMBEDDING_PROVIDER)
+    p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
+    p.add_argument("--chunk-sizes", type=int, nargs="+", default=list(CHUNK_SIZES))
+    p.add_argument("--rebuild", action="store_true")
+    p.add_argument("--out", default=str(_ROOT / "benchmarks" / "results" / "chunk_size_sweep.json"))
+    return p.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    args = parse_args(argv)
+
+    # Load the encoder BEFORE any corpus. The order is load-bearing: loading a
+    # BEIR corpus first puts a ``datasets`` module in ``sys.modules`` that shadows
+    # HuggingFace's (``benchmarks/datasets.py``, reachable because the script's own
+    # directory is ``sys.path[0]``), and ``transformers``' lazy import of it then
+    # fails -- surfacing as ``LocalVectorDB``'s bare "model is not available".
+    from benchmarks.eval_retrieval import preflight_embedding_model
+
+    preflight_embedding_model(args.embedding_provider, args.embedding_model)
+
+    leg = density_leg()
+    bench = leg.load()
+    logger.info("[%s] %d docs, %d queries", leg.name, len(bench.corpus), len(bench.queries))
+
+    rungs: Dict[str, Any] = {}
+    anchor_problems: List[str] = []
+    for chunk_size in args.chunk_sizes:
+        rung = run_rung(leg, bench, chunk_size, args)
+        rungs[str(chunk_size)] = rung
+        if chunk_size == LIBRARY_DEFAULT_CHUNK_SIZE and not args.rebuild:
+            anchor_problems = _check_anchor(rung)
+            if anchor_problems:
+                logger.error("ANCHOR MISMATCH at c=500: %s", "; ".join(anchor_problems))
+            else:
+                logger.info("anchor ok: c=500 reproduces the published §6.32 rung exactly")
+
+    ordered = sorted(rungs.values(), key=lambda r: r["chunk_size"])
+    print(f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'r_nom':>6} {'r_eff':>6}", end="")
+    print(f" {'raw doc':>9} {'cen doc':>9} {'raw sec':>9} {'cen sec':>9} {'sec gap':>9}")
+    for r in ordered:
+        raw_d = r["sections · rawspan"]["ndcg@10"]
+        cen_d = r["sections · centroid"]["ndcg@10"]
+        raw_s = r["sections · rawspan"].get("ndcg@10_sections", float("nan"))
+        cen_s = r["sections · centroid"].get("ndcg@10_sections", float("nan"))
+        print(
+            f"{r['chunk_size']:>6} {r['n_chunks']:>8} {r['mean_chunk_chars']:>8.0f} "
+            f"{r['r_nominal']:>6.2f} {r['r_effective']:>6.2f} "
+            f"{raw_d:>9.4f} {cen_d:>9.4f} {raw_s:>9.4f} {cen_s:>9.4f} {raw_s - cen_s:>+9.4f}"
+        )
+    print("\n'sec gap' > 0 means rawspan wins at the section level; the rule predicts it flips as r crosses 1.")
+    if anchor_problems:
+        print("ANCHOR MISMATCH -- cached c=500 rung does not reproduce §6.32: " + "; ".join(anchor_problems))
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {
+                "generated": datetime.now(timezone.utc).isoformat(),
+                "model": args.embedding_model,
+                "leg": f"fiqa-superdocs s{SECTIONS}p{PASSAGES} gold{GOLD} q{QUERIES} seed{SEED}",
+                "anchor_problems": anchor_problems,
+                "rungs": rungs,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(f"\nWrote {out}")
+    return 1 if anchor_problems else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
