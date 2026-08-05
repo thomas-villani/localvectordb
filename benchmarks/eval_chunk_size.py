@@ -45,7 +45,26 @@ most resolvable. Its ``chunk_size=500`` DBs are already built, so that rung is
 free and reproduces published numbers (rawspan 0.4536 / centroid 0.3537 doc,
 0.4426 / 0.3308 section) as a cache-integrity check on the whole sweep.
 
-Zero API spend (local sentence-transformers). 10 builds, ~1-2 h on CPU.
+THE SECOND ENCODER, AND WHY ONE LADDER CANNOT CONCLUDE. The MiniLM ladder found
+plain ``search_level="chunks"`` nDCG to be an inverted U peaking at c=219, close
+enough to MiniLM's own 256-token context to look causal. It is confounded: with
+one encoder "the optimum tracks the encoder's context window" and "the optimum is
+~220 tokens because longer chunks dilute the query match" predict the identical
+curve, and they give **opposite** advice about buying long-context models. So the
+ladder is re-run on ``embeddinggemma:300m`` (ollama, 2048-token context, 8x
+MiniLM's) over the same leg, changing only the encoder:
+
+    optimum stays at ~219   -> dilution; context length buys nothing here
+    optimum moves to ~1750  -> it tracks the encoder; long context earns its keep
+
+Rungs are ordered so the decisive pair (1000 vs 219 -- 1000 was MiniLM's *worst*
+rung) resolves first, then egemma's own r=1 point at 1750, the shipped 500, a
+rung past its context at 3000, and finally 128/64 for comparability with the
+MiniLM curve's fine end. Small chunk sizes cost the MOST wall-clock, not the
+least: ``chunk_overlap=1`` is one sentence at every size, so c=64 re-encodes 10.7M
+chars against c=1000's 7.7M.
+
+Zero API spend either way -- sentence-transformers is in-process, ollama is local.
 """
 
 from __future__ import annotations
@@ -134,7 +153,7 @@ def _r_values(mean_chunk_chars: float, window_chars: int, encoder_cap_chars: flo
     }
 
 
-def _encoder_geometry(db) -> Tuple[int, float, int]:
+def _encoder_geometry(db, override: Optional[int] = None) -> Tuple[int, float, int]:
     """(context_tokens, encoder_cap_chars, window_chars) from a DB's live provider.
 
     Read off the opened database rather than a freshly constructed provider for
@@ -147,18 +166,50 @@ def _encoder_geometry(db) -> Tuple[int, float, int]:
     """
     # src/'s own sizing, imported rather than mirrored: a copy would silently
     # stop matching the moment _WINDOW_CHARS_PER_TOKEN changed.
-    from localvectordb.database._span_embed import _provider_context_tokens, _window_chars_for
+    from localvectordb.database._span_embed import (
+        _DEFAULT_WINDOW_CHARS,
+        _provider_context_tokens,
+        _window_chars_for,
+    )
 
     provider = db.embedding_provider
-    tokens = _provider_context_tokens(provider)
+    tokens = _provider_context_tokens(provider) or override
     if not tokens:
         raise SystemExit(
             f"{provider!r} reports no context window; the r rule is undefined without it "
-            "(and _span_embed would fall back to a fixed 24,000-char window)"
+            "(and _span_embed falls back to a fixed 24,000-char window). Pass --context-tokens."
+        )
+    if _provider_context_tokens(provider) is None:
+        # NOT cosmetic. src/ sizes rawspan windows from the same missing value and
+        # silently uses 24,000 chars, which overflows any sub-6,860-token encoder
+        # (§6.34/4b). Harmless for a centroid-only sweep -- centroids pool chunk
+        # vectors and never window -- so the override fixes the REPORTED geometry
+        # only. It does not fix what a rawspan build would actually do.
+        logger.warning(
+            "provider reports no context window; using --context-tokens=%d for the r rule. "
+            "src/ would window rawspan sections at %d chars regardless -- do not trust a "
+            "rawspan arm built this way on long sections.",
+            override,
+            _DEFAULT_WINDOW_CHARS,
         )
     # The window uses the conservative 3.0; the cap on how much of a CHUNK the
     # model actually encodes is the same context measured in ordinary text, 3.5.
-    return tokens, tokens * _CHARS_PER_TOKEN, _window_chars_for(provider)
+    # When the provider reports nothing, _window_chars_for returns the 24,000-char
+    # default; the override describes the encoder we actually have, so report that.
+    window = (
+        _window_chars_for(provider) if _provider_context_tokens(provider) else int(tokens * _WINDOW_CHARS_PER_TOKEN)
+    )
+    return tokens, tokens * _CHARS_PER_TOKEN, window
+
+
+def _embedding_config(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    """Transport-only overrides; see build_db's allowlist. Never content-affecting."""
+    cfg: Dict[str, Any] = {}
+    if args.embed_concurrency:
+        cfg["max_concurrent_requests"] = args.embed_concurrency
+    if args.embed_timeout:
+        cfg["timeout"] = args.embed_timeout
+    return cfg or None
 
 
 def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict[str, Any]:
@@ -174,8 +225,9 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
             strategy=s,
             rebuild=args.rebuild,
             chunk_size=key_size,
+            embedding_config=_embedding_config(args),
         )
-        for s in ("rawspan", "centroid")
+        for s in args.strategies
     }
     for strategy, db in dbs.items():
         if db.count() != len(bench.corpus):
@@ -184,8 +236,10 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
                 f"benchmark has {len(bench.corpus)}. Stale cached index -- re-run with --rebuild."
             )
 
-    tokens, encoder_cap_chars, window_chars = _encoder_geometry(dbs["rawspan"])
-    shape = _corpus_shape(dbs["centroid"])
+    # Geometry is a property of the corpus and the encoder, not of the section
+    # strategy, so any built arm reports it identically.
+    tokens, encoder_cap_chars, window_chars = _encoder_geometry(next(iter(dbs.values())), args.context_tokens)
+    shape = _corpus_shape(next(iter(dbs.values())))
     rung: Dict[str, Any] = {
         "chunk_size": chunk_size,
         "encoder_context_tokens": tokens,
@@ -205,6 +259,8 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
     )
 
     for cfg in build_configs():
+        if cfg.strategy not in dbs:
+            continue
         scores = run_config(dbs[cfg.strategy], bench, cfg)
         rung[cfg.label] = scores
         logger.info(
@@ -217,6 +273,10 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
     for db in dbs.values():
         db.close()
     return rung
+
+
+# §6.32 was measured on this encoder alone, so the anchor is only meaningful there.
+ANCHOR_MODEL = "all-MiniLM-L6-v2"
 
 
 def _check_anchor(rung: Dict[str, Any]) -> List[str]:
@@ -242,6 +302,47 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--embedding-provider", default=EVAL_EMBEDDING_PROVIDER)
     p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
     p.add_argument("--chunk-sizes", type=int, nargs="+", default=list(CHUNK_SIZES))
+    p.add_argument(
+        "--strategies",
+        nargs="+",
+        default=["rawspan", "centroid"],
+        choices=["rawspan", "centroid"],
+        help="which section_vector_strategy arms to build. ``centroid`` alone is enough for the "
+        "plain chunk-retrieval curve -- HierConfig('chunks', ...) reads the centroid DB, and a "
+        "centroid section vector is POOLED from chunk vectors, so that build embeds no section "
+        "windows at all. ``rawspan`` is the expensive arm and buys only the section-level "
+        "rawspan-vs-centroid gap: this leg's sections average ~26k chars against a 6k-char window "
+        "on egemma, so _span_embed splits each into ~5 windows and the section half of a build "
+        "costs MORE than the chunk half (~2.6M vs ~1.9M tokens at c=1000).",
+    )
+    p.add_argument(
+        "--embed-concurrency",
+        type=int,
+        default=None,
+        help="override the provider's max_concurrent_requests (transport only). Worth ~10-20%% against "
+        "ollama, NOT the 2x an isolated one-text-per-request benchmark suggests: the provider already "
+        "batches 64 texts per call, which amortizes almost all of the per-request overhead.",
+    )
+    p.add_argument(
+        "--embed-timeout",
+        type=int,
+        default=None,
+        help="per-request timeout in seconds (transport only; OllamaEmbeddings defaults to 300). "
+        "``max_batch_size`` is a fixed COUNT of 64, so a batch's token volume scales with "
+        "chunk_size: 64x500 tokens is comfortable, 64x1750 is ~112k tokens in one request and at "
+        "8-way concurrency it cannot finish inside 300s. Symptom is an EMPTY error message every "
+        "300s exactly (httpx.ReadTimeout stringifies to ''), four of which kill the build. Lower "
+        "--embed-concurrency as well: fewer requests in flight finish faster than more that time out.",
+    )
+    p.add_argument(
+        "--context-tokens",
+        type=int,
+        default=None,
+        help="encoder context window to use for the r rule when the provider does not report one. "
+        "OllamaEmbeddings sets neither num_ctx nor max_input_tokens by default, so every "
+        "ollama-backed provider reports None (see §6.34/4b). This fixes the REPORTED geometry only; "
+        "src/ still sizes rawspan windows at 24,000 chars in that case.",
+    )
     p.add_argument("--rebuild", action="store_true")
     p.add_argument("--out", default=str(_ROOT / "benchmarks" / "results" / "chunk_size_sweep.json"))
     return p.parse_args(argv)
@@ -269,7 +370,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for chunk_size in args.chunk_sizes:
         rung = run_rung(leg, bench, chunk_size, args)
         rungs[str(chunk_size)] = rung
-        if chunk_size == LIBRARY_DEFAULT_CHUNK_SIZE and not args.rebuild:
+        if chunk_size == LIBRARY_DEFAULT_CHUNK_SIZE and not args.rebuild and args.embedding_model == ANCHOR_MODEL:
             anchor_problems = _check_anchor(rung)
             if anchor_problems:
                 logger.error("ANCHOR MISMATCH at c=500: %s", "; ".join(anchor_problems))
@@ -277,19 +378,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 logger.info("anchor ok: c=500 reproduces the published §6.32 rung exactly")
 
     ordered = sorted(rungs.values(), key=lambda r: r["chunk_size"])
-    print(f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'r_nom':>6} {'r_eff':>6}", end="")
-    print(f" {'raw doc':>9} {'cen doc':>9} {'raw sec':>9} {'cen sec':>9} {'sec gap':>9}")
+    have_rawspan = any("sections · rawspan" in r for r in ordered)
+
+    def _cell(rung: Dict[str, Any], label: str, metric: str) -> float:
+        return rung.get(label, {}).get(metric, float("nan"))
+
+    print(f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'r_nom':>6} {'r_eff':>6} {'CHUNKS':>9}", end="")
+    print(f" {'raw doc':>9} {'cen doc':>9} {'raw sec':>9} {'cen sec':>9} {'sec gap':>9}" if have_rawspan else "")
     for r in ordered:
-        raw_d = r["sections · rawspan"]["ndcg@10"]
-        cen_d = r["sections · centroid"]["ndcg@10"]
-        raw_s = r["sections · rawspan"].get("ndcg@10_sections", float("nan"))
-        cen_s = r["sections · centroid"].get("ndcg@10_sections", float("nan"))
-        print(
+        row = (
             f"{r['chunk_size']:>6} {r['n_chunks']:>8} {r['mean_chunk_chars']:>8.0f} "
-            f"{r['r_nominal']:>6.2f} {r['r_effective']:>6.2f} "
-            f"{raw_d:>9.4f} {cen_d:>9.4f} {raw_s:>9.4f} {cen_s:>9.4f} {raw_s - cen_s:>+9.4f}"
+            f"{r['r_nominal']:>6.2f} {r['r_effective']:>6.2f} {_cell(r, 'chunks', 'ndcg@10'):>9.4f}"
         )
-    print("\n'sec gap' > 0 means rawspan wins at the section level; the rule predicts it flips as r crosses 1.")
+        if have_rawspan:
+            raw_s = _cell(r, "sections · rawspan", "ndcg@10_sections")
+            cen_s = _cell(r, "sections · centroid", "ndcg@10_sections")
+            row += (
+                f" {_cell(r, 'sections · rawspan', 'ndcg@10'):>9.4f}"
+                f" {_cell(r, 'sections · centroid', 'ndcg@10'):>9.4f}"
+                f" {raw_s:>9.4f} {cen_s:>9.4f} {raw_s - cen_s:>+9.4f}"
+            )
+        print(row)
+    print("\nCHUNKS is plain search_level='chunks' -- the curve this sweep exists to draw.")
+    if have_rawspan:
+        print("'sec gap' > 0 means rawspan wins at the section level; the rule predicts it flips as r crosses 1.")
+    else:
+        print("Section arms not built (--strategies centroid); 'sections · centroid' is scored, rawspan is not.")
     if anchor_problems:
         print("ANCHOR MISMATCH -- cached c=500 rung does not reproduce §6.32: " + "; ".join(anchor_problems))
 

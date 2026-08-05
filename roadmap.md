@@ -27,6 +27,86 @@ path. Raising that ceiling within our lane is planned (see v0.5.0), but chasing
 
 ---
 
+## PRE-RELEASE — defaults to fix before the first cut
+
+Findings from the retrieval study (`experiments/`, §6.31–6.35 of
+`span-length-crossover-findings.md`). These are not tuning preferences: each one is a case where the
+library **knows** something is wrong and does not say so, or ships a constant that is correct only
+for the regime it was tuned on. We have not released, so these are free to change now and expensive
+to change later.
+
+Ordered by user harm.
+
+**1. `chunk_size` silently discards text past the encoder's context — and this is the whole ballgame.**
+At the shipped `chunk_size=500` on a 256-token encoder (`all-MiniLM-L6-v2`, our own eval default), a
+chunk is ~1,767 chars and the encoder reads 896 — **49% of the corpus never enters any vector.** No
+error, no warning.
+
+The measured curve (§6.35/1) says this is the *only* chunk-size decision that matters. Retrieval
+quality is a **plateau with a cliff**: across an 8× range of chunk sizes that fit inside the
+encoder's context, total variation is 0.028 nDCG; once coverage falls to 55%, it drops **0.109** —
+four times the entire plateau, and 10× the build-noise floor. Undershooting is nearly free,
+overshooting is expensive. Note 500 is the *argmax* on a 2k-context encoder and past the cliff on a
+256-token one: the constant is unconditioned, not wrong.
+
+Fix: warn at DB creation on **measured coverage** — `Σ min(chunk_len, cap) / Σ chunk_len` over the
+ingested corpus — *not* on `chunk_size × 3.5 > cap`. Those two disagree badly: at one measured rung
+the mean-based estimate said "barely truncated" (r_eff 0.86) while 44.9% of text was being discarded,
+because the chunk-length distribution is bimodal (median 10,759 > mean 7,229; `CharChunker` leaves
+short remainder fragments that drag the mean down). A warning built on the cheap arithmetic would
+have stayed silent through the exact failure it exists to catch.
+
+Because the good region is a plateau, this warning *is* the fix — no derived default is needed. Any
+value comfortably inside the context is within 0.028 of optimal.
+
+**2. `_provider_context_tokens` returns `None` for every ollama provider.** It reads only `num_ctx`
+and `max_input_tokens`; `OllamaEmbeddings` sets neither by default. `_span_embed` then falls back to
+a fixed **24,000-char** window (~6,860 tokens), ~3.3× egemma's real 2,048 — so each rawspan window
+overflows and is silently truncated, the exact failure the windowing code was written to prevent.
+Ollama exposes the value (`/api/show`, `/api/ps`); sentence-transformers exposes `max_seq_length`.
+Pure derivation from the model, no policy. Fix this first — items 1 and 6 depend on knowing the
+context. (§6.34/4b. Measured as harmless on Qasper's short sections, 2.0% of text; it would bite hard
+on any long-section corpus.)
+
+**3. Batch sizing is count-based, not token-aware — and fails in the direction we are about to
+recommend.** `max_batch_size` is a fixed 64 regardless of chunk length, so token volume per request
+scales with `chunk_size`: fine at 500, ~112k tokens at 1750, which cannot complete inside the 300s
+default `timeout` at the default concurrency. `max_retries=3` then kills the ingest. Users following
+our own advice to raise `chunk_size` for a long-context model will hit this. Fix: size batches by
+estimated tokens, not count.
+
+**4. Embedding errors stringify to nothing.** `logger.error(f"Error processing batch {n}: {e}")`
+prints an empty message for `httpx.ReadTimeout` — an operator hitting a real failure gets silence and
+a retry. Log the exception type and request shape (batch size, token estimate) at minimum.
+
+**5. Do not default `search_level="fused"`.** Fusion loses to plain chunk retrieval at **every**
+`section_weight` on all five legs (MiniLM, §6.33/1) and on **all five egemma rungs**, by 0.093 to
+0.324 — a deficit that *grows* with `chunk_size`, because 0.65 blends a section leg that degrades
+monotonically as chunks coarsen (§6.35/4). The constant is mistuned as a function of another
+parameter we are telling users to change. `section_weight=0.65` is the exact argmax on Qasper and wrong by −0.05 to −0.18
+elsewhere — it is not a bad number, it is an *un-conditioned* one.
+
+**6. Over-fetch when `return_type="sections"`.** `_search` sets `fetch_k == k` with no reranker, so
+asking for 10 sections retrieves 10 *chunks*, which collapse into far fewer distinct sections. Worth
++0.008 on Qasper. No policy question.
+
+**7. Ship the diagnostic instead of a prose tuning guide.** `section_weight`, whether hierarchical
+embeddings help at all, and gold density are properties of the user's *corpus*, which no static guide
+can know. Everything needed is derivable from a built index in seconds — encoder coverage of section
+text (46.2% on MiniLM vs 98.0% on egemma, same corpus), chunkless-section rate (**40.1% of all
+sections and 26.3% of gold** on Qasper — a hard recall ceiling of 0.737 for chunk→section roll-up),
+and chunk-truncation share. A `lvdb doctor` / `db.diagnose()` printing those tells each user which
+regime they are in. This is the highest-leverage item on the list: it converts the study into a
+feature rather than documentation.
+
+**Deliberately NOT here: defaulting `chunk_size` from the encoder's context.** The optimum does track
+context (§6.35/1 — the slope reverses sign between a 256-tok and a 2k encoder), but two encoders give
+a *direction*, not a coefficient: the peak sits at **92% of cap on MiniLM and 25% on egemma**. Those
+are not two estimates of one number — they are arbitrary points on **flat regions**, which is also
+why a derived default is unnecessary. Ship the coverage warning (item 1); the plateau does the rest.
+
+---
+
 ## v0.2.0 — Trust: measurement, concurrency, operations
 
 Making the thing provable and operable.
