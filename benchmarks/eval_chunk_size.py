@@ -64,6 +64,31 @@ MiniLM curve's fine end. Small chunk sizes cost the MOST wall-clock, not the
 least: ``chunk_overlap=1`` is one sentence at every size, so c=64 re-encodes 10.7M
 chars against c=1000's 7.7M.
 
+THE THIRD POINT, AND WHY IT IS NOT A THIRD ENCODER (``--num-ctx``). Two ladders
+gave a **plateau with a cliff**: 219->1750 spans 0.028 nDCG on egemma, then
+coverage falls to 55% and the score drops 0.109. The cliff looks like a coverage
+effect, but "coverage" and "encoder identity" are still perfectly confounded --
+each encoder has exactly one context length, so every point on the coverage axis
+is also a different model. A third encoder does not break that; it adds a third
+model with a third context and a third set of weights, training corpus and
+dimension.
+
+``--num-ctx`` breaks it. Ollama truncates each input at ``num_ctx`` (and at
+``num_batch``, which ``OllamaEmbeddings`` moves with it, because an encoder model
+embeds its whole input in one llama.cpp batch). Lowering it on egemma holds the
+weights, the corpus, the chunker and the queries **exactly** fixed and varies
+only how much of each chunk the model reads. If the cliff is caused by coverage,
+it must MOVE, and to a predictable place: at ``num_ctx=512`` the cap is ~1,792
+chars, so the cliff should appear between c=500 (~100% coverage) and c=1000
+(~50%), where at 2048 it sat between 1750 and 3000. Same model, cliff in a
+different place = coverage is causal. Cliff stays at 1750->3000 = it is not
+coverage, and the plateau is a property of the corpus instead.
+
+The honest limit: a 2048-trained model run at 512 is not the same thing as a
+natively-512 model, so this establishes MECHANISM, not external validity. A third
+real encoder is the complementary experiment, not a substitute -- but it is the
+expensive one, and it answers the weaker question.
+
 Zero API spend either way -- sentence-transformers is in-process, ollama is local.
 """
 
@@ -124,20 +149,42 @@ def density_leg() -> Leg:
     return Leg(name="density_g4", cache_key=key, load=_load)
 
 
-def _corpus_shape(db) -> Dict[str, float]:
-    """Measured chunk/section geometry of a built index.
+def _corpus_shape(db, encoder_cap_chars: float) -> Dict[str, float]:
+    """Measured chunk/section geometry of a built index, including COVERAGE.
 
     The *nominal* chunk_size overstates how much distinct text a chunk covers,
     because ``chunk_overlap=1`` is one sentence regardless of chunk size. Reading
     the real mean back out is what makes the reported r a measurement.
+
+    ``coverage`` is the fraction of corpus text the encoder actually reads,
+    ``sum(min(len, cap)) / sum(len)``. It is reported separately from anything
+    derived from the MEAN because the mean is the wrong statistic for a
+    truncation question and reporting it as one has already misled this project
+    once: at c=3000 the mean-based ``r_effective`` said "barely truncated" (0.86)
+    while **44.9%** of the corpus was being discarded. Chunk length here is
+    strongly bimodal -- median 10,759 against a mean of 7,229, because CharChunker
+    emits a short remainder fragment per document -- so the mean sits in a valley
+    the distribution barely occupies. Coverage is the quantity the cliff tracks;
+    prefer it to r_effective in any claim about truncation.
     """
     with db.connection_pool.get_connection() as conn:
-        chunks = conn.execute("SELECT COUNT(*) AS n, AVG(LENGTH(content)) AS mean FROM chunks").fetchone()
+        chunks = conn.execute(
+            "SELECT COUNT(*) AS n, AVG(LENGTH(content)) AS mean, "
+            "       SUM(LENGTH(content)) AS total, "
+            "       SUM(MIN(LENGTH(content), ?)) AS encoded, "
+            "       SUM(CASE WHEN LENGTH(content) > ? THEN 1 ELSE 0 END) AS n_truncated "
+            "FROM chunks",
+            (int(encoder_cap_chars), int(encoder_cap_chars)),
+        ).fetchone()
         sections = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()
+    total = float(chunks["total"] or 0.0)
     return {
         "n_chunks": int(chunks["n"] or 0),
         "mean_chunk_chars": float(chunks["mean"] or 0.0),
         "n_sections": int(sections["n"] or 0),
+        "total_chunk_chars": total,
+        "coverage": (float(chunks["encoded"] or 0.0) / total) if total else float("nan"),
+        "frac_chunks_truncated": (int(chunks["n_truncated"] or 0) / int(chunks["n"])) if chunks["n"] else float("nan"),
     }
 
 
@@ -225,6 +272,7 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
             strategy=s,
             rebuild=args.rebuild,
             chunk_size=key_size,
+            num_ctx=args.num_ctx,
             embedding_config=_embedding_config(args),
         )
         for s in args.strategies
@@ -239,9 +287,10 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
     # Geometry is a property of the corpus and the encoder, not of the section
     # strategy, so any built arm reports it identically.
     tokens, encoder_cap_chars, window_chars = _encoder_geometry(next(iter(dbs.values())), args.context_tokens)
-    shape = _corpus_shape(next(iter(dbs.values())))
+    shape = _corpus_shape(next(iter(dbs.values())), encoder_cap_chars)
     rung: Dict[str, Any] = {
         "chunk_size": chunk_size,
+        "num_ctx": args.num_ctx,
         "encoder_context_tokens": tokens,
         "window_chars": window_chars,
         "encoder_cap_chars": encoder_cap_chars,
@@ -249,19 +298,19 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
         **_r_values(shape["mean_chunk_chars"], window_chars, encoder_cap_chars),
     }
     logger.info(
-        "[c=%d] %d chunks, mean %.0f chars (encoded %.0f), r_nom %.2f r_eff %.2f",
+        "[c=%d] %d chunks, mean %.0f chars, COVERAGE %.1f%% (%.0f%% of chunks truncated at %.0f chars)",
         chunk_size,
         rung["n_chunks"],
         rung["mean_chunk_chars"],
-        rung["encoded_chunk_chars"],
-        rung["r_nominal"],
-        rung["r_effective"],
+        100.0 * rung["coverage"],
+        100.0 * rung["frac_chunks_truncated"],
+        encoder_cap_chars,
     )
 
     for cfg in build_configs():
         if cfg.strategy not in dbs:
             continue
-        scores = run_config(dbs[cfg.strategy], bench, cfg)
+        scores = run_config(dbs[cfg.strategy], bench, cfg, search_type=args.search_type)
         rung[cfg.label] = scores
         logger.info(
             "[c=%d] %-24s ndcg@10=%.4f  sec=%s",
@@ -335,6 +384,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--embed-concurrency as well: fewer requests in flight finish faster than more that time out.",
     )
     p.add_argument(
+        "--num-ctx",
+        type=int,
+        default=None,
+        help="CONTENT-AFFECTING (cache-keyed as __ctx{n}): the context window to request from Ollama, "
+        "which is also what it truncates at. Lowering this on a fixed model is the cleanest available "
+        "test of the coverage hypothesis -- identical weights, identical corpus, identical chunking; "
+        "only how much of each chunk the encoder READS changes. A third encoder confounds coverage "
+        "with model quality, training data and dimension, which is the confound that made the first "
+        "ladder ambiguous in the first place. Setting this also makes _provider_context_tokens report "
+        "a real value, so --context-tokens is unnecessary and _span_embed stops using its 24,000-char "
+        "fallback. OllamaEmbeddings moves num_batch with it (llama.cpp's n_batch is the true ceiling).",
+    )
+    p.add_argument(
         "--context-tokens",
         type=int,
         default=None,
@@ -342,6 +404,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "OllamaEmbeddings sets neither num_ctx nor max_input_tokens by default, so every "
         "ollama-backed provider reports None (see §6.34/4b). This fixes the REPORTED geometry only; "
         "src/ still sizes rawspan windows at 24,000 chars in that case.",
+    )
+    p.add_argument(
+        "--search-type",
+        default="hybrid",
+        choices=["hybrid", "vector", "keyword"],
+        help="ALWAYS set this deliberately. The CHUNKS curve this sweep draws was measured at the "
+        "'hybrid' default, and BM25 reads the whole chunk no matter what the encoder truncates -- so "
+        "the keyword leg props the score up exactly where coverage collapses, MASKING the very cliff "
+        "the sweep exists to locate. Use 'vector' for any claim about encoder context or coverage; "
+        "'hybrid' only to describe what a user of the shipped defaults actually gets.",
     )
     p.add_argument("--rebuild", action="store_true")
     p.add_argument("--out", default=str(_ROOT / "benchmarks" / "results" / "chunk_size_sweep.json"))
@@ -383,12 +455,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     def _cell(rung: Dict[str, Any], label: str, metric: str) -> float:
         return rung.get(label, {}).get(metric, float("nan"))
 
-    print(f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'r_nom':>6} {'r_eff':>6} {'CHUNKS':>9}", end="")
+    print(f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'cover':>7} {'r_nom':>6} {'CHUNKS':>9}", end="")
     print(f" {'raw doc':>9} {'cen doc':>9} {'raw sec':>9} {'cen sec':>9} {'sec gap':>9}" if have_rawspan else "")
     for r in ordered:
         row = (
             f"{r['chunk_size']:>6} {r['n_chunks']:>8} {r['mean_chunk_chars']:>8.0f} "
-            f"{r['r_nominal']:>6.2f} {r['r_effective']:>6.2f} {_cell(r, 'chunks', 'ndcg@10'):>9.4f}"
+            f"{100.0 * r['coverage']:>6.1f}% {r['r_nominal']:>6.2f} {_cell(r, 'chunks', 'ndcg@10'):>9.4f}"
         )
         if have_rawspan:
             raw_s = _cell(r, "sections · rawspan", "ndcg@10_sections")
@@ -400,6 +472,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         print(row)
     print("\nCHUNKS is plain search_level='chunks' -- the curve this sweep exists to draw.")
+    print("'cover' is sum(min(len,cap))/sum(len), NOT derived from the mean -- the cliff tracks this.")
     if have_rawspan:
         print("'sec gap' > 0 means rawspan wins at the section level; the rule predicts it flips as r crosses 1.")
     else:
@@ -414,6 +487,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             {
                 "generated": datetime.now(timezone.utc).isoformat(),
                 "model": args.embedding_model,
+                "search_type": args.search_type,
                 "leg": f"fiqa-superdocs s{SECTIONS}p{PASSAGES} gold{GOLD} q{QUERIES} seed{SEED}",
                 "anchor_problems": anchor_problems,
                 "rungs": rungs,
