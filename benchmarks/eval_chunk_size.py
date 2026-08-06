@@ -442,7 +442,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for chunk_size in args.chunk_sizes:
         rung = run_rung(leg, bench, chunk_size, args)
         rungs[str(chunk_size)] = rung
-        if chunk_size == LIBRARY_DEFAULT_CHUNK_SIZE and not args.rebuild and args.embedding_model == ANCHOR_MODEL:
+        if (
+            chunk_size == LIBRARY_DEFAULT_CHUNK_SIZE
+            and not args.rebuild
+            and args.embedding_model == ANCHOR_MODEL
+            # The published anchors are HYBRID scores (S6.36). Checking them
+            # against a vector run would report a mismatch that is really just
+            # the missing BM25 leg, turning a correct run into a false alarm.
+            and args.search_type == "hybrid"
+        ):
             anchor_problems = _check_anchor(rung)
             if anchor_problems:
                 logger.error("ANCHOR MISMATCH at c=500: %s", "; ".join(anchor_problems))
