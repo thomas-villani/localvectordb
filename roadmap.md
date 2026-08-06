@@ -37,6 +37,23 @@ to change later.
 
 Ordered by user harm.
 
+**0a. `search_type="hybrid"` is accepted and SILENTLY IGNORED at section and fused level.**
+FTS5 indexes chunks only, so `search_level="sections"` / `"fused"` return vector-only results no
+matter what the caller asks for — no warning, no error, and no field in the result recording which
+retrieval actually ran. Measured cost of the asymmetry (qasper/egemma, doc-level nDCG@10): BM25 is
+worth **+0.0860** to chunks and **+0.0000** to sections and fused. This silently biased every
+level comparison in our own study by that amount and reversed two headline conclusions
+(`span-length-crossover-findings.md` §6.36). Minimum fix: warn, or reject the argument. Real fix:
+give sections and fused a keyword leg — likely the largest single retrieval win available.
+
+**0b. The hybrid default actively HURTS at fine granularity.** BM25's contribution changes sign with
+chunk size: on vector-healthy small chunks it dilutes a strong signal (**−0.092** on egemma at
+c=219, **−0.067** on MiniLM at c=128), while rescuing badly truncated large ones (**+0.259** /
+**+0.182**). A user with small chunks is being degraded by a default they never chose. The shipped
+`chunk_size=500` is itself the argmax of a *hybrid* curve; on vector it loses to c=219 by 0.098
+(egemma) and to c=128 by 0.167 (MiniLM), where the curve declines monotonically with no interior
+optimum at all (§7 of `POST-CONFOUND-SYNTHESIS.md`).
+
 **1. `chunk_size` silently discards text past the encoder's context — and this is the whole ballgame.**
 At the shipped `chunk_size=500` on a 256-token encoder (`all-MiniLM-L6-v2`, our own eval default), a
 chunk is ~1,767 chars and the encoder reads 896 — **49% of the corpus never enters any vector.** No
