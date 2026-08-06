@@ -66,8 +66,13 @@ four times the entire plateau, and 10× the build-noise floor. Undershooting is 
 overshooting is expensive. Note 500 is the *argmax* on a 2k-context encoder and past the cliff on a
 256-token one: the constant is unconditioned, not wrong.
 
+> Both numbers in that paragraph are hybrid-era and coverage-era artifacts. On **vector** search the
+> plateau does not exist — the curve declines monotonically over a 14× range (§7 of
+> `POST-CONFOUND-SYNTHESIS.md`) — and the "55%" is really **65.4%** once chars/token is measured
+> rather than assumed (§8.2). The *direction* of this item survives; its calibration does not.
+
 Fix: warn at DB creation on **measured coverage** — `Σ min(chunk_len, cap) / Σ chunk_len` over the
-ingested corpus — *not* on `chunk_size × 3.5 > cap`. Those two disagree badly: at one measured rung
+ingested corpus — *not* on `chunk_size × k > cap`. Those two disagree badly: at one measured rung
 the mean-based estimate said "barely truncated" (r_eff 0.86) while 44.9% of text was being discarded,
 because the chunk-length distribution is bimodal (median 10,759 > mean 7,229; `CharChunker` leaves
 short remainder fragments that drag the mean down). A warning built on the cheap arithmetic would
@@ -75,6 +80,22 @@ have stayed silent through the exact failure it exists to catch.
 
 Because the good region is a plateau, this warning *is* the fix — no derived default is needed. Any
 value comfortably inside the context is within 0.028 of optimal.
+
+**Two corrections to how this warning must be built (§8 of `POST-CONFOUND-SYNTHESIS.md`, 2026-08-06).**
+
+*Count tokens; do not estimate them.* The chars/token constant we used was 3.5; measured is **4.38**
+(MiniLM's own tokenizer) and **~4.2** (embeddinggemma, by bisecting Ollama's real truncation
+boundary). Worse, it is not a constant: across chunks of a single corpus it spans **2.00–5.67**, so a
+char cap misclassifies **~28–31%** of individual chunks whenever the length distribution sits *on*
+the cap — the exact regime a tuning warning fires in — while looking accurate in aggregate. Use the
+model's tokenizer where one is reachable; where it isn't (Ollama models have no importable
+tokenizer), the warning must say it is estimating rather than print a confident percentage.
+
+*Calibrate the threshold — mild truncation is free.* Coverage does not predict retrieval damage.
+Paired builds show **46% of chunks truncated with nDCG unchanged to four decimals** (mean cosine
+displacement 0.0027); damage only appears past ~0.01 displacement. So a warning that fires on any
+truncation will cry wolf. Fire it on *substantial* loss, and say what it costs, not merely that it
+happened.
 
 **2. `_provider_context_tokens` returns `None` for every ollama provider.** It reads only `num_ctx`
 and `max_input_tokens`; `OllamaEmbeddings` sets neither by default. `_span_embed` then falls back to
@@ -115,6 +136,10 @@ sections and 26.3% of gold** on Qasper — a hard recall ceiling of 0.737 for ch
 and chunk-truncation share. A `lvdb doctor` / `db.diagnose()` printing those tells each user which
 regime they are in. This is the highest-leverage item on the list: it converts the study into a
 feature rather than documentation.
+
+Build the coverage line per item 1's two corrections: count tokens with the model's real tokenizer,
+and state uncertainty when there isn't one. A diagnostic that prints a confident wrong percentage is
+worse than one that admits it is estimating — ours was understating coverage by up to 16 points.
 
 **Deliberately NOT here: defaulting `chunk_size` from the encoder's context.** The optimum does track
 context (§6.35/1 — the slope reverses sign between a 256-tok and a 2k encoder), but two encoders give
