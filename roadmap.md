@@ -43,8 +43,21 @@ matter what the caller asks for — no warning, no error, and no field in the re
 retrieval actually ran. Measured cost of the asymmetry (qasper/egemma, doc-level nDCG@10): BM25 is
 worth **+0.0860** to chunks and **+0.0000** to sections and fused. This silently biased every
 level comparison in our own study by that amount and reversed two headline conclusions
-(`span-length-crossover-findings.md` §6.36). Minimum fix: warn, or reject the argument. Real fix:
-give sections and fused a keyword leg — likely the largest single retrieval win available.
+(`span-length-crossover-findings.md` §6.36).
+
+**Now measured on six leg/encoder pairs: +0.084 to +0.131** — the asymmetry is systematic, not a
+qasper quirk, and larger than every vector-side effect in the study.
+
+**Minimum fix DONE** (`d0b0f1a`): `query()` warns once per instance when `search_type` cannot be
+honoured at a vector-only level. A warning rather than a rejection, because `hybrid` is the default
+and rejecting would break the ordinary `query(text, search_level="sections")` call.
+
+**Real fix still open, and it is a feature.** `sections` has no `content` column — a section is a
+`start_pos`/`end_pos` slice of its parent document — and there is no `sections_fts`, only
+`chunks_fts` and `documents_fts`. Giving sections and fused a keyword leg means building
+`sections_fts` from sliced text at ingest, migrating existing databases, and sharing BM25
+normalisation with the chunk leg. Routing through `documents_fts` is not a shortcut: document-level
+BM25 is not section-level scoring. Still likely the largest single retrieval win available.
 
 **0b. The hybrid default actively HURTS at fine granularity.** BM25's contribution changes sign with
 chunk size: on vector-healthy small chunks it dilutes a strong signal (**−0.092** on egemma at
