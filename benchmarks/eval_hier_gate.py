@@ -187,6 +187,7 @@ def build_db(
     strategy: str,
     rebuild: bool,
     chunk_size: Optional[int] = None,
+    num_ctx: Optional[int] = None,
     embedding_config: Optional[Dict[str, Any]] = None,
 ):
     """Build (or reopen) a hierarchical DB for one section_vector_strategy.
@@ -208,6 +209,14 @@ def build_db(
     The consequence is that ``chunk_size=None`` and ``chunk_size=500`` are two
     keys for the same content; pass ``None`` unless you are deliberately sweeping.
 
+    ``num_ctx`` is the same case as ``chunk_size`` and the opposite of
+    ``embedding_config``: it reaches the provider through the very same
+    ``embedding_config`` dict, but it is CONTENT-AFFECTING -- it is the knob that
+    decides how much of each text the encoder reads before truncating -- so it
+    gets its own key suffix and is merged in *after* the transport allowlist
+    check rather than passing through it. Lowering it is how the coverage
+    hypothesis gets tested within a single set of weights (§6.36).
+
     ``embedding_config`` is the opposite case: it is deliberately kept OUT of the
     key, because it may only carry TRANSPORT settings (how fast we talk to the
     provider), which cannot change a single stored vector. Ollama's default of 3
@@ -222,6 +231,8 @@ def build_db(
     key = f"hiergate__{leg.cache_key}__{model.replace('/', '_').replace(':', '-')}__{strategy}"
     if chunk_size is not None:
         key += f"__c{chunk_size}"
+    if num_ctx is not None:
+        key += f"__ctx{num_ctx}"
     base = DATA_DIR / "db"
     base.mkdir(parents=True, exist_ok=True)
     sentinel = base / f"{key}.complete"
@@ -249,6 +260,13 @@ def build_db(
                 "the stored vectors without changing the cache key. Add them to the key, not the allowlist."
             )
         kwargs["embedding_config"] = dict(embedding_config)
+    if num_ctx is not None:
+        # Merged AFTER the allowlist check on purpose: this one IS content-affecting
+        # and is legitimate only because the key carries it. num_batch is left to
+        # OllamaEmbeddings, which defaults it to num_ctx -- llama.cpp's n_batch is
+        # the real input ceiling for an encoder model, so a num_ctx that moved
+        # without it would be a no-op above 2048 and a half-measure below it.
+        kwargs.setdefault("embedding_config", {})["num_ctx"] = num_ctx
     if sentinel.exists():
         logger.info("Reusing cached DB %s", key)
         return LocalVectorDB(key, base, **kwargs)
@@ -275,6 +293,15 @@ def build_db(
     # would make every rung of a chunk_size ladder the same build.
     if chunk_size is not None and db.chunk_size != chunk_size:
         raise RuntimeError(f"DB reports chunk_size={db.chunk_size!r}, expected {chunk_size!r}")
+    # And for num_ctx, where a silent default is worse than either: the build would
+    # succeed, the key would say ctx512, and the vectors would be full-context ones.
+    if num_ctx is not None:
+        got_ctx = getattr(db.embedding_provider, "num_ctx", None)
+        if got_ctx != num_ctx:
+            raise RuntimeError(
+                f"provider reports num_ctx={got_ctx!r}, expected {num_ctx!r} -- embedding_config did not "
+                "reach the provider, so these vectors are NOT truncated as the cache key claims."
+            )
     sentinel.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     return db
 
@@ -285,8 +312,21 @@ def _section_qrel_id(result_id: str) -> str:
     return f"{doc_id}#s{index}"
 
 
-def run_config(db, bench, config: HierConfig) -> Dict[str, float]:
+def run_config(db, bench, config: HierConfig, search_type: str = "hybrid") -> Dict[str, float]:
     """Score one arm at document level, and -- where meaningful -- at section level.
+
+    ``search_type`` MUST be passed explicitly by anything comparing retrieval
+    LEVELS. It defaults to "hybrid" only to preserve the historical numbers this
+    file already published; that default is a trap. ``db.query()`` also defaults
+    to hybrid, and FTS5 indexes **chunks only** -- so ``search_level="sections"``
+    and ``"fused"`` silently ignore the requested search type and return
+    vector-only results. Measured on qasper/egemma at document level, BM25 is
+    worth **+0.0860** to chunks and **+0.0000** to sections and fused, so every
+    cross-level comparison ever run through here handed chunks a free 0.086 and
+    reversed two headline conclusions (findings doc S6.36). Pass "vector" to
+    compare levels as retrieval MECHANISMS; pass "hybrid" to compare them as the
+    SYSTEMS a user actually gets. Both are legitimate questions -- silently
+    answering the second while believing the first is not.
 
     Document level is the common unit every arm can be measured in, so it is the
     primary metric. But it is **structurally blind to whether a given section is
@@ -317,6 +357,7 @@ def run_config(db, bench, config: HierConfig) -> Dict[str, float]:
             search_level=config.search_level,
             return_type="documents",
             k=K,
+            search_type=search_type,
         )
         ranked = [h.id for h in hits]
         scores["ndcg@10"].append(ndcg_at_k(ranked, rel, K))
@@ -326,7 +367,7 @@ def run_config(db, bench, config: HierConfig) -> Dict[str, float]:
         if score_sections:
             sec_rel = bench.section_qrels.get(qid, {})
             if any(r > 0 for r in sec_rel.values()):
-                sec_hits = db.query(text, search_level="sections", k=K)
+                sec_hits = db.query(text, search_level="sections", k=K, search_type=search_type)
                 sec_ranked = [_section_qrel_id(h.id) for h in sec_hits]
                 section_scores.append(ndcg_at_k(sec_ranked, sec_rel, K))
 
