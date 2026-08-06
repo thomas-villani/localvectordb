@@ -312,7 +312,13 @@ def _section_qrel_id(result_id: str) -> str:
     return f"{doc_id}#s{index}"
 
 
-def run_config(db, bench, config: HierConfig, search_type: str = "hybrid") -> Dict[str, float]:
+def run_config(
+    db,
+    bench,
+    config: HierConfig,
+    search_type: str = "hybrid",
+    collect_per_query: bool = False,
+) -> Dict[str, Any]:
     """Score one arm at document level, and -- where meaningful -- at section level.
 
     ``search_type`` MUST be passed explicitly by anything comparing retrieval
@@ -342,10 +348,19 @@ def run_config(db, bench, config: HierConfig, search_type: str = "hybrid") -> Di
     change to section *vectors* must be read on it rather than on the doc-level
     column. Only computed for ``search_level="sections"``: ``fused`` mixes chunk
     and section hits and has no section-level ground truth to be scored against.
+
+    ``collect_per_query`` additionally returns ``out["per_query"]``, a
+    ``{metric: {qid: score}}`` map. Means alone cannot support a **paired**
+    bootstrap, and pairing is the whole point: two arms scored on the same queries
+    are highly correlated, so the unpaired interval is far too wide and would call
+    real effects insignificant. Keyed by qid rather than positionally, because
+    arms skip different queries (an arm with no gold for a query contributes
+    nothing) and zipping two ragged lists would silently pair the wrong queries.
     """
     scores: Dict[str, List[float]] = {f"recall@{k}": [] for k in RECALL_K}
     scores["ndcg@10"] = []
     section_scores: List[float] = []
+    per_query: Dict[str, Dict[str, float]] = {m: {} for m in list(scores) + ["ndcg@10_sections"]}
     score_sections = config.search_level == "sections" and bool(getattr(bench, "section_qrels", None))
 
     for qid, text in bench.queries.items():
@@ -360,20 +375,28 @@ def run_config(db, bench, config: HierConfig, search_type: str = "hybrid") -> Di
             search_type=search_type,
         )
         ranked = [h.id for h in hits]
-        scores["ndcg@10"].append(ndcg_at_k(ranked, rel, K))
+        nd = ndcg_at_k(ranked, rel, K)
+        scores["ndcg@10"].append(nd)
+        per_query["ndcg@10"][qid] = nd
         for k in RECALL_K:
-            scores[f"recall@{k}"].append(recall_at_k(ranked, rel, k))
+            r = recall_at_k(ranked, rel, k)
+            scores[f"recall@{k}"].append(r)
+            per_query[f"recall@{k}"][qid] = r
 
         if score_sections:
             sec_rel = bench.section_qrels.get(qid, {})
             if any(r > 0 for r in sec_rel.values()):
                 sec_hits = db.query(text, search_level="sections", k=K, search_type=search_type)
                 sec_ranked = [_section_qrel_id(h.id) for h in sec_hits]
-                section_scores.append(ndcg_at_k(sec_ranked, sec_rel, K))
+                sec_nd = ndcg_at_k(sec_ranked, sec_rel, K)
+                section_scores.append(sec_nd)
+                per_query["ndcg@10_sections"][qid] = sec_nd
 
-    out = {m: (sum(v) / len(v) if v else 0.0) for m, v in scores.items()}
+    out: Dict[str, Any] = {m: (sum(v) / len(v) if v else 0.0) for m, v in scores.items()}
     if section_scores:
         out["ndcg@10_sections"] = sum(section_scores) / len(section_scores)
+    if collect_per_query:
+        out["per_query"] = {m: q for m, q in per_query.items() if q}
     return out
 
 
@@ -406,9 +429,16 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Dict[str, Any]:
             )
     logger.info("[%s] index check: both DBs hold %d documents", leg.name, len(bench.corpus))
 
-    results: Dict[str, Dict[str, float]] = {}
+    results: Dict[str, Dict[str, Any]] = {}
+    search_type = getattr(args, "search_type", "hybrid")
     for config in build_configs():
-        m = run_config(dbs[config.strategy], bench, config)
+        m = run_config(
+            dbs[config.strategy],
+            bench,
+            config,
+            search_type=search_type,
+            collect_per_query=bool(getattr(args, "per_query_out", None)),
+        )
         results[config.label] = m
         logger.info(
             "[%s] %-24s ndcg@10 %.4f  r@1 %.4f  r@10 %.4f%s",
@@ -422,11 +452,24 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Dict[str, Any]:
     return {"n_docs": len(bench.corpus), "n_queries": len(bench.queries), "results": results}
 
 
-def compare_to_baseline(legs: Dict[str, Any], path: Path, tolerance: float) -> int:
+def compare_to_baseline(legs: Dict[str, Any], path: Path, tolerance: float, search_type: str = "hybrid") -> int:
     if not path.exists():
         print(f"No baseline at {path}; run with --save-baseline first.", file=sys.stderr)
         return 1
     payload = json.loads(path.read_text(encoding="utf-8"))
+    # Comparing a vector run to a hybrid baseline compares two different systems
+    # and calls the difference a regression. Baselines written before this field
+    # existed are hybrid by construction, so a missing value means "hybrid".
+    base_type = payload.get("search_type", "hybrid")
+    if base_type != search_type:
+        print(
+            f"Baseline {path} was built with search_type={base_type!r} but this run used "
+            f"{search_type!r}. These are different retrieval systems -- BM25 is worth +0.086 to the "
+            "chunks arm and 0.000 to sections/fused -- so the comparison is meaningless. Gate against "
+            "a baseline of the same search_type.",
+            file=sys.stderr,
+        )
+        return 1
     base = payload.get("legs", {})
     if not base:
         # The pre-two-leg format stored a flat top-level "results". Reading it as
@@ -485,6 +528,22 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--check", action="store_true")
     p.add_argument("--baseline", type=Path, default=BASELINE_JSON)
     p.add_argument("--tolerance", type=float, default=TOLERANCE)
+    p.add_argument(
+        "--search-type",
+        choices=("hybrid", "vector", "keyword"),
+        default="hybrid",
+        help="Retrieval mechanism. Defaults to hybrid, which is what the saved baseline was built "
+        "with and what users get -- but FTS5 indexes CHUNKS ONLY, so under hybrid the sections and "
+        "fused arms silently return vector-only results and the chunks arm gets a free +0.086 that "
+        "they structurally cannot. Use 'vector' for any comparison BETWEEN levels.",
+    )
+    p.add_argument(
+        "--per-query-out",
+        type=Path,
+        default=None,
+        help="Write per-query scores here ({leg: {arm: {metric: {qid: score}}}}) for paired "
+        "bootstrapping. Off by default: it is a large file and only the significance pass needs it.",
+    )
     return p.parse_args(argv)
 
 
@@ -518,17 +577,53 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
     print("=" * 72)
 
+    if args.per_query_out:
+        args.per_query_out.parent.mkdir(parents=True, exist_ok=True)
+        args.per_query_out.write_text(
+            json.dumps(
+                {
+                    "generated": datetime.now(timezone.utc).isoformat(),
+                    "model": args.embedding_model,
+                    "search_type": args.search_type,
+                    "legs": {
+                        name: {arm: m.get("per_query", {}) for arm, m in payload["results"].items()}
+                        for name, payload in payloads.items()
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"Wrote per-query scores {args.per_query_out}")
+
     if args.save_baseline:
         if args.leg != "both":
             # A partial save would silently drop the other leg's baseline and
             # leave it ungated from then on, with nothing in the file to say so.
             print("Refusing to save a partial baseline; re-run with --leg both.", file=sys.stderr)
             return 1
+        if args.search_type != "hybrid":
+            # A vector baseline written over the hybrid one would be compared
+            # against future hybrid runs and flag every arm as a regression --
+            # or, worse, pass, because the two happen to be close on some legs.
+            # The file records search_type now, but refusing is the real guard.
+            print(
+                f"Refusing to save a --search-type={args.search_type} baseline over the hybrid one. "
+                "Write it to a separate --baseline path if you want a vector gate.",
+                file=sys.stderr,
+            )
+            return 1
+        # Per-query maps are for the bootstrap, not the gate; leaving them in would
+        # bloat the baseline by ~100x and diff noisily on every regeneration.
+        for payload in payloads.values():
+            for m in payload["results"].values():
+                m.pop("per_query", None)
         args.baseline.write_text(
             json.dumps(
                 {
                     "generated": datetime.now(timezone.utc).isoformat(),
                     "model": args.embedding_model,
+                    "search_type": args.search_type,
                     "legs": {
                         "qasper": {
                             "dataset": "qasper-dev",
@@ -553,7 +648,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         print(f"Wrote baseline {args.baseline}")
     if args.check:
-        return compare_to_baseline(payloads, args.baseline, args.tolerance)
+        return compare_to_baseline(payloads, args.baseline, args.tolerance, args.search_type)
     return 0
 
 

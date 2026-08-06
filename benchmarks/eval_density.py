@@ -90,9 +90,31 @@ def main() -> int:
     p.add_argument("--embedding-provider", default=EVAL_EMBEDDING_PROVIDER)
     p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
     p.add_argument("--out", default=str(_ROOT / "benchmarks" / "results" / "density_ladder.json"))
+    p.add_argument(
+        "--search-type",
+        choices=("hybrid", "vector", "keyword"),
+        default="hybrid",
+        help="Retrieval mechanism. The published ladder is HYBRID, and under hybrid only the chunks "
+        "arm has a keyword leg (FTS5 indexes chunks only) -- so it handed chunks a free +0.086 that "
+        "sections and fused structurally cannot get. Use 'vector' to compare the levels as "
+        "mechanisms; this ladder's question ('does gold density rescue sections?') is one of those.",
+    )
+    p.add_argument(
+        "--per-query-out",
+        default=None,
+        help="Write per-query scores here for paired bootstrapping (benchmarks/paired_bootstrap.py). "
+        "The gaps on this ladder are small enough at 100 queries that a point estimate is not a result.",
+    )
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # LocalVectorDB collapses ANY provider failure into a bare "model is not
+    # available" -- a rate-limited HF fetch, a cold cache, or two processes
+    # loading the same sentence-transformers model at once all look identical.
+    # Preflight surfaces the real exception, as the other harnesses already do.
+    from benchmarks.eval_retrieval import preflight_embedding_model
+
+    preflight_embedding_model(args.embedding_provider, args.embedding_model)
     configs = build_configs()
     results = {}
 
@@ -125,7 +147,13 @@ def main() -> int:
         }
         rung = {"gold_placed": gold, "density": density, "queries": len(bench.queries)}
         for cfg in configs:
-            scores = run_config(dbs[cfg.strategy], bench, cfg)
+            scores = run_config(
+                dbs[cfg.strategy],
+                bench,
+                cfg,
+                search_type=args.search_type,
+                collect_per_query=bool(args.per_query_out),
+            )
             rung[cfg.label] = scores
             logger.info(
                 "  %-24s ndcg@10=%.4f  sec=%s",
@@ -147,10 +175,34 @@ def main() -> int:
     results["meta"] = {
         "model": args.embedding_model,
         "provider": args.embedding_provider,
+        "search_type": args.search_type,
         "grid": f"{SECTIONS}x{PASSAGES}",
         "min_query_gold": MIN_QUERY_GOLD,
         "generated": datetime.now(timezone.utc).isoformat(),
     }
+    if args.per_query_out:
+        # Split out rather than nest: the ladder JSON is read by eye and by the
+        # summary table, and per-query maps would bury both under ~100x the bulk.
+        per_query = {
+            name: {arm: scores.pop("per_query", {}) for arm, scores in rung.items() if isinstance(scores, dict)}
+            for name, rung in results.items()
+            if name.startswith("gold")
+        }
+        pq = Path(args.per_query_out)
+        pq.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_text(
+            json.dumps(
+                {
+                    "model": args.embedding_model,
+                    "search_type": args.search_type,
+                    "legs": per_query,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"Wrote per-query scores {pq}")
+
     Path(args.out).write_text(json.dumps(results, indent=2), encoding="utf-8")
 
     print(f"\n{'arm':<26}" + "".join(f"{f'{g}g ({100*g/PASSAGES:.1f}%)':>16}" for g in GOLD_RUNGS))

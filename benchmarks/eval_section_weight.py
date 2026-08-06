@@ -157,15 +157,17 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Optional[Dict[str, Any]]:
 
     # Reference arms. ``chunks`` reads no section vector, so it is strategy-free;
     # scoring it once off the rawspan DB is not an arbitrary choice of index.
-    out["chunks"] = _score(dbs["rawspan"], queries, search_level="chunks")
+    st = getattr(args, "search_type", "hybrid")
+    out["search_type"] = st
+    out["chunks"] = _score(dbs["rawspan"], queries, search_level="chunks", search_type=st)
     logger.info("[%s] chunks                  ndcg@10 %.4f", leg.name, out["chunks"]["ndcg@10"])
 
     for strategy in STRATEGIES:
         db = dbs[strategy]
-        out[f"sections · {strategy}"] = _score(db, queries, search_level="sections")
+        out[f"sections · {strategy}"] = _score(db, queries, search_level="sections", search_type=st)
         curve = {}
         for w in WEIGHTS:
-            curve[f"{w:.2f}"] = _score(db, queries, search_level="fused", section_weight=w)
+            curve[f"{w:.2f}"] = _score(db, queries, search_level="fused", section_weight=w, search_type=st)
             logger.info(
                 "[%s] fused · %-8s w=%.2f  ndcg@10 %.4f",
                 leg.name,
@@ -222,6 +224,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="permit building a leg whose DB is not cached (slow); off by default",
     )
     p.add_argument("--out", default=str(_ROOT / "benchmarks" / "results" / "section_weight_sweep.json"))
+    p.add_argument(
+        "--search-type",
+        choices=("hybrid", "vector", "keyword"),
+        default="hybrid",
+        help="Retrieval mechanism. THIS SWEEP IS THE ONE MOST DAMAGED BY THE DEFAULT: it compares "
+        "fused against chunks across weights, and under hybrid only chunks has a keyword leg, so "
+        "the reference arm carries a free +0.086 at every weight. The published conclusion 'fusion "
+        "loses to chunks at every weight on every leg' was measured that way. Use 'vector'.",
+    )
     return p.parse_args(argv)
 
 
@@ -261,6 +272,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             {
                 "generated": datetime.now(timezone.utc).isoformat(),
                 "model": args.embedding_model,
+                "search_type": args.search_type,
                 "weights": list(WEIGHTS),
                 "shipped_weight": SHIPPED_WEIGHT,
                 "legs": payloads,
