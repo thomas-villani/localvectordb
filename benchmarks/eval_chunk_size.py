@@ -5,7 +5,7 @@ mean-pooling operator at two granularities, and the finer pool wins. That makes
 the winner predictable from configuration alone:
 
     rawspan piece = max_input_tokens x 3.0   (_span_embed._WINDOW_CHARS_PER_TOKEN)
-    centroid piece = chunk_size      x 3.5   (_CHARS_PER_TOKEN)
+    centroid piece = chunk_size      x 4.2   (_CHARS_PER_TOKEN_FALLBACK, MEASURED)
     r = rawspan / centroid   ->   r < 1 favours rawspan, r > 1 favours centroid
 
 It has been checked at exactly **two** points, on opposite sides of r=1 across a
@@ -77,12 +77,29 @@ dimension.
 ``num_batch``, which ``OllamaEmbeddings`` moves with it, because an encoder model
 embeds its whole input in one llama.cpp batch). Lowering it on egemma holds the
 weights, the corpus, the chunker and the queries **exactly** fixed and varies
-only how much of each chunk the model reads. If the cliff is caused by coverage,
-it must MOVE, and to a predictable place: at ``num_ctx=512`` the cap is ~1,792
-chars, so the cliff should appear between c=500 (~100% coverage) and c=1000
-(~50%), where at 2048 it sat between 1750 and 3000. Same model, cliff in a
-different place = coverage is causal. Cliff stays at 1750->3000 = it is not
-coverage, and the plateau is a property of the corpus instead.
+only how much of each chunk the model reads.
+
+WHAT THAT LADDER ACTUALLY RETURNED, and why coverage is the wrong instrument
+(2026-08-06). ``num_ctx=512`` verifiably takes effect -- bisecting Ollama's
+truncation boundary puts the cap at 1,797-2,315 chars against 8,143-9,010 at
+2048, and the native build matches the 2048 build to the character, so "native"
+is 2048. But the paired builds refute coverage as the mechanism:
+
+    c      vectors CHANGED   mean cos   delta nDCG@10
+    219      0 / 10,421      1.000000     0.0000
+    500  2,077 /  4,478      0.9972      -0.0000
+    1000 1,713 /  2,478      0.9360      -0.0571
+    1750   981 /  1,577      0.8967      -0.0396
+
+Read the c=500 row twice. **46% of its chunks were truncated and the score did
+not move at four decimal places.** So "was it truncated" is not the question --
+"how far did the vector move" is. Displacement predicts the damage; coverage does
+not, because lopping the tail off a chunk that only just exceeds the cap barely
+moves its vector. Damage needs 1-cos above ~0.01; below that truncation is free.
+
+The c=219 row also establishes that the encoder is deterministic ACROSS BUILDS
+(10,421 vectors, zero drift at 1e-6), which is what licenses reading any of the
+other rows as truncation rather than noise.
 
 The honest limit: a 2048-trained model run at 512 is not the same thing as a
 natively-512 model, so this establishes MECHANISM, not external validity. A third
@@ -125,7 +142,68 @@ LIBRARY_DEFAULT_CHUNK_SIZE = 500
 CHUNK_SIZES: Tuple[int, ...] = (500, 219, 128, 1000, 256, 64)
 
 _WINDOW_CHARS_PER_TOKEN = 3.0  # mirrors _span_embed
-_CHARS_PER_TOKEN = 3.5  # mirrors _span_embed
+
+# MEASURED, not assumed (2026-08-06). The old value here was 3.5, mirrored from
+# _span_embed, where it was a guess. It is 20-25% LOW, and because chunk lengths
+# concentrate right at the cap, a constant error of that size understated reported
+# coverage by up to **16.4 points** (c=256: 81.3% reported against 97.7% true).
+#
+#   all-MiniLM-L6-v2   4.38   BertTokenizer, 2,400 chunks across 6 rungs of this
+#                             very leg; stable 4.35-4.43, so it is a corpus
+#                             property, not a rung artifact.
+#   embeddinggemma     ~4.2   no public tokenizer (gated); bisected Ollama's real
+#                             truncation boundary instead -- embed(T[:m]) == embed(T)
+#                             iff m >= cap -- over 4 long chunks x {512, 2048} ctx.
+#                             Caps landed at 1797-2315 chars for a ~503-token
+#                             content budget and 8143-9010 for ~2039. (Ollama's
+#                             /api/ps independently reports context_length 2048.)
+#
+# The fallback is 4.2 rather than 3.5 so an unknown model errs toward the measured
+# range instead of toward a number nothing supports. It is still only a fallback:
+# per chunk this ratio spans 2.00-5.67 on one corpus, so where the length
+# distribution sits ON the cap it misclassifies ~30% of chunks either way. Use
+# _token_counter when the model has a reachable tokenizer.
+_CHARS_PER_TOKEN_FALLBACK = 4.2
+_MEASURED_CHARS_PER_TOKEN: Dict[str, float] = {
+    "all-MiniLM-L6-v2": 4.38,
+    "sentence-transformers/all-MiniLM-L6-v2": 4.38,
+    "embeddinggemma:300m": 4.2,
+}
+
+
+def _chars_per_token(model: str) -> float:
+    """The measured chars/token for ``model``, or the measured-range fallback."""
+    return _MEASURED_CHARS_PER_TOKEN.get(model, _CHARS_PER_TOKEN_FALLBACK)
+
+
+def _token_counter(model: str):
+    """A ``text -> n_tokens`` function using the model's REAL tokenizer, or None.
+
+    Exact token counts make the coverage question exact, and there is no reason to
+    estimate what can be counted. Strictly offline: this is a diagnostic and must
+    not reach for the network, so a model whose tokenizer is not already cached
+    simply falls back to the char proxy.
+
+    Ollama-hosted models have no importable tokenizer (embeddinggemma's is gated),
+    which is why the char proxy has to survive at all.
+    """
+    name = model if "/" in model else f"sentence-transformers/{model}"
+    try:
+        from transformers import AutoTokenizer
+
+        # local_files_only, not the HF_HUB_OFFLINE env var: the env var is read at
+        # huggingface_hub import time, so setting it here is a no-op whenever
+        # anything has already imported transformers -- which, in this harness, it
+        # has. This argument is checked per call and cannot be outrun by import order.
+        tok = AutoTokenizer.from_pretrained(name, local_files_only=True)
+    except Exception as exc:  # noqa: BLE001 -- any failure means "use the proxy"
+        logger.info("no local tokenizer for %s (%s); coverage falls back to the char proxy", model, type(exc).__name__)
+        return None
+
+    def count(text: str) -> int:
+        return len(tok.encode(text, add_special_tokens=False))
+
+    return count
 
 
 def density_leg() -> Leg:
@@ -149,6 +227,60 @@ def density_leg() -> Leg:
     return Leg(name="density_g4", cache_key=key, load=_load)
 
 
+def _token_coverage(db, cap_tokens: int, count: Any, sample: int = 400) -> Dict[str, float]:
+    """EXACT coverage, in tokens, over a strided sample of the chunk table.
+
+    This is the quantity every ``coverage`` number in this project was trying to
+    approximate. Where a real tokenizer exists there is no reason to approximate
+    it: ``sum(min(tok, budget)) / sum(tok)``.
+
+    ``cap_tokens`` is the context; the budget is two less, because the encoder
+    spends two slots on [CLS]/[SEP] and an instruction-prefixed model spends
+    several more. Sampling is strided rather than random so the number is stable
+    across runs of the same index -- a diagnostic that moves when nothing changed
+    is worse than no diagnostic.
+    """
+    with db.connection_pool.get_connection() as conn:
+        rows = [r[0] for r in conn.execute("SELECT content FROM chunks ORDER BY id")]
+    step = max(1, len(rows) // sample)
+    texts = rows[::step][:sample]
+    ntok = [count(t) for t in texts]
+    budget = max(1, cap_tokens - 2)
+    total = sum(ntok)
+    return {
+        "coverage_tokens": (sum(min(n, budget) for n in ntok) / total) if total else float("nan"),
+        "frac_chunks_truncated_tokens": sum(n > budget for n in ntok) / len(ntok),
+        "mean_chunk_tokens": total / len(ntok),
+        "measured_chars_per_token": sum(len(t) for t in texts) / total if total else float("nan"),
+        "token_sample": len(texts),
+    }
+
+
+def _straddle(db, encoder_cap_chars: float, band: float = 0.35) -> float:
+    """Fraction of chunks within +-``band`` of the char cap -- the proxy's blind zone.
+
+    A char cap can only classify a chunk when the chunk is far from it. Chars per
+    token is not constant across chunks: on this leg it spans at least 2.1 to 5.3,
+    so on the c=500 rung, where the length distribution sits ON the cap, NO single
+    char threshold reproduces which vectors actually changed (best fit still
+    misclassifies 31%). On c=1000, where chunks are far above the cap, a threshold
+    separates them to 0.1%.
+
+    This bounds ``frac_chunks_truncated`` specifically -- whether a given chunk is
+    over the line. It is NOT the error bar on ``coverage``: when chunks sit far
+    ABOVE the cap, straddle is ~0 and every chunk is correctly called truncated,
+    yet coverage is still just cap/mean_len and so scales linearly with whatever
+    constant was assumed. The two failure modes are different; this catches one.
+    """
+    lo, hi = int(encoder_cap_chars * (1 - band)), int(encoder_cap_chars * (1 + band))
+    with db.connection_pool.get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, SUM(CASE WHEN LENGTH(content) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS s FROM chunks",
+            (lo, hi),
+        ).fetchone()
+    return (int(row["s"] or 0) / int(row["n"])) if row["n"] else float("nan")
+
+
 def _corpus_shape(db, encoder_cap_chars: float) -> Dict[str, float]:
     """Measured chunk/section geometry of a built index, including COVERAGE.
 
@@ -166,6 +298,13 @@ def _corpus_shape(db, encoder_cap_chars: float) -> Dict[str, float]:
     emits a short remainder fragment per document -- so the mean sits in a valley
     the distribution barely occupies. Coverage is the quantity the cliff tracks;
     prefer it to r_effective in any claim about truncation.
+
+    CAVEAT (2026-08-06): everything here is a CHAR proxy for a TOKEN quantity, and
+    its error is not uniform -- it concentrates exactly where the length
+    distribution straddles the cap, which is the regime worth tuning. Prefer
+    ``coverage_tokens`` when a tokenizer is available, and read ``straddle_frac``
+    before trusting this one. Ground truth, where a paired build exists, is
+    neither: it is how far the stored VECTOR moved (see the module docstring).
     """
     with db.connection_pool.get_connection() as conn:
         chunks = conn.execute(
@@ -246,7 +385,7 @@ def _encoder_geometry(db, override: Optional[int] = None) -> Tuple[int, float, i
     window = (
         _window_chars_for(provider) if _provider_context_tokens(provider) else int(tokens * _WINDOW_CHARS_PER_TOKEN)
     )
-    return tokens, tokens * _CHARS_PER_TOKEN, window
+    return tokens, tokens * _chars_per_token(getattr(provider, "model", "")), window
 
 
 def _embedding_config(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
@@ -286,25 +425,34 @@ def run_rung(leg: Leg, bench, chunk_size: int, args: argparse.Namespace) -> Dict
 
     # Geometry is a property of the corpus and the encoder, not of the section
     # strategy, so any built arm reports it identically.
-    tokens, encoder_cap_chars, window_chars = _encoder_geometry(next(iter(dbs.values())), args.context_tokens)
-    shape = _corpus_shape(next(iter(dbs.values())), encoder_cap_chars)
+    probe = next(iter(dbs.values()))
+    tokens, encoder_cap_chars, window_chars = _encoder_geometry(probe, args.context_tokens)
+    shape = _corpus_shape(probe, encoder_cap_chars)
     rung: Dict[str, Any] = {
         "chunk_size": chunk_size,
         "num_ctx": args.num_ctx,
         "encoder_context_tokens": tokens,
         "window_chars": window_chars,
         "encoder_cap_chars": encoder_cap_chars,
+        "chars_per_token": _chars_per_token(getattr(probe.embedding_provider, "model", "")),
+        "straddle_frac": _straddle(probe, encoder_cap_chars),
         **shape,
         **_r_values(shape["mean_chunk_chars"], window_chars, encoder_cap_chars),
     }
+    counter = _token_counter(getattr(probe.embedding_provider, "model", ""))
+    if counter is not None:
+        rung.update(_token_coverage(probe, tokens, counter))
     logger.info(
-        "[c=%d] %d chunks, mean %.0f chars, COVERAGE %.1f%% (%.0f%% of chunks truncated at %.0f chars)",
+        "[c=%d] %d chunks, mean %.0f chars, COVERAGE %.1f%% chars / %s tokens "
+        "(%.0f%% truncated at %.0f chars; straddle %.0f%%)",
         chunk_size,
         rung["n_chunks"],
         rung["mean_chunk_chars"],
         100.0 * rung["coverage"],
+        f"{100.0 * rung['coverage_tokens']:.1f}%" if "coverage_tokens" in rung else "n/a",
         100.0 * rung["frac_chunks_truncated"],
         encoder_cap_chars,
+        100.0 * rung["straddle_frac"],
     )
 
     for cfg in build_configs():
@@ -463,12 +611,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     def _cell(rung: Dict[str, Any], label: str, metric: str) -> float:
         return rung.get(label, {}).get(metric, float("nan"))
 
-    print(f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'cover':>7} {'r_nom':>6} {'CHUNKS':>9}", end="")
+    have_tokens = any("coverage_tokens" in r for r in ordered)
+    print(
+        f"\n{'chunk':>6} {'chunks':>8} {'mean ch':>8} {'cover':>7} "
+        f"{'covTOK':>7} {'strad':>6} {'r_nom':>6} {'CHUNKS':>9}",
+        end="",
+    )
     print(f" {'raw doc':>9} {'cen doc':>9} {'raw sec':>9} {'cen sec':>9} {'sec gap':>9}" if have_rawspan else "")
     for r in ordered:
+        cov_tok = f"{100.0 * r['coverage_tokens']:>6.1f}%" if "coverage_tokens" in r else f"{'--':>7}"
         row = (
             f"{r['chunk_size']:>6} {r['n_chunks']:>8} {r['mean_chunk_chars']:>8.0f} "
-            f"{100.0 * r['coverage']:>6.1f}% {r['r_nominal']:>6.2f} {_cell(r, 'chunks', 'ndcg@10'):>9.4f}"
+            f"{100.0 * r['coverage']:>6.1f}% {cov_tok} {100.0 * r.get('straddle_frac', float('nan')):>5.0f}% "
+            f"{r['r_nominal']:>6.2f} {_cell(r, 'chunks', 'ndcg@10'):>9.4f}"
         )
         if have_rawspan:
             raw_s = _cell(r, "sections · rawspan", "ndcg@10_sections")
@@ -480,7 +635,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         print(row)
     print("\nCHUNKS is plain search_level='chunks' -- the curve this sweep exists to draw.")
-    print("'cover' is sum(min(len,cap))/sum(len), NOT derived from the mean -- the cliff tracks this.")
+    print("'cover' is sum(min(len,cap))/sum(len) in CHARS -- a proxy, and a biased one.")
+    if have_tokens:
+        print("'covTOK' is the same quantity counted in TOKENS by the real tokenizer. Prefer it.")
+    print("'strad' is the share of chunks sitting ON the cap (+-35%), where 'truncated?' is a coin-flip.")
     if have_rawspan:
         print("'sec gap' > 0 means rawspan wins at the section level; the rule predicts it flips as r crosses 1.")
     else:
