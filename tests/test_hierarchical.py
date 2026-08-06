@@ -436,6 +436,53 @@ class TestHierarchicalIntegration:
         results = db.query("neural networks", search_level=level, k=3)
         assert len(results) >= 1
 
+    # -- A search_type these levels cannot honour must be said out loud --
+
+    @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
+    @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
+    def test_vector_only_level_warns_on_unhonoured_search_type(self, db_with_hierarchy, level, search_type):
+        """FTS5 indexes chunks only, so these levels silently ran vector-only.
+
+        Because 'hybrid' is the DEFAULT, query(text, search_level='sections') was
+        answered by a different retrieval system than the same call at chunk
+        level -- worth +0.084 to +0.131 nDCG@10 to chunks on our benchmarks and
+        exactly +0.0000 here. Comparing the two was invalid and nothing said so.
+        """
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        with pytest.warns(UserWarning, match="keyword search is indexed over chunks only"):
+            db.query("neural networks", search_level=level, search_type=search_type, k=3)
+
+    @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
+    def test_vector_only_level_silent_when_asked_for_vector(self, db_with_hierarchy, level, recwarn):
+        """Asking for what these levels actually do must not warn."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        recwarn.clear()
+
+        db.query("neural networks", search_level=level, search_type="vector", k=3)
+        assert [w for w in recwarn if "indexed over chunks only" in str(w.message)] == []
+
+    def test_chunk_level_hybrid_never_warns(self, db_with_hierarchy, recwarn):
+        """Chunks genuinely have a keyword leg; the warning must not fire there."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        recwarn.clear()
+
+        db.query("neural networks", search_level="chunks", search_type="hybrid", k=3)
+        assert [w for w in recwarn if "indexed over chunks only" in str(w.message)] == []
+
+    def test_vector_only_level_warns_once_per_instance(self, db_with_hierarchy, recwarn):
+        """A query loop must not drown the log in the same warning."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        recwarn.clear()
+
+        for _ in range(3):
+            db.query("neural networks", search_level="sections", k=3)
+        assert len([w for w in recwarn if "indexed over chunks only" in str(w.message)]) == 1
+
     # -- H8: reranking must not be silently dropped on fused/sections/documents --
 
     @pytest.mark.parametrize("level", ["fused", "sections", "documents"])

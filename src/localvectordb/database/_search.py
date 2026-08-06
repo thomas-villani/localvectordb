@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import re
+import warnings
 from abc import ABC
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple
@@ -82,6 +83,13 @@ def _resolve_return_type(return_type: Optional[ReturnType], search_level: str) -
     if return_type is not None:
         return return_type
     return _NATURAL_RETURN_TYPE.get(search_level, "documents")
+
+
+# Levels served by a vector index alone. FTS5 indexes chunks (and whole
+# documents); there is no sections_fts, and `sections` holds no text of its own --
+# only start_pos/end_pos into the parent document -- so no keyword leg exists at
+# these levels to honour a keyword or hybrid request with.
+_VECTOR_ONLY_LEVELS = frozenset({"sections", "documents", "fused"})
 
 
 def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
@@ -830,6 +838,29 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 "return_type='sections' requires a hierarchical database "
                 "(create with hierarchical_embeddings=True), or use search_level='sections'."
             )
+        # Say so when the requested search_type cannot be honoured. These levels
+        # have no keyword leg, so a keyword or hybrid request silently returned
+        # vector-only results -- no error, no warning, and nothing in the result
+        # objects recording which retrieval actually ran. Because `hybrid` is the
+        # DEFAULT, the common call `query(text, search_level="sections")` was
+        # quietly answered by a different retrieval system than the same call at
+        # chunk level, which makes any comparison between the two invalid: on our
+        # benchmarks the keyword leg is worth +0.084 to +0.131 nDCG@10 to chunks
+        # and exactly +0.0000 to these levels.
+        #
+        # A warning, not an error: raising would break the working (if mislabelled)
+        # default call. Once per instance, so a query loop cannot drown a log.
+        if search_level in _VECTOR_ONLY_LEVELS and search_type != "vector":
+            if not getattr(self, "_vector_only_level_warned", False):
+                self._vector_only_level_warned = True
+                warnings.warn(
+                    f"search_type={search_type!r} is not available at search_level={search_level!r}: "
+                    "keyword search is indexed over chunks only, so this query ran as vector-only. "
+                    "Pass search_type='vector' to make that explicit, and do not compare these "
+                    "results against chunk-level hybrid results -- only the latter gets BM25.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
