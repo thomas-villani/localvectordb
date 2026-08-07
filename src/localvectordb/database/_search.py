@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import re
+import sqlite3
 import warnings
 from abc import ABC
 from collections import defaultdict
@@ -85,12 +86,12 @@ def _resolve_return_type(return_type: Optional[ReturnType], search_level: str) -
     return _NATURAL_RETURN_TYPE.get(search_level, "documents")
 
 
-# Levels served by a vector index alone. There is no sections_fts, and `sections`
-# holds no text of its own -- only start_pos/end_pos into the parent document --
-# so no keyword leg exists at these levels to honour a keyword or hybrid request
-# with. `documents` used to be here too; it now reads `documents_fts`, which was
-# always created, populated and trigger-maintained but never queried.
-_VECTOR_ONLY_LEVELS = frozenset({"sections", "fused"})
+# Levels served by a vector index alone. `chunks`, `documents` and `sections` all
+# have keyword indices now; `fused` is the last holdout, because it blends two
+# bounded-similarity legs through `_two_leg_minmax_fuse` rather than running a
+# search type of its own, so giving it BM25 is a change to the blend and not just
+# a wiring fix.
+_VECTOR_ONLY_LEVELS = frozenset({"fused"})
 
 
 def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
@@ -1913,16 +1914,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         if search_level == "sections":
             if return_type == "sections":
-                return self._section_level_search(query_embedding, k, score_threshold, filters)
+                return self._section_hits(
+                    query, query_embedding, k, score_threshold, filters, search_type, vector_weight
+                )
             if return_type == "documents":
                 # Over-fetch before rolling up: k sections may live in far fewer
                 # than k documents. Warn on starvation against the k the caller
                 # actually asked for, not the inflated fetch.
-                section_hits = self._section_level_search(
+                section_hits = self._section_hits(
+                    query,
                     query_embedding,
                     k * _SECTION_ROLLUP_OVERFETCH,
                     score_threshold,
                     filters,
+                    search_type,
+                    vector_weight,
                     warn_k=k,
                 )
                 best_by_doc = self._reduce_to_best_per_key(section_hits, lambda r: r.document_id or r.id)
@@ -2073,6 +2079,100 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # same way everywhere, forever.
         results.sort(key=lambda x: (-x.score, x.id))
         return results[:k]
+
+    def _section_hits(
+        self,
+        query: str,
+        query_embedding: np.ndarray,
+        k: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]],
+        search_type: str,
+        vector_weight: float,
+        warn_k: Optional[int] = None,
+    ) -> List[QueryResult]:
+        """Section hits honouring ``search_type``, as one leg or two fused.
+
+        Mirrors the document-level path: both legs are fetched unthresholded and
+        the caller's threshold lands on the fused score, and an empty keyword leg
+        degrades to the vector ranking rather than to nothing.
+        """
+        if search_type == "keyword":
+            raw = self._keyword_section_hits(query, k * 2, filters)
+            similarities = {key: self._fts_rank_to_similarity(rank) for key, rank in raw.items()}
+            return self._sections_from_scores(similarities, k, score_threshold, filters)
+
+        if search_type != "hybrid":
+            return self._section_level_search(query_embedding, k, score_threshold, filters, warn_k=warn_k)
+
+        vector_hits = self._section_level_search(query_embedding, k * 2, 0.0, filters, warn_k=warn_k)
+        raw = self._keyword_section_hits(query, k * 2, filters)
+        if not raw:
+            return [r for r in vector_hits if r.score >= score_threshold][:k]
+        vector_scores = {r.id: r.score for r in vector_hits}
+        fused = _relative_score_fusion(vector_scores, raw, vector_weight)
+        return self._sections_from_scores(fused, k, score_threshold, filters)
+
+    def _keyword_section_hits(
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> Dict[str, float]:
+        """Raw BM25 per ``{document_id}:section:{index}`` key from ``sections_fts``.
+
+        Keyed the way ``_section_level_search`` keys its results, so the two legs
+        fuse without a translation step. Raw BM25, for the reason given in
+        ``_keyword_document_hits``.
+
+        ``sections_fts`` may be contentless, so nothing is selected from it beyond
+        ``rowid`` and the rank; the section's identity comes from joining
+        ``sections``. Returns ``{}`` when FTS is unavailable, the query sanitizes
+        to nothing, or the index has not been backfilled -- in every case the
+        caller keeps its vector ranking.
+        """
+        if not getattr(self, "_fts_enabled", True):
+            return {}
+        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized_query:
+            return {}
+
+        built = self._build_filter_where(filters)
+        select = (
+            "SELECT s.document_id AS doc_id, s.section_index AS section_index, "
+            "bm25(sections_fts) AS rank "
+            "FROM sections_fts JOIN sections s ON s.id = sections_fts.rowid "
+            "WHERE sections_fts MATCH ?"
+        )
+        if built is not None:
+            where_clause, filter_params = built
+            fts_sql = (
+                f"{select} AND s.document_id IN (SELECT id FROM documents WHERE {where_clause}) "
+                "ORDER BY rank ASC LIMIT ?"
+            )
+            fts_params: Tuple[Any, ...] = (sanitized_query, *filter_params, limit)
+        else:
+            fts_sql = f"{select} ORDER BY rank ASC LIMIT ?"
+            fts_params = (sanitized_query, limit)
+
+        try:
+            with self.connection_pool.get_connection() as conn:
+                rows = conn.execute(fts_sql, fts_params).fetchall()
+                ranks = {f"{r['doc_id']}:section:{r['section_index']}": float(r["rank"]) for r in rows}
+                if filters and ranks:
+                    doc_ids = list({key.rsplit(":section:", 1)[0] for key in ranks})
+                    metadata_batch = self._get_documents_metadata_batch(conn, doc_ids)
+                    ranks = {
+                        key: rank
+                        for key, rank in ranks.items()
+                        if matches_metadata_filter(metadata_batch.get(key.rsplit(":section:", 1)[0], {}), filters)
+                    }
+        except sqlite3.OperationalError:
+            # A database opened before sections_fts existed, where the backfill did
+            # not run (FTS disabled, or it failed). Vector-only is the old
+            # behaviour and the right thing to fall back to.
+            return {}
+        return ranks
 
     def _keyword_document_hits(
         self,
@@ -2368,6 +2468,86 @@ class SearchMixin(LocalVectorDBBase, ABC):
         section_by_doc = self._reduce_to_best_per_key(section_hits, lambda r: r.document_id or r.id)
         fused = _two_leg_minmax_fuse(chunk_by_doc, section_by_doc, section_weight)
         return self._documents_from_scores(fused, k, score_threshold)
+
+    def _sections_from_scores(
+        self,
+        scores: Dict[str, float],
+        k: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[QueryResult]:
+        """Materialise the top ``k`` scored ``{doc}:section:{i}`` keys as section results.
+
+        The section-level counterpart of ``_documents_from_scores``, and the reason
+        the keyword leg can be fused with the vector leg at all: both legs reduce
+        to ``{section_key: score}``, and this turns that back into hydrated
+        results. Hydration matches ``_section_level_search`` exactly -- same
+        content slice, same merged document + section metadata, same position --
+        so a section looks identical whichever leg retrieved it.
+        """
+        ranked = [(key, s) for key, s in sorted(scores.items(), key=lambda kv: -kv[1]) if s >= score_threshold][:k]
+        if not ranked:
+            return []
+
+        wanted: Dict[Tuple[str, int], float] = {}
+        for key, score in ranked:
+            doc_id, _, index = key.rpartition(":section:")
+            if doc_id and index.isdigit():
+                wanted[(doc_id, int(index))] = score
+        if not wanted:
+            return []
+
+        doc_ids = list({d for d, _ in wanted})
+        placeholders = ",".join(["?"] * len(doc_ids))
+        results: List[QueryResult] = []
+        with self.connection_pool.get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT s.*, d.content as doc_content, d.id as doc_id
+                FROM sections s JOIN documents d ON s.document_id = d.id
+                WHERE s.document_id IN ({placeholders})
+                """,
+                doc_ids,
+            ).fetchall()
+            doc_metadata_batch = self._get_documents_metadata_batch(conn, doc_ids)
+            by_key = {(row["document_id"], row["section_index"]): row for row in rows}
+
+        for section_key, score in sorted(wanted.items(), key=lambda kv: -kv[1]):
+            row = by_key.get(section_key)
+            if row is None:
+                continue
+            doc_metadata = doc_metadata_batch.get(row["doc_id"], {})
+            if filters and not matches_metadata_filter(doc_metadata, filters):
+                continue
+            section_metadata = dict(doc_metadata)
+            section_metadata["section_heading"] = row["heading"]
+            section_metadata["section_level"] = row["heading_level"]
+            section_metadata["section_index"] = row["section_index"]
+            if row["metadata"]:
+                try:
+                    raw = row["metadata"]
+                    section_metadata.update(json.loads(raw) if isinstance(raw, str) else raw)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(
+                QueryResult(
+                    id=f"{row['document_id']}:section:{row['section_index']}",
+                    score=score,
+                    type="section",
+                    content=row["doc_content"][row["start_pos"] : row["end_pos"]],
+                    metadata=section_metadata,
+                    document_id=row["document_id"],
+                    position=ChunkPosition(
+                        start=row["start_pos"],
+                        end=row["end_pos"],
+                        line=row["start_line"] or 1,
+                        column=1,
+                        end_line=row["end_line"] or 1,
+                        end_column=1,
+                    ),
+                )
+            )
+        return results
 
     def _documents_from_scores(
         self,

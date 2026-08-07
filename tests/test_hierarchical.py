@@ -438,18 +438,20 @@ class TestHierarchicalIntegration:
 
     # -- A search_type these levels cannot honour must be said out loud --
 
-    @pytest.mark.parametrize("level", ["sections", "fused"])
+    @pytest.mark.parametrize("level", ["fused"])
     @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
     def test_vector_only_level_warns_on_unhonoured_search_type(self, db_with_hierarchy, level, search_type):
-        """Sections hold no text of their own, so these levels run vector-only.
+        """A level that cannot honour the requested search type must say so.
 
         Because 'hybrid' is the DEFAULT, query(text, search_level='sections') was
         answered by a different retrieval system than the same call at chunk
         level -- worth +0.084 to +0.131 nDCG@10 to chunks on our benchmarks and
-        exactly +0.0000 here. Comparing the two was invalid and nothing said so.
+        exactly +0.0000 there. Comparing the two was invalid and nothing said so.
 
-        ``documents`` is deliberately absent: it now has a real keyword leg over
-        ``documents_fts`` and must NOT warn. See the tests below it.
+        Only ``fused`` is left: ``documents`` (Fix A) and ``sections`` (Fix B) now
+        have real keyword legs. ``fused`` blends two bounded-similarity legs via
+        ``_two_leg_minmax_fuse`` rather than running a search type of its own, so
+        giving it BM25 is a change to the blend, not a wiring fix.
         """
         db = db_with_hierarchy
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
@@ -483,7 +485,7 @@ class TestHierarchicalIntegration:
         recwarn.clear()
 
         for _ in range(3):
-            db.query("neural networks", search_level="sections", k=3)
+            db.query("neural networks", search_level="fused", k=3)
         assert len([w for w in recwarn if "ran as vector-only" in str(w.message)]) == 1
 
     # -- Fix A: search_level='documents' has a real keyword leg (documents_fts) --
@@ -544,6 +546,77 @@ class TestHierarchicalIntegration:
         hybrid = db.query("xyzzyplughcolossal", search_level="documents", search_type="hybrid", k=3)
         vector = db.query("xyzzyplughcolossal", search_level="documents", search_type="vector", k=3)
         assert [r.id for r in hybrid] == [r.id for r in vector]
+
+    # -- Fix B: search_level='sections' has a real keyword leg (sections_fts) --
+
+    @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
+    def test_sections_level_never_warns(self, db_with_hierarchy, recwarn, search_type):
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        recwarn.clear()
+
+        db.query("neural networks", search_level="sections", search_type=search_type, k=3)
+        assert [w for w in recwarn if "ran as vector-only" in str(w.message)] == []
+
+    def test_sections_keyword_leg_finds_the_right_section(self, db_with_hierarchy):
+        """A term unique to one section must return that section, not its document.
+
+        This is the assertion document-level BM25 cannot make: ``documents_fts``
+        would rank the whole document and could not say which of its sections
+        matched, which is exactly why Fix B could not be routed through it.
+        """
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        results = db.query("Convolutional", search_level="sections", search_type="keyword", k=5)
+        assert results, "section keyword leg returned nothing"
+        assert results[0].metadata["section_heading"] == "Background"
+        assert all(r.type == "section" for r in results)
+
+    def test_sections_hybrid_differs_from_vector(self, db_with_hierarchy):
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        vector = db.query("Convolutional", search_level="sections", search_type="vector", k=5)
+        hybrid = db.query("Convolutional", search_level="sections", search_type="hybrid", k=5)
+        assert vector and hybrid
+        assert {r.id: round(r.score, 6) for r in vector} != {r.id: round(r.score, 6) for r in hybrid}
+
+    def test_sections_fts_rows_removed_with_their_document(self, db_with_hierarchy):
+        """Deletion rides an AFTER DELETE trigger, so it must survive every path."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        with db.connection_pool.get_connection() as conn:
+            before = conn.execute("SELECT COUNT(*) AS n FROM sections_fts").fetchone()["n"]
+        assert before > 0
+
+        db.delete(["md_doc"])
+        with db.connection_pool.get_connection() as conn:
+            after = conn.execute("SELECT COUNT(*) AS n FROM sections_fts").fetchone()["n"]
+        assert after == 0, "sections_fts kept rows for a deleted document"
+
+    def test_sections_fts_backfills_an_existing_database(self, db_with_hierarchy):
+        """A database whose sections predate sections_fts must self-heal on open.
+
+        Simulated by emptying the index behind the database's back, which is
+        exactly the state an upgrade lands in: sections present, index absent.
+        """
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        with db.connection_pool.get_connection() as conn:
+            expected = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"]
+            conn.execute("DELETE FROM sections_fts")
+            conn.commit()
+            assert conn.execute("SELECT COUNT(*) AS n FROM sections_fts").fetchone()["n"] == 0
+
+        assert db._backfill_sections_fts() == expected
+        with db.connection_pool.get_connection() as conn:
+            assert conn.execute("SELECT COUNT(*) AS n FROM sections_fts").fetchone()["n"] == expected
+        # Idempotent: a second call is a no-op, not a duplicate insert.
+        assert db._backfill_sections_fts() == 0
+
+        results = db.query("Convolutional", search_level="sections", search_type="keyword", k=5)
+        assert results and results[0].metadata["section_heading"] == "Background"
 
     # -- H8: reranking must not be silently dropped on fused/sections/documents --
 
@@ -906,7 +979,11 @@ class TestT15CentroidNormalizationAndMetric:
                 # IndexFlatL2, so the query is used as-is (no IP boundary norm).
                 qvec = np.asarray(db.embedding_provider.embed_sync([query])[0], dtype=np.float32)
 
-                results = db.query(query, search_level="sections", k=10)
+                # search_type='vector' because this asserts the raw index metric.
+                # The default 'hybrid' now fuses a BM25 leg and min-max normalises
+                # within the pool, so the top score is 1.0 by construction and
+                # carries no information about which FAISS formula produced it.
+                results = db.query(query, search_level="sections", search_type="vector", k=10)
                 assert len(results) >= 2, "need multiple sections to test ranking"
 
                 with db.connection_pool.get_connection() as conn:
@@ -1350,7 +1427,10 @@ class TestSectionSearchReturnType:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = _make_hier_db(tmpdir)
             try:
-                db.query("neural networks", search_level="sections", return_type="documents", k=3)
+                # search_type='vector' isolates the roll-up over-fetch. Hybrid
+                # over-fetches a second time on top of it so the fusion has
+                # candidates to blend, which is asserted separately below.
+                db.query("neural networks", search_level="sections", return_type="documents", search_type="vector", k=3)
                 assert calls, "_section_level_search was never called"
                 # Assert the pool is bigger than k, not just that it equals
                 # `k * _SECTION_ROLLUP_OVERFETCH` -- that comparison moves with the
@@ -1362,10 +1442,17 @@ class TestSectionSearchReturnType:
                 # over-fetch does not manufacture "filter starved" warnings.
                 assert calls[0]["warn_k"] == 3
 
-                # Returning sections directly needs no over-fetch.
+                # Returning sections directly needs no roll-up over-fetch.
                 calls.clear()
-                db.query("neural networks", search_level="sections", k=3)
+                db.query("neural networks", search_level="sections", search_type="vector", k=3)
                 assert calls[0]["k"] == 3
+
+                # Hybrid keeps the roll-up over-fetch and adds the fusion pool on
+                # top of it; it must never fetch LESS than the vector path.
+                calls.clear()
+                db.query("neural networks", search_level="sections", return_type="documents", search_type="hybrid", k=3)
+                assert calls[0]["k"] >= 3 * _SECTION_ROLLUP_OVERFETCH
+                assert calls[0]["warn_k"] == 3
             finally:
                 db.close()
 
