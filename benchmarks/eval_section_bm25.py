@@ -1,0 +1,333 @@
+"""DIAGNOSTIC: what would a `sections_fts` actually buy? Measure before building it.
+
+THE QUESTION. `search_level="sections"` and `"fused"` have no keyword leg -- FTS5
+indexes chunks only, and the `sections` table stores no text, just start/end
+offsets into its parent document. Adding one is a schema change plus a migration,
+so it deserves a measurement first.
+
+WHY THE OBVIOUS ESTIMATE IS NOT GOOD ENOUGH. We measured BM25's worth to the
+CHUNK arm: +0.084 to +0.131 nDCG@10 across six leg/encoder pairs. Quoting that as
+the headroom for sections is an extrapolation wearing a measurement's clothes --
+exactly the error that produced the hybrid-default confound (an effect credited to
+the mechanism under study that came from the baseline it was measured against).
+
+There is a specific reason to expect it to differ. Qasper sections average ~3.3k
+chars against ~800 for chunks, and BM25 is not scale-free: the `b` length
+normalisation and term-frequency saturation both bite differently at 4x the
+document length, and a query term that dominates a chunk is diluted in a section.
+The section-level gain could be most of +0.10, or a fraction of it, or negative.
+
+HOW. Build a REAL in-memory FTS5 index over section text and query it with
+SQLite's own `bm25()`. Not a Python re-implementation: FTS5's tokenizer, k1 and b
+defaults are what a shipped `sections_fts` would inherit, and a hand-rolled BM25
+would answer a question about my arithmetic instead of about the feature.
+Fusion replicates `_relative_score_fusion` exactly -- min-max within the query's
+own candidate pool, then `vector_weight` blend, missing leg = 0.0.
+
+THE VALIDATION THAT MAKES IT TRUSTWORTHY. The same code path also scores the
+CHUNK arm, where the answer is already known from `src/`. If this harness does not
+reproduce the published chunk-level BM25 delta, its section number means nothing
+and the run aborts on that basis rather than reporting a number that looks fine.
+
+Zero embedding: every vector comes from the `hier_embed` disk cache.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sqlite3
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from benchmarks.metrics import ndcg_at_k, recall_at_k  # noqa: E402
+
+logger = logging.getLogger("section_bm25")
+
+K = 10
+# Mirrors _hybrid_search: search_k = max(k, min(k*4, 100)); the keyword leg
+# over-fetches 2x then truncates back to search_k. Pool size changes the min-max
+# normalisation, so it is part of the fusion rule, not an efficiency knob.
+SEARCH_K = max(K, min(K * 4, 100))
+VECTOR_WEIGHT = 0.5
+
+
+def _minmax(values: Sequence[float]) -> List[float]:
+    """Same degenerate-case behaviour as src's _minmax_normalize."""
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        return [1.0] * len(values)
+    return [(v - lo) / (hi - lo) for v in values]
+
+
+def fuse(vector_scores: Dict[str, float], bm25_raw: Dict[str, float], vector_weight: float) -> Dict[str, float]:
+    """Replica of _relative_score_fusion. BM25 arrives raw and negative-is-better."""
+    nv = dict(zip(vector_scores, _minmax(list(vector_scores.values())), strict=True))
+    nk = dict(zip(bm25_raw, _minmax([-r for r in bm25_raw.values()]), strict=True))
+    fused: Dict[str, float] = {}
+    for key in (*vector_scores, *bm25_raw):
+        if key in fused:
+            continue
+        fused[key] = vector_weight * nv.get(key, 0.0) + (1.0 - vector_weight) * nk.get(key, 0.0)
+    return fused
+
+
+class FTS:
+    """An in-memory FTS5 index over arbitrary units -- i.e. the sections_fts we might ship."""
+
+    def __init__(self, ids: Sequence[str], texts: Sequence[str]) -> None:
+        self.ids = list(ids)
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute("CREATE VIRTUAL TABLE u USING fts5(body)")
+        self.conn.executemany("INSERT INTO u(rowid, body) VALUES (?, ?)", enumerate(texts))
+        self.conn.commit()
+
+    def search(self, query: str, limit: int) -> Dict[str, float]:
+        """{unit_id: raw bm25} best-first, using src's own query sanitisation."""
+        from localvectordb._filters import FTSQuerySanitization
+
+        sanitized = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized:
+            return {}
+        try:
+            rows = self.conn.execute(
+                "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ? ORDER BY rank ASC LIMIT ?",
+                (sanitized, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:  # malformed MATCH after sanitisation
+            return {}
+        return {self.ids[r[0]]: float(r[1]) for r in rows}
+
+
+def vector_top(sims: np.ndarray, ids: Sequence[str], k: int) -> Dict[str, float]:
+    idx = np.argpartition(-sims, min(k, len(sims) - 1))[:k]
+    idx = idx[np.argsort(-sims[idx])]
+    return {ids[i]: float(sims[i]) for i in idx}
+
+
+def rollup(scores: Dict[str, float], owner: Dict[str, str]) -> Dict[str, float]:
+    """Max roll-up of unit scores to their parent (section or document)."""
+    out: Dict[str, float] = {}
+    for uid, s in scores.items():
+        p = owner[uid]
+        if s > out.get(p, -np.inf):
+            out[p] = s
+    return out
+
+
+def score(ranked_per_query: List[List[str]], qids: Sequence[str], qrels: Dict[str, Dict[str, int]]) -> np.ndarray:
+    pairs = zip(qids, ranked_per_query, strict=True)
+    return np.array([ndcg_at_k(ranked, qrels.get(q, {}), K) for q, ranked in pairs], dtype=np.float64)
+
+
+def recall(ranked_per_query: List[List[str]], qids: Sequence[str], qrels: Dict[str, Dict[str, int]]) -> float:
+    vals = [recall_at_k(ranked, qrels.get(q, {}), K) for q, ranked in zip(qids, ranked_per_query, strict=True)]
+    return float(np.mean(vals)) if vals else float("nan")
+
+
+def paired(a: np.ndarray, b: np.ndarray, resamples: int = 10_000) -> Dict[str, float]:
+    rng = np.random.default_rng(0)
+    d = a - b
+    idx = rng.integers(0, len(d), size=(resamples, len(d)))
+    means = d[idx].mean(axis=1)
+    signs = rng.choice(np.array([-1.0, 1.0]), size=(resamples, len(d)))
+    p = float((np.abs((signs * d).mean(axis=1)) >= abs(d.mean())).sum() + 1) / (resamples + 1)
+    return {
+        "delta": float(d.mean()),
+        "ci_lo": float(np.percentile(means, 2.5)),
+        "ci_hi": float(np.percentile(means, 97.5)),
+        "p": p,
+    }
+
+
+def run_arm(
+    unit_ids: Sequence[str],
+    unit_vecs: np.ndarray,
+    fts: Optional[FTS],
+    qvecs: np.ndarray,
+    qtexts: Sequence[str],
+    owner: Optional[Dict[str, str]],
+    vector_weight: float,
+) -> List[Dict[str, float]]:
+    """Per-query {target_id: score}. ``fts=None`` is the vector-only arm."""
+    out: List[Dict[str, float]] = []
+    for qi, qtext in enumerate(qtexts):
+        sims = unit_vecs @ qvecs[qi]
+        vec = vector_top(sims, unit_ids, SEARCH_K)
+        if fts is None:
+            scores = vec
+        else:
+            kw = fts.search(qtext, SEARCH_K * 2)
+            kw = dict(list(kw.items())[:SEARCH_K])
+            scores = fuse(vec, kw, vector_weight)
+        out.append(rollup(scores, owner) if owner is not None else scores)
+    return out
+
+
+def fuse_levels(
+    chunk_side: List[Dict[str, float]], section_side: List[Dict[str, float]], section_weight: float
+) -> List[Dict[str, float]]:
+    """Blend a chunk-derived and a section-derived pool -- the `fused` search level.
+
+    Min-max within each query's own pool before blending, mirroring
+    `_two_leg_minmax_fuse`: the two legs are on unrelated scales otherwise and
+    ``section_weight`` stops being a blend.
+    """
+    out: List[Dict[str, float]] = []
+    for a, b in zip(chunk_side, section_side, strict=True):
+        na = dict(zip(a, _minmax(list(a.values())), strict=True))
+        nb = dict(zip(b, _minmax(list(b.values())), strict=True))
+        keys = {*a, *b}
+        out.append({k: (1.0 - section_weight) * na.get(k, 0.0) + section_weight * nb.get(k, 0.0) for k in keys})
+    return out
+
+
+def to_ranked(scores_per_query: List[Dict[str, float]]) -> List[List[str]]:
+    return [[u for u, _ in sorted(s.items(), key=lambda kv: -kv[1])[:K]] for s in scores_per_query]
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--model-key", default="egemma")
+    p.add_argument("--dataset", choices=("qasper", "maud"), default="qasper")
+    p.add_argument("--max-papers", type=int, default=None)
+    p.add_argument("--vector-weight", type=float, default=VECTOR_WEIGHT)
+    p.add_argument(
+        "--section-weight",
+        type=float,
+        default=0.65,
+        help="Weight on the section leg of the fused arm. Default is the shipped 0.65, which is also "
+        "the measured qasper argmax -- and wrong on long-section legs (0.10-0.40 there).",
+    )
+    p.add_argument("--allow-embed", action="store_true", help="permit cache misses to be embedded (costs money/time)")
+    p.add_argument("--out", type=Path, default=None)
+    args = p.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    logging.getLogger("localvectordb.chunking").setLevel(logging.ERROR)
+
+    from benchmarks.eval_dual import MODEL_POOL, embed_model, load_units
+
+    if args.dataset == "maud":
+        from benchmarks.maud_data import detect_contract_sections, load_maud
+
+        bench = load_maud(max_contracts=args.max_papers)
+        units = load_units(bench, None, detect_contract_sections)
+    else:
+        from benchmarks.qasper_data import load_qasper
+
+        bench = load_qasper(split="dev", max_papers=args.max_papers)
+        units = load_units(bench, None)
+
+    spec = MODEL_POOL[args.model_key]
+    if not args.allow_embed:
+        from benchmarks.eval_dual import PrefixedEncoder
+
+        doc = PrefixedEncoder(spec, spec.doc_prefix)
+        miss = doc.count_misses(units.chunk_texts)[1] + doc.count_misses(units.section_texts)[1]
+        if miss:
+            raise SystemExit(
+                f"{miss} unit vectors are not cached for {spec.model}. This harness is zero-embedding "
+                "by default; pass --allow-embed to encode them."
+            )
+    vecs, _ = embed_model(spec, units)
+    assert vecs is not None
+
+    def unit(v: np.ndarray) -> np.ndarray:
+        n = np.linalg.norm(v, axis=1, keepdims=True)
+        return v / np.where(n == 0, 1.0, n)
+
+    cv, sv, qv = unit(vecs.chunks), unit(vecs.sections), unit(vecs.queries)
+    qids = list(units.query_ids)
+    qtexts = list(units.query_texts)
+    logger.info("%d chunks, %d sections, %d queries", len(cv), len(sv), len(qids))
+
+    # FTS over each unit type. The section index is the thing under test.
+    chunk_uid = [f"c{i}" for i in range(len(units.chunk_texts))]
+    sec_uid = list(units.section_ids)
+    fts_chunks = FTS(chunk_uid, units.chunk_texts)
+    fts_secs = FTS(sec_uid, units.section_texts)
+
+    chunk_to_sec = dict(zip(chunk_uid, units.chunk_section, strict=True))
+    chunk_to_doc = dict(zip(chunk_uid, units.chunk_doc, strict=True))
+    sec_to_doc = dict(zip(sec_uid, units.section_doc, strict=True))
+
+    results: Dict[str, Dict[str, float]] = {}
+    targets = [("section", bench.section_qrels), ("doc", bench.doc_qrels)]
+
+    for tname, qrels in targets:
+        if not qrels:
+            continue
+        chunk_owner = chunk_to_sec if tname == "section" else chunk_to_doc
+        sec_owner = None if tname == "section" else sec_to_doc
+        arms = {
+            "chunks · vector": (chunk_uid, cv, None, chunk_owner),
+            "chunks · hybrid": (chunk_uid, cv, fts_chunks, chunk_owner),
+            "sections · vector": (sec_uid, sv, None, sec_owner),
+            "sections · hybrid": (sec_uid, sv, fts_secs, sec_owner),
+        }
+        raw: Dict[str, List[Dict[str, float]]] = {}
+        for label, (uids, uvecs, fts, owner) in arms.items():
+            raw[label] = run_arm(uids, uvecs, fts, qv, qtexts, owner, args.vector_weight)
+
+        # `fused` blends the two levels. "vector" is what ships TODAY -- the fused
+        # level ignores search_type entirely, so both its legs are vector-only.
+        # "hybrid" is what it would become once sections had a keyword leg.
+        raw["fused · vector"] = fuse_levels(raw["chunks · vector"], raw["sections · vector"], args.section_weight)
+        raw["fused · hybrid"] = fuse_levels(raw["chunks · hybrid"], raw["sections · hybrid"], args.section_weight)
+
+        pq: Dict[str, np.ndarray] = {}
+        print(f"\n=== target: {tname} ===")
+        print(f"  {'arm':<20} {'nDCG@10':>9} {'recall@10':>10}")
+        for label, scores_per_q in raw.items():
+            ranked = to_ranked(scores_per_q)
+            pq[label] = score(ranked, qids, qrels)
+            print(f"  {label:<20} {pq[label].mean():>9.4f} {recall(ranked, qids, qrels):>10.4f}")
+            results.setdefault(tname, {})[label] = float(pq[label].mean())
+
+        def _report(label: str, a: str, b: str, _pq=pq, _t=tname) -> None:
+            st = paired(_pq[a], _pq[b])
+            results[_t][label] = st["delta"]
+            star = "*" if (st["ci_lo"] > 0 or st["ci_hi"] < 0) else " "
+            print(f"  {label:<34} {st['delta']:+.4f} [{st['ci_lo']:+.4f},{st['ci_hi']:+.4f}] p={st['p']:.4f}{star}")
+
+        # What BM25 is worth at each level -- the ratio between these two is the
+        # quantity a `sections_fts` decision actually turns on.
+        for level in ("chunks", "sections"):
+            _report(f"BM25 contribution to {level}", f"{level} · hybrid", f"{level} · vector")
+        c = results[tname].get("BM25 contribution to chunks") or float("nan")
+        s = results[tname].get("BM25 contribution to sections") or float("nan")
+        results[tname]["section_share_of_chunk_gain"] = s / c if c else float("nan")
+        print(f"  {'-> sections get this share of it':<34} {100 * s / c:.0f}%" if c else "")
+
+        # The decision question: with BOTH levels given a keyword leg, which wins?
+        # Today only the left side of this comparison exists.
+        _report("sections vs chunks (both HYBRID)", "sections · hybrid", "chunks · hybrid")
+        _report("sections vs chunks (both vector)", "sections · vector", "chunks · vector")
+        _report("BM25 contribution to fused", "fused · hybrid", "fused · vector")
+        # The real product question. LHS is what a user would get after the fix;
+        # RHS is the best arm available today (chunks is the only level with BM25).
+        _report("fused-hybrid vs chunks-hybrid", "fused · hybrid", "chunks · hybrid")
+        _report("fused-vector vs chunks-hybrid (TODAY)", "fused · vector", "chunks · hybrid")
+
+    print("\n" + "=" * 72)
+    print("VALIDATION: the chunk-level BM25 delta must reproduce what src/ already gives.")
+    print("If it does not, the section-level number above is measuring this harness, not the feature.")
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(
+            json.dumps({"model": spec.model, "dataset": args.dataset, "results": results}, indent=2), encoding="utf-8"
+        )
+        print(f"Wrote {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:] if len(sys.argv) > 1 else None))
