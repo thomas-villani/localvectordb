@@ -299,6 +299,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Hierarchical embeddings: section and document FAISS indices
         self._init_hierarchical(hierarchical_embeddings, section_pattern, section_metadata_extractors)
 
+        # Any database built before sections_fts existed has sections but no
+        # section keyword index. Backfilling is what makes the section keyword leg
+        # work on an existing database without a rebuild or an export/import.
+        if self._fts_enabled and self._hierarchical_embeddings:
+            self._backfill_sections_fts()
+
         # FAISS id allocation and dual-store integrity. Seeding must precede the
         # integrity check: the counter floor is a max() and is safe to compute even
         # on a corrupt database, which means no *new* collisions can be issued from
@@ -470,12 +476,102 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                         VALUES (new.id, new.document_id, new.content);
                     END
                     """)
+                self._init_sections_fts(conn)
                 conn.commit()
                 self._fts_enabled = True
                 logger.info("FTS5 initialized successfully")
         except Exception as e:
             logger.error(f"Error setting up FTS5: {e}")
             self._fts_enabled = False
+
+    def _init_sections_fts(self, conn) -> None:
+        """Create the section keyword index.
+
+        Unlike ``chunks_fts`` and ``documents_fts``, this cannot be an
+        external-content table: ``sections`` stores no text at all, only
+        ``start_pos``/``end_pos`` offsets into the parent document. So the rows are
+        written explicitly at ingest, from a slice of ``documents.content``.
+
+        Preferred shape is **contentless** (``content=''``) so the section text is
+        not stored a second time -- sections tile their document, so a
+        text-carrying index would roughly double the size of a hierarchical
+        database. Contentless tables could not serve ``DELETE`` by rowid before
+        SQLite 3.43's ``contentless_delete``, so that is feature-detected and a
+        plain (text-carrying) FTS5 table is the fallback on older builds. Query and
+        delete SQL are identical either way; only storage differs.
+
+        Deletion rides an ``AFTER DELETE ON sections`` trigger so every path that
+        removes a section -- explicit delete, document replacement, FK cascade --
+        is covered by one rule rather than by remembering each call site.
+        """
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts "
+                "USING fts5(content, content='', contentless_delete=1)"
+            )
+        except sqlite3.OperationalError:
+            # SQLite < 3.43: no contentless_delete. Store the text instead; the
+            # index is larger but every other behaviour is the same.
+            logger.info("sections_fts: contentless_delete unavailable, using a text-carrying FTS5 table")
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(content)")
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS sections_ad AFTER DELETE ON sections BEGIN
+                DELETE FROM sections_fts WHERE rowid = old.id;
+            END
+            """)
+
+    def _backfill_sections_fts(self, batch_size: int = 500) -> int:
+        """Populate ``sections_fts`` for sections indexed before it existed.
+
+        Returns the number of sections indexed. Idempotent: it only writes rows
+        whose id is absent from the index, so reopening a current database costs
+        one ``COUNT`` and nothing else.
+
+        The membership probe reads ``sections_fts`` rowids directly rather than
+        via a ``NOT IN`` join, because a contentless FTS5 table has no queryable
+        content column to join against. Batched so a large corpus does not build
+        one enormous transaction, and ordered by id so an interrupted backfill
+        resumes from where it stopped instead of starting over.
+        """
+        try:
+            with self.connection_pool.get_connection() as conn:
+                total = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"]
+                if not total:
+                    return 0
+                indexed = {row["rowid"] for row in conn.execute("SELECT rowid FROM sections_fts")}
+                if len(indexed) >= total:
+                    return 0
+
+                done = 0
+                cursor_id = 0
+                while True:
+                    rows = conn.execute(
+                        """
+                        SELECT s.id AS id, substr(d.content, s.start_pos + 1, s.end_pos - s.start_pos) AS body
+                        FROM sections s JOIN documents d ON d.id = s.document_id
+                        WHERE s.id > ? ORDER BY s.id LIMIT ?
+                        """,
+                        (cursor_id, batch_size),
+                    ).fetchall()
+                    if not rows:
+                        break
+                    pending = [(r["id"], r["body"]) for r in rows if r["id"] not in indexed]
+                    if pending:
+                        conn.executemany("INSERT INTO sections_fts(rowid, content) VALUES (?, ?)", pending)
+                        done += len(pending)
+                    # Advance on the SQL cursor, never on `indexed` -- a partially
+                    # populated index can hold high ids, and seeding the cursor
+                    # from max(indexed) would skip every section below them.
+                    cursor_id = rows[-1]["id"]
+                conn.commit()
+                if done:
+                    logger.info("sections_fts: backfilled %d section(s)", done)
+                return done
+        except sqlite3.Error as e:
+            # A failed backfill must not stop the database opening: the section
+            # keyword leg degrades to vector-only, which is what it did before.
+            logger.warning("sections_fts backfill skipped: %s", e)
+            return 0
 
     # FAISS helpers
     def _init_faiss_index(

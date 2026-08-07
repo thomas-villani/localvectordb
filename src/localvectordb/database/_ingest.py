@@ -1936,6 +1936,15 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             row = cursor.fetchone()
             if row:
                 section_id_map[section.index] = row["id"]
+                # sections_fts cannot be an external-content table (sections store
+                # offsets, not text), and a trigger cannot do the slicing, so the
+                # keyword index is written here. Deletion is trigger-driven; only
+                # insertion has to live at the call site.
+                if getattr(self, "_fts_enabled", False):
+                    conn.execute(
+                        "INSERT INTO sections_fts(rowid, content) VALUES (?, ?)",
+                        (row["id"], doc_text[section.start_pos : section.end_pos]),
+                    )
 
         # Update chunks with section_id FK
         if chunk_to_section_map and section_id_map:
