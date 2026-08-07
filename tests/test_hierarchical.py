@@ -438,26 +438,30 @@ class TestHierarchicalIntegration:
 
     # -- A search_type these levels cannot honour must be said out loud --
 
-    @pytest.mark.parametrize("level", ["fused"])
     @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
-    def test_vector_only_level_warns_on_unhonoured_search_type(self, db_with_hierarchy, level, search_type):
-        """A level that cannot honour the requested search type must say so.
+    def test_vector_only_guard_still_fires_when_a_level_cannot_honour(
+        self, db_with_hierarchy, search_type, monkeypatch
+    ):
+        """The guard must still work, even though no level needs it today.
 
-        Because 'hybrid' is the DEFAULT, query(text, search_level='sections') was
+        ``_VECTOR_ONLY_LEVELS`` is empty now: ``documents`` (Fix A), ``sections``
+        (Fix B) and ``fused`` (Fix C) all honour ``search_type``. The mechanism is
+        kept because the failure it catches was expensive and silent -- because
+        'hybrid' is the DEFAULT, ``query(text, search_level='sections')`` was
         answered by a different retrieval system than the same call at chunk
-        level -- worth +0.084 to +0.131 nDCG@10 to chunks on our benchmarks and
-        exactly +0.0000 there. Comparing the two was invalid and nothing said so.
+        level, worth +0.084 to +0.131 nDCG@10 to chunks and exactly +0.0000 there,
+        so every comparison between them was invalid and nothing said so.
 
-        Only ``fused`` is left: ``documents`` (Fix A) and ``sections`` (Fix B) now
-        have real keyword legs. ``fused`` blends two bounded-similarity legs via
-        ``_two_leg_minmax_fuse`` rather than running a search type of its own, so
-        giving it BM25 is a change to the blend, not a wiring fix.
+        An empty set would leave that mechanism untested and free to rot, so this
+        re-populates it to prove the guard still fires. A new retrieval level is
+        the case that would need it again.
         """
+        monkeypatch.setattr("localvectordb.database._search._VECTOR_ONLY_LEVELS", frozenset({"fused"}))
         db = db_with_hierarchy
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
 
         with pytest.warns(UserWarning, match="ran as vector-only"):
-            db.query("neural networks", search_level=level, search_type=search_type, k=3)
+            db.query("neural networks", search_level="fused", search_type=search_type, k=3)
 
     @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
     def test_vector_only_level_silent_when_asked_for_vector(self, db_with_hierarchy, level, recwarn):
@@ -478,8 +482,9 @@ class TestHierarchicalIntegration:
         db.query("neural networks", search_level="chunks", search_type="hybrid", k=3)
         assert [w for w in recwarn if "ran as vector-only" in str(w.message)] == []
 
-    def test_vector_only_level_warns_once_per_instance(self, db_with_hierarchy, recwarn):
+    def test_vector_only_level_warns_once_per_instance(self, db_with_hierarchy, recwarn, monkeypatch):
         """A query loop must not drown the log in the same warning."""
+        monkeypatch.setattr("localvectordb.database._search._VECTOR_ONLY_LEVELS", frozenset({"fused"}))
         db = db_with_hierarchy
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
         recwarn.clear()
@@ -617,6 +622,84 @@ class TestHierarchicalIntegration:
 
         results = db.query("Convolutional", search_level="sections", search_type="keyword", k=5)
         assert results and results[0].metadata["section_heading"] == "Background"
+
+    # -- Fix C: search_level='fused' honours search_type inside each leg --
+
+    @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
+    def test_fused_level_never_warns(self, db_with_hierarchy, recwarn, search_type):
+        """``fused`` genuinely honours hybrid/keyword now, so it must not warn."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        recwarn.clear()
+
+        db.query("neural networks", search_level="fused", search_type=search_type, k=3)
+        assert [w for w in recwarn if "ran as vector-only" in str(w.message)] == []
+
+    def test_fused_vector_never_touches_the_keyword_legs(self, db_with_hierarchy, monkeypatch):
+        """``search_type='vector'`` must be bit-identical to the pre-Fix-C behaviour.
+
+        Asserted structurally rather than by golden numbers: both keyword helpers
+        are made to explode, so the vector path passing proves it never consults
+        them. A regression that merely *weighted* BM25 to zero would still call
+        them and would still perturb the pool, and this catches that.
+        """
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        baseline = db.query("neural networks", search_level="fused", search_type="vector", k=5)
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("the vector path must not consult a keyword index")
+
+        monkeypatch.setattr(type(db), "_keyword_chunk_hits", _boom)
+        monkeypatch.setattr(type(db), "_keyword_section_hits", _boom)
+
+        after = db.query("neural networks", search_level="fused", search_type="vector", k=5)
+        assert [(r.id, round(r.score, 9)) for r in after] == [(r.id, round(r.score, 9)) for r in baseline]
+
+    def test_fused_hybrid_differs_from_vector(self, db_with_hierarchy):
+        # Scored at SECTION level deliberately: this fixture holds one document, so
+        # a document-level blend min-max normalizes to {doc: 1.0} under every weight
+        # and could not show a difference that exists.
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        vector = db.query("Convolutional", search_level="fused", search_type="vector", k=5, return_type="sections")
+        hybrid = db.query("Convolutional", search_level="fused", search_type="hybrid", k=5, return_type="sections")
+        assert vector and hybrid
+        assert {r.id: round(r.score, 6) for r in vector} != {r.id: round(r.score, 6) for r in hybrid}
+
+    def test_fused_keyword_leg_is_live(self, db_with_hierarchy):
+        """A term unique to one section must surface it through the fused path."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        results = db.query("Convolutional", search_level="fused", search_type="keyword", k=5, return_type="sections")
+        assert results, "fused keyword leg returned nothing"
+        assert any(r.metadata.get("section_heading") == "Background" for r in results)
+
+    def test_fused_vector_weight_changes_the_blend(self, db_with_hierarchy):
+        """``vector_weight`` must reach *inside* each leg, not be ignored as it was.
+
+        This is the parameter the corpus-dependence lives in: 0.5 is the measured
+        argmax on qasper and MAUD, but a corpus that repeats terms across every
+        section wants ~0.9. If it did not reach the legs, that would be untunable.
+        """
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        kwargs = {"search_level": "fused", "search_type": "hybrid", "k": 5, "return_type": "sections"}
+        low = db.query("Convolutional", vector_weight=0.1, **kwargs)
+        high = db.query("Convolutional", vector_weight=0.9, **kwargs)
+        assert low and high
+        assert {r.id: round(r.score, 6) for r in low} != {r.id: round(r.score, 6) for r in high}
+
+    def test_fused_hybrid_degrades_to_vector_without_keyword_match(self, db_with_hierarchy):
+        """A query no FTS index matches must still return the vector ranking."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        hybrid = db.query("zzzqqq nonexistentterm", search_level="fused", search_type="hybrid", k=5)
+        assert hybrid, "fused hybrid returned nothing when BM25 matched nothing"
 
     # -- H8: reranking must not be silently dropped on fused/sections/documents --
 

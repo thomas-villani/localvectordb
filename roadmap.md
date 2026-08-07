@@ -52,20 +52,26 @@ qasper quirk, and larger than every vector-side effect in the study.
 honoured at a vector-only level. A warning rather than a rejection, because `hybrid` is the default
 and rejecting would break the ordinary `query(text, search_level="sections")` call.
 
-**MEASURED 2026-08-07, and it is TWO fixes -- the cheaper one needs no migration.** Across three
-corpora, today's `fused` level is *significantly worse* than plain chunks (-0.039 qasper, -0.070
-MAUD, -0.129 MLDR) purely because it runs vector-only against a chunks arm that has BM25. A coarse
-keyword leg makes it competitive on all three. Crucially **`documents_fts` already exists, is
-populated and trigger-maintained, and no search path reads it** -- wiring `search_level="documents"`
-is free of schema work and worth +0.155 to that level on MLDR. Implementation notes for both:
-`experiments/SYNTHESIS-v2.md` S13.
+**RESOLVED 2026-08-07 — all three fixes shipped. `_VECTOR_ONLY_LEVELS` is now empty and no query
+warns.** It turned out to be three fixes, not one, and only the first was free:
 
-**The sections half is still a feature.** `sections` has no `content` column — a section is a
-`start_pos`/`end_pos` slice of its parent document — and there is no `sections_fts`, only
-`chunks_fts` and `documents_fts`. Giving sections and fused a keyword leg means building
-`sections_fts` from sliced text at ingest, migrating existing databases, and sharing BM25
-normalisation with the chunk leg. Routing through `documents_fts` is not a shortcut: document-level
-BM25 is not section-level scoring. Still likely the largest single retrieval win available.
+* **Fix A, `documents_fts` (`a4c0918`).** The index already existed, populated and
+  trigger-maintained, and no search path read it. Wiring it needed no schema work and no migration.
+  qasper document level: vector 0.2758 → hybrid **0.4037**, previously exactly +0.0000.
+* **Fix B, `sections_fts` (`1bd45c5`).** `sections` has no `content` column — a section is a
+  `start_pos`/`end_pos` slice of its parent — so this needed a new contentless FTS5 table written at
+  ingest from the document slice, deleted by an `AFTER DELETE` trigger, plus a self-healing backfill
+  for existing databases. Routing through `documents_fts` was never a shortcut: document-level BM25
+  is not section-level scoring.
+* **Fix C, the `fused` blend.** Could not be a wiring fix at all. `fused` runs two *different*
+  fusions, so BM25 had to enter through the blend, which has a free parameter. Settled by a 2-D
+  sweep over four corpora (`benchmarks/eval_fused_blend.py`, `--blend-sweep`): two-stage topology,
+  native leg pool, existing weights unchanged. `experiments/SYNTHESIS-v2.md` S17.
+
+At the shipped defaults this is worth **+0.057 qasper-doc, +0.058 MAUD, +0.123 MLDR** — matching
+S12.8's predictions to three decimals — and **−0.033 on Natural Questions**, taken anyway because
+`chunks` already defaults to hybrid and already pays that same penalty. The per-corpus escape hatch
+is `vector_weight` (NQ's argmax is 0.90, not 0.50), now documented as a per-level knob.
 
 **0b. The hybrid default actively HURTS at fine granularity.** BM25's contribution changes sign with
 chunk size: on vector-healthy small chunks it dilutes a strong signal (**−0.092** on egemma at
@@ -138,12 +144,20 @@ estimated tokens, not count.
 prints an empty message for `httpx.ReadTimeout` — an operator hitting a real failure gets silence and
 a retry. Log the exception type and request shape (batch size, token estimate) at minimum.
 
-**5. Do not default `search_level="fused"`.** Fusion loses to plain chunk retrieval at **every**
-`section_weight` on all five legs (MiniLM, §6.33/1) and on **all five egemma rungs**, by 0.093 to
-0.324 — a deficit that *grows* with `chunk_size`, because 0.65 blends a section leg that degrades
-monotonically as chunks coarsen (§6.35/4). The constant is mistuned as a function of another
-parameter we are telling users to change. `section_weight=0.65` is the exact argmax on Qasper and wrong by −0.05 to −0.18
-elsewhere — it is not a bad number, it is an *un-conditioned* one.
+**5. Do not default `search_level="fused"` — but the ORIGINAL REASON IS WITHDRAWN (2026-08-07).**
+The old claim was that fusion loses to plain chunk retrieval at *every* `section_weight` on every
+leg, by 0.093 to 0.324. That was measured under the 0a confound: fused ran vector-only against a
+chunks arm that had BM25. With Fix C shipped, **`fused` is now the best arm at every level on
+qasper** (0.4483/0.4516 against chunks 0.4293 and sections 0.4340/0.4368).
+
+What survives is weaker and still enough to keep the default where it is: which level wins remains
+**corpus-dependent** — chunks still beats fused on superdocs (0.2924 vs 0.2812) — and `fused` costs
+two retrievals instead of one. So it stays opt-in on cost and unpredictability, not on being worse.
+
+`section_weight=0.65` remains *un-conditioned* rather than bad: the measured argmax is 0.65 on
+qasper, 0.35 on MAUD, 0.80 on NQ. `vector_weight` is now a second knob with the same property (0.5
+qasper/MAUD, 0.9 NQ). Both are documented with those numbers; neither has a defensible global
+default, which is the argument for item 7.
 
 **6. Over-fetch when `return_type="sections"`.** `_search` sets `fetch_k == k` with no reranker, so
 asking for 10 sections retrieves 10 *chunks*, which collapse into far fewer distinct sections. Worth

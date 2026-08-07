@@ -86,12 +86,17 @@ def _resolve_return_type(return_type: Optional[ReturnType], search_level: str) -
     return _NATURAL_RETURN_TYPE.get(search_level, "documents")
 
 
-# Levels served by a vector index alone. `chunks`, `documents` and `sections` all
-# have keyword indices now; `fused` is the last holdout, because it blends two
-# bounded-similarity legs through `_two_leg_minmax_fuse` rather than running a
-# search type of its own, so giving it BM25 is a change to the blend and not just
-# a wiring fix.
-_VECTOR_ONLY_LEVELS = frozenset({"fused"})
+# Levels served by a vector index alone -- now EMPTY. `chunks`, `documents`,
+# `sections` and `fused` all honour `search_type`, so nothing is silently
+# downgraded and no query warns any more. `fused` was the last holdout and needed
+# a blend sweep rather than a wiring fix, because `search_type` there runs inside
+# each granularity before `_two_leg_minmax_fuse` combines them.
+#
+# Kept rather than deleted: the guard below is the mechanism that stops a level
+# accepting a search_type it cannot honour, and a future level (a graph or
+# late-interaction index, say) would need it again. An empty set means "every
+# level currently keeps its promise", which is a property worth stating.
+_VECTOR_ONLY_LEVELS: frozenset[str] = frozenset()
 
 
 def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
@@ -762,17 +767,28 @@ class SearchMixin(LocalVectorDBBase, ABC):
             schema (or be reserved columns like ``id``/``created_at``);
             unknown fields or unsupported operators raise ``DatabaseError``.
         vector_weight : float
-            Weight for vector search in hybrid mode (0-1)
+            Weight for vector search in hybrid mode (0-1). At
+            ``search_level='fused'`` it applies *within* each granularity -- the
+            chunk leg and the section leg each blend their own vector and BM25
+            scores by this weight -- before ``section_weight`` blends the two legs.
+            The best value is corpus-dependent: 0.5 is the measured argmax on
+            qasper and MAUD, but a corpus whose documents repeat the same terms in
+            every section (Wikipedia, in our Natural Questions runs) wants ~0.9,
+            because BM25 cannot discriminate *within* a document there.
         search_level : Literal['chunks', 'sections', 'documents', 'fused']
             Which retrieval level to search. 'chunks' (default) is the normal path.
             'sections'/'documents' search the hierarchical indices directly. 'fused'
             blends chunk retrieval with section (raw-span) retrieval. All three
             require ``hierarchical_embeddings`` and raise ``ValueError`` without
             it. 'sections' and 'fused' report either 'sections' or 'documents';
-            'documents' reports only 'documents'.
+            'documents' reports only 'documents'. Every level honours
+            ``search_type``; none silently downgrades to vector-only.
         section_weight : float
             Weight on the section leg when ``search_level='fused'`` (0-1): 0.0 is
-            chunk-only, 1.0 is section-only. Default 0.65 (tuned on real long docs).
+            chunk-only, 1.0 is section-only. Default 0.65. Like ``vector_weight``
+            this is regime-specific rather than universal -- the measured argmax is
+            0.65 on qasper, 0.35 on MAUD and 0.80 on Natural Questions -- so treat
+            the default as a starting point and tune it if the corpus matters.
             Ignored for other search levels.
         context_window : int
             Size of the context to assemble for return_type='context'/'enriched'.
@@ -840,15 +856,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 "return_type='sections' requires a hierarchical database "
                 "(create with hierarchical_embeddings=True), or use search_level='sections'."
             )
-        # Say so when the requested search_type cannot be honoured. These levels
-        # have no keyword leg, so a keyword or hybrid request silently returned
-        # vector-only results -- no error, no warning, and nothing in the result
-        # objects recording which retrieval actually ran. Because `hybrid` is the
-        # DEFAULT, the common call `query(text, search_level="sections")` was
-        # quietly answered by a different retrieval system than the same call at
-        # chunk level, which makes any comparison between the two invalid: on our
-        # benchmarks the keyword leg is worth +0.084 to +0.131 nDCG@10 to chunks
-        # and exactly +0.0000 to these levels.
+        # Say so when the requested search_type cannot be honoured. `_VECTOR_ONLY_LEVELS`
+        # is empty today, so this never fires -- kept because the failure it guards
+        # against was expensive and silent, and a new level would reintroduce it.
+        #
+        # The history: a level with no keyword leg answered a keyword or hybrid
+        # request with vector-only results -- no error, no warning, and nothing in
+        # the result objects recording which retrieval actually ran. Because `hybrid`
+        # is the DEFAULT, `query(text, search_level="sections")` was quietly answered
+        # by a different retrieval system than the same call at chunk level, which
+        # made every comparison between them invalid: the keyword leg was worth
+        # +0.084 to +0.131 nDCG@10 to chunks and exactly +0.0000 to those levels.
         #
         # A warning, not an error: raising would break the working (if mislabelled)
         # default call. Once per instance, so a query loop cannot drown a log.
@@ -856,11 +874,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
             if not getattr(self, "_vector_only_level_warned", False):
                 self._vector_only_level_warned = True
                 warnings.warn(
-                    f"search_type={search_type!r} is not available at search_level={search_level!r}: "
-                    "keyword search is indexed over chunks and whole documents, but sections hold no "
-                    "text of their own, so this query ran as vector-only. Pass search_type='vector' "
-                    "to make that explicit, and do not compare these results against chunk- or "
-                    "document-level hybrid results -- only those get BM25.",
+                    f"search_type={search_type!r} is not available at search_level={search_level!r}, "
+                    "so this query ran as vector-only. Pass search_type='vector' to make that "
+                    "explicit, and do not compare these results against levels that do run BM25.",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -887,6 +903,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     score_threshold=score_threshold,
                     filters=filters,
                     section_weight=section_weight,
+                    search_type=search_type,
+                    vector_weight=vector_weight,
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options,
                 )
@@ -1821,7 +1839,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         document_scoring_options: Optional[dict] = None,
         context_unit: str = "chunks",
         context_truncate: bool = False,
+        query_embedding: Optional[np.ndarray] = None,
     ) -> List[QueryResult]:
+        # A caller (the fused path) may pass a pre-computed query embedding to avoid
+        # embedding the query twice; None preserves the default path byte-for-byte.
         if not self.fts_enabled:
             logger.info("FTS not available, falling back to vector search")
             return self._vector_search(
@@ -1836,12 +1857,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 document_scoring_options,
                 context_unit,
                 context_truncate,
+                query_embedding=query_embedding,
             )
         # Over-fetch k*4 for fusion/dedup headroom, ceiling 100 to bound work for
         # small k -- but never below k itself, or a large-k request (or the rerank
         # over-fetch that passes fetch_k in as k) is silently truncated / starved.
         search_k = max(k, min(k * 4, 100))
-        vector_results = self._vector_search(query, "chunks", search_k, 0.0, filters, 0, None)
+        vector_results = self._vector_search(
+            query, "chunks", search_k, 0.0, filters, 0, None, query_embedding=query_embedding
+        )
         # `search_k * 2` mirrors the `initial_k` over-fetch `_keyword_search` applies for
         # chunk results, so the keyword leg sees the same candidate pool it always has.
         keyword_results, keyword_ranks = self._keyword_chunk_hits(query, search_k * 2, 0.0, filters)
@@ -1902,12 +1926,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         does for ``search_level='fused'``. It used to be accepted and ignored
         here, so ``return_type='documents'`` quietly handed back sections.
 
-        ``search_type`` is honoured at ``search_level='documents'`` only, because
-        that is the only one of these levels with a keyword index. ``sections``
-        has no text of its own to index and still runs vector-only; it stays in
-        ``_VECTOR_ONLY_LEVELS`` and still warns. The default is ``"vector"`` so
-        that any caller reaching this method without an explicit search type gets
-        the behaviour it had before the keyword leg existed.
+        ``search_type`` is honoured at both levels: ``documents`` reads
+        ``documents_fts`` and ``sections`` reads ``sections_fts``, which is written
+        at ingest from the document slice because a section stores offsets rather
+        than text of its own. The default is ``"vector"`` so that any caller
+        reaching this method without an explicit search type gets the behaviour it
+        had before the keyword leg existed.
         """
         query_embeddings = self.embedding_provider.embed_sync([query], task="query")
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
@@ -2402,17 +2426,50 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold: float,
         filters: Optional[Dict[str, Any]],
         section_weight: float,
+        search_type: str = "vector",
+        vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """Fuse chunk retrieval with section (raw-span) retrieval.
 
-        Runs a chunk vector search and a section-level search over the same query,
-        maps each hit up to its target unit (document or section), and blends the two
+        Runs a chunk search and a section-level search over the same query, maps
+        each hit up to its target unit (document or section), and blends the two
         legs with ``_two_leg_minmax_fuse`` weighted by ``section_weight`` (the weight
         on the section leg). This is the shippable result of the hierarchical
         experiment (findings F3): fusing a section raw-span representation with chunk
         retrieval beats chunk-only on real, section-structured documents.
+
+        TWO FUSIONS, ONE INSIDE THE OTHER -- and the order matters. ``search_type`` is honoured
+        *inside each leg*: the chunk leg fuses chunk-vector with chunk-BM25 and the
+        section leg fuses section-vector with section-BM25, both through
+        ``_relative_score_fusion(vector_weight)``; only then are the two granularities
+        blended by ``_two_leg_minmax_fuse(section_weight)``. The single-stage
+        alternative -- normalizing all four legs once at the target -- was measured and is
+        indistinguishable from this one (``benchmarks/eval_fused_blend.py``: eight arms
+        x two readings, every CI straddling zero, the largest p=0.085), so this
+        two-stage form wins on reusing two fusions that are already gated, not on
+        score.
+
+        Each leg retrieves at the width it would use as a standalone level and is
+        then truncated to ``pool_k`` -- ``_hybrid_search`` over-fetches to
+        ``search_k`` internally and ``_section_hits`` to ``k*2`` -- because that
+        measured mildly better than giving both legs a flat ``pool_k`` (8 of 9
+        paired comparisons positive, 3 significant) and because it is what calling
+        the existing per-level paths already does.
+
+        ``search_type="vector"`` is bit-identical to the pre-keyword-leg behaviour:
+        both branches below reduce to exactly the calls this method used to make.
+
+        ``search_type="keyword"`` is UNMEASURED and shipped for consistency, not on
+        evidence. Both legs then carry ``_fts_rank_to_similarity`` output, which
+        saturates toward 1.0, and ``_two_leg_minmax_fuse`` normalizes that band --
+        which is the degenerate case its own docstring warns about. The blend sweep
+        measured the hybrid family only: its ``vector_weight=0.0`` column blends
+        *raw* BM25 through ``_relative_score_fusion`` and is a different operator
+        from this branch. ``sections`` and ``documents`` behave the same way under
+        ``keyword``, so this is consistent rather than novel -- but do not quote a
+        swept number at it.
 
         Like hybrid search, fused scores are relative to this query's candidate pool,
         so ``score_threshold`` acts as a rank-position threshold, not an absolute
@@ -2422,21 +2479,41 @@ class SearchMixin(LocalVectorDBBase, ABC):
         query_embedding = np.array(self.embedding_provider.embed_sync([query], task="query")[0]).reshape(1, -1)
         pool_k = k * 2
 
-        chunk_hits = self._vector_search(
-            query,
-            "chunks",
-            pool_k,
-            0.0,
-            filters,
-            0,
-            None,
-            document_scoring_method,
-            document_scoring_options,
-            "chunks",
-            False,
-            query_embedding=query_embedding,
-        )
-        section_hits = self._section_level_search(query_embedding, pool_k, 0.0, filters)
+        if search_type == "keyword":
+            # `_keyword_chunk_hits` mirrors `_keyword_search`'s own over-fetch before
+            # truncating, so the keyword-only leg sees its usual candidate pool.
+            keyword_hits, _ = self._keyword_chunk_hits(query, pool_k * 2, 0.0, filters)
+            chunk_hits = keyword_hits[:pool_k]
+        elif search_type == "hybrid":
+            chunk_hits = self._hybrid_search(
+                query,
+                "chunks",
+                pool_k,
+                0.0,
+                filters,
+                vector_weight,
+                0,
+                None,
+                document_scoring_method,
+                document_scoring_options,
+                query_embedding=query_embedding,
+            )
+        else:
+            chunk_hits = self._vector_search(
+                query,
+                "chunks",
+                pool_k,
+                0.0,
+                filters,
+                0,
+                None,
+                document_scoring_method,
+                document_scoring_options,
+                "chunks",
+                False,
+                query_embedding=query_embedding,
+            )
+        section_hits = self._section_hits(query, query_embedding, pool_k, 0.0, filters, search_type, vector_weight)
 
         if return_type == "documents":
             return self._fuse_to_documents(chunk_hits, section_hits, k, score_threshold, section_weight)
