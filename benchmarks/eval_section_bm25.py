@@ -239,7 +239,17 @@ def to_ranked(scores_per_query: List[Dict[str, float]]) -> List[List[str]]:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-key", default="egemma")
-    p.add_argument("--dataset", choices=("qasper", "maud"), default="qasper")
+    p.add_argument("--dataset", choices=("qasper", "maud", "mldr"), default="qasper")
+    p.add_argument(
+        "--coarse",
+        choices=("sections", "documents"),
+        default="sections",
+        help="The coarse unit to pit against chunks. 'documents' exists because MLDR has NO detectable "
+        "headings (0/800 docs) and returns section_qrels empty on purpose -- inventing sections there "
+        "would be spans with fabricated relevance. It is also the cheaper fix to evaluate: "
+        "`documents_fts` is ALREADY created, populated and trigger-maintained in every database, and "
+        "no search path reads it, so wiring a document-level keyword leg needs no migration at all.",
+    )
     p.add_argument("--max-papers", type=int, default=None)
     p.add_argument("--vector-weight", type=float, default=VECTOR_WEIGHT)
     p.add_argument(
@@ -255,49 +265,88 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("localvectordb.chunking").setLevel(logging.ERROR)
 
-    from benchmarks.eval_dual import MODEL_POOL, embed_model, load_units
+    from benchmarks.eval_dual import MODEL_POOL, _load_experiments_env, load_units
+
+    # experiments/.env holds OPENAI_API_KEY. eval_dual loads it in its own main();
+    # this harness has to do it too or any cache miss dies on 'API key is required'.
+    _load_experiments_env()
 
     if args.dataset == "maud":
         from benchmarks.maud_data import detect_contract_sections, load_maud
 
         bench = load_maud(max_contracts=args.max_papers)
         units = load_units(bench, None, detect_contract_sections)
+    elif args.dataset == "mldr":
+        from benchmarks.mldr_data import load_mldr
+
+        bench = load_mldr(split="dev", max_queries=args.max_papers)
+        units = load_units(bench, None)
     else:
         from benchmarks.qasper_data import load_qasper
 
         bench = load_qasper(split="dev", max_papers=args.max_papers)
         units = load_units(bench, None)
 
-    spec = MODEL_POOL[args.model_key]
-    if not args.allow_embed:
-        from benchmarks.eval_dual import PrefixedEncoder
+    if args.coarse == "sections" and not units.section_texts:
+        raise SystemExit(
+            f"{args.dataset} yielded 0 sections, so there is no section arm to measure. MLDR has no "
+            "detectable headings and returns section_qrels empty ON PURPOSE -- fabricating sections "
+            "would be spans with invented relevance. Use --coarse documents."
+        )
 
-        doc = PrefixedEncoder(spec, spec.doc_prefix)
-        miss = doc.count_misses(units.chunk_texts)[1] + doc.count_misses(units.section_texts)[1]
+    spec = MODEL_POOL[args.model_key]
+    coarse_texts = list(units.section_texts) if args.coarse == "sections" else [bench.corpus[d] for d in bench.corpus]
+    coarse_docs = list(units.section_doc) if args.coarse == "sections" else list(bench.corpus)
+    coarse_uid = list(units.section_ids) if args.coarse == "sections" else list(bench.corpus)
+
+    from dataclasses import replace
+
+    from benchmarks.eval_dual import PrefixedEncoder
+
+    doc_enc = PrefixedEncoder(spec, spec.doc_prefix)
+    qry_enc = PrefixedEncoder(spec, spec.query_prefix)
+    # Mirrors embed_model: a spec may re-window the coarse unit more finely than
+    # chunks. Encoding here rather than via embed_model because that helper always
+    # encodes sections, and --coarse documents needs none -- on MLDR that meant
+    # trying to embed stray uncached section windows the run never uses.
+    coarse_enc = doc_enc
+    if args.coarse == "sections" and spec.section_window_chars is not None:
+        coarse_enc = PrefixedEncoder(
+            replace(spec, window_chars=spec.section_window_chars, window_tokens=None), spec.doc_prefix
+        )
+
+    if not args.allow_embed:
+        miss = (
+            doc_enc.count_misses(units.chunk_texts)[1]
+            + coarse_enc.count_misses(coarse_texts)[1]
+            + qry_enc.count_misses(units.query_texts)[1]
+        )
         if miss:
             raise SystemExit(
-                f"{miss} unit vectors are not cached for {spec.model}. This harness is zero-embedding "
+                f"{miss} vectors are not cached for {spec.model}. This harness is zero-embedding "
                 "by default; pass --allow-embed to encode them."
             )
-    vecs, _ = embed_model(spec, units)
-    assert vecs is not None
 
     def unit(v: np.ndarray) -> np.ndarray:
         n = np.linalg.norm(v, axis=1, keepdims=True)
         return v / np.where(n == 0, 1.0, n)
 
-    cv, sv, qv = unit(vecs.chunks), unit(vecs.sections), unit(vecs.queries)
+    cv = unit(doc_enc.encode(units.chunk_texts, normalize=False))
+    qv = unit(qry_enc.encode(units.query_texts, normalize=False))
+    # encode() windows and mean-pools anything over the model's window, so a
+    # 36k-char MLDR document is represented in full rather than truncated.
+    sv = unit(coarse_enc.encode(coarse_texts, normalize=False))
     qids = list(units.query_ids)
     qtexts = list(units.query_texts)
-    logger.info("%d chunks, %d sections, %d queries", len(cv), len(sv), len(qids))
+    logger.info("%d chunks, %d %s, %d queries", len(cv), len(sv), args.coarse, len(qids))
 
-    # FTS over each unit type. The section index is the thing under test.
+    # FTS over each unit type. The coarse index is the thing under test.
     chunk_uid = [f"c{i}" for i in range(len(units.chunk_texts))]
-    sec_uid = list(units.section_ids)
+    sec_uid = coarse_uid
     fts_chunks = FTS(chunk_uid, units.chunk_texts, units.chunk_doc)
-    fts_secs = FTS(sec_uid, units.section_texts, units.section_doc)
+    fts_secs = FTS(sec_uid, coarse_texts, coarse_docs)
     chunk_docs = list(units.chunk_doc)
-    section_docs = list(units.section_doc)
+    section_docs = coarse_docs
 
     # MAUD is per-contract scoped retrieval; qasper is not. Mirrors eval_dual's SCOPE_QID.
     q_scope: Optional[List[Optional[str]]] = None
@@ -307,7 +356,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     chunk_to_sec = dict(zip(chunk_uid, units.chunk_section, strict=True))
     chunk_to_doc = dict(zip(chunk_uid, units.chunk_doc, strict=True))
-    sec_to_doc = dict(zip(sec_uid, units.section_doc, strict=True))
+    sec_to_doc = dict(zip(sec_uid, coarse_docs, strict=True))
 
     results: Dict[str, Dict[str, float]] = {}
     targets = [("section", bench.section_qrels), ("doc", bench.doc_qrels)]
@@ -321,11 +370,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
         chunk_owner = chunk_to_sec if tname == "section" else chunk_to_doc
         sec_owner = None if tname == "section" else sec_to_doc
+        CN = args.coarse  # "sections" or "documents" -- label the arm by what it is
         arms = {
             "chunks · vector": (chunk_uid, cv, None, chunk_owner, chunk_docs),
             "chunks · hybrid": (chunk_uid, cv, fts_chunks, chunk_owner, chunk_docs),
-            "sections · vector": (sec_uid, sv, None, sec_owner, section_docs),
-            "sections · hybrid": (sec_uid, sv, fts_secs, sec_owner, section_docs),
+            f"{CN} · vector": (sec_uid, sv, None, sec_owner, section_docs),
+            f"{CN} · hybrid": (sec_uid, sv, fts_secs, sec_owner, section_docs),
         }
         raw: Dict[str, List[Dict[str, float]]] = {}
         for label, (uids, uvecs, fts, owner, udocs) in arms.items():
@@ -334,8 +384,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # `fused` blends the two levels. "vector" is what ships TODAY -- the fused
         # level ignores search_type entirely, so both its legs are vector-only.
         # "hybrid" is what it would become once sections had a keyword leg.
-        raw["fused · vector"] = fuse_levels(raw["chunks · vector"], raw["sections · vector"], args.section_weight)
-        raw["fused · hybrid"] = fuse_levels(raw["chunks · hybrid"], raw["sections · hybrid"], args.section_weight)
+        raw["fused · vector"] = fuse_levels(raw["chunks · vector"], raw[f"{CN} · vector"], args.section_weight)
+        raw["fused · hybrid"] = fuse_levels(raw["chunks · hybrid"], raw[f"{CN} · hybrid"], args.section_weight)
 
         pq: Dict[str, np.ndarray] = {}
         print(f"\n=== target: {tname} ===")
@@ -354,17 +404,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         # What BM25 is worth at each level -- the ratio between these two is the
         # quantity a `sections_fts` decision actually turns on.
-        for level in ("chunks", "sections"):
+        for level in ("chunks", CN):
             _report(f"BM25 contribution to {level}", f"{level} · hybrid", f"{level} · vector")
         c = results[tname].get("BM25 contribution to chunks") or float("nan")
-        s = results[tname].get("BM25 contribution to sections") or float("nan")
-        results[tname]["section_share_of_chunk_gain"] = s / c if c else float("nan")
-        print(f"  {'-> sections get this share of it':<34} {100 * s / c:.0f}%" if c else "")
+        s = results[tname].get(f"BM25 contribution to {CN}") or float("nan")
+        results[tname]["coarse_share_of_chunk_gain"] = s / c if c else float("nan")
+        # Quote the ABSOLUTE gain, not this: the share is 63-72% on qasper and 477%
+        # on MAUD purely because the two baselines have different headroom.
+        print(f"  {f'-> {CN} get this share of it':<34} {100 * s / c:.0f}%" if c else "")
 
         # The decision question: with BOTH levels given a keyword leg, which wins?
         # Today only the left side of this comparison exists.
-        _report("sections vs chunks (both HYBRID)", "sections · hybrid", "chunks · hybrid")
-        _report("sections vs chunks (both vector)", "sections · vector", "chunks · vector")
+        _report(f"{CN} vs chunks (both HYBRID)", f"{CN} · hybrid", "chunks · hybrid")
+        _report(f"{CN} vs chunks (both vector)", f"{CN} · vector", "chunks · vector")
         _report("BM25 contribution to fused", "fused · hybrid", "fused · vector")
         # The real product question. LHS is what a user would get after the fix;
         # RHS is the best arm available today (chunks is the only level with BM25).
