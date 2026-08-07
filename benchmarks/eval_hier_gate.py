@@ -132,13 +132,24 @@ class HierConfig:
 
     @property
     def label(self) -> str:
-        # The chunk leg does not read section vectors, so the strategy is not
-        # part of its identity -- labelling it would imply two distinct arms.
-        return self.search_level if self.search_level == "chunks" else f"{self.search_level} · {self.strategy}"
+        # Neither the chunk leg nor the document leg reads section vectors, so the
+        # strategy is not part of their identity -- labelling it would imply two
+        # distinct arms where there is one.
+        return (
+            self.search_level
+            if self.search_level in ("chunks", "documents")
+            else f"{self.search_level} · {self.strategy}"
+        )
 
 
 def build_configs() -> List[HierConfig]:
-    out = [HierConfig("chunks", "centroid")]
+    # `documents` is here because it is the level Fix A gave a keyword leg to, and
+    # NOTHING gated it before: eval_retrieval.py is chunk-level BEIR, and this file
+    # scored only chunks/sections/fused. A change to document-level retrieval used
+    # to pass both gates at +0.0000 while moving that level by +0.155 (MLDR, S12.7).
+    # Its document vectors are identical under either section strategy, so it is
+    # built once, against the rawspan DB.
+    out = [HierConfig("chunks", "centroid"), HierConfig("documents", "rawspan")]
     for strategy in ("rawspan", "centroid"):
         for level in ("sections", "fused"):
             out.append(HierConfig(level, strategy))
