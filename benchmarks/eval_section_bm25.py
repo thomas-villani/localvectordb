@@ -239,7 +239,7 @@ def to_ranked(scores_per_query: List[Dict[str, float]]) -> List[List[str]]:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-key", default="egemma")
-    p.add_argument("--dataset", choices=("qasper", "maud", "mldr"), default="qasper")
+    p.add_argument("--dataset", choices=("qasper", "maud", "mldr", "nq"), default="qasper")
     p.add_argument(
         "--coarse",
         choices=("sections", "documents"),
@@ -280,6 +280,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from benchmarks.mldr_data import load_mldr
 
         bench = load_mldr(split="dev", max_queries=args.max_papers)
+        units = load_units(bench, None)
+    elif args.dataset == "nq":
+        from benchmarks.nq_data import load_nq
+
+        # NQ carries ~1.06 queries per article, so --max-papers caps both.
+        bench = load_nq(max_queries=args.max_papers)
         units = load_units(bench, None)
     else:
         from benchmarks.qasper_data import load_qasper

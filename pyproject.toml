@@ -247,6 +247,11 @@ dev = [
     "sphinx-copybutton>=0.5.2",
     "sphinx-design>=0.6.1",
     "sphinx-rtd-theme>=3.0.2",
+    # benchmarks/nq_data.py only. Google closed gs://natural_questions to
+    # anonymous readers, so the Natural Questions dev split is reachable only as
+    # the HuggingFace parquet mirror. Nothing in src/ or tests/ imports pyarrow,
+    # and nq_data imports it lazily so the other loaders stay dependency-free.
+    "pyarrow>=17.0.0",
     # Runtime extras exercised by the test suite (mcp deliberately excluded)
     "localvectordb[server]",
     "localvectordb[file-extraction]",
