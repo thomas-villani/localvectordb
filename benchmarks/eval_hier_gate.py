@@ -318,6 +318,7 @@ def run_config(
     config: HierConfig,
     search_type: str = "hybrid",
     collect_per_query: bool = False,
+    score_chunk_rollup: bool = False,
 ) -> Dict[str, Any]:
     """Score one arm at document level, and -- where meaningful -- at section level.
 
@@ -361,7 +362,17 @@ def run_config(
     scores["ndcg@10"] = []
     section_scores: List[float] = []
     per_query: Dict[str, Dict[str, float]] = {m: {} for m in list(scores) + ["ndcg@10_sections"]}
-    score_sections = config.search_level == "sections" and bool(getattr(bench, "section_qrels", None))
+    has_sec_gold = bool(getattr(bench, "section_qrels", None))
+    score_sections = config.search_level == "sections" and has_sec_gold
+    # The chunks arm answered in SECTIONS, via src/'s own roll-up
+    # (``return_type="sections"`` -> ``_assemble_section_results``, which joins
+    # ``chunks.section_id``). That mapping is single-valued and midpoint-based, so
+    # a section owning no chunk cannot be returned at all -- 40.1% of them at the
+    # shipped chunk_size on both qasper and NQ. Without this arm the gate can
+    # measure the section index but not the alternative to it, so "should sections
+    # be a retrieval level" was never answerable on the real query() path.
+    # Off by default: it adds a metric the committed baseline has no entry for.
+    score_rollup = score_chunk_rollup and config.search_level == "chunks" and has_sec_gold
 
     for qid, text in bench.queries.items():
         rel = bench.doc_qrels.get(qid, {})
@@ -383,10 +394,15 @@ def run_config(
             scores[f"recall@{k}"].append(r)
             per_query[f"recall@{k}"][qid] = r
 
-        if score_sections:
+        if score_sections or score_rollup:
             sec_rel = bench.section_qrels.get(qid, {})
             if any(r > 0 for r in sec_rel.values()):
-                sec_hits = db.query(text, search_level="sections", k=K, search_type=search_type)
+                if score_rollup:
+                    sec_hits = db.query(
+                        text, search_level="chunks", return_type="sections", k=K, search_type=search_type
+                    )
+                else:
+                    sec_hits = db.query(text, search_level="sections", k=K, search_type=search_type)
                 sec_ranked = [_section_qrel_id(h.id) for h in sec_hits]
                 sec_nd = ndcg_at_k(sec_ranked, sec_rel, K)
                 section_scores.append(sec_nd)
@@ -438,6 +454,7 @@ def run_leg(leg: Leg, args: argparse.Namespace) -> Dict[str, Any]:
             config,
             search_type=search_type,
             collect_per_query=bool(getattr(args, "per_query_out", None)),
+            score_chunk_rollup=bool(getattr(args, "score_chunk_rollup", False)),
         )
         results[config.label] = m
         logger.info(
@@ -543,6 +560,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help="Write per-query scores here ({leg: {arm: {metric: {qid: score}}}}) for paired "
         "bootstrapping. Off by default: it is a large file and only the significance pass needs it.",
+    )
+    p.add_argument(
+        "--score-chunk-rollup",
+        action="store_true",
+        help="Also score the CHUNKS arm at section level, via src/'s own roll-up "
+        "(return_type='sections', which joins the single-valued chunks.section_id). This is the "
+        "alternative a section index has to beat, and the gate could not measure it before. Off by "
+        "default because it adds an ndcg@10_sections entry the committed baseline does not have; "
+        "--check skips metrics missing on either side, so enabling it cannot mask a regression.",
     )
     return p.parse_args(argv)
 
