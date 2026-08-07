@@ -126,13 +126,19 @@ def vector_top(sims: np.ndarray, ids: Sequence[str], k: int) -> Dict[str, float]
     return {ids[i]: float(sims[i]) for i in idx}
 
 
-def rollup(scores: Dict[str, float], owner: Dict[str, str]) -> Dict[str, float]:
-    """Max roll-up of unit scores to their parent (section or document)."""
+def rollup(scores: Dict[str, float], owner: Dict[str, Sequence[str]]) -> Dict[str, float]:
+    """Max roll-up of unit scores to their parent(s).
+
+    ``owner`` maps a unit to a *list* of parents so midpoint and overlap
+    attribution share one code path: midpoint passes a one-element list, overlap
+    passes every section the chunk touches. That is the only difference between
+    the two arms -- see ``--rollup``.
+    """
     out: Dict[str, float] = {}
     for uid, s in scores.items():
-        p = owner[uid]
-        if s > out.get(p, -np.inf):
-            out[p] = s
+        for p in owner[uid]:
+            if s > out.get(p, -np.inf):
+                out[p] = s
     return out
 
 
@@ -260,6 +266,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "the measured qasper argmax -- and wrong on long-section legs (0.10-0.40 there).",
     )
     p.add_argument(
+        "--rollup",
+        choices=("midpoint", "overlap"),
+        default="midpoint",
+        help="How a chunk hit is credited to sections. 'midpoint' mirrors what src/ stores in "
+        "chunks.section_id (one section, the one holding the chunk's midpoint) and orphans 40.1%% of "
+        "sections at the shipped chunk_size. 'overlap' credits every section the chunk touches -- "
+        "what a chunk<->section join table would allow. Only affects the SECTION target.",
+    )
+    p.add_argument(
         "--reachable-only",
         action="store_true",
         help="Drop queries whose gold sections own no chunk. The chunks arm cannot rank those at any "
@@ -362,7 +377,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.reachable_only:
         if not bench.section_qrels:
             raise SystemExit("--reachable-only needs section qrels; MLDR has none by design.")
-        owned = {s for s in units.chunk_section if s is not None}
+        # Reachability follows the SELECTED attribution: under `overlap` far more
+        # sections own a chunk, which is exactly the effect being measured.
+        if args.rollup == "overlap":
+            owned = {s for ss in units.chunk_sections_all for s in ss if s is not None}
+        else:
+            owned = {s for s in units.chunk_section if s is not None}
         keep = [i for i, q in enumerate(qids) if any(s in owned for s in bench.section_qrels.get(q, {}))]
         dropped = len(qids) - len(keep)
         if not keep:
@@ -393,9 +413,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         q_scope = [str(q).split("||", 1)[0] for q in qids]
         logger.info("scoped retrieval: %d distinct contracts", len({s for s in q_scope}))
 
-    chunk_to_sec = dict(zip(chunk_uid, units.chunk_section, strict=True))
-    chunk_to_doc = dict(zip(chunk_uid, units.chunk_doc, strict=True))
-    sec_to_doc = dict(zip(sec_uid, coarse_docs, strict=True))
+    # Roll-up attribution: the thing under test. `midpoint` is what src/ stores in
+    # chunks.section_id -- one section per chunk, the one holding the chunk's
+    # midpoint -- and it orphans 40.1% of sections at the shipped chunk_size.
+    # `overlap` credits every section the chunk touches, which is what a
+    # chunk<->section join table would allow. Nothing else differs between them.
+    if args.rollup == "overlap":
+        chunk_to_sec = {u: list(v) for u, v in zip(chunk_uid, units.chunk_sections_all, strict=True)}
+    else:
+        chunk_to_sec = {u: [v] for u, v in zip(chunk_uid, units.chunk_section, strict=True)}
+    chunk_to_doc = {u: [v] for u, v in zip(chunk_uid, units.chunk_doc, strict=True)}
+    sec_to_doc = {u: [v] for u, v in zip(sec_uid, coarse_docs, strict=True)}
+
+    if args.coarse == "sections":
+        reached = {s for ss in chunk_to_sec.values() for s in ss}
+        blind = sum(1 for s in sec_uid if s not in reached)
+        logger.info(
+            "rollup=%s: %d/%d sections own no chunk (%.1f%%) -- unrankable by the chunks arm at any k",
+            args.rollup,
+            blind,
+            len(sec_uid),
+            100 * blind / max(len(sec_uid), 1),
+        )
 
     results: Dict[str, Dict[str, float]] = {}
     targets = [("section", bench.section_qrels), ("doc", bench.doc_qrels)]
@@ -473,6 +512,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "model": spec.model,
                     "dataset": args.dataset,
                     "coarse": args.coarse,
+                    "rollup": args.rollup,
                     "queries": len(qids),
                     # A reachable-only run is a CONTROL, not a headline. Recording
                     # the flag stops the two files being compared as if they were
