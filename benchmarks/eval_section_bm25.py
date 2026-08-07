@@ -40,7 +40,7 @@ import logging
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -56,6 +56,13 @@ K = 10
 # normalisation, so it is part of the fusion rule, not an efficiency knob.
 SEARCH_K = max(K, min(K * 4, 100))
 VECTOR_WEIGHT = 0.5
+
+# --blend-sweep grid, kept identical to benchmarks/eval_fused_blend.py so the
+# numpy harness and the real query() path can be read off each other. vw=1.00 is
+# the vector-only column -- today's fused -- and the keyword legs are skipped
+# there rather than weighted to zero (see blend_arm).
+BLEND_VECTOR_WEIGHTS: Tuple[float, ...] = (1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.0)
+BLEND_SECTION_WEIGHTS: Tuple[float, ...] = (0.0, 0.2, 0.35, 0.5, 0.65, 0.8, 1.0)
 
 
 def _minmax(values: Sequence[float]) -> List[float]:
@@ -167,18 +174,23 @@ def paired(a: np.ndarray, b: np.ndarray, resamples: int = 10_000) -> Dict[str, f
     }
 
 
-def run_arm(
+def capture_arm(
     unit_ids: Sequence[str],
     unit_vecs: np.ndarray,
     fts: Optional[FTS],
     qvecs: np.ndarray,
     qtexts: Sequence[str],
-    owner: Optional[Dict[str, str]],
-    vector_weight: float,
     unit_docs: Optional[Sequence[str]] = None,
     q_scope: Optional[Sequence[Optional[str]]] = None,
-) -> List[Dict[str, float]]:
-    """Per-query {target_id: score}. ``fts=None`` is the vector-only arm.
+) -> List[Tuple[Dict[str, float], Dict[str, float]]]:
+    """Per-query ``(vector_scores, raw_bm25)`` BEFORE fusion and BEFORE roll-up.
+
+    Split out of ``run_arm`` so a weight sweep pays for the matmul once instead of
+    once per weight -- fusion and roll-up are pure post-processing. ``run_arm`` is
+    now this plus those two steps, so the swept arms and the published arms cannot
+    drift apart.
+
+    ``fts=None`` yields an empty keyword dict for every query -- the vector-only arm.
 
     ``q_scope`` restricts each query to units of one document -- MAUD asks "which
     section of *this contract*", so ranking against all 152 contracts would be a
@@ -196,7 +208,7 @@ def run_arm(
             order.setdefault(d, []).append(i)
         by_doc = {d: np.asarray(ix, dtype=np.int64) for d, ix in order.items()}
 
-    out: List[Dict[str, float]] = []
+    out: List[Tuple[Dict[str, float], Dict[str, float]]] = []
     for qi, qtext in enumerate(qtexts):
         scope = q_scope[qi] if q_scope is not None else None
         if scope is None:
@@ -205,19 +217,55 @@ def run_arm(
         else:
             idx = by_doc.get(scope)
             if idx is None or not len(idx):
-                out.append({})
+                out.append(({}, {}))
                 continue
             sims = unit_vecs[idx] @ qvecs[qi]
             ids = [unit_ids[i] for i in idx]
         vec = vector_top(sims, ids, SEARCH_K)
         if fts is None:
-            scores = vec
+            kw: Dict[str, float] = {}
         else:
             kw = fts.search(qtext, SEARCH_K * 2, scope)
             kw = dict(list(kw.items())[:SEARCH_K])
-            scores = fuse(vec, kw, vector_weight)
+        out.append((vec, kw))
+    return out
+
+
+def blend_arm(
+    captured: Sequence[Tuple[Dict[str, float], Dict[str, float]]],
+    owner: Optional[Dict[str, Sequence[str]]],
+    vector_weight: float,
+    *,
+    use_keyword: bool = True,
+) -> List[Dict[str, float]]:
+    """Fuse a captured arm at ``vector_weight`` and roll it up to its target.
+
+    ``use_keyword=False`` skips the keyword leg entirely rather than weighting it
+    to zero. The two are not the same operator: weighting to zero still widens the
+    pool with keyword-only keys at score 0.0. The vector-only baseline every
+    keyword result is quoted against has to be the former.
+    """
+    out: List[Dict[str, float]] = []
+    for vec, kw in captured:
+        scores = fuse(vec, kw, vector_weight) if (use_keyword and kw) else vec
         out.append(rollup(scores, owner) if owner is not None else scores)
     return out
+
+
+def run_arm(
+    unit_ids: Sequence[str],
+    unit_vecs: np.ndarray,
+    fts: Optional[FTS],
+    qvecs: np.ndarray,
+    qtexts: Sequence[str],
+    owner: Optional[Dict[str, Sequence[str]]],
+    vector_weight: float,
+    unit_docs: Optional[Sequence[str]] = None,
+    q_scope: Optional[Sequence[Optional[str]]] = None,
+) -> List[Dict[str, float]]:
+    """Per-query {target_id: score}. ``fts=None`` is the vector-only arm."""
+    captured = capture_arm(unit_ids, unit_vecs, fts, qvecs, qtexts, unit_docs, q_scope)
+    return blend_arm(captured, owner, vector_weight, use_keyword=fts is not None)
 
 
 def fuse_levels(
@@ -240,6 +288,78 @@ def fuse_levels(
 
 def to_ranked(scores_per_query: List[Dict[str, float]]) -> List[List[str]]:
     return [[u for u, _ in sorted(s.items(), key=lambda kv: -kv[1])[:K]] for s in scores_per_query]
+
+
+def blend_sweep(
+    chunk_cap: Sequence[Tuple[Dict[str, float], Dict[str, float]]],
+    coarse_cap: Sequence[Tuple[Dict[str, float], Dict[str, float]]],
+    chunk_owner: Optional[Dict[str, Sequence[str]]],
+    coarse_owner: Optional[Dict[str, Sequence[str]]],
+    qids: Sequence[str],
+    qrels: Dict[str, Dict[str, int]],
+) -> Dict[str, Any]:
+    """The 2-D ``fused`` blend grid: BM25 weight within each leg x weight across legs.
+
+    ``vector_weight`` is swept in the OUTER loop because it is the only parameter
+    that touches retrieval-side fusion; ``section_weight`` is a scalar over two
+    already-built pools, so its inner loop is nearly free. Returns per-cell means
+    plus the per-query vectors, which is what makes a paired CI on the argmax
+    possible afterwards.
+    """
+    grid: Dict[str, Dict[str, float]] = {}
+    per_query: Dict[str, List[float]] = {}
+    for vector_weight in BLEND_VECTOR_WEIGHTS:
+        use_keyword = vector_weight < 1.0
+        chunk_side = blend_arm(chunk_cap, chunk_owner, vector_weight, use_keyword=use_keyword)
+        coarse_side = blend_arm(coarse_cap, coarse_owner, vector_weight, use_keyword=use_keyword)
+        for section_weight in BLEND_SECTION_WEIGHTS:
+            fused = fuse_levels(chunk_side, coarse_side, section_weight)
+            ranked = to_ranked(fused)
+            per_q = score(ranked, qids, qrels)
+            cell = f"vw={vector_weight:.2f}|sw={section_weight:.2f}"
+            grid[cell] = {"ndcg@10": float(per_q.mean()), "recall@10": recall(ranked, qids, qrels)}
+            per_query[cell] = [float(v) for v in per_q]
+    return {"grid": grid, "per_query": per_query}
+
+
+def report_blend_sweep(tname: str, swept: Dict[str, Any], shipped_section_weight: float) -> None:
+    grid = swept["grid"]
+
+    def cell(vector_weight: float, section_weight: float) -> float:
+        return grid[f"vw={vector_weight:.2f}|sw={section_weight:.2f}"]["ndcg@10"]
+
+    print(f"\n=== blend sweep · target: {tname} ===  (nDCG@10)")
+    corner = "vw \\ sw"
+    print("  " + f"{corner:<8}" + "".join(f"{sw:>9.2f}" for sw in BLEND_SECTION_WEIGHTS))
+    for vector_weight in BLEND_VECTOR_WEIGHTS:
+        row = f"  {vector_weight:<8.2f}"
+        for section_weight in BLEND_SECTION_WEIGHTS:
+            row += f"{cell(vector_weight, section_weight):>9.4f}"
+        print(row)
+
+    best_cell, best = max(grid.items(), key=lambda kv: kv[1]["ndcg@10"])
+    vec_only = {c: v for c, v in grid.items() if c.startswith("vw=1.00")}
+    best_vec_cell, best_vec = max(vec_only.items(), key=lambda kv: kv[1]["ndcg@10"])
+    shipped_today = cell(1.0, shipped_section_weight)
+    print(f"  shipped today (vector-only, sw={shipped_section_weight:.2f})  {shipped_today:.4f}")
+    print(f"  best vector-only  {best_vec_cell:<22} {best_vec['ndcg@10']:.4f}")
+    print(
+        f"  best overall      {best_cell:<22} {best['ndcg@10']:.4f}  "
+        f"({best['ndcg@10'] - shipped_today:+.4f} vs shipped, "
+        f"{best['ndcg@10'] - best_vec['ndcg@10']:+.4f} vs best vector-only)"
+    )
+    # The single-leg corners. A blend that cannot beat its own best leg is not a
+    # blend worth shipping, and on a corpus where BM25 simply dominates the vector
+    # the headline "+X vs vector-only" is mostly that fact, not the blend.
+    corners = {
+        "chunk vector": cell(1.0, 0.0),
+        "chunk BM25": cell(0.0, 0.0),
+        "coarse vector": cell(1.0, 1.0),
+        "coarse BM25": cell(0.0, 1.0),
+    }
+    best_leg_name, best_leg = max(corners.items(), key=lambda kv: kv[1])
+    print("  single legs: " + "  ".join(f"{n} {v:.4f}" for n, v in corners.items()))
+    print(f"  -> blend beats its best single leg ({best_leg_name}) by {best['ndcg@10'] - best_leg:+.4f}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -280,6 +400,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Drop queries whose gold sections own no chunk. The chunks arm cannot rank those at any "
         "k (chunks.section_id is single-valued), so an unfiltered section-target win is partly a "
         "reachability artifact. Run BOTH and report the pair.",
+    )
+    p.add_argument(
+        "--blend-sweep",
+        action="store_true",
+        help="Sweep the fused blend over (vector_weight x section_weight) instead of reporting the "
+        "fixed-weight arms. This is the question `fused` actually poses: it is the last vector-only "
+        "level, and unlike documents_fts/sections_fts it cannot be fixed by wiring an index -- BM25 "
+        "enters through the BLEND, which has a free parameter. Read the argmax as an upper bound: it "
+        "is picked on the same queries it is scored on.",
     )
     p.add_argument("--allow-embed", action="store_true", help="permit cache misses to be embedded (costs money/time)")
     p.add_argument("--out", type=Path, default=None)
@@ -436,7 +565,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             100 * blind / max(len(sec_uid), 1),
         )
 
-    results: Dict[str, Dict[str, float]] = {}
+    # Values are per-arm floats on the default path and the nested sweep payload
+    # under --blend-sweep, so the two never land in the same output file.
+    results: Dict[str, Dict[str, Any]] = {}
     targets = [("section", bench.section_qrels), ("doc", bench.doc_qrels)]
     if args.dataset == "maud":
         # Every query is scoped to its own contract, so the doc target has one
@@ -449,6 +580,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         chunk_owner = chunk_to_sec if tname == "section" else chunk_to_doc
         sec_owner = None if tname == "section" else sec_to_doc
         CN = args.coarse  # "sections" or "documents" -- label the arm by what it is
+
+        if args.blend_sweep:
+            # Capture once, blend many times. Both legs get an FTS index here --
+            # that is the whole premise of the sweep, and the vw=1.00 column is
+            # what recovers today's vector-only fused for comparison.
+            swept = blend_sweep(
+                capture_arm(chunk_uid, cv, fts_chunks, qv, qtexts, chunk_docs, q_scope),
+                capture_arm(sec_uid, sv, fts_secs, qv, qtexts, section_docs, q_scope),
+                chunk_owner,
+                sec_owner,
+                qids,
+                qrels,
+            )
+            report_blend_sweep(tname, swept, args.section_weight)
+            results[tname] = swept
+            continue
+
         arms = {
             "chunks · vector": (chunk_uid, cv, None, chunk_owner, chunk_docs),
             "chunks · hybrid": (chunk_uid, cv, fts_chunks, chunk_owner, chunk_docs),
