@@ -259,6 +259,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Weight on the section leg of the fused arm. Default is the shipped 0.65, which is also "
         "the measured qasper argmax -- and wrong on long-section legs (0.10-0.40 there).",
     )
+    p.add_argument(
+        "--reachable-only",
+        action="store_true",
+        help="Drop queries whose gold sections own no chunk. The chunks arm cannot rank those at any "
+        "k (chunks.section_id is single-valued), so an unfiltered section-target win is partly a "
+        "reachability artifact. Run BOTH and report the pair.",
+    )
     p.add_argument("--allow-embed", action="store_true", help="permit cache misses to be embedded (costs money/time)")
     p.add_argument("--out", type=Path, default=None)
     args = p.parse_args(argv)
@@ -344,6 +351,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sv = unit(coarse_enc.encode(coarse_texts, normalize=False))
     qids = list(units.query_ids)
     qtexts = list(units.query_texts)
+
+    # THE ROLL-UP HANDICAP CONTROL. `chunks.section_id` is single-valued, so a
+    # section that owns no chunk cannot be ranked by the chunks arm at any k --
+    # 26.3% of qasper's gold sections and 17.5% of NQ's. Any section-target win
+    # is therefore partly a reachability artifact rather than a retrieval one.
+    # This drops the queries whose gold is unreachable, so both arms compete over
+    # the same attainable set. Report it BESIDE the unfiltered number, never
+    # instead of it: the dropped queries are real queries the roll-up really fails.
+    if args.reachable_only:
+        if not bench.section_qrels:
+            raise SystemExit("--reachable-only needs section qrels; MLDR has none by design.")
+        owned = {s for s in units.chunk_section if s is not None}
+        keep = [i for i, q in enumerate(qids) if any(s in owned for s in bench.section_qrels.get(q, {}))]
+        dropped = len(qids) - len(keep)
+        if not keep:
+            raise SystemExit("--reachable-only removed every query; nothing to measure.")
+        logger.info(
+            "reachable-only: dropped %d/%d queries (%.1f%%) whose gold sections own no chunk",
+            dropped,
+            len(qids),
+            100 * dropped / len(qids),
+        )
+        qv = qv[keep]
+        qids = [qids[i] for i in keep]
+        qtexts = [qtexts[i] for i in keep]
+
     logger.info("%d chunks, %d %s, %d queries", len(cv), len(sv), args.coarse, len(qids))
 
     # FTS over each unit type. The coarse index is the thing under test.
@@ -435,7 +468,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(
-            json.dumps({"model": spec.model, "dataset": args.dataset, "results": results}, indent=2), encoding="utf-8"
+            json.dumps(
+                {
+                    "model": spec.model,
+                    "dataset": args.dataset,
+                    "coarse": args.coarse,
+                    "queries": len(qids),
+                    # A reachable-only run is a CONTROL, not a headline. Recording
+                    # the flag stops the two files being compared as if they were
+                    # the same measurement over the same query set.
+                    "reachable_only": bool(args.reachable_only),
+                    "results": results,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
         )
         print(f"Wrote {args.out}")
     return 0
