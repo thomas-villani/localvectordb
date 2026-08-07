@@ -52,7 +52,15 @@ qasper quirk, and larger than every vector-side effect in the study.
 honoured at a vector-only level. A warning rather than a rejection, because `hybrid` is the default
 and rejecting would break the ordinary `query(text, search_level="sections")` call.
 
-**Real fix still open, and it is a feature.** `sections` has no `content` column — a section is a
+**MEASURED 2026-08-07, and it is TWO fixes -- the cheaper one needs no migration.** Across three
+corpora, today's `fused` level is *significantly worse* than plain chunks (-0.039 qasper, -0.070
+MAUD, -0.129 MLDR) purely because it runs vector-only against a chunks arm that has BM25. A coarse
+keyword leg makes it competitive on all three. Crucially **`documents_fts` already exists, is
+populated and trigger-maintained, and no search path reads it** -- wiring `search_level="documents"`
+is free of schema work and worth +0.155 to that level on MLDR. Implementation notes for both:
+`experiments/SYNTHESIS-v2.md` S13.
+
+**The sections half is still a feature.** `sections` has no `content` column — a section is a
 `start_pos`/`end_pos` slice of its parent document — and there is no `sections_fts`, only
 `chunks_fts` and `documents_fts`. Giving sections and fused a keyword leg means building
 `sections_fts` from sliced text at ingest, migrating existing databases, and sharing BM25
