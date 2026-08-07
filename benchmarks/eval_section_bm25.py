@@ -81,27 +81,40 @@ def fuse(vector_scores: Dict[str, float], bm25_raw: Dict[str, float], vector_wei
 
 
 class FTS:
-    """An in-memory FTS5 index over arbitrary units -- i.e. the sections_fts we might ship."""
+    """An in-memory FTS5 index over arbitrary units -- i.e. the sections_fts we might ship.
 
-    def __init__(self, ids: Sequence[str], texts: Sequence[str]) -> None:
+    Carries an UNINDEXED ``doc`` column so a scoped corpus (MAUD ranks each query
+    only within its own contract) can filter *inside* the query. Filtering after
+    ``LIMIT`` would be wrong: the pool would fill with out-of-scope hits and the
+    in-scope ones would never be seen.
+    """
+
+    def __init__(self, ids: Sequence[str], texts: Sequence[str], docs: Sequence[str]) -> None:
         self.ids = list(ids)
         self.conn = sqlite3.connect(":memory:")
-        self.conn.execute("CREATE VIRTUAL TABLE u USING fts5(body)")
-        self.conn.executemany("INSERT INTO u(rowid, body) VALUES (?, ?)", enumerate(texts))
+        self.conn.execute("CREATE VIRTUAL TABLE u USING fts5(body, doc UNINDEXED)")
+        self.conn.executemany(
+            "INSERT INTO u(rowid, body, doc) VALUES (?, ?, ?)",
+            ((i, t, d) for i, (t, d) in enumerate(zip(texts, docs, strict=True))),
+        )
         self.conn.commit()
 
-    def search(self, query: str, limit: int) -> Dict[str, float]:
+    def search(self, query: str, limit: int, scope: Optional[str] = None) -> Dict[str, float]:
         """{unit_id: raw bm25} best-first, using src's own query sanitisation."""
         from localvectordb._filters import FTSQuerySanitization
 
         sanitized = FTSQuerySanitization.sanitize_fts_query(query)
         if not sanitized:
             return {}
+        sql = "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ?"
+        params: List[object] = [sanitized]
+        if scope is not None:
+            sql += " AND doc = ?"
+            params.append(scope)
+        sql += " ORDER BY rank ASC LIMIT ?"
+        params.append(limit)
         try:
-            rows = self.conn.execute(
-                "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ? ORDER BY rank ASC LIMIT ?",
-                (sanitized, limit),
-            ).fetchall()
+            rows = self.conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError:  # malformed MATCH after sanitisation
             return {}
         return {self.ids[r[0]]: float(r[1]) for r in rows}
@@ -156,16 +169,45 @@ def run_arm(
     qtexts: Sequence[str],
     owner: Optional[Dict[str, str]],
     vector_weight: float,
+    unit_docs: Optional[Sequence[str]] = None,
+    q_scope: Optional[Sequence[Optional[str]]] = None,
 ) -> List[Dict[str, float]]:
-    """Per-query {target_id: score}. ``fts=None`` is the vector-only arm."""
+    """Per-query {target_id: score}. ``fts=None`` is the vector-only arm.
+
+    ``q_scope`` restricts each query to units of one document -- MAUD asks "which
+    section of *this contract*", so ranking against all 152 contracts would be a
+    different and much easier-looking task.
+
+    Scoping SLICES the unit matrix per document rather than masking the full one.
+    Masking looked equivalent and was ~150x slower: `unit_docs == scope` over an
+    object array is a Python-level loop across 34k strings, run once per query per
+    arm. Slicing also shrinks the matmul itself to the ~228 units that can score.
+    """
+    by_doc: Dict[str, np.ndarray] = {}
+    if q_scope is not None and unit_docs is not None:
+        order: Dict[str, List[int]] = {}
+        for i, d in enumerate(unit_docs):
+            order.setdefault(d, []).append(i)
+        by_doc = {d: np.asarray(ix, dtype=np.int64) for d, ix in order.items()}
+
     out: List[Dict[str, float]] = []
     for qi, qtext in enumerate(qtexts):
-        sims = unit_vecs @ qvecs[qi]
-        vec = vector_top(sims, unit_ids, SEARCH_K)
+        scope = q_scope[qi] if q_scope is not None else None
+        if scope is None:
+            sims = unit_vecs @ qvecs[qi]
+            ids: Sequence[str] = unit_ids
+        else:
+            idx = by_doc.get(scope)
+            if idx is None or not len(idx):
+                out.append({})
+                continue
+            sims = unit_vecs[idx] @ qvecs[qi]
+            ids = [unit_ids[i] for i in idx]
+        vec = vector_top(sims, ids, SEARCH_K)
         if fts is None:
             scores = vec
         else:
-            kw = fts.search(qtext, SEARCH_K * 2)
+            kw = fts.search(qtext, SEARCH_K * 2, scope)
             kw = dict(list(kw.items())[:SEARCH_K])
             scores = fuse(vec, kw, vector_weight)
         out.append(rollup(scores, owner) if owner is not None else scores)
@@ -252,8 +294,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # FTS over each unit type. The section index is the thing under test.
     chunk_uid = [f"c{i}" for i in range(len(units.chunk_texts))]
     sec_uid = list(units.section_ids)
-    fts_chunks = FTS(chunk_uid, units.chunk_texts)
-    fts_secs = FTS(sec_uid, units.section_texts)
+    fts_chunks = FTS(chunk_uid, units.chunk_texts, units.chunk_doc)
+    fts_secs = FTS(sec_uid, units.section_texts, units.section_doc)
+    chunk_docs = list(units.chunk_doc)
+    section_docs = list(units.section_doc)
+
+    # MAUD is per-contract scoped retrieval; qasper is not. Mirrors eval_dual's SCOPE_QID.
+    q_scope: Optional[List[Optional[str]]] = None
+    if args.dataset == "maud":
+        q_scope = [str(q).split("||", 1)[0] for q in qids]
+        logger.info("scoped retrieval: %d distinct contracts", len({s for s in q_scope}))
 
     chunk_to_sec = dict(zip(chunk_uid, units.chunk_section, strict=True))
     chunk_to_doc = dict(zip(chunk_uid, units.chunk_doc, strict=True))
@@ -261,6 +311,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     results: Dict[str, Dict[str, float]] = {}
     targets = [("section", bench.section_qrels), ("doc", bench.doc_qrels)]
+    if args.dataset == "maud":
+        # Every query is scoped to its own contract, so the doc target has one
+        # candidate and is trivially perfect -- a number that means nothing.
+        targets = [("section", bench.section_qrels)]
 
     for tname, qrels in targets:
         if not qrels:
@@ -268,14 +322,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         chunk_owner = chunk_to_sec if tname == "section" else chunk_to_doc
         sec_owner = None if tname == "section" else sec_to_doc
         arms = {
-            "chunks · vector": (chunk_uid, cv, None, chunk_owner),
-            "chunks · hybrid": (chunk_uid, cv, fts_chunks, chunk_owner),
-            "sections · vector": (sec_uid, sv, None, sec_owner),
-            "sections · hybrid": (sec_uid, sv, fts_secs, sec_owner),
+            "chunks · vector": (chunk_uid, cv, None, chunk_owner, chunk_docs),
+            "chunks · hybrid": (chunk_uid, cv, fts_chunks, chunk_owner, chunk_docs),
+            "sections · vector": (sec_uid, sv, None, sec_owner, section_docs),
+            "sections · hybrid": (sec_uid, sv, fts_secs, sec_owner, section_docs),
         }
         raw: Dict[str, List[Dict[str, float]]] = {}
-        for label, (uids, uvecs, fts, owner) in arms.items():
-            raw[label] = run_arm(uids, uvecs, fts, qv, qtexts, owner, args.vector_weight)
+        for label, (uids, uvecs, fts, owner, udocs) in arms.items():
+            raw[label] = run_arm(uids, uvecs, fts, qv, qtexts, owner, args.vector_weight, udocs, q_scope)
 
         # `fused` blends the two levels. "vector" is what ships TODAY -- the fused
         # level ignores search_type entirely, so both its legs are vector-only.
