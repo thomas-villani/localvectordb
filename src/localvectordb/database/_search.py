@@ -85,11 +85,12 @@ def _resolve_return_type(return_type: Optional[ReturnType], search_level: str) -
     return _NATURAL_RETURN_TYPE.get(search_level, "documents")
 
 
-# Levels served by a vector index alone. FTS5 indexes chunks (and whole
-# documents); there is no sections_fts, and `sections` holds no text of its own --
-# only start_pos/end_pos into the parent document -- so no keyword leg exists at
-# these levels to honour a keyword or hybrid request with.
-_VECTOR_ONLY_LEVELS = frozenset({"sections", "documents", "fused"})
+# Levels served by a vector index alone. There is no sections_fts, and `sections`
+# holds no text of its own -- only start_pos/end_pos into the parent document --
+# so no keyword leg exists at these levels to honour a keyword or hybrid request
+# with. `documents` used to be here too; it now reads `documents_fts`, which was
+# always created, populated and trigger-maintained but never queried.
+_VECTOR_ONLY_LEVELS = frozenset({"sections", "fused"})
 
 
 def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
@@ -855,9 +856,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 self._vector_only_level_warned = True
                 warnings.warn(
                     f"search_type={search_type!r} is not available at search_level={search_level!r}: "
-                    "keyword search is indexed over chunks only, so this query ran as vector-only. "
-                    "Pass search_type='vector' to make that explicit, and do not compare these "
-                    "results against chunk-level hybrid results -- only the latter gets BM25.",
+                    "keyword search is indexed over chunks and whole documents, but sections hold no "
+                    "text of their own, so this query ran as vector-only. Pass search_type='vector' "
+                    "to make that explicit, and do not compare these results against chunk- or "
+                    "document-level hybrid results -- only those get BM25.",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -904,6 +906,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     filters=filters,
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options,
+                    search_type=search_type,
+                    vector_weight=vector_weight,
                 )
 
             elif search_type == "vector":
@@ -1888,12 +1892,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
         filters: Optional[Dict[str, Any]],
         document_scoring_method: DocumentScoringMethod = "frequency_boost",
         document_scoring_options: Optional[dict] = None,
+        search_type: str = "vector",
+        vector_weight: float = 0.5,
     ) -> List[QueryResult]:
         """Search using section or document FAISS indices.
 
         ``return_type`` chooses the unit the hits are reported in, exactly as it
         does for ``search_level='fused'``. It used to be accepted and ignored
         here, so ``return_type='documents'`` quietly handed back sections.
+
+        ``search_type`` is honoured at ``search_level='documents'`` only, because
+        that is the only one of these levels with a keyword index. ``sections``
+        has no text of its own to index and still runs vector-only; it stays in
+        ``_VECTOR_ONLY_LEVELS`` and still warns. The default is ``"vector"`` so
+        that any caller reaching this method without an explicit search type gets
+        the behaviour it had before the keyword leg existed.
         """
         query_embeddings = self.embedding_provider.embed_sync([query], task="query")
         query_embedding = np.array(query_embeddings[0]).reshape(1, -1)
@@ -1923,7 +1936,29 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if search_level == "documents":
             if return_type != "documents":
                 raise ValueError(f"search_level='documents' supports return_type 'documents', got {return_type!r}")
-            return self._document_level_search(query_embedding, k, score_threshold, filters)
+
+            if search_type == "keyword":
+                raw = self._keyword_document_hits(query, k * 2, filters)
+                similarities = {doc_id: self._fts_rank_to_similarity(rank) for doc_id, rank in raw.items()}
+                return self._documents_from_scores(similarities, k, score_threshold)
+
+            if search_type != "hybrid":
+                return self._document_level_search(query_embedding, k, score_threshold, filters)
+
+            # Hybrid. Both legs are fetched unthresholded and the caller's
+            # threshold is applied to the fused score, mirroring the chunk-level
+            # hybrid path exactly -- thresholding a leg first would cut candidates
+            # the other leg might have rescued, and the two legs are on different
+            # scales until _relative_score_fusion normalises them.
+            vector_hits = self._document_level_search(query_embedding, k * 2, 0.0, filters)
+            raw = self._keyword_document_hits(query, k * 2, filters)
+            if not raw:
+                # No keyword match (or FTS disabled): degrade to the vector
+                # ranking rather than to an empty result set.
+                return [r for r in vector_hits if r.score >= score_threshold][:k]
+            vector_scores = {r.id: r.score for r in vector_hits}
+            fused = _relative_score_fusion(vector_scores, raw, vector_weight)
+            return self._documents_from_scores(fused, k, score_threshold)
         return []
 
     def _section_level_search(
@@ -2038,6 +2073,64 @@ class SearchMixin(LocalVectorDBBase, ABC):
         # same way everywhere, forever.
         results.sort(key=lambda x: (-x.score, x.id))
         return results[:k]
+
+    def _keyword_document_hits(
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> Dict[str, float]:
+        """Raw BM25 per document id from ``documents_fts``, best-first.
+
+        Returns *raw* BM25 (negative, more negative is better), which is what
+        ``_relative_score_fusion`` expects -- never ``_fts_rank_to_similarity``,
+        whose output saturates and would normalize float noise.
+
+        ``documents_fts`` is an external-content FTS5 table over ``documents``,
+        created and trigger-maintained since the index was introduced but read by
+        nothing until now. It indexes two columns, ``(id, content)``, so ``bm25``
+        is given explicit column weights: the ``id`` column is weighted 0.0 so a
+        query term that happens to equal a document id cannot outrank a genuine
+        content match. Such a document is still returned, at rank 0.0, which sorts
+        below every real match because BM25 is negative-is-better.
+
+        Returns ``{}`` when FTS is unavailable or the query sanitizes to nothing,
+        so the caller degrades to its vector leg rather than to an empty result.
+        """
+        if not getattr(self, "_fts_enabled", True):
+            return {}
+        sanitized_query = FTSQuerySanitization.sanitize_fts_query(query)
+        if not sanitized_query:
+            return {}
+
+        # Push a SQL-expressible metadata filter into the query so LIMIT applies
+        # after filtering, exactly as _keyword_chunk_hits does (T1.3).
+        built = self._build_filter_where(filters)
+        select = (
+            "SELECT d.id AS doc_id, bm25(documents_fts, 0.0, 1.0) AS rank "
+            "FROM documents_fts JOIN documents d ON d.rowid = documents_fts.rowid "
+            "WHERE documents_fts MATCH ?"
+        )
+        if built is not None:
+            where_clause, filter_params = built
+            fts_sql = f"{select} AND d.id IN (SELECT id FROM documents WHERE {where_clause}) ORDER BY rank ASC LIMIT ?"
+            fts_params: Tuple[Any, ...] = (sanitized_query, *filter_params, limit)
+        else:
+            fts_sql = f"{select} ORDER BY rank ASC LIMIT ?"
+            fts_params = (sanitized_query, limit)
+
+        with self.connection_pool.get_connection() as conn:
+            rows = conn.execute(fts_sql, fts_params).fetchall()
+            ranks = {row["doc_id"]: float(row["rank"]) for row in rows}
+            # Unpushable filters (dot-notation JSON) still need the Python matcher.
+            if filters and ranks:
+                metadata_batch = self._get_documents_metadata_batch(conn, list(ranks))
+                ranks = {
+                    doc_id: rank
+                    for doc_id, rank in ranks.items()
+                    if matches_metadata_filter(metadata_batch.get(doc_id, {}), filters)
+                }
+        return ranks
 
     def _document_level_search(
         self,

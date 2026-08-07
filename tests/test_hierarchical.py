@@ -438,20 +438,23 @@ class TestHierarchicalIntegration:
 
     # -- A search_type these levels cannot honour must be said out loud --
 
-    @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
+    @pytest.mark.parametrize("level", ["sections", "fused"])
     @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
     def test_vector_only_level_warns_on_unhonoured_search_type(self, db_with_hierarchy, level, search_type):
-        """FTS5 indexes chunks only, so these levels silently ran vector-only.
+        """Sections hold no text of their own, so these levels run vector-only.
 
         Because 'hybrid' is the DEFAULT, query(text, search_level='sections') was
         answered by a different retrieval system than the same call at chunk
         level -- worth +0.084 to +0.131 nDCG@10 to chunks on our benchmarks and
         exactly +0.0000 here. Comparing the two was invalid and nothing said so.
+
+        ``documents`` is deliberately absent: it now has a real keyword leg over
+        ``documents_fts`` and must NOT warn. See the tests below it.
         """
         db = db_with_hierarchy
         db.upsert([MARKDOWN_DOC], ids=["md_doc"])
 
-        with pytest.warns(UserWarning, match="keyword search is indexed over chunks only"):
+        with pytest.warns(UserWarning, match="ran as vector-only"):
             db.query("neural networks", search_level=level, search_type=search_type, k=3)
 
     @pytest.mark.parametrize("level", ["sections", "documents", "fused"])
@@ -462,7 +465,7 @@ class TestHierarchicalIntegration:
         recwarn.clear()
 
         db.query("neural networks", search_level=level, search_type="vector", k=3)
-        assert [w for w in recwarn if "indexed over chunks only" in str(w.message)] == []
+        assert [w for w in recwarn if "ran as vector-only" in str(w.message)] == []
 
     def test_chunk_level_hybrid_never_warns(self, db_with_hierarchy, recwarn):
         """Chunks genuinely have a keyword leg; the warning must not fire there."""
@@ -471,7 +474,7 @@ class TestHierarchicalIntegration:
         recwarn.clear()
 
         db.query("neural networks", search_level="chunks", search_type="hybrid", k=3)
-        assert [w for w in recwarn if "indexed over chunks only" in str(w.message)] == []
+        assert [w for w in recwarn if "ran as vector-only" in str(w.message)] == []
 
     def test_vector_only_level_warns_once_per_instance(self, db_with_hierarchy, recwarn):
         """A query loop must not drown the log in the same warning."""
@@ -481,7 +484,66 @@ class TestHierarchicalIntegration:
 
         for _ in range(3):
             db.query("neural networks", search_level="sections", k=3)
-        assert len([w for w in recwarn if "indexed over chunks only" in str(w.message)]) == 1
+        assert len([w for w in recwarn if "ran as vector-only" in str(w.message)]) == 1
+
+    # -- Fix A: search_level='documents' has a real keyword leg (documents_fts) --
+
+    @pytest.mark.parametrize("search_type", ["hybrid", "keyword"])
+    def test_documents_level_never_warns(self, db_with_hierarchy, recwarn, search_type):
+        """``documents`` genuinely honours hybrid/keyword now, so it must not warn."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        recwarn.clear()
+
+        db.query("neural networks", search_level="documents", search_type=search_type, k=3)
+        assert [w for w in recwarn if "ran as vector-only" in str(w.message)] == []
+
+    def test_documents_keyword_leg_is_live(self, db_with_hierarchy):
+        """A term present in exactly one document must retrieve that document.
+
+        This is the test that would have caught the original defect: before the
+        fix, ``search_type='keyword'`` at this level silently ran the FAISS
+        document index instead, so a rare literal term proved nothing.
+        """
+        db = db_with_hierarchy
+        db.upsert(
+            [MARKDOWN_DOC, "Zanzibar quokka telemetry is unrelated to anything else in this corpus."],
+            ids=["md_doc", "odd_doc"],
+        )
+
+        results = db.query("quokka", search_level="documents", search_type="keyword", k=3)
+        assert results, "keyword leg at document level returned nothing"
+        assert results[0].id == "odd_doc"
+        assert all(r.type == "document" for r in results)
+
+    def test_documents_hybrid_differs_from_vector(self, db_with_hierarchy):
+        """Hybrid must actually fuse, not fall through to the vector ranking.
+
+        With MockEmbeddings the vector leg is deterministic but arbitrary, so the
+        assertion is on the *scores* changing, not on which document wins --
+        MockEmbeddings cannot tell whether the right document ranks first, only
+        the retrieval harness can (see benchmarks/RETRIEVAL_BASELINE.md).
+        """
+        db = db_with_hierarchy
+        db.upsert(
+            [MARKDOWN_DOC, "Zanzibar quokka telemetry is unrelated to anything else in this corpus."],
+            ids=["md_doc", "odd_doc"],
+        )
+
+        vector = db.query("quokka", search_level="documents", search_type="vector", k=3)
+        hybrid = db.query("quokka", search_level="documents", search_type="hybrid", k=3)
+        assert vector and hybrid
+        assert {r.id: round(r.score, 6) for r in vector} != {r.id: round(r.score, 6) for r in hybrid}
+
+    def test_documents_hybrid_degrades_to_vector_without_keyword_match(self, db_with_hierarchy):
+        """No BM25 hit must leave the vector ranking intact, not empty it."""
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        # A term in no document at all: the keyword leg contributes nothing.
+        hybrid = db.query("xyzzyplughcolossal", search_level="documents", search_type="hybrid", k=3)
+        vector = db.query("xyzzyplughcolossal", search_level="documents", search_type="vector", k=3)
+        assert [r.id for r in hybrid] == [r.id for r in vector]
 
     # -- H8: reranking must not be silently dropped on fused/sections/documents --
 
