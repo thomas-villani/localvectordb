@@ -1848,7 +1848,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         context_unit: str = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
@@ -1947,7 +1947,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
@@ -3311,7 +3311,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         context_unit: str = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
@@ -3407,7 +3407,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
@@ -3788,7 +3788,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,
-        document_scoring_method: str = "frequency_boost",
+        document_scoring_method: str = "auto",
         document_scoring_options: Optional[Dict[str, Any]] = None,
     ):
         """Stream query results from the server via SSE.
@@ -3886,7 +3886,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,
-        document_scoring_method: str = "frequency_boost",
+        document_scoring_method: str = "auto",
         document_scoring_options: Optional[Dict[str, Any]] = None,
     ):
         """Async version of query_stream. Yields lists of QueryResult."""

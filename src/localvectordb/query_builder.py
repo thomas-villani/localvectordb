@@ -333,7 +333,7 @@ class QueryBuilder:
         self._explain: bool = False
         self._context_window: int = 2
         self._semantic_dedup_threshold: Optional[float] = None
-        self._document_scoring_method: DocumentScoringMethod = "frequency_boost"
+        self._document_scoring_method: DocumentScoringMethod = "auto"
         self._document_scoring_options: Optional[dict] = None
 
     def clone(self) -> "QueryBuilder":

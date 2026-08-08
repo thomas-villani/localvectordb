@@ -142,7 +142,7 @@ class QueryBody(StrictModel):
     context_unit: Literal["chunks", "tokens", "words", "characters"] = "chunks"
     context_truncate: bool = False
     semantic_dedup_threshold: Optional[float] = Field(default=None, ge=0.0)
-    document_scoring_method: DocumentScoringMethod = "frequency_boost"
+    document_scoring_method: DocumentScoringMethod = "auto"
     document_scoring_options: Optional[Dict[str, Any]] = None
     reranker_config: Optional[Dict[str, Any]] = None
     # Candidate-pool size fetched before reranking (only used when reranker_config

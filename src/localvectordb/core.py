@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the document-score aggregation that occurs when querying
 DocumentScoringMethod = Literal[
+    "auto",
     "best",
     "average",
     "frequency_boost",
@@ -31,11 +32,35 @@ DocumentScoringMethod = Literal[
 """
 Document scoring methods for aggregating chunk scores into a document score:
 
+- "auto": Pick by ``search_type`` -- ``"best"`` for a pure vector search,
+  ``"frequency_boost"`` otherwise (default). See below for why these differ.
 - "best": Highest chunk score (single best passage matters)
 - "average": Mean of all chunk scores (overall quality)
 - "frequency_boost": Boosts the best chunk score by the number of quality chunks
-  (default, good for comprehensive docs)
+  (good for comprehensive docs)
   - frequency_bias (0.3): How much to boost based on chunk count
+
+Why ``"auto"`` is not one constant
+----------------------------------
+The right aggregator depends on the scale the chunk scores arrive on, which is a
+function of ``search_type``:
+
+* **hybrid/keyword** min-max normalise each leg within the query's own candidate
+  pool, so the best chunk is 1.0 by construction and ``frequency_boost``'s count
+  multiplier lands on a bounded, comparable scale. It wins there.
+* **vector** passes a raw bounded similarity through unchanged, so the same
+  multiplier over-rewards documents that simply own more chunks. Plain ``"best"``
+  measured better on both corpora with document-level relevance judgements
+  (qasper +0.0084, NQ +0.0150 nDCG@10 at a 400-candidate pool; NQ +0.0081 at the
+  shipped pool, 95% CI excluding zero in three of those four).
+
+Aggregation is a property of the *unit being ranked*, not of the corpus: a
+summing aggregator never lost on a document target and never won on a section
+target across 20 measured corpus/target/leg/pool cells. Sections therefore keep a
+plain max and expose no knob.
+
+Pass any explicit value to pin the behaviour; only ``"auto"`` consults
+``search_type``.
 """
 
 
