@@ -122,7 +122,9 @@ class TestQueryBuilderInitialization:
         assert builder._explain is False
         assert builder._context_window == 2
         assert builder._semantic_dedup_threshold is None
-        assert builder._document_scoring_method == "frequency_boost"
+        # "auto" resolves by search_type at query time: "best" for a pure
+        # vector search, "frequency_boost" otherwise. See DocumentScoringMethod.
+        assert builder._document_scoring_method == "auto"
 
     def test_clone(self, mock_db):
         """Test cloning QueryBuilder preserves all state."""
@@ -1256,7 +1258,7 @@ class TestQueryExecutorExecution:
             section_weight=0.65,
             context_window=2,
             semantic_dedup_threshold=None,
-            document_scoring_method="frequency_boost",
+            document_scoring_method="auto",
             document_scoring_options=None,
         )
 
@@ -1294,7 +1296,7 @@ class TestQueryExecutorExecution:
             section_weight=0.65,
             context_window=2,
             semantic_dedup_threshold=None,
-            document_scoring_method="frequency_boost",
+            document_scoring_method="auto",
             document_scoring_options=None,
         )
 

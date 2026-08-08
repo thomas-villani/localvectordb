@@ -322,7 +322,7 @@ async def query_database(
     context_unit: Literal["chunks", "tokens", "words", "characters"] = "chunks",
     context_truncate: bool = False,
     semantic_dedup_threshold: Optional[float] = None,
-    document_scoring_method: str = "frequency_boost",
+    document_scoring_method: str = "auto",
 ) -> Dict[str, Any]:
     """
     Search a database using vector, keyword, or hybrid search

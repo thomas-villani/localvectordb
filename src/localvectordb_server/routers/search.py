@@ -180,7 +180,7 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
     context_unit = search_params.get("context_unit", "chunks")
     context_truncate = search_params.get("context_truncate", False)
     semantic_dedup_threshold = search_params.get("semantic_dedup_threshold")
-    document_scoring_method = search_params.get("document_scoring_method", "frequency_boost")
+    document_scoring_method = search_params.get("document_scoring_method", "auto")
     document_scoring_options = search_params.get("document_scoring_options", None)
     reranker_config = search_params.get("reranker_config")
     rerank_k = search_params.get("rerank_k")

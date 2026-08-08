@@ -1,7 +1,7 @@
 Document Scoring Methods
 ========================
 
-When aggregating chunk-level search results into document-level scores, LocalVectorDB supports three scoring methods. Each has a different strength depending on your use case.
+When aggregating chunk-level search results into document-level scores, LocalVectorDB supports three scoring methods plus ``"auto"``, which is the default and picks between them based on ``search_type``. Each has a different strength depending on your use case.
 
 .. note::
 
@@ -14,6 +14,27 @@ When aggregating chunk-level search results into document-level scores, LocalVec
 
 Methods
 -------
+
+``"auto"`` (Default)
+^^^^^^^^^^^^^^^^^^^^
+
+Picks the aggregator from ``search_type``: ``"best"`` for ``search_type="vector"``,
+``"frequency_boost"`` for ``"hybrid"`` and ``"keyword"``. Passing any explicit method
+pins it and disables this behaviour.
+
+The two differ because of the *scale* the chunk scores arrive on, not the corpus.
+Hybrid and keyword min-max normalise each leg within the query's own candidate pool,
+so the best chunk is 1.0 by construction and ``frequency_boost``'s count multiplier
+acts on a bounded, query-relative scale. Vector search passes a raw bounded similarity
+through unchanged, where the same multiplier mostly rewards documents for owning more
+chunks. Measured on the vector leg, ``"best"`` beat ``"frequency_boost"`` by
+**+0.0226 nDCG@10 on BEIR SciFact**, +0.0150 on Natural Questions and +0.0084 on
+qasper.
+
+A related result decided the section path: aggregation is a property of the *unit being
+ranked*, not of the corpus. Across 20 measured corpus/target/leg/pool cells a summing
+aggregator never lost on a document target and never won on a section target, so
+section-level roll-up keeps a plain maximum and exposes no knob.
 
 ``"best"``
 ^^^^^^^^^^
@@ -29,8 +50,8 @@ Takes the arithmetic mean of all chunk scores. Good for documents where overall 
 
 **Parameters:** None
 
-``"frequency_boost"`` (Default)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``"frequency_boost"``
+^^^^^^^^^^^^^^^^^^^^^
 
 Boosts the best chunk score based on the number of quality chunks found, rewarding documents with multiple relevant passages. Ideal for comprehensive documents where breadth of coverage indicates relevance.
 
@@ -41,9 +62,10 @@ Boosts the best chunk score based on the number of quality chunks found, rewardi
 Choosing a Method
 -----------------
 
+* **Not sure**: leave the default ``"auto"``
 * **Single best passage matters most**: Use ``"best"``
 * **Overall document quality important**: Use ``"average"``
-* **Want to reward multiple relevant sections**: Use ``"frequency_boost"`` (default)
+* **Want to reward multiple relevant sections**: Use ``"frequency_boost"``
 
 How Raw Scores Are Computed
 ---------------------------

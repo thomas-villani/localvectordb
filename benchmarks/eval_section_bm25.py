@@ -96,7 +96,18 @@ class FTS:
     in-scope ones would never be seen.
     """
 
-    def __init__(self, ids: Sequence[str], texts: Sequence[str], docs: Sequence[str]) -> None:
+    def __init__(
+        self,
+        ids: Sequence[str],
+        texts: Sequence[str],
+        docs: Sequence[str],
+        sanitize: Optional[Any] = None,
+    ) -> None:
+        # ``sanitize`` swaps the query->MATCH transform for a candidate one, so a
+        # proposed change to FTSQuerySanitization can be measured before it is
+        # shipped. Default None keeps src's own function, which is what every
+        # published number here was produced with.
+        self.sanitize = sanitize
         self.ids = list(ids)
         self.conn = sqlite3.connect(":memory:")
         self.conn.execute("CREATE VIRTUAL TABLE u USING fts5(body, doc UNINDEXED)")
@@ -110,7 +121,8 @@ class FTS:
         """{unit_id: raw bm25} best-first, using src's own query sanitisation."""
         from localvectordb._filters import FTSQuerySanitization
 
-        sanitized = FTSQuerySanitization.sanitize_fts_query(query)
+        sanitize = self.sanitize or FTSQuerySanitization.sanitize_fts_query
+        sanitized = sanitize(query)
         if not sanitized:
             return {}
         sql = "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ?"

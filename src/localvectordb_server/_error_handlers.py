@@ -278,8 +278,9 @@ def validate_search_params(data: Dict[str, Any]) -> Dict[str, Any]:
                 value=semantic_dedup_threshold,
             )
 
-    document_scoring_method = data.get("document_scoring_method", "frequency_boost")
+    document_scoring_method = data.get("document_scoring_method", "auto")
     valid_methods = [
+        "auto",
         "best",
         "average",
         "frequency_boost",

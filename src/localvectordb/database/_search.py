@@ -137,6 +137,29 @@ def _faiss_search_with_selector(
 _token_encoder: Any = None
 
 
+def _resolve_document_scoring(method: DocumentScoringMethod, search_type: str) -> DocumentScoringMethod:
+    """Resolve ``document_scoring_method="auto"`` against the search type.
+
+    ``frequency_boost`` multiplies the best chunk score by a term that grows in
+    the number of quality chunks. Whether that helps depends entirely on the
+    scale the scores arrive on:
+
+    * hybrid and keyword go through ``_relative_score_fusion``, which min-max
+      normalises within the query's own pool -- the multiplier then acts on a
+      bounded, query-relative scale and the ``min(1.0, ...)`` clamp caps any
+      runaway. Measured better than plain max there.
+    * vector arrives as a raw bounded similarity (``(ip+1)/2`` or ``1/(1+L2)``),
+      where the same multiplier mostly rewards owning more chunks. Plain ``best``
+      measured better on every corpus with document-level qrels.
+
+    Anything other than ``"auto"`` is returned unchanged, so an explicit choice
+    is never second-guessed. See ``DocumentScoringMethod`` for the numbers.
+    """
+    if method != "auto":
+        return method
+    return "best" if search_type == "vector" else "frequency_boost"
+
+
 def _minmax_normalize(values: List[float]) -> List[float]:
     """Scale ``values`` into ``[0, 1]`` relative to their own min and max."""
     if not values:
@@ -731,7 +754,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
@@ -843,6 +866,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         _validate_context_unit(context_unit)
         return_type = _resolve_return_type(return_type, search_level)
+        # Resolve "auto" once, here, so every helper below receives a concrete
+        # method and none of them has to know about search_type.
+        document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
         # A 'sections' return on a chunk-level search needs section data to group
         # into. On a non-hierarchical DB there is none, so the assembly below is
         # skipped and the user silently gets chunk results back. Fail loudly
@@ -1127,7 +1153,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
@@ -1166,6 +1192,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if search_level == "fused":
             raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
         _validate_context_unit(context_unit)
+        # Resolve "auto" before it is frozen into CursorConfig, so every batch
+        # this cursor yields is scored the same way a one-shot query() would be.
+        document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
 
         with self._read_write_lock.read_lock():
             effective_return_type = return_type if return_type != "sections" else "chunks"
@@ -1252,7 +1281,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
@@ -1269,6 +1298,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if search_level == "fused":
             raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
         _validate_context_unit(context_unit)
+        # Resolve "auto" before it is frozen into CursorConfig, so every batch
+        # this cursor yields is scored the same way a one-shot query() would be.
+        document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
 
         self._ensure_async_pool()
         await self._ensure_async_schema_initialized()
@@ -1452,7 +1484,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         batch_size: int = 50,
     ) -> Iterator[List[QueryResult]]:
@@ -1500,7 +1532,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         batch_size: int = 50,
     ) -> AsyncIterator[List[QueryResult]]:
@@ -3473,10 +3505,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 method_metadata["effective_chunk_count"] = effective_chunk_count
                 method_metadata["frequency_multiplier"] = frequency_multiplier
                 final_score = min(1.0, best_score * frequency_multiplier)
+            elif method == "auto":
+                # Reaching here means an entry point forgot to call
+                # _resolve_document_scoring. Fail loudly: silently treating it as
+                # frequency_boost would give the vector path the wrong aggregator
+                # and look exactly like a retrieval regression.
+                raise ValueError(
+                    "document_scoring_method='auto' reached the scorer unresolved. "
+                    "Entry points must call _resolve_document_scoring(method, search_type) first."
+                )
             else:
                 raise ValueError(
                     f"Unknown document_scoring_method: {method!r}. "
-                    "Valid methods are 'best', 'average', 'frequency_boost'."
+                    "Valid methods are 'auto', 'best', 'average', 'frequency_boost'."
                 )
             doc_metadata = doc_metadata_batch.get(doc_id, {})
             method_metadata["_aggregation_method"] = method
@@ -3516,7 +3557,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
@@ -3557,6 +3598,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         List[QueryResult]
             Search results with column attribution
         """
+        # Resolved here as well as in the query() calls below, because this
+        # method also invokes the scorer directly on the merged results.
+        document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
 
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
@@ -3725,7 +3769,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         context_unit: ContextUnit = "chunks",
         context_truncate: bool = False,
         semantic_dedup_threshold: Optional[float] = None,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
         reranker: Optional[Any] = None,
         reranker_config: Optional[Dict[str, Any]] = None,
@@ -3790,6 +3834,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
         """
         _validate_context_unit(context_unit)
         return_type = _resolve_return_type(return_type, search_level)
+        # Same resolution as the sync path, so async and sync cannot drift apart.
+        document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
         # See the sync path: a 'sections' return on a chunk-level search over a
         # non-hierarchical DB would silently degrade to chunk results.
         if (
@@ -4965,7 +5011,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         score_threshold: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         vector_weight: float = 0.5,
-        document_scoring_method: DocumentScoringMethod = "frequency_boost",
+        document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
     ) -> List[QueryResult]:
         """
@@ -5007,6 +5053,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Search results with column attribution
         """
         self._ensure_async_pool()
+        # Mirrors the sync path: this method also scores the merged results itself.
+        document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
 
         # Determine which columns to search
         embedding_enabled_fields = self._get_embedding_enabled_fields()
