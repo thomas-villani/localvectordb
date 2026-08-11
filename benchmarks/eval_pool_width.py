@@ -42,6 +42,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -93,6 +94,25 @@ CORPORA: Dict[str, Dict[str, Any]] = {
         "cache": "ollama__embeddinggemma-300m__ctx2048",
         "dimension": 768,
         "hierarchical": True,
+    },
+    # Train+dev: 1,088 papers / 13,503 chunks / 2,940 queries, versus dev's
+    # 275 / 3,155 / 882. A SEPARATE leg under its own key, never a widened
+    # `qasper` -- every qasper number in SYNTHESIS-v2 is dev-only, and regrading
+    # them against a 4x corpus under the same name would make that document
+    # incomparable to itself. The key follows eval_hier_gate's `hiergate__`
+    # convention because the index is built the same way (live local Ollama at
+    # ingest, cache stub at query time), so either harness can open it.
+    "qasper_full": {
+        "db": "hiergate__qasper_full__embeddinggemma-300m__centroid",
+        "model": "embeddinggemma:300m",
+        "cache": "ollama__embeddinggemma-300m__ctx2048",
+        "dimension": 768,
+        "hierarchical": True,
+        # The encoder runs on this box, so this corpus may be INGESTED live
+        # (--embed) instead of from cache. The exact tag matters: the vector
+        # cache keys on the model string, so `:latest` would orphan every vector
+        # banked under `:300m` while looking like a cold cache.
+        "ollama": True,
     },
     "nq": {
         "db": "poolwidth__nq2000__text-embedding-3-small",
@@ -173,7 +193,7 @@ class PoolStub(CacheBackedProvider):
         return super().embed_sync(texts)
 
 
-def _construct(spec: Dict[str, Any], stub: Optional[PoolStub]):
+def _construct(spec: Dict[str, Any], stub: Optional[PoolStub], *, live: bool = False):
     """Open the index, either against a live LOCAL encoder or the cache stub.
 
     A corpus whose encoder runs on this box (``provider`` set in the spec) is
@@ -184,6 +204,14 @@ def _construct(spec: Dict[str, Any], stub: Optional[PoolStub]):
     Ollama that forces a model reload, on OpenAI it is a live billed call. After
     the swap no text this harness handles can reach a network encoder; a text
     with no cached vector raises instead.
+
+    ``live`` forces the real provider named by ``spec["ollama"]`` for an INGEST
+    that has nothing to read from cache -- a corpus being built for the first
+    time. It is only ever set for a local encoder (guarded by the caller), so it
+    spends CPU and never money, and it makes the build mechanically identical to
+    the one that produced every other ``hiergate__`` index: src/ applies its own
+    document prefix through the provider's registry, which is byte-identical to
+    the ``EGEMMA_DOC_PREFIX`` the vector cache was keyed with.
     """
     from localvectordb import LocalVectorDB
 
@@ -196,6 +224,22 @@ def _construct(spec: Dict[str, Any], stub: Optional[PoolStub]):
             faiss_index_type=spec.get("index_type", "IndexFlatL2"),
             **spec.get("chunking", {}),
         )
+
+    if live:
+        if not spec.get("ollama"):
+            raise ValueError(f"--embed refused for {spec['db']}: no local encoder declared for this corpus")
+        kwargs = dict(
+            embedding_provider="ollama",
+            embedding_model=spec["model"],
+            hierarchical_embeddings=spec["hierarchical"],
+            # Transport only -- it cannot change a stored vector. 2 rather than
+            # the tempting 8: a long-chunk Ollama ingest at high concurrency
+            # fails with empty error messages at exactly the 300s timeout.
+            embedding_config={"max_concurrent_requests": 2},
+        )
+        if spec["hierarchical"]:
+            kwargs["section_vector_strategy"] = "centroid"
+        return LocalVectorDB(spec["db"], DATA_DIR / "db", **kwargs)
 
     kwargs: Dict[str, Any] = dict(
         embedding_provider="mock",
@@ -217,7 +261,7 @@ def open_db(spec: Dict[str, Any], stub: PoolStub):
     return _construct(spec, stub)
 
 
-def build_db(spec: Dict[str, Any], stub: PoolStub, bench, rebuild: bool):
+def build_db(spec: Dict[str, Any], stub: PoolStub, bench, rebuild: bool, *, live: bool = False):
     """Ingest a corpus into a real index using only cached vectors.
 
     A ``.complete`` sentinel is written last, so an interrupted build is never
@@ -231,16 +275,34 @@ def build_db(spec: Dict[str, Any], stub: PoolStub, bench, rebuild: bool):
     if sentinel.exists() and not rebuild:
         logger.info("Reusing built index %s", spec["db"])
         return _construct(spec, stub)
-    for path in base.glob(f"{spec['db']}.*"):
-        path.unlink(missing_ok=True)
+    # `{db}.*` alone does NOT reach the hierarchical sidecars: they are named
+    # `{db}_sections.faiss` / `{db}_documents.faiss`, with an underscore before
+    # the dot, so a rebuild would silently inherit the previous build's section
+    # and document vectors. The second pattern is anchored on `{db}_` rather than
+    # `{db}` so that discarding `...__qasper__...` cannot also delete
+    # `...__qasper_full__...`.
+    for pattern in (f"{spec['db']}.*", f"{spec['db']}_*.faiss"):
+        for path in base.glob(pattern):
+            path.unlink(missing_ok=True)
 
-    db = _construct(spec, stub)
+    db = _construct(spec, stub, live=live)
     doc_ids = list(bench.corpus)
-    logger.info("building %s: %d documents", spec["db"], len(doc_ids))
+    logger.info("building %s: %d documents (live encoder: %s)", spec["db"], len(doc_ids), live)
+    started = time.monotonic()
     for start in range(0, len(doc_ids), 10):
         batch = doc_ids[start : start + 10]
         db.upsert([bench.corpus[d] for d in batch], ids=batch)
-        logger.info("  ingested %d/%d", min(start + 10, len(doc_ids)), len(doc_ids))
+        done = min(start + 10, len(doc_ids))
+        # A live ingest of this size runs for hours, so log a MEASURED rate and
+        # ETA rather than leaving the operator to extrapolate from a remembered
+        # tokens/sec -- that estimate has been wrong by 6x on this box before.
+        elapsed = time.monotonic() - started
+        eta = elapsed / done * (len(doc_ids) - done)
+        logger.info(
+            "  ingested %d/%d  (%.1f docs/min, ETA %.0f min)", done, len(doc_ids), done / elapsed * 60, eta / 60
+        )
+        if done % 100 == 0:
+            db.save()  # checkpoint; the sentinel is still withheld until the end
     db.save()
     if stub is not None and stub.misses:
         raise SystemExit(
@@ -250,6 +312,39 @@ def build_db(spec: Dict[str, Any], stub: PoolStub, bench, rebuild: bool):
         )
     sentinel.write_text("ok", encoding="utf-8")
     return db
+
+
+def fill_query_cache(spec: Dict[str, Any], queries: Dict[str, str], qids: Sequence[str]) -> None:
+    """Bank the query vectors the stub will read, through the SAME code that wrote the rest.
+
+    A new corpus brings new queries, and the sweep's stub raises on a cache miss
+    -- correctly, since a miss means the arm would be scored against a vector
+    nobody can account for. This fills the gap by delegating to
+    ``eval_hierarchical.CachedEmbedder`` rather than reimplementing its key
+    derivation: a hand-rolled ``sha256(model \\x00 text)`` that disagreed with it
+    by one byte would not fail, it would write a second, shadow set of vectors
+    into the same directory and every harness reading that cache afterwards would
+    silently get whichever it happened to hash to.
+
+    The prefix is applied HERE, with the provider's own prefixing off, because
+    that is the convention the directory was written under. It is the same string
+    src/ applies through its registry, so the banked vector is what a live query
+    would have produced -- checked, not assumed (``--verify-cache``).
+    """
+    from benchmarks.eval_equivalence import EGEMMA_QUERY_PREFIX
+    from benchmarks.eval_hierarchical import CachedEmbedder
+
+    want = (CACHE_DIR / "hier_embed" / spec["cache"]).resolve()
+    emb = CachedEmbedder("ollama", spec["model"], num_ctx=2048)
+    if emb.cache_dir.resolve() != want:
+        raise SystemExit(
+            f"ABORT: CachedEmbedder would write to {emb.cache_dir}, but the sweep's stub reads "
+            f"{want}. Filling the wrong directory leaves the sweep failing on misses while the "
+            "vectors sit somewhere nobody looks."
+        )
+    texts = [EGEMMA_QUERY_PREFIX + queries[q] for q in qids]
+    emb.encode(texts)
+    logger.info("query cache: %d embedded, %d already present -> %s", emb.n_embedded, emb.n_cached, emb.cache_dir)
 
 
 def run_arm(db, queries: Dict[str, str], qids: Sequence[str], method: str) -> List[List[str]]:
@@ -312,6 +407,42 @@ def score(ranked: List[List[str]], qids: Sequence[str], qrels: Dict[str, Dict[st
     )
 
 
+def compare(path_a: Path, path_b: Path) -> int:
+    """Paired bootstrap between two artifacts, arm by arm, on their shared queries.
+
+    The contrast this exists for is "same queries, bigger haystack": scoring
+    qasper's 882 dev queries against the 275-paper index and against the
+    1,088-paper one. Those two runs differ in exactly one thing, so the
+    difference is the cost of 813 more distractor documents -- which is otherwise
+    inseparable from the effect of simply drawing a larger query sample.
+
+    Pairing is by QUERY ID, never by position: the two files' ``qids`` lists are
+    built by different runs over different corpora, and lining up two arrays that
+    happen to be the same length would silently compare unrelated queries.
+    """
+    a = json.loads(path_a.read_text(encoding="utf-8"))
+    b = json.loads(path_b.read_text(encoding="utf-8"))
+    common = [q for q in a["qids"] if q in set(b["qids"])]
+    if not common:
+        raise SystemExit(f"No shared query ids between {path_a.name} and {path_b.name}")
+    ia = {q: i for i, q in enumerate(a["qids"])}
+    ib = {q: i for i, q in enumerate(b["qids"])}
+
+    print(f"\nA = {a['config'].get('arm', a['config']['dataset'])}  ({a['config'].get('n_documents', '?')} docs)")
+    print(f"B = {b['config'].get('arm', b['config']['dataset'])}  ({b['config'].get('n_documents', '?')} docs)")
+    print(f"{len(common)} shared queries\n")
+    print(f"{'arm':<30}{'A':>9}{'B':>9}{'B-A':>10}{'95% CI':>22}{'p':>8}")
+    for label in a["per_query"]:
+        if label not in b["per_query"]:
+            continue
+        va = np.array([a["per_query"][label][ia[q]] for q in common])
+        vb = np.array([b["per_query"][label][ib[q]] for q in common])
+        st = paired(vb, va)
+        ci = f"[{st['ci_lo']:+.4f},{st['ci_hi']:+.4f}]"
+        print(f"{label:<30}{va.mean():>9.4f}{vb.mean():>9.4f}{st['delta']:>+10.4f}{ci:>22}{st['p']:>8.3f}")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -334,6 +465,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "unrankable target, so this exists for diagnosis only",
     )
     p.add_argument(
+        "--max-papers",
+        type=int,
+        default=None,
+        help="qasper smoke builds only. Suffixes the index key for the same reason --max-contracts "
+        "does: a 12-paper smoke index that got reused by a full run once scored every arm at "
+        "chance (nDCG ~= 10/275) while looking like a real result.",
+    )
+    p.add_argument(
         "--max-contracts",
         type=int,
         default=None,
@@ -341,9 +480,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "reused by the full run -- an index missing most of its gold scores at chance and looks real.",
     )
     p.add_argument("--rebuild", action="store_true", help="discard and re-ingest even if complete")
+    p.add_argument("--build-only", action="store_true", help="stop after ingest; do not sweep")
+    p.add_argument(
+        "--fill-query-cache",
+        action="store_true",
+        help="embed any query text this corpus needs that is not yet banked, then stop. Local "
+        "encoder only. Run this once after a build; the sweep then reads vectors, not the encoder.",
+    )
+    p.add_argument(
+        "--embed",
+        action="store_true",
+        help="ingest through the REAL local encoder instead of the cache stub. Only legal for a "
+        "corpus that declares a local Ollama model, so it spends CPU-hours and never money; "
+        "required to build a corpus whose chunks have never been embedded.",
+    )
+    p.add_argument(
+        "--query-subset",
+        choices=("all", "dev"),
+        default="all",
+        help="qasper_full only. `dev` scores the 882 dev queries against the FULL index, which is "
+        "what separates the effect of 4x more distractors from the effect of a different query "
+        "sample -- dev is a verified strict subset of full (same ids, same rendered text).",
+    )
     p.add_argument("--no-verify", action="store_true", help="skip the patch-inertness check (do not)")
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument(
+        "--compare",
+        nargs=2,
+        type=Path,
+        metavar=("A.json", "B.json"),
+        help="paired bootstrap between two finished artifacts on their shared query ids, and exit",
+    )
     args = p.parse_args(argv)
+
+    if args.compare:
+        return compare(*args.compare)
 
     if args.dataset in _REFUSED and not args.i_know_maud_is_unrankable:
         raise SystemExit(f"REFUSING --dataset {args.dataset}: {_REFUSED[args.dataset]}")
@@ -366,10 +537,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             doc_qrels = ds.qrels
 
         bench = _Bench()
-    elif args.dataset == "qasper":
+    elif args.dataset in ("qasper", "qasper_full"):
         from benchmarks.qasper_data import load_qasper
 
-        bench = load_qasper(split="dev", max_papers=None)
+        bench = load_qasper(split="dev" if args.dataset == "qasper" else "full", max_papers=args.max_papers)
+        if args.max_papers:
+            spec["db"] += f"__max{args.max_papers}"
     elif args.dataset == "nq":
         from benchmarks.nq_data import load_nq
 
@@ -385,16 +558,56 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.max_contracts:
             spec["db"] += f"__max{args.max_contracts}"
 
+    if args.fill_query_cache:
+        if not spec.get("ollama"):
+            raise SystemExit(f"--fill-query-cache refused for {args.dataset}: no local encoder declared")
+        # Every scored query, not just the arm being swept: a subset arm reads
+        # from the same directory, and a half-filled cache fails later, not here.
+        scored = [q for q in bench.queries if any(v > 0 for v in bench.doc_qrels.get(q, {}).values())]
+        fill_query_cache(spec, bench.queries, scored)
+        return 0
+
     if args.build or args.rebuild:
-        db = build_db(spec, stub, bench, args.rebuild)
+        db = build_db(spec, stub, bench, args.rebuild, live=args.embed)
+        if args.build_only:
+            # Deliberately a separate invocation from the sweep. A `--embed` build
+            # leaves the LIVE encoder attached, and the sweep re-embeds every query
+            # once per arm -- 14 passes over 2,940 queries at ~0.5 s each is days,
+            # against seconds once those vectors are in the cache the stub reads.
+            logger.info("build complete: %s -- rerun without --build to sweep", spec["db"])
+            return 0
     else:
         db = open_db(spec, stub)
 
     qrels = bench.doc_qrels
     qids = [q for q in bench.queries if any(v > 0 for v in qrels.get(q, {}).values())]
+
+    if args.query_subset == "dev":
+        if args.dataset != "qasper_full":
+            raise SystemExit("--query-subset dev is only meaningful for --dataset qasper_full")
+        from benchmarks.qasper_data import load_qasper
+
+        keep = set(load_qasper(split="dev").queries)
+        subset = [q for q in qids if q in keep]
+        # If dev ever stops being a subset of full, this arm silently becomes a
+        # different query set and the distractor contrast is no longer paired.
+        if len(subset) != len(keep):
+            raise SystemExit(f"ABORT: {len(keep) - len(subset)} dev queries are absent from qasper_full")
+        qids = subset
+
     if args.max_queries:
         qids = qids[: args.max_queries]
-    logger.info("%s: %d scored queries over %d documents", args.dataset, len(qids), len(bench.corpus))
+    # Artifacts are named for the ARM, not the dataset: `qasper_full` scored over
+    # dev's queries is a different measurement from `qasper_full` over all of
+    # them, and writing both to one filename would let the second silently
+    # overwrite the first.
+    tag = args.dataset if args.query_subset == "all" else f"{args.dataset}_devq"
+    # A capped smoke must not write to the full run's filename either -- the same
+    # collision the index key guards against, one level up in the artifacts.
+    for cap, name in ((args.max_papers, "papers"), (args.max_contracts, "contracts"), (args.max_queries, "q")):
+        if cap:
+            tag += f"__max{name}{cap}"
+    logger.info("%s: %d scored queries over %d documents", tag, len(qids), len(bench.corpus))
 
     from localvectordb.database import _search
 
@@ -415,7 +628,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 logger.info("pool=%-5d %s", pool, fanout[f"pool={pool}"])
         finally:
             _search._hybrid_pool_size = shipped_fn
-        out = args.out or (Path("experiments") / f"poolwidth_{args.dataset}_fanout.json")
+        out = args.out or (Path("experiments") / f"poolwidth_{tag}_fanout.json")
         out.write_text(json.dumps({"dataset": args.dataset, "fanout": fanout}, indent=2), encoding="utf-8")
         logger.info("wrote %s", out)
         return 0
@@ -457,7 +670,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Everything is read against what a user gets today: the shipped width with
     # the shipped hybrid aggregator.
     base_label = f"pool={SHIPPED_POOL}|frequency_boost"
-    print(f"\n{args.dataset}: {len(qids)} queries, baseline = {base_label}\n")
+    print(f"\n{tag}: {len(qids)} queries over {len(bench.corpus)} docs, baseline = {base_label}\n")
     print(f"{'arm':<30}{'ndcg@10':>10}{'delta':>10}{'95% CI':>22}{'p':>8}")
     stats: Dict[str, Dict[str, float]] = {}
     if base_label in per_query:
@@ -472,13 +685,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ci = f"[{st['ci_lo']:+.4f},{st['ci_hi']:+.4f}]"
             print(f"{label:<30}{arr.mean():>10.4f}{st['delta']:>+10.4f}{ci:>22}{st['p']:>8.3f}")
 
-    out = args.out or (Path("experiments") / f"poolwidth_{args.dataset}.json")
+    out = args.out or (Path("experiments") / f"poolwidth_{tag}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(
             {
                 "config": {
                     "dataset": args.dataset,
+                    "arm": tag,
+                    "query_subset": args.query_subset,
+                    "n_documents": len(bench.corpus),
                     "db": spec["db"],
                     "model": spec["model"],
                     "pools": args.pools,

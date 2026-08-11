@@ -160,45 +160,30 @@ def _evidence_strings(qa: dict) -> List[str]:
     return out
 
 
-def load_qasper(
-    *,
-    split: str = "dev",
-    data_dir: Optional[Path] = None,
-    max_papers: Optional[int] = None,
-    seed: int = 0,
-) -> SyntheticBenchmark:
-    """Load Qasper as a benchmark with document- and section-level qrels.
+# ``"full"`` is train+dev, the whole public release. It is a DISTINCT split name
+# and never an alias for a widened ``"dev"``: every qasper number recorded before
+# 2026-08-11 is dev-only, so regrading them against a 4x corpus under the same
+# name would silently make those results incomparable to themselves. The splits
+# are safe to concatenate -- measured, not assumed: 0 paper-id and 0 question-id
+# collisions between the two files.
+_SPLIT_FILES: Dict[str, Tuple[str, ...]] = {
+    "dev": ("dev",),
+    "train": ("train",),
+    "full": ("train", "dev"),
+}
 
-    Parameters
-    ----------
-    split
-        ``"dev"`` (~280 papers, the default) or ``"train"`` (~880).
-    max_papers
-        Cap the corpus to the first ``max_papers`` papers (deterministic order);
-        all of their answerable questions are kept. ``None`` uses every paper.
-    seed
-        Unused for selection (order is deterministic); accepted for a uniform
-        call signature with the synthetic builder.
-    """
-    from localvectordb.section_detection import SectionDetector
 
-    root = download(data_dir=data_dir)
-    matches = sorted(root.glob(f"*{split}*.json"))
-    if not matches:
-        raise FileNotFoundError(f"No Qasper {split!r} JSON under {root}")
-    data = json.loads(matches[0].read_text(encoding="utf-8"))
-
-    detector = SectionDetector()
-    paper_ids = sorted(data)
-    if max_papers is not None:
-        paper_ids = paper_ids[:max_papers]
-
-    corpus: Dict[str, str] = {}
-    queries: Dict[str, str] = {}
-    doc_qrels: Dict[str, Dict[str, int]] = {}
-    section_qrels: Dict[str, Dict[str, int]] = {}
-    passage_qrels: Dict[str, Dict[str, int]] = {}
-
+def _accumulate(
+    data: dict,
+    paper_ids: List[str],
+    detector,
+    corpus: Dict[str, str],
+    queries: Dict[str, str],
+    doc_qrels: Dict[str, Dict[str, int]],
+    section_qrels: Dict[str, Dict[str, int]],
+    passage_qrels: Dict[str, Dict[str, int]],
+) -> Tuple[int, int, int, int]:
+    """Fold one split's papers into the shared dicts. Returns counters."""
     n_questions = n_kept = n_evidence = n_located = 0
     for pid in paper_ids:
         paper = data[pid]
@@ -224,6 +209,8 @@ def load_qasper(
                     n_located += 1
             if not gold_sections:
                 continue
+            if qid in queries:  # cannot happen across the released splits; see _SPLIT_FILES
+                raise ValueError(f"Duplicate Qasper question id {qid!r} across splits -- qrels would be overwritten")
             queries[qid] = question
             doc_qrels[qid] = {pid: 1}
             section_qrels[qid] = {sid: 1 for sid in gold_sections}
@@ -232,7 +219,62 @@ def load_qasper(
             added_paper = True
 
         if added_paper:
+            if pid in corpus:
+                raise ValueError(f"Duplicate Qasper paper id {pid!r} across splits -- the corpus would be overwritten")
             corpus[pid] = text
+    return n_questions, n_kept, n_evidence, n_located
+
+
+def load_qasper(
+    *,
+    split: str = "dev",
+    data_dir: Optional[Path] = None,
+    max_papers: Optional[int] = None,
+    seed: int = 0,
+) -> SyntheticBenchmark:
+    """Load Qasper as a benchmark with document- and section-level qrels.
+
+    Parameters
+    ----------
+    split
+        ``"dev"`` (~280 papers, the default), ``"train"`` (~880), or ``"full"``
+        (both, ~1.17k papers -- the whole release).
+    max_papers
+        Cap the corpus to the first ``max_papers`` papers (deterministic order);
+        all of their answerable questions are kept. ``None`` uses every paper.
+        Applied **per split**, so a capped ``"full"`` draws from both.
+    seed
+        Unused for selection (order is deterministic); accepted for a uniform
+        call signature with the synthetic builder.
+    """
+    from localvectordb.section_detection import SectionDetector
+
+    if split not in _SPLIT_FILES:
+        raise ValueError(f"Unknown Qasper split {split!r}; expected one of {sorted(_SPLIT_FILES)}")
+
+    root = download(data_dir=data_dir)
+    detector = SectionDetector()
+
+    corpus: Dict[str, str] = {}
+    queries: Dict[str, str] = {}
+    doc_qrels: Dict[str, Dict[str, int]] = {}
+    section_qrels: Dict[str, Dict[str, int]] = {}
+    passage_qrels: Dict[str, Dict[str, int]] = {}
+    n_questions = n_kept = n_evidence = n_located = 0
+
+    for part in _SPLIT_FILES[split]:
+        matches = sorted(root.glob(f"*{part}*.json"))
+        if not matches:
+            raise FileNotFoundError(f"No Qasper {part!r} JSON under {root}")
+        data = json.loads(matches[0].read_text(encoding="utf-8"))
+        paper_ids = sorted(data)
+        if max_papers is not None:
+            paper_ids = paper_ids[:max_papers]
+        counts = _accumulate(data, paper_ids, detector, corpus, queries, doc_qrels, section_qrels, passage_qrels)
+        n_questions += counts[0]
+        n_kept += counts[1]
+        n_evidence += counts[2]
+        n_located += counts[3]
 
     if not queries:
         raise ValueError(f"Qasper {split!r}: no questions with locatable textual evidence")
