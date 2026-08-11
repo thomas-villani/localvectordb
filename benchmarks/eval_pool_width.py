@@ -94,6 +94,10 @@ CORPORA: Dict[str, Dict[str, Any]] = {
         "cache": "ollama__embeddinggemma-300m__ctx2048",
         "dimension": 768,
         "hierarchical": True,
+        # Same local encoder as qasper_full, so the ingest/cache-fill modes are
+        # available here too. Declaring it does not change how this leg is swept:
+        # the sweep still runs off the stub, and this index is already built.
+        "ollama": True,
     },
     # Train+dev: 1,088 papers / 13,503 chunks / 2,940 queries, versus dev's
     # 275 / 3,155 / 882. A SEPARATE leg under its own key, never a widened
@@ -320,7 +324,7 @@ def fill_query_cache(spec: Dict[str, Any], queries: Dict[str, str], qids: Sequen
     A new corpus brings new queries, and the sweep's stub raises on a cache miss
     -- correctly, since a miss means the arm would be scored against a vector
     nobody can account for. This fills the gap by delegating to
-    ``eval_hierarchical.CachedEmbedder`` rather than reimplementing its key
+    ``eval_hierarchical.CachedEncoder`` rather than reimplementing its key
     derivation: a hand-rolled ``sha256(model \\x00 text)`` that disagreed with it
     by one byte would not fail, it would write a second, shadow set of vectors
     into the same directory and every harness reading that cache afterwards would
@@ -332,13 +336,13 @@ def fill_query_cache(spec: Dict[str, Any], queries: Dict[str, str], qids: Sequen
     would have produced -- checked, not assumed (``--verify-cache``).
     """
     from benchmarks.eval_equivalence import EGEMMA_QUERY_PREFIX
-    from benchmarks.eval_hierarchical import CachedEmbedder
+    from benchmarks.eval_hierarchical import CachedEncoder
 
     want = (CACHE_DIR / "hier_embed" / spec["cache"]).resolve()
-    emb = CachedEmbedder("ollama", spec["model"], num_ctx=2048)
+    emb = CachedEncoder("ollama", spec["model"], num_ctx=2048)
     if emb.cache_dir.resolve() != want:
         raise SystemExit(
-            f"ABORT: CachedEmbedder would write to {emb.cache_dir}, but the sweep's stub reads "
+            f"ABORT: CachedEncoder would write to {emb.cache_dir}, but the sweep's stub reads "
             f"{want}. Filling the wrong directory leaves the sweep failing on misses while the "
             "vectors sit somewhere nobody looks."
         )
