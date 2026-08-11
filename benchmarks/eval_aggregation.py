@@ -64,6 +64,7 @@ import argparse
 import json
 import logging
 import math
+import statistics
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -189,6 +190,122 @@ def agg_freq_boost(bias: float, clip: bool) -> Callable[[List[float]], float]:
     return f
 
 
+def agg_len_norm(m: int, p: float) -> Callable[[List[float]], float]:
+    """``sum(top m) / n**p`` -- the LENGTH-PENALTY direction of the axis.
+
+    The study has measured the reward direction (`freq`, which multiplies by a
+    coverage term) and the neutral direction (`max`). It has never measured a
+    penalty. That gap matters specifically because S18.4 found the failure mode
+    of an unclamped `freq` is a length prior leaking in: if owning more children
+    is a liability rather than an asset, an explicit penalty should beat both.
+
+    ``p=0`` degenerates to `sum@m` and ``m=1, p=1`` is max/n, so the family
+    brackets the shipped operators rather than sitting off to one side.
+    """
+
+    def f(vals: List[float]) -> float:
+        return sum(vals[:m]) / (len(vals) ** p)
+
+    return f
+
+
+def agg_diminishing(decay: float, normalize: bool, clip: bool) -> Callable[[List[float]], float]:
+    """The removed ``diminishing_returns``, transcribed from `54a9898^`.
+
+    Worth resurrecting for a reason the July sweep could not have had: it is
+    rank-decayed, and its normalised form divides by ``sum(decay**i)`` over ALL
+    children -- so the shipped version was a position-weighted *mean*, i.e. the
+    "position-weighted mean" the brainstorm lists as untried was in the codebase
+    the whole time, and was measured at a single pool width where S18 says every
+    aggregator difference is smallest.
+
+    ``normalize=False`` is the decayed SUM, which is the same operator moved into
+    the family S18.3 found wins on document targets. The pair is the test of
+    whether that method was removed for being wrong or for being normalised.
+    """
+
+    def f(vals: List[float]) -> float:
+        total = 0.0
+        weight = 1.0
+        for v in vals:
+            total += v * weight
+            weight *= decay
+        if not normalize:
+            return total
+        max_possible = sum(decay**i for i in range(len(vals)))
+        raw = total / max_possible if max_possible > 0 else 0.0
+        return min(1.0, raw) if clip else raw
+
+    return f
+
+
+def agg_percentile(primary: float, secondary: Optional[float], primary_weight: float) -> Callable[[List[float]], float]:
+    """The removed ``percentile``, transcribed from `54a9898^`.
+
+    The best-performing dropped method in four of the six legs of that sweep, and
+    the most defensible of the eight: a true order statistic is monotone, and the
+    family CONTAINS max at p100, so it is the "soft max" nothing else here tests.
+
+    ``secondary=None`` is the single clean order statistic; the two-percentile
+    blend is what actually shipped. Both are measured, because the blend's second
+    term is exactly the kind of unmotivated knob that made the eight prunable.
+    """
+
+    def f(vals: List[float]) -> float:
+        if len(vals) == 1:
+            return vals[0]
+        arr = np.asarray(vals, dtype=float)
+        hi = float(np.percentile(arr, primary * 100))
+        if secondary is None:
+            return hi
+        lo = float(np.percentile(arr, secondary * 100))
+        return hi * primary_weight + lo * (1.0 - primary_weight)
+
+    return f
+
+
+def agg_robust_mean(outlier_threshold: float, position_decay: float) -> Callable[[List[float]], float]:
+    """The removed ``robust_mean``, transcribed from `54a9898^`: z-trim, then
+    rank-decay the survivors. A defensible trimmed mean, included as the third
+    resurrection rather than the headline one."""
+
+    def f(vals: List[float]) -> float:
+        if len(vals) == 1:
+            return vals[0]
+        mean_score = statistics.mean(vals)
+        std_score = statistics.stdev(vals)
+        if std_score > 0:
+            kept = [v for v in vals if abs(v - mean_score) <= outlier_threshold * std_score]
+        else:
+            kept = list(vals)
+        if not kept:
+            kept = list(vals)
+        kept.sort(reverse=True)
+        weights = [position_decay**i for i in range(len(kept))]
+        wsum = sum(weights)
+        return sum(v * w for v, w in zip(kept, weights, strict=True)) / wsum if wsum > 0 else 0.0
+
+    return f
+
+
+def agg_harmonic(max_chunks: int, coverage_threshold: float) -> Callable[[List[float]], float]:
+    """The removed ``harmonic_mean``, transcribed from `54a9898^`. CONTROL ONLY.
+
+    It topped two legs of the July sweep, so it is measured -- but a harmonic
+    mean is dominated by its smallest term, which makes it a near-relative of the
+    `worst` aggregator and non-monotone in the direction that produces surprising
+    rank flips. It is here to be refuted, not advocated.
+    """
+
+    def f(vals: List[float]) -> float:
+        top = vals[:max_chunks]
+        harmonic = len(top) / sum(1.0 / max(v, 0.001) for v in top)
+        coverage_ratio = sum(1 for v in vals if v >= coverage_threshold) / len(vals)
+        return min(1.0, harmonic * (1.0 + coverage_ratio * 0.2))
+
+    return f
+
+
 def agg_count(vals: List[float]) -> float:
     """Pure coverage control: how many children this parent has in the pool.
 
@@ -216,6 +333,17 @@ AGGREGATORS: Dict[str, Callable[[List[float]], float]] = {
     "lse@20": agg_lse(20.0),
     "lse@10": agg_lse(10.0),
     "lse@5": agg_lse(5.0),
+    # -- the missing third of the length axis (reward / neutral / PENALTY) --
+    "lnorm@1p0.5": agg_len_norm(1, 0.5),  # max / sqrt(n)
+    "lnorm@2p0.5": agg_len_norm(2, 0.5),
+    "lnorm@1p1.0": agg_len_norm(1, 1.0),  # max / n -- the strong penalty
+    # -- resurrected from `54a9898`, which measured all 11 at ONE pool width --
+    "dimret@0.8": agg_diminishing(0.8, normalize=True, clip=True),  # as shipped pre-prune
+    "dimret@0.8_sum": agg_diminishing(0.8, normalize=False, clip=False),  # the sum form
+    "pctl@0.9/0.7": agg_percentile(0.9, 0.7, 0.7),  # as shipped pre-prune
+    "pctl@0.9": agg_percentile(0.9, None, 1.0),  # the clean order statistic
+    "robust@2/0.9": agg_robust_mean(2.0, 0.9),
+    "harm@5": agg_harmonic(5, 0.7),  # control; expected to behave like `worst`
     # -- control --
     "count": agg_count,
 }

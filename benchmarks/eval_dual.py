@@ -261,6 +261,40 @@ MODEL_POOL: Dict[str, ModelSpec] = {
         doc_prefix="",
         note="hosted 32k; non-pooling long/section leg; $0.01/M in (OpenRouter)",
     ),
+    # The SAME model as `qwen3lc`, windowed to match the local 0.6b arm, so that
+    # `qwen3` vs `qwen3lc_matched` is a within-family SIZE contrast and nothing
+    # else. Added rather than mutating `qwen3lc`, because clamping that spec would
+    # spend the one property it exists for -- it is the only non-pooling arm above
+    # 8k, and both questions deserve to stay answerable.
+    #
+    # There is no context-length parameter on an embeddings request, and this
+    # harness forwards `num_ctx` to Ollama alone (`forward_num_ctx`). Input length
+    # for a hosted arm is therefore set HERE, by the window, and matching windows
+    # is the only way to normalise it. 24_576 chars ~= 7_022 band-tokens, under the
+    # local arm's num_ctx=8192, so neither side truncates and neither pools below
+    # that size.
+    #
+    # Two confounds remain and only one is fixable in a spec. `cache_suffix` must
+    # differ from `qwen3lc`'s or the two windows would silently share vectors --
+    # that is handled. Dimension is not: 1024 vs 4096 is a 4x representation
+    # budget, so read the size contrast at a matched MRL slice (<=1024) first and
+    # treat the native-dim comparison as capacity+budget together.
+    "qwen3lc_matched": ModelSpec(
+        key="qwen3lc_matched",
+        provider="openrouter",
+        model="qwen/qwen3-embedding-8b",
+        dim=4096,
+        mrl_dims=(4096, 2048, 1024, 512, 256, 128),
+        window_chars=24_576,  # == qwen3 0.6b; the whole point of this spec
+        cache_suffix="__w24576",
+        forward_num_ctx=False,
+        max_inputs=512,
+        max_req_tokens=150_000,
+        timeout=600,
+        query_prefix=("Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "),
+        doc_prefix="",
+        note="hosted 8b at the 0.6b's window; within-family size contrast vs `qwen3`",
+    ),
 }
 
 
