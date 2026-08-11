@@ -178,16 +178,51 @@ hier gate runs hybrid and the retrieval gate passes explicit methods, so their `
 inertness for existing callers, not that the new default worked. That needed end-to-end tests
 (`tests/test_scoring.py::TestAutoDocumentScoringEndToEnd`).
 
-**5c. A quoted phrase inside a sentence kills the keyword leg.** `handle_phrase_query` AND-joins every
-term around a quoted phrase, including stopwords — the exact failure the plain-text branch documents
-and avoids. It hits **20.6% of MAUD queries**, of which **99.8% return zero keyword hits**. Measured
-cost is small (**+0.0022** to repair, because MAUD's vector leg already carries those queries), so this
-is a correctness fix, not a retrieval one. Of the two candidate semantics, the principled reading
-(`phrase_required`: a quote is a hard constraint) *lost*; `all_or` won. Evidence is thin — no corpus
-tested has this branch both common and consequential — so measure the fallback variant
-(`phrase_required`, retrying as `all_or` when the leg comes back empty) before choosing. Harness:
-`benchmarks/eval_fts_phrase.py`. The sanitiser is otherwise injection-safe and crash-free across 9,333
-real queries.
+**5c. A quoted phrase inside a sentence kills the keyword leg — SHIPPED 2026-08-10 (`0cbe243`).**
+`handle_phrase_query` AND-joined every term around a quoted phrase, stopwords included — the exact
+failure the plain-text branch documents and avoids. It hit **20.6% of MAUD queries**, of which
+**99.8% returned zero keyword hits**. Now OR-joins, each phrase surviving as one phrase token.
+
+The fallback variant this item asked for was measured, and it **reframed the defect**:
+`phrase_fallback` (strict, degrading to `all_or` only when strict returns nothing) eliminates every
+dead leg and gains **+0.0002 (n.s.)**, while `all_or` gains **+0.0022** (p=.028). They differ only on
+the 412 queries where the conjunction *did* return rows — so rescuing dead legs is worth ~+0.0012 and
+de-conjoining the ones that already worked is worth ~+0.0020. **The problem was the conjunction
+ranking badly, not returning nothing.** `all_or` shipped on that evidence.
+
+Trade taken knowingly: a quoted phrase no longer constrains the result set, only ranks it (still
+matched as a phrase; a fully-quoted query still binds via the exact-phrase branch). **Both gates are
+structurally blind** — SciFact has 0/300 quoted queries — so the evidence is the MAUD number plus 10
+tests in `tests/test_keyword_search_semantics.py`. The sanitiser is otherwise injection-safe and
+crash-free across 9,333 real queries.
+
+**5d. The hybrid candidate pool is too small — MEASURED, not yet shipped.** `_hybrid_search` sets
+`search_k = max(k, min(k * 4, 100))` for both legs, so the default `k=10` retrieves **40**. On qasper
+the optimum is **100–200**:
+
+| arm | 40→100 | 40→200 | 100→400 |
+|---|---|---|---|
+| doc `max` | **+0.0083** p=.004 | **+0.0083** p=.019 | −0.0004 null |
+| doc `pctl@0.9` | **+0.0085** p=.016 | **+0.0118** p=.008 | +0.0006 null |
+| section `pctl@0.9` | **+0.0078** p=.001 | **+0.0076** p=.004 | +0.0008 null |
+| doc **`freq@0.3`** | +0.0004 null | −0.0038 null | **−0.0076 LOSS** |
+
+It is a **hybrid-only** effect: on a vector-only leg widening moves `max` by exactly +0.0000 at every
+step. The mechanism is the zero-fill — `_relative_score_fusion` scores a keyword-only chunk **0.0** on
+the vector leg, and because the vector band is compressed the chunk just outside the cutoff is nearly
+as good as the one inside. **Two conditions before shipping:** it must be measured on the real
+`db.query()` path (these are numpy captures), and it has to move *together* with the aggregator,
+because the shipped `frequency_boost` degrades at wider pools while `max`/`percentile` gain. qasper
+only so far. Cost is 2.5× the candidates through fusion.
+
+**5e. Resurrect `percentile` as an option (not a default).** Removed in `54a9898` — a sound prune
+whose one gap was sweeping a single pool width, which is where aggregator differences are smallest.
+Re-measured across six pools, three corpora and two encoders: a **document-target** aggregator,
+**3 of 4 doc cells positive** (best: NQ doc/vector +0.0201) and **0 of 6 section wins** (two
+significant losses). Fanout sets the magnitude of its deviation from `max`; the target unit sets the
+sign. Bring it back with **one** parameter — the clean single order statistic beat the shipped
+two-percentile blend in **19 of 20 cells**, so `secondary_percentile` and `primary_weight` should not
+return with it.
 
 **6. Over-fetch when `return_type="sections"`.** `_search` sets `fetch_k == k` with no reranker, so
 asking for 10 sections retrieves 10 *chunks*, which collapse into far fewer distinct sections. Worth
