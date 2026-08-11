@@ -196,24 +196,29 @@ structurally blind** — SciFact has 0/300 quoted queries — so the evidence is
 tests in `tests/test_keyword_search_semantics.py`. The sanitiser is otherwise injection-safe and
 crash-free across 9,333 real queries.
 
-**5d. The hybrid candidate pool is too small — MEASURED, not yet shipped.** `_hybrid_search` sets
-`search_k = max(k, min(k * 4, 100))` for both legs, so the default `k=10` retrieves **40**. On qasper
-the optimum is **100–200**:
+**5d. The hybrid candidate pool — MEASURED ON THE REAL PATH, and NOT to be shipped.**
+`_hybrid_search` fetches `_hybrid_pool_size(k) = max(k, min(k * 4, 100))` for both legs, so the
+default `k=10` retrieves **40**. §19.3 measured a ~+0.008 win for widening to 100–200 on numpy
+captures. §20 re-ran it through `db.query()` on three corpora. The mechanism replicated exactly on
+qasper (numpy predicted +0.0083 at 40→100; the product gave +0.0077, p=.005; `frequency_boost` gained
+nothing, as predicted). **The recommendation did not survive the corpus axis.**
 
-| arm | 40→100 | 40→200 | 100→400 |
-|---|---|---|---|
-| doc `max` | **+0.0083** p=.004 | **+0.0083** p=.019 | −0.0004 null |
-| doc `pctl@0.9` | **+0.0085** p=.016 | **+0.0118** p=.008 | +0.0006 null |
-| section `pctl@0.9` | **+0.0078** p=.001 | **+0.0076** p=.004 | +0.0008 null |
-| doc **`freq@0.3`** | +0.0004 null | −0.0038 null | **−0.0076 LOSS** |
+The change a user would actually get — `best` @200 vs today's `frequency_boost` @40:
 
-It is a **hybrid-only** effect: on a vector-only leg widening moves `max` by exactly +0.0000 at every
-step. The mechanism is the zero-fill — `_relative_score_fusion` scores a keyword-only chunk **0.0** on
-the vector leg, and because the vector band is compressed the chunk just outside the cutoff is nearly
-as good as the one inside. **Two conditions before shipping:** it must be measured on the real
-`db.query()` path (these are numpy captures), and it has to move *together* with the aggregator,
-because the shipped `frequency_boost` degrades at wider pools while `max`/`percentile` gain. qasper
-only so far. Cost is 2.5× the candidates through fusion.
+| corpus | n | fanout@40 | baseline | `best` 40→200 | **end-to-end** |
+|---|---|---|---|---|---|
+| qasper | 882 | 1.78 | 0.4657 | **+0.0099** p=.003 | +0.0067 p=.066 |
+| NFCorpus | 323 | 1.03 | 0.3367 | +0.0008 null | +0.0011 null |
+| NQ | 2000 | 4.61 | 0.9493 | −0.0007 null | **−0.0030 p=.024 LOSS** |
+
+One win, one null, one significant loss — and even qasper's end-to-end change misses significance,
+because switching aggregator costs −0.0032 at the shipped width before the wider pool earns it back.
+**The default stays at 40.** Two findings are worth keeping: the gain is an **aggregation** effect and
+not candidate recall (NFCorpus's pool is 97% distinct documents; adding 345 more moved +0.0004), and
+the tempting "fanout gates it" rule is **refuted** — NQ has the highest fanout and no effect. The
+open, falsifiable question is whether *headroom × fanout* predicts it; **MLDR** is the discriminating
+fourth corpus, since qasper is currently the only one with both. Cost, if revisited: 2.2× retrieval
+latency at pool 200, 4.0× at 400.
 
 **5e. Resurrect `percentile` as an option (not a default).** Removed in `54a9898` — a sound prune
 whose one gap was sweeping a single pool width, which is where aggregator differences are smallest.

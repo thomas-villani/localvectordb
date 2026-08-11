@@ -112,6 +112,24 @@ def _resolve_rerank_k(rerank_k: Optional[int], k: int) -> int:
     return max(k, min(requested, _RERANK_K_MAX))
 
 
+def _hybrid_pool_size(k: int) -> int:
+    """Width each leg fetches before hybrid fusion, for a request of ``k``.
+
+    Over-fetch ``k*4`` for fusion/dedup headroom, ceiling 100 to bound work for
+    small ``k`` -- but never below ``k`` itself, or a large-``k`` request (or the
+    rerank over-fetch that passes ``fetch_k`` in as ``k``) is silently truncated
+    or starved.
+
+    This is a function rather than an inline expression because the pool is part
+    of the *scoring* operator, not just a fetch budget: with
+    ``return_type="documents"`` the chunk->document aggregator runs over this
+    whole pool before the truncation to ``k``, so its width changes the ranking
+    and not merely the cost. Naming it keeps that visible and lets a benchmark
+    sweep it against the real query path instead of a re-implementation of it.
+    """
+    return max(k, min(k * 4, 100))
+
+
 def _faiss_search_with_selector(
     index: Any,
     query_embedding: np.ndarray,
@@ -1891,10 +1909,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 context_truncate,
                 query_embedding=query_embedding,
             )
-        # Over-fetch k*4 for fusion/dedup headroom, ceiling 100 to bound work for
-        # small k -- but never below k itself, or a large-k request (or the rerank
-        # over-fetch that passes fetch_k in as k) is silently truncated / starved.
-        search_k = max(k, min(k * 4, 100))
+        search_k = _hybrid_pool_size(k)
         vector_results = self._vector_search(
             query, "chunks", search_k, 0.0, filters, 0, None, query_embedding=query_embedding
         )
@@ -4232,9 +4247,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 context_unit,
                 context_truncate,
             )
-        # Ceiling the over-fetch at 100 bounds work for small k, but never below
-        # k (nor the rerank fetch_k passed in as k), which would truncate/starve.
-        search_k = max(k, min(k * 4, 100))
+        search_k = _hybrid_pool_size(k)
         vector_task = asyncio.create_task(
             self._vector_search_with_embedding_async(query_embedding, "chunks", search_k, 0.0, filters, 0, None, "best")
         )
