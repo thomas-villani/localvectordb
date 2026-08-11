@@ -40,7 +40,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Sequence
 
 import numpy as np
 
@@ -139,10 +139,27 @@ def sanitize_all_or(query: str) -> str:
     return _wrap(query, join)
 
 
-VARIANTS: Dict[str, Callable[[str], str]] = {
+def sanitize_phrase_fallback(query: str) -> List[str]:
+    """`phrase_required`, degrading to `all_or` only when the strict form is dead.
+
+    The third candidate, added after the first sweep made the choice between the
+    other two rest on one small significant win. It is the only variant that can
+    both honour a quote AND never return an empty leg, so if the quote is a real
+    constraint it keeps it, and if the corpus simply does not contain the phrase
+    it stops paying for that with silence. Expressed as an ordered candidate
+    list, which `FTS.search` tries in turn -- the fallback is conditional on the
+    RESULT, so no query->str function can encode it.
+    """
+    strict = sanitize_phrase_required(query)
+    loose = sanitize_all_or(query)
+    return [strict] if strict == loose else [strict, loose]
+
+
+VARIANTS: Dict[str, Callable[[str], Any]] = {
     "current": sanitize_current,
     "phrase_required": sanitize_phrase_required,
     "all_or": sanitize_all_or,
+    "phrase_fallback": sanitize_phrase_fallback,
 }
 BASELINE = "current"
 

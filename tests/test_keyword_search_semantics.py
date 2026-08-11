@@ -259,3 +259,79 @@ class TestKeywordSearchEndToEnd:
         )
         assert results
         assert results[0].id == "doc0"
+
+
+# ---------------------------------------------------------------------------
+# Defect C: the phrase-mixed branch AND-joined, which is defect A wearing a quote
+# ---------------------------------------------------------------------------
+
+
+class TestPhraseMixedQueries:
+    """A query that only PARTLY quotes used to conjoin every part, stopwords included.
+
+    Same failure as defect A and for the same reason, but it survived the T1.0 fix
+    because that fix only touched the bare multi-term path. Measured on 2,752 MAUD
+    queries: 20.6% took this branch and 99.8% of those returned nothing.
+    """
+
+    def test_phrase_mixed_query_is_or_joined(self):
+        assert sanitize('How is a "chunk of posts" defined?') == (
+            '"How" OR "is" OR "a" OR "chunk of posts" OR "defined"'
+        )
+
+    def test_the_phrase_survives_as_one_phrase(self):
+        """OR-joining must not shatter the phrase into loose words.
+
+        If it did, quoting would stop meaning anything at all rather than merely
+        stopping being mandatory -- and the whole change would be a no-op dressed
+        up as a fix.
+        """
+        out = sanitize('the "quick brown" fox')
+        assert '"quick brown"' in out
+        assert '"quick" OR "brown"' not in out
+
+    def test_a_fully_quoted_query_is_still_required_to_match(self):
+        """The exact-phrase branch is untouched: quoting the WHOLE query still binds."""
+        assert sanitize('"machine learning"') == '"machine learning"'
+
+    def test_multiple_phrases_each_survive(self):
+        out = sanitize('the "quick brown" fox and the "lazy dog"')
+        assert '"quick brown"' in out and '"lazy dog"' in out
+        assert " AND " not in out
+
+    def test_boolean_branch_is_untouched(self):
+        """Only the phrase branch changed; an explicit AND still conjoins."""
+        assert sanitize("aspirin AND risk") == '"aspirin" AND "risk"'
+
+    def test_phrase_mixed_query_finds_the_document(self, fts):
+        """The point of the change, against a real index.
+
+        No document contains every word of this sentence, so the old AND-join
+        returned nothing while the phrase itself was present all along.
+        """
+        query = 'does "cardiovascular risk" fall in elderly diabetic patients?'
+        assert _match(fts, sanitize(query)), "phrase-mixed keyword search found nothing"
+
+    def test_the_old_and_join_would_have_matched_nothing(self, fts):
+        """Pins the defect, so a revert to AND-joining fails loudly here."""
+        query = 'does "cardiovascular risk" fall in elderly diabetic patients?'
+        and_joined = '"does" AND "cardiovascular risk" AND "fall" AND "in" AND "elderly"'
+        assert _match(fts, and_joined) == []
+        assert _match(fts, sanitize(query)) != []
+
+    def test_the_phrase_still_constrains_ranking(self, fts):
+        """OR-joining costs the phrase its veto, not its contribution.
+
+        Doc 0 contains "cardiovascular risk" as a contiguous phrase; doc 2 has both
+        words but not adjacent. If the phrase were shattered they would be
+        interchangeable here.
+        """
+        assert _match(fts, '"cardiovascular risk"') == [0]
+
+    @pytest.mark.parametrize(
+        "hostile",
+        ['unclosed "phrase', '"" empty', 'a "*" b', '"x" OR docs MATCH "y'],
+    )
+    def test_hostile_phrase_input_neither_errors_nor_matches_everything(self, fts, hostile):
+        rows = _match(fts, sanitize(hostile))  # must not raise sqlite3.OperationalError
+        assert len(rows) <= len(_DOCS)

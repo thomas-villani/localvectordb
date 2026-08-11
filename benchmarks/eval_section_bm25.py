@@ -118,25 +118,37 @@ class FTS:
         self.conn.commit()
 
     def search(self, query: str, limit: int, scope: Optional[str] = None) -> Dict[str, float]:
-        """{unit_id: raw bm25} best-first, using src's own query sanitisation."""
+        """{unit_id: raw bm25} best-first, using src's own query sanitisation.
+
+        A candidate ``sanitize`` may return either a single MATCH string or a
+        sequence of them, tried in order until one returns rows. That is what
+        lets a *fallback* rule -- strict first, permissive if the strict form
+        matches nothing -- be measured against a single-shot one; a pure
+        query->str function cannot express it, because the decision depends on
+        the result set.
+        """
         from localvectordb._filters import FTSQuerySanitization
 
         sanitize = self.sanitize or FTSQuerySanitization.sanitize_fts_query
-        sanitized = sanitize(query)
-        if not sanitized:
-            return {}
-        sql = "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ?"
-        params: List[object] = [sanitized]
-        if scope is not None:
-            sql += " AND doc = ?"
-            params.append(scope)
-        sql += " ORDER BY rank ASC LIMIT ?"
-        params.append(limit)
-        try:
-            rows = self.conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:  # malformed MATCH after sanitisation
-            return {}
-        return {self.ids[r[0]]: float(r[1]) for r in rows}
+        produced = sanitize(query)
+        candidates = [produced] if isinstance(produced, str) else list(produced)
+        for sanitized in candidates:
+            if not sanitized:
+                continue
+            sql = "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ?"
+            params: List[object] = [sanitized]
+            if scope is not None:
+                sql += " AND doc = ?"
+                params.append(scope)
+            sql += " ORDER BY rank ASC LIMIT ?"
+            params.append(limit)
+            try:
+                rows = self.conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:  # malformed MATCH after sanitisation
+                continue
+            if rows:
+                return {self.ids[r[0]]: float(r[1]) for r in rows}
+        return {}
 
 
 def vector_top(sims: np.ndarray, ids: Sequence[str], k: int) -> Dict[str, float]:
