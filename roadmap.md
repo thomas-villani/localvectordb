@@ -159,6 +159,36 @@ qasper, 0.35 on MAUD, 0.80 on NQ. `vector_weight` is now a second knob with the 
 qasper/MAUD, 0.9 NQ). Both are documented with those numbers; neither has a defensible global
 default, which is the argument for item 7.
 
+**5b. The document aggregator was wrong for vector search — RESOLVED 2026-08-07 (`a8e12fd`).**
+`document_scoring_method` defaulted to `frequency_boost` for every search type. It multiplies the best
+chunk score by a term growing in the chunk count, which is fine on the min-max-normalised hybrid scale
+and wrong on the raw bounded similarity a vector search returns, where it mostly rewards a document
+for owning more chunks. The default is now `"auto"`: `best` for `search_type="vector"`,
+`frequency_boost` otherwise, with any explicit value passed through untouched. Worth **+0.0226 nDCG@10
+on SciFact, +0.0150 on NQ, +0.0084 on qasper** for a default vector query.
+
+Two deliberate non-changes. **Keyword** keeps `frequency_boost`: the same argument plausibly applies,
+but that leg was never measured and generalising from an untested one is exactly how the 0a confound
+happened. **Sections** keep a plain max and expose no knob — aggregation turned out to be a property
+of the *unit being ranked*, not of the corpus, and across 20 measured corpus/target/leg/pool cells a
+summing aggregator never lost on a document target and never won on a section target.
+
+Note for whoever gates the next default change: **both retrieval gates were blind to this one.** The
+hier gate runs hybrid and the retrieval gate passes explicit methods, so their `+0.0000` proved
+inertness for existing callers, not that the new default worked. That needed end-to-end tests
+(`tests/test_scoring.py::TestAutoDocumentScoringEndToEnd`).
+
+**5c. A quoted phrase inside a sentence kills the keyword leg.** `handle_phrase_query` AND-joins every
+term around a quoted phrase, including stopwords — the exact failure the plain-text branch documents
+and avoids. It hits **20.6% of MAUD queries**, of which **99.8% return zero keyword hits**. Measured
+cost is small (**+0.0022** to repair, because MAUD's vector leg already carries those queries), so this
+is a correctness fix, not a retrieval one. Of the two candidate semantics, the principled reading
+(`phrase_required`: a quote is a hard constraint) *lost*; `all_or` won. Evidence is thin — no corpus
+tested has this branch both common and consequential — so measure the fallback variant
+(`phrase_required`, retrying as `all_or` when the leg comes back empty) before choosing. Harness:
+`benchmarks/eval_fts_phrase.py`. The sanitiser is otherwise injection-safe and crash-free across 9,333
+real queries.
+
 **6. Over-fetch when `return_type="sections"`.** `_search` sets `fetch_k == k` with no reranker, so
 asking for 10 sections retrieves 10 *chunks*, which collapse into far fewer distinct sections. Worth
 +0.008 on Qasper. No policy question.
@@ -258,6 +288,21 @@ move nDCG on a real dataset does not ship.
 
 Explicitly **not** pursuing semantic chunking: current research finds plain
 recursive splitting beats it, and embedding-model quality dominates the chunker.
+
+**Keyword→vector cascade — measured 2026-08-07, viability is corpus-dependent.** Prefiltering with
+`documents_fts` and vector-searching only the survivors is a *different operator* from everything we
+have tested: all our fusion is parallel, so it can only add, whereas a cascade makes BM25 a hard
+recall gate. Keyword recall@N is therefore a ceiling on the whole system. Measured at document level:
+NQ **0.8962 @10 / 0.9716 @100** scanning 0.2% / 1.9% of the corpus, MLDR **0.9300 @10**, but qasper
+only **0.5408 @10** and 0.7857 @100 (36% of the corpus), and MAUD 0.5305 @100 (66%). It works where
+query and document share vocabulary and fails where they do not.
+
+Treat it as a **latency optimisation that buys speed by capping recall**, not as a quality upgrade,
+and only where vector search is actually the bottleneck — with flat FAISS at our current corpus sizes
+it is not. The machinery already exists (`_faiss_search_with_selector` + `faiss.IDSelectorBatch`, used
+for metadata pushdown today); only a doc-id→faiss-id helper is missing. If it is ever pursued, measure
+a **hybrid** stage 1 first: the ceilings above are for a pure-keyword stage 1 and a union of keyword
+and vector candidates has a higher one.
 
 ---
 
