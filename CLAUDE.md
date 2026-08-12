@@ -138,8 +138,8 @@ LocalVectorDB is a document-first vector database built on SQLite + FAISS with p
   - `_metadata.py` - Metadata management
 - `client.py` - RemoteVectorDB client for HTTP server communication
 - `factory.py` - VectorDB factory function for automatic local/remote selection
-- `embeddings.py` - Pluggable embedding providers (Ollama, OpenAI, Google, Jina, HuggingFace, SentenceTransformers, Mock)
-- `reranking.py` - Pluggable cross-encoder rerankers (Jina, SentenceTransformers, HuggingFace, Mock)
+- `embeddings.py` - Pluggable embedding providers (Ollama, OpenAI, OpenRouter, Google, Jina, HuggingFace, SentenceTransformers, Mock, and `openai_compatible` for any server speaking OpenAI's `/v1/embeddings`: llama.cpp, LM Studio, vLLM, TEI, LocalAI)
+- `reranking.py` - Pluggable cross-encoder rerankers (Jina, SentenceTransformers, HuggingFace, Mock, and `openai_compatible`/`openrouter` for the shared `/rerank` wire format)
 - `chunking.py` - Position-aware text chunking with multiple strategies
 - `query_builder.py` - SQL-like query builder for metadata filtering
 - `extractors/` - File text extraction. A single `All2MdExtractor` delegates to the `all2md` library (20+ document formats, 200+ source/text formats), outputting Markdown. The plugin interface (`BaseExtractor`, `ExtractorRegistry`, `localvectordb.file_extractors` entry points) is retained for custom extractors.

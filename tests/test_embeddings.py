@@ -406,6 +406,30 @@ class TestOpenAIEmbeddings:
 
     @patch("httpx.AsyncClient")
     @pytest.mark.asyncio
+    async def test_embed_batch_honours_base_url(self, mock_client_class):
+        """A custom base_url must actually be requested, not silently ignored.
+
+        The constructor accepted and stored base_url while _embed_single_batch
+        spelled out api.openai.com, so pointing the provider at a local
+        OpenAI-compatible server sent the traffic to OpenAI instead.
+        """
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+        mock_response.raise_for_status = Mock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        provider = OpenAIEmbeddings("text-embedding-ada-002", api_key="test-key", base_url="http://localhost:8080/v1")
+        provider._dimension = 3
+
+        await provider.embed_batch(["hello"])
+
+        assert mock_client.post.call_args.args[0] == "http://localhost:8080/v1/embeddings"
+
+    @patch("httpx.AsyncClient")
+    @pytest.mark.asyncio
     async def test_embed_batch_openai_error(self, mock_client_class):
         """Test OpenAI API error handling when response contains error JSON."""
         mock_client = Mock()

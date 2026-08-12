@@ -34,6 +34,14 @@ from localvectordb.sqlite_tuning import SqliteProfile
 DEFAULT_QUEUE_SIZE = 3
 DEFAULT_BATCH_SIZE = 100
 
+# Used only when creating a brand-new database. The constructor arguments default
+# to None rather than to these values so that reopening an existing database can
+# tell "the caller named a provider" apart from "the caller said nothing" -- the
+# saved configuration wins over the latter silently, but a real override has to be
+# reported before it is dropped.
+DEFAULT_EMBEDDING_PROVIDER = "ollama"
+DEFAULT_EMBEDDING_MODEL = "embeddinggemma"
+
 
 class BaseVectorDB(ABC):
     """
@@ -706,8 +714,8 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
         # ID generation patterns
         doc_id_pattern: str = "doc_{idx}",
         # Embedding configuration
-        embedding_provider: str = "ollama",
-        embedding_model: str = "embeddinggemma",
+        embedding_provider: Optional[str] = None,
+        embedding_model: Optional[str] = None,
         embedding_config: Optional[Dict[str, Any]] = None,
         # Chunking configuration
         chunking_method: Union[str, Any] = "sentences",

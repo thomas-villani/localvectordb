@@ -65,6 +65,10 @@ class Reranker(ABC):
           with a logistic sigmoid. This is deliberately *not* a per-batch min-max:
           min-max is pool-relative (top always 1.0, bottom always 0.0) and would
           break ``score_threshold`` exactly as the pre-T1.1 hybrid fusion did.
+        * **OpenAI-compatible / OpenRouter** -- a self-hosted or routed server may
+          return either, so the mapping is decided per score: values already in
+          ``[0, 1]`` pass through and anything else is squashed. Override with
+          ``score_transform`` when you know which your server produces.
         * **Mock** -- word-overlap fraction, already in ``[0, 1]``.
         """
         pass
@@ -87,47 +91,145 @@ class Reranker(ABC):
         pass
 
 
-class JinaReranker(Reranker):
-    """Jina AI reranker using the Jina Reranker API.
+class HTTPRerankerBase(Reranker):
+    """Shared machinery for the ``/rerank`` wire format Jina popularised.
 
-    Parameters
-    ----------
-    model : str
-        The Jina reranker model. Default: "jina-reranker-v2-base-multilingual"
-    api_key : str, optional
-        API key. Falls back to JINA_API_KEY env var.
-    timeout : int
-        Request timeout in seconds.
-    max_retries : int
-        Number of retry attempts.
+    The same request shape -- ``{model, query, documents, top_n}`` answered with
+    per-document ``{index, score}`` pairs -- is served by Jina, vLLM,
+    text-embeddings-inference, Infinity and OpenRouter. Only the address, the
+    credential and the exact spelling of the response differ, so subclasses
+    override those and inherit the request, retry and scoring behaviour.
+
+    Response shapes accepted, because servers disagree on all three axes:
+
+    * ``{"results": [...]}`` (Jina, vLLM, OpenRouter), ``{"data": [...]}``, or a
+      bare top-level list (text-embeddings-inference).
+    * ``relevance_score`` or ``score`` for the value.
+    * Scores already in ``[0, 1]``, or raw cross-encoder logits.
+
+    That last one matters more than it looks. The module contract is that
+    ``result.score`` is an *absolute* ``[0, 1]`` relevance, because
+    ``score_threshold`` filtering and cross-query comparison depend on it. A
+    server returning logits would silently break both, so ``score_transform``
+    defaults to squashing anything that falls outside ``[0, 1]``.
     """
+
+    #: Endpoint root used when the caller gives no base_url. None means required.
+    DEFAULT_BASE_URL: Optional[str] = None
+    #: Environment variable consulted when no api_key is passed.
+    API_KEY_ENV: Optional[str] = None
+    #: Whether construction fails without a credential.
+    REQUIRES_API_KEY: bool = False
+    #: Human-readable name used in log and error messages.
+    DISPLAY_NAME: str = "Reranker"
+    #: Message raised when a required key is absent.
+    MISSING_KEY_MESSAGE: str = "An API key is required."
 
     def __init__(
         self,
-        model: str = "jina-reranker-v2-base-multilingual",
+        model: str,
         *,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         timeout: int = 90,
         max_retries: int = 3,
+        score_transform: str = "auto",
         **kwargs: Any,
     ) -> None:
         super().__init__(model, timeout=timeout, max_retries=max_retries, **kwargs)
 
         api_key = resolve_env_ref(api_key, what="api_key")
+        if not api_key and self.API_KEY_ENV:
+            api_key = os.getenv(self.API_KEY_ENV)
+        self.api_key = api_key
+        if self.REQUIRES_API_KEY and not self.api_key:
+            raise ValueError(self.MISSING_KEY_MESSAGE)
 
-        self.api_key = api_key or os.getenv("JINA_API_KEY")
-        if not self.api_key:
+        resolved_base_url = base_url or self.DEFAULT_BASE_URL
+        if not resolved_base_url:
             raise ValueError(
-                "Jina API key is required. Set JINA_API_KEY environment variable. "
-                "Get your key at: https://jina.ai/?sui=apikey"
+                f"base_url is required for the {self.provider_name} reranker -- there is no default "
+                f"endpoint to fall back to. Point it at your server's rerank root, e.g. "
+                f"http://localhost:8000/v1 (vLLM) or http://localhost:8080/v1 "
+                f"(text-embeddings-inference)."
             )
+        self.base_url = resolved_base_url.rstrip("/")
 
-    @property
-    def provider_name(self) -> str:
-        return "jina"
+        if score_transform not in ("auto", "none", "sigmoid"):
+            raise ValueError(f"Unknown score_transform: {score_transform!r}. Use 'auto', 'none' or 'sigmoid'.")
+        self.score_transform = score_transform
 
     def validate_model(self) -> bool:
+        # The endpoint decides what it serves; a bad name surfaces on first use.
         return True
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self.base_url}/rerank"
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        # Local servers usually have no credential, and some reject a malformed
+        # Authorization header outright, so omit it entirely when absent.
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _payload(self, query: str, results: List[QueryResult], top_k: Optional[int]) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "query": query,
+            "documents": [r.content or "" for r in results],
+        }
+        if top_k is not None:
+            payload["top_n"] = top_k
+        return payload
+
+    def _to_absolute_score(self, raw: float) -> float:
+        """Map a server's raw score into the absolute [0, 1] the module promises."""
+        if self.score_transform == "none":
+            return raw
+        if self.score_transform == "auto" and 0.0 <= raw <= 1.0:
+            return raw
+        return float(1.0 / (1.0 + np.exp(-raw)))
+
+    def _parse(self, data: Any, results: List[QueryResult], top_k: Optional[int]) -> List[QueryResult]:
+        items: List[Dict[str, Any]]
+        if isinstance(data, dict):
+            # `or` rather than a get() default: a server that sends an explicit
+            # null for the envelope should be treated as empty, not iterated.
+            items = data.get("results") or data.get("data") or []
+        elif isinstance(data, list):
+            items = data
+        else:
+            raise RerankerError(f"{self.DISPLAY_NAME} returned an unreadable response of type {type(data).__name__}")
+
+        reranked = []
+        for item in items:
+            idx = item["index"]
+            if not 0 <= idx < len(results):
+                raise RerankerError(f"{self.DISPLAY_NAME} returned index {idx} for a batch of {len(results)} documents")
+            if "relevance_score" in item:
+                raw = float(item["relevance_score"])
+            elif "score" in item:
+                raw = float(item["score"])
+            else:
+                raise RerankerError(
+                    f"{self.DISPLAY_NAME} returned a result with no relevance_score or score field: {item!r}"
+                )
+
+            result = results[idx]
+            if result.metadata is None:
+                result.metadata = {}
+            result.metadata["original_score"] = result.score
+            result.metadata["rerank_raw_score"] = raw
+            result.score = self._to_absolute_score(raw)
+            reranked.append(result)
+
+        reranked.sort(key=lambda x: x.score, reverse=True)
+        if top_k is not None:
+            reranked = reranked[:top_k]
+        return reranked
 
     def rerank(self, query: str, results: List[QueryResult], top_k: Optional[int] = None) -> List[QueryResult]:
         if not results:
@@ -135,56 +237,22 @@ class JinaReranker(Reranker):
 
         import httpx
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-
-        documents = [r.content or "" for r in results]
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "query": query,
-            "documents": documents,
-        }
-        if top_k is not None:
-            payload["top_n"] = top_k
+        headers = self._headers()
+        payload = self._payload(query, results, top_k)
 
         for attempt in range(self.max_retries + 1):
             try:
                 with httpx.Client(timeout=self.timeout) as client:
-                    response = client.post(
-                        "https://api.jina.ai/v1/rerank",
-                        headers=headers,
-                        json=payload,
-                    )
+                    response = client.post(self.endpoint, headers=headers, json=payload)
                     response.raise_for_status()
                     data = response.json()
-
-                reranked = []
-                for item in data.get("results", []):
-                    idx = item["index"]
-                    # Jina returns a native [0, 1] relevance score; used as-is.
-                    score = float(item["relevance_score"])
-                    result = results[idx]
-                    if result.metadata is None:
-                        result.metadata = {}
-                    result.metadata["original_score"] = result.score
-                    result.metadata["rerank_raw_score"] = score
-                    result.score = score
-                    reranked.append(result)
-
-                reranked.sort(key=lambda x: x.score, reverse=True)
-                if top_k is not None:
-                    reranked = reranked[:top_k]
-                return reranked
-
+                return self._parse(data, results, top_k)
             except Exception as e:
                 if attempt >= self.max_retries:
-                    raise RerankerError(f"Jina reranking failed: {e}") from e
-                logger.warning(f"Jina rerank attempt {attempt + 1} failed: {e}")
+                    raise RerankerError(f"{self.DISPLAY_NAME} reranking failed: {e}") from e
+                logger.warning(f"{self.DISPLAY_NAME} rerank attempt {attempt + 1} failed: {e}")
 
-        raise RerankerError("All Jina reranking attempts failed")
+        raise RerankerError(f"All {self.DISPLAY_NAME} reranking attempts failed")
 
     async def rerank_async(
         self, query: str, results: List[QueryResult], top_k: Optional[int] = None
@@ -194,57 +262,128 @@ class JinaReranker(Reranker):
 
         import httpx
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-
-        documents = [r.content or "" for r in results]
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "query": query,
-            "documents": documents,
-        }
-        if top_k is not None:
-            payload["top_n"] = top_k
+        headers = self._headers()
+        payload = self._payload(query, results, top_k)
 
         for attempt in range(self.max_retries + 1):
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.post(
-                        "https://api.jina.ai/v1/rerank",
-                        headers=headers,
-                        json=payload,
-                    )
+                    response = await client.post(self.endpoint, headers=headers, json=payload)
                     response.raise_for_status()
                     data = response.json()
-
-                reranked = []
-                for item in data.get("results", []):
-                    idx = item["index"]
-                    # Jina returns a native [0, 1] relevance score; used as-is.
-                    score = float(item["relevance_score"])
-                    result = results[idx]
-                    if result.metadata is None:
-                        result.metadata = {}
-                    result.metadata["original_score"] = result.score
-                    result.metadata["rerank_raw_score"] = score
-                    result.score = score
-                    reranked.append(result)
-
-                reranked.sort(key=lambda x: x.score, reverse=True)
-                if top_k is not None:
-                    reranked = reranked[:top_k]
-                return reranked
-
+                return self._parse(data, results, top_k)
             except Exception as e:
                 if attempt >= self.max_retries:
-                    raise RerankerError(f"Jina reranking failed: {e}") from e
-                logger.warning(f"Jina rerank attempt {attempt + 1} failed: {e}")
+                    raise RerankerError(f"{self.DISPLAY_NAME} reranking failed: {e}") from e
+                logger.warning(f"{self.DISPLAY_NAME} rerank attempt {attempt + 1} failed: {e}")
                 await asyncio.sleep(1.0 * (2**attempt))
 
-        raise RerankerError("All Jina reranking attempts failed")
+        raise RerankerError(f"All {self.DISPLAY_NAME} reranking attempts failed")
+
+
+class JinaReranker(HTTPRerankerBase):
+    """Jina AI reranker using the Jina Reranker API.
+
+    Parameters
+    ----------
+    model : str
+        The Jina reranker model. Default: "jina-reranker-v2-base-multilingual"
+    api_key : str, optional
+        API key. Falls back to JINA_API_KEY env var.
+    base_url : str, optional
+        Override the API root. Defaults to ``https://api.jina.ai/v1``. Useful for
+        a proxy; to reach a self-hosted reranker prefer the ``openai_compatible``
+        provider, which does not require a credential.
+    timeout : int
+        Request timeout in seconds.
+    max_retries : int
+        Number of retry attempts.
+    """
+
+    DEFAULT_BASE_URL = "https://api.jina.ai/v1"
+    API_KEY_ENV = "JINA_API_KEY"
+    REQUIRES_API_KEY = True
+    DISPLAY_NAME = "Jina"
+    MISSING_KEY_MESSAGE = (
+        "Jina API key is required. Set JINA_API_KEY environment variable. "
+        "Get your key at: https://jina.ai/?sui=apikey"
+    )
+
+    def __init__(self, model: str = "jina-reranker-v2-base-multilingual", **kwargs: Any) -> None:
+        super().__init__(model, **kwargs)
+
+    @property
+    def provider_name(self) -> str:
+        return "jina"
+
+
+class OpenAICompatibleReranker(HTTPRerankerBase):
+    """Any self-hosted server exposing a Jina/Cohere-shaped ``/rerank`` endpoint.
+
+    The reranking counterpart to
+    :class:`~localvectordb.embeddings.OpenAICompatibleEmbeddings`, so a fully
+    local stack does not have to fall back to a hosted API for its second stage.
+
+    =========================  ====================================
+    Server                     Typical ``base_url``
+    =========================  ====================================
+    vLLM                       ``http://localhost:8000/v1``
+    text-embeddings-inference  ``http://localhost:8080``
+    Infinity                   ``http://localhost:7997``
+    =========================  ====================================
+
+    Parameters
+    ----------
+    model : str
+        Model name as the server reports it.
+    base_url : str
+        Required. The rerank root; ``/rerank`` is appended. Note that
+        text-embeddings-inference serves it at the root rather than under
+        ``/v1``.
+    api_key : str, optional
+        Sent as a bearer token when present. Optional -- most local servers need
+        none. Falls back to ``RERANKER_API_KEY``.
+    score_transform : {"auto", "none", "sigmoid"}, default "auto"
+        How to map raw scores into the absolute ``[0, 1]`` range the rest of the
+        library assumes. ``"auto"`` passes through values already in range and
+        squashes anything else, which is what makes a logit-returning
+        cross-encoder safe to use with ``score_threshold``.
+    """
+
+    API_KEY_ENV = "RERANKER_API_KEY"
+    DISPLAY_NAME = "OpenAI-compatible"
+
+    @property
+    def provider_name(self) -> str:
+        return "openai_compatible"
+
+
+class OpenRouterReranker(HTTPRerankerBase):
+    """OpenRouter reranker, routing to the rerank models it hosts.
+
+    Parameters
+    ----------
+    model : str
+        OpenRouter model slug for a rerank-capable model.
+    api_key : str, optional
+        Falls back to ``OPENROUTER_API_KEY``. Get a key at
+        https://openrouter.ai/keys
+    base_url : str, optional
+        Defaults to ``https://openrouter.ai/api/v1``.
+    """
+
+    DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+    API_KEY_ENV = "OPENROUTER_API_KEY"
+    REQUIRES_API_KEY = True
+    DISPLAY_NAME = "OpenRouter"
+    MISSING_KEY_MESSAGE = (
+        "OpenRouter API key is required. Set the OPENROUTER_API_KEY environment "
+        "variable or pass api_key=. Get a key at https://openrouter.ai/keys"
+    )
+
+    @property
+    def provider_name(self) -> str:
+        return "openrouter"
 
 
 class SentenceTransformersReranker(Reranker):
@@ -541,6 +680,8 @@ class RerankerRegistry:
 
 # Auto-register built-in rerankers
 RerankerRegistry.register("jina", JinaReranker)
+RerankerRegistry.register("openai_compatible", OpenAICompatibleReranker)
+RerankerRegistry.register("openrouter", OpenRouterReranker)
 RerankerRegistry.register("sentence_transformers", SentenceTransformersReranker)
 RerankerRegistry.register("huggingface", HuggingFaceReranker)
 RerankerRegistry.register("mock", MockReranker)
