@@ -215,10 +215,31 @@ One win, one null, one significant loss — and even qasper's end-to-end change 
 because switching aggregator costs −0.0032 at the shipped width before the wider pool earns it back.
 **The default stays at 40.** Two findings are worth keeping: the gain is an **aggregation** effect and
 not candidate recall (NFCorpus's pool is 97% distinct documents; adding 345 more moved +0.0004), and
-the tempting "fanout gates it" rule is **refuted** — NQ has the highest fanout and no effect. The
-open, falsifiable question is whether *headroom × fanout* predicts it; **MLDR** is the discriminating
-fourth corpus, since qasper is currently the only one with both. Cost, if revisited: 2.2× retrieval
-latency at pool 200, 4.0× at 400.
+the tempting "fanout gates it" rule is **refuted** — NQ has the highest fanout and no effect. Cost, if
+revisited: 2.2× retrieval latency at pool 200, 4.0× at 400.
+
+**§22 (qasper_full, 2026-08-11) does not overturn the verdict but changes what the open question is.**
+Re-measured on the same corpus at 4× the haystack (1,088 papers / 13,503 chunks / 2,940 queries):
+
+| method, 40→P | qasper (275 docs) | qasper_full (1,088 docs) |
+|---|---|---|
+| `best` @200 | +0.0099 p=.003 | +0.0096 p=.000 |
+| `frequency_boost` @200 | +0.0018 **null** | **+0.0069 p=.000** |
+| `frequency_boost` @400 | +0.0007 **null** | **+0.0073 p=.001** |
+
+`best` replicates to the third decimal. **`frequency_boost` does not** — and its null on dev is
+exactly half of §19.3's rule that *pool width and aggregator must move together*. That rule is a
+**small-haystack artifact**: same corpus, same encoder, same code, 813 more distractor documents.
+Controlled by scoring dev's identical 882 queries against both indexes (`--query-subset dev`), which
+isolates the haystack from the query sample: +0.0018 null → **+0.0099 p=.005**.
+
+Consequence for this item: the change worth evaluating is no longer "switch to `best` and widen"
+(which gets *weaker* at scale — +0.0067 p=.066 on dev, +0.0019 p=.346 on full) but **"keep
+`frequency_boost`, just widen"**, which is the simpler edit and is the winning arm on both full-corpus
+legs. It is still ONE corpus: `frequency_boost` gains nothing on NQ (−0.0015 at 40→200) or NFCorpus
+(−0.0002), so **40 remains the default**. **MLDR is still the designed test, and should now be run at
+two corpus sizes rather than one** — corpus SIZE was never an axis in §20, which is how a rule derived
+on 275 documents survived a three-corpus generalisation check and still failed.
 
 **5e. Resurrect `percentile` as an option (not a default).** Removed in `54a9898` — a sound prune
 whose one gap was sweeping a single pool width, which is where aggregator differences are smallest.
