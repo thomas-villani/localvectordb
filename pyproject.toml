@@ -67,6 +67,9 @@ dependencies = [
 ollama = "localvectordb.embeddings:OllamaEmbeddings"
 openai = "localvectordb.embeddings:OpenAIEmbeddings"
 openrouter = "localvectordb.embeddings:OpenRouterEmbeddings"
+# One adapter for every server speaking OpenAI's /v1/embeddings wire format:
+# llama.cpp, LM Studio, vLLM, text-embeddings-inference, LocalAI, Jan.
+openai_compatible = "localvectordb.embeddings:OpenAICompatibleEmbeddings"
 mock = "localvectordb.embeddings:MockEmbeddings"
 google = "localvectordb.embeddings:GoogleEmbeddings"
 jina = "localvectordb.embeddings:JinaEmbeddings"
@@ -76,6 +79,10 @@ huggingface_local = "localvectordb.embeddings:HuggingFaceLocalEmbeddings"
 
 [project.entry-points."localvectordb.reranker_providers"]
 jina = "localvectordb.reranking:JinaReranker"
+# Self-hosted rerankers speaking the Jina/Cohere /rerank format: vLLM,
+# text-embeddings-inference, Infinity.
+openai_compatible = "localvectordb.reranking:OpenAICompatibleReranker"
+openrouter = "localvectordb.reranking:OpenRouterReranker"
 sentence_transformers = "localvectordb.reranking:SentenceTransformersReranker"
 huggingface = "localvectordb.reranking:HuggingFaceReranker"
 mock = "localvectordb.reranking:MockReranker"

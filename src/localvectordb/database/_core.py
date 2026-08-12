@@ -38,9 +38,14 @@ from localvectordb._sqlite_retry import retry_on_locked
 from localvectordb.chunking import ChunkerFactory, PositionTrackingChunker
 from localvectordb.core import Chunk, MetadataField
 from localvectordb.database._faiss_utils import build_id_lookup
-from localvectordb.database.base import LocalVectorDBBase
+from localvectordb.database.base import (
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_EMBEDDING_PROVIDER,
+    LocalVectorDBBase,
+)
 from localvectordb.embeddings import EmbeddingProvider, EmbeddingRegistry
 from localvectordb.exceptions import (
+    ConfigurationError,
     DatabaseError,
     DatabaseNotFoundError,
     IndexIntegrityError,
@@ -92,8 +97,8 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         *,
         metadata_schema: Optional[Dict[str, Any]] = None,
         doc_id_pattern: str = "doc_{idx}",
-        embedding_provider: str = "ollama",
-        embedding_model: str = "embeddinggemma",
+        embedding_provider: Optional[str] = None,
+        embedding_model: Optional[str] = None,
         embedding_config: Optional[Dict[str, Any]] = None,
         chunking_method: Union[str, Any] = "sentences",
         chunk_size: int = 500,
@@ -193,14 +198,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # Chunker - create with initial values (might be overridden later)
         self.chunker = self._build_chunker()
 
-        # Embedding provider - create with initial values (might be overridden later)
+        # Embedding provider - deliberately NOT built here. Constructing the
+        # default provider up front and then discarding it made opening any
+        # non-Ollama database require a running Ollama, because validate_model()
+        # reaches the network before the saved configuration has been read. It is
+        # built exactly once, below, from the resolved identity.
         embedding_config = embedding_config or {}
-        self._embedding_provider = EmbeddingRegistry.create_provider(
-            embedding_provider, embedding_model, **embedding_config
-        )
-        if not self._embedding_provider.validate_model():
-            raise ValueError(f"Embedding model '{embedding_model}' is not available")
-        self._embedding_dimension = self._embedding_provider.get_dimension()
 
         # Threading
         self._read_write_lock: ReadWriteLock = ReadWriteLock()
@@ -243,40 +246,46 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             self.schema.initialize(self._metadata_schema, db_connection=conn)
 
             # Load configuration from existing database
+            loaded_config: Dict[str, str] = {}
             is_existing_db = not self.is_memory_only and Path(self.db_path).exists()
             if is_existing_db:
                 existing_schema = self.schema.load_metadata_schema(db_connection=conn)
                 self._metadata_schema.update(existing_schema)
-
-                # Load and apply saved configuration
                 loaded_config = self._load_config(conn)
-                if loaded_config:
-                    # Override constructor values with saved configuration
-                    embedding_provider = loaded_config.get("embedding_provider", embedding_provider)
-                    embedding_model = loaded_config.get("embedding_model", embedding_model)
-                    self._chunking_method = loaded_config.get("chunking_method", self._chunking_method)
-                    self._chunk_size = int(loaded_config.get("chunk_size", self._chunk_size))
-                    self._chunk_overlap = int(loaded_config.get("chunk_overlap", self._chunk_overlap))
-                    self._chunk_delimiter = loaded_config.get("chunk_delimiter", self._chunk_delimiter)
-                    self._batch_size = int(loaded_config.get("batch_size", self._batch_size))
-                    self.doc_id_pattern = loaded_config.get("doc_id_pattern", self.doc_id_pattern)
 
-                    # Load SQLite tuning configuration
-                    self._load_sqlite_tuning(loaded_config)
-                    # Update connection pool with loaded pragma settings
-                    self.connection_pool._pragmas = self._sqlite_pragmas
+            if loaded_config:
+                # Override constructor values with saved configuration
+                embedding_provider, embedding_model = self._resolve_saved_embedding_identity(
+                    embedding_provider, embedding_model, loaded_config
+                )
+                self._chunking_method = loaded_config.get("chunking_method", self._chunking_method)
+                self._chunk_size = int(loaded_config.get("chunk_size", self._chunk_size))
+                self._chunk_overlap = int(loaded_config.get("chunk_overlap", self._chunk_overlap))
+                self._chunk_delimiter = loaded_config.get("chunk_delimiter", self._chunk_delimiter)
+                self._batch_size = int(loaded_config.get("batch_size", self._batch_size))
+                self.doc_id_pattern = loaded_config.get("doc_id_pattern", self.doc_id_pattern)
 
-                    # Re-create chunker with loaded configuration
-                    self.chunker = self._build_chunker()
+                # Load SQLite tuning configuration
+                self._load_sqlite_tuning(loaded_config)
+                # Update connection pool with loaded pragma settings
+                self.connection_pool._pragmas = self._sqlite_pragmas
 
-                    # Re-create embedding provider with loaded configuration.
-                    embedding_config = self._resolve_saved_prefixes(embedding_config, loaded_config)
-                    self._embedding_provider = EmbeddingRegistry.create_provider(
-                        embedding_provider, embedding_model, **embedding_config
-                    )
-                    if not self._embedding_provider.validate_model():
-                        raise ValueError(f"Embedding model '{embedding_model}' is not available")
-                    self._embedding_dimension = self._embedding_provider.get_dimension()
+                # Re-create chunker with loaded configuration
+                self.chunker = self._build_chunker()
+
+                embedding_config = self._resolve_saved_prefixes(embedding_config, loaded_config)
+
+            # Build the embedding provider once, from the resolved identity.
+            self._embedding_provider = EmbeddingRegistry.create_provider(
+                embedding_provider or DEFAULT_EMBEDDING_PROVIDER,
+                embedding_model or DEFAULT_EMBEDDING_MODEL,
+                **embedding_config,
+            )
+            if not self._embedding_provider.validate_model():
+                raise ValueError(f"Embedding model '{embedding_model}' is not available")
+            self._embedding_dimension = self._embedding_provider.get_dimension()
+            self._check_saved_embedding_dimension(loaded_config)
+            self._check_saved_embedding_base_url(loaded_config)
 
         # Read-only, memory-mapped index. An mmap'd FAISS index shares one copy of
         # the file across processes via the OS page cache (many read-only workers) and
@@ -1336,6 +1345,104 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         retry_on_locked(_write)
 
     @staticmethod
+    def _resolve_saved_embedding_identity(
+        requested_provider: Optional[str],
+        requested_model: Optional[str],
+        loaded_config: Dict[str, str],
+    ) -> tuple[str, str]:
+        """Reconcile a caller-supplied provider/model against what is on disk.
+
+        The saved values always win. Existing vectors were produced by the saved
+        provider and model, and honouring an override would embed queries into a
+        different space than the stored chunks -- there is no in-place migration,
+        so a database opened under the wrong model is simply broken. Silently
+        winning is the problem this fixes: a caller who names a different model is
+        expressing an intent that will not be met, and needs to be told so rather
+        than left to wonder why their results look nothing like they expect.
+
+        Callers who said nothing are not overriding anything, which is why the
+        constructor defaults these to None -- see DEFAULT_EMBEDDING_PROVIDER.
+        """
+        saved_provider = loaded_config.get("embedding_provider")
+        saved_model = loaded_config.get("embedding_model")
+
+        # Nothing recorded: a database that predates the config table, or one
+        # whose schema rows exist but which was never saved. Take the request.
+        if not saved_provider or not saved_model:
+            return (
+                requested_provider or DEFAULT_EMBEDDING_PROVIDER,
+                requested_model or DEFAULT_EMBEDDING_MODEL,
+            )
+
+        for label, requested, saved in (
+            ("provider", requested_provider, saved_provider),
+            ("model", requested_model, saved_model),
+        ):
+            if requested is not None and requested != saved:
+                logger.warning(
+                    f"Ignoring embedding {label}={requested!r}: this database was built with "
+                    f"{saved!r} and its stored vectors cannot be reinterpreted. Continuing with "
+                    f"{saved!r}. To move to {requested!r}, create a new database and re-ingest."
+                )
+
+        return saved_provider, saved_model
+
+    def _check_saved_embedding_dimension(self, loaded_config: Dict[str, str]) -> None:
+        """Refuse to open a database whose index cannot hold the provider's vectors.
+
+        A provider that resolves to a different width than the one the index was
+        built at is unrecoverable rather than merely degraded -- FAISS cannot
+        accept the vectors at all -- so this is the one identity mismatch that
+        raises. It catches the case a provider/model comparison cannot: a remote
+        endpoint that kept its model name but changed what it serves.
+        """
+        saved = loaded_config.get("embedding_dimension")
+        if not saved:
+            return
+        try:
+            saved_dimension = int(saved)
+        except (TypeError, ValueError):
+            logger.warning(f"Ignoring unreadable saved embedding_dimension={saved!r}")
+            return
+
+        if saved_dimension != self._embedding_dimension:
+            raise ConfigurationError(
+                f"This database was built with {saved_dimension}-dimensional vectors but "
+                f"{self._embedding_provider.provider_name}/{self._embedding_provider.model} produces "
+                f"{self._embedding_dimension}. The index cannot hold them. Re-ingest into a new "
+                f"database, or open this one with the model it was built with."
+            )
+
+    def _check_saved_embedding_base_url(self, loaded_config: Dict[str, str]) -> None:
+        """Report that this database's vectors came from a different server.
+
+        Unlike the provider and model, the saved endpoint is *not* restored. A URL
+        is deployment detail as much as provenance -- the same server legitimately
+        moves host or port -- and pinning a stale localhost address would break
+        databases that are otherwise fine. So the caller's endpoint wins and the
+        divergence is only reported, which is where the value is: two runtimes
+        serving the same model name do not produce interchangeable vectors, and
+        nothing else in the saved config can tell them apart.
+
+        Databases written before this key existed have no entry and are left alone
+        rather than warned at, since their endpoint is genuinely unknown.
+        """
+        if "embedding_base_url" not in loaded_config:
+            return
+
+        saved = loaded_config["embedding_base_url"]
+        current = getattr(self._embedding_provider, "base_url", "") or ""
+        if saved == current:
+            return
+
+        logger.warning(
+            f"This database's vectors were embedded via {saved or 'the provider default endpoint'}, "
+            f"but it is being opened against {current or 'the provider default endpoint'}. "
+            f"Different servers can pool the same model differently, so scores may be off. "
+            f"Re-ingest if retrieval quality looks wrong."
+        )
+
+    @staticmethod
     def _resolve_saved_prefixes(
         embedding_config: Optional[Dict[str, Any]], loaded_config: Dict[str, str]
     ) -> Dict[str, Any]:
@@ -1391,6 +1498,13 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             # default prefix cannot silently re-point queries at a different space.
             "embedding_document_prefix": self.embedding_provider.document_prefix,
             "embedding_query_prefix": self.embedding_provider.query_prefix,
+            # Which server produced these vectors. The provider name used to pin
+            # the endpoint by itself -- "ollama" meant localhost:11434, "openai"
+            # meant api.openai.com -- but an OpenAI-compatible provider can point
+            # anywhere, and the same model served by llama.cpp, LM Studio or vLLM
+            # pools differently. Without this the three are indistinguishable in
+            # the saved config. Empty for providers that have no endpoint.
+            "embedding_base_url": getattr(self.embedding_provider, "base_url", "") or "",
             "chunking_method": self.chunking_method,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,

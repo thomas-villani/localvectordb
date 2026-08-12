@@ -958,6 +958,8 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         How many requests to make concurrently to the OpenAI server.
     """
 
+    DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
     # Models that support Matryoshka Representation Learning (MRL) dimensions parameter
     _MRL_SUPPORTED_MODELS = {"text-embedding-3-small", "text-embedding-3-large"}
 
@@ -1040,6 +1042,10 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         return 1000  # OpenAI's batch size limit
 
     @property
+    def _endpoint(self) -> str:
+        return f"{(self.base_url or self.DEFAULT_BASE_URL).rstrip('/')}/embeddings"
+
+    @property
     def max_input_tokens(self) -> int:
         """Maximum input tokens per text for this model."""
         return self._max_input_tokens
@@ -1094,31 +1100,11 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         payload = self._build_openai_payload(texts)
 
-        if client is None:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://api.openai.com/v1/embeddings", headers=headers, json=payload, timeout=self.timeout
-                )
-
-                if not response.is_success:
-                    try:
-                        error_data = response.json()
-                        if "error" in error_data:
-                            error_msg = error_data["error"].get("message", str(error_data["error"]))
-                            raise ProviderHTTPError(f"OpenAI error: {error_msg}", status_code=response.status_code)
-                    except (ValueError, KeyError, TypeError):
-                        # Error body was not the expected JSON shape; fall back
-                        # to raise_for_status() below for a generic HTTP error.
-                        pass
-                    response.raise_for_status()
-
-                data = response.json()
-                embeddings = [item["embedding"] for item in data["data"]]
-                return self._postprocess_embeddings(embeddings)
-        else:
-            response = await client.post(
-                "https://api.openai.com/v1/embeddings", headers=headers, json=payload, timeout=self.timeout
-            )
+        # One request body, one call site. The endpoint used to be spelled out
+        # separately in each branch, which is how base_url came to be honoured
+        # in neither.
+        async def _do(c: httpx.AsyncClient) -> List[List[float]]:
+            response = await c.post(self._endpoint, headers=headers, json=payload, timeout=self.timeout)
 
             if not response.is_success:
                 try:
@@ -1135,6 +1121,11 @@ class OpenAIEmbeddings(HTTPEmbeddingProvider):
             data = response.json()
             embeddings = [item["embedding"] for item in data["data"]]
             return self._postprocess_embeddings(embeddings)
+
+        if client is None:
+            async with httpx.AsyncClient() as owned:
+                return await _do(owned)
+        return await _do(client)
 
 
 class OpenRouterEmbeddings(HTTPEmbeddingProvider):
@@ -1343,6 +1334,270 @@ class OpenRouterEmbeddings(HTTPEmbeddingProvider):
                 response.raise_for_status()
             data = response.json()
             self._raise_on_error(data)
+            embeddings = [item["embedding"] for item in data["data"]]
+            return self._postprocess_embeddings(embeddings)
+
+        if client is None:
+            async with httpx.AsyncClient() as owned:
+                return await _do(owned)
+        return await _do(client)
+
+
+class OpenAICompatibleEmbeddings(HTTPEmbeddingProvider):
+    """Any server exposing an OpenAI-compatible ``/v1/embeddings`` endpoint.
+
+    This is one provider rather than one per runtime, because llama.cpp's server,
+    LM Studio, vLLM, text-embeddings-inference, LocalAI and Jan all speak the same
+    wire format -- only the address differs. Point ``base_url`` at the server:
+
+    ==========================  ====================================
+    Server                      Typical ``base_url``
+    ==========================  ====================================
+    llama.cpp (``--embedding``)  ``http://localhost:8080/v1``
+    LM Studio                    ``http://localhost:1234/v1``
+    vLLM                         ``http://localhost:8000/v1``
+    text-embeddings-inference    ``http://localhost:8080/v1``
+    ==========================  ====================================
+
+    Ollama is supported natively by :class:`OllamaEmbeddings`, which is preferable
+    -- it can enumerate installed models -- but Ollama's own ``/v1`` shim works
+    here too.
+
+    Because the served model set is open-ended, the model name is trusted and
+    dimensions are not hard-coded. Resolution order for the index dimension (first
+    match wins): ``requested_dimensions`` (also asks the server to truncate) ->
+    ``dimension`` (declares the native size, no payload effect) -> a one-off probe
+    request the first time the dimension is needed. Declare ``dimension`` to keep
+    database creation from making a network call.
+
+    Parameters
+    ----------
+    model : str
+        Model name as the server reports it. For llama.cpp this is often ignored
+        (it serves whatever was loaded), but it is still recorded as part of the
+        database's embedding identity, so use the real name.
+    base_url : str
+        Required. The OpenAI-compatible root, including the ``/v1`` suffix if the
+        server uses one. There is no default: guessing an endpoint would silently
+        embed against the wrong server.
+    api_key : str, optional
+        Sent as a bearer token when provided. Most local servers need no key, so
+        this is optional -- unlike :class:`OpenAIEmbeddings`. If omitted, read from
+        ``OPENAI_COMPATIBLE_API_KEY``; a ``"$OTHER_VAR"`` value reads that variable
+        instead. When there is no key, no ``Authorization`` header is sent at all,
+        since some servers reject a malformed one.
+    dimension : int, optional
+        Declare the model's native embedding dimension and skip the probe.
+    requested_dimensions : int, optional
+        Ask for this output dimension (only honored by models supporting
+        Matryoshka truncation) and use it as the index dimension.
+    normalize : bool, default False
+        Apply L2 normalization to returned embeddings. Useful when a server
+        returns unnormalized vectors and the index uses inner product.
+    max_batch_size : int, default 64
+        Texts per request. Conservative because local servers are configured with
+        much smaller batch ceilings than hosted APIs; raise it if your server
+        allows more.
+    timeout : int, default = 90
+        HTTP timeout (seconds). Local CPU inference can be slow -- raise this if
+        large batches time out.
+    max_retries : int, default = 3
+        Automatic retry attempts.
+    retry_delay : float, default = 1.0
+        Base delay for exponential backoff.
+    max_concurrent_requests : int, default = 5
+        Concurrent requests. Most local servers are single-GPU or CPU-bound and
+        gain nothing above 1-2.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: Optional[str] = None,
+        timeout: int = 90,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        max_concurrent_requests: int = 5,
+        api_key: Optional[str] = None,
+        dimension: Optional[int] = None,
+        requested_dimensions: Optional[int] = None,
+        normalize: bool = False,
+        max_batch_size: int = 64,
+        **kwargs: Any,
+    ) -> None:
+        if not base_url:
+            raise ValueError(
+                "base_url is required for the openai_compatible provider -- there is no default "
+                "endpoint to fall back to. Point it at your server's OpenAI-compatible root, e.g. "
+                "http://localhost:8080/v1 (llama.cpp), http://localhost:1234/v1 (LM Studio) or "
+                "http://localhost:8000/v1 (vLLM)."
+            )
+
+        super().__init__(
+            model,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            max_concurrent_requests=max_concurrent_requests,
+            base_url=base_url,
+            **kwargs,
+        )
+
+        api_key = resolve_env_ref(api_key, what="api_key")
+        # No key is the normal case for a local server, so absence is not an error.
+        self.api_key = api_key or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+
+        if dimension is not None and requested_dimensions is not None and dimension != requested_dimensions:
+            raise ValueError(
+                f"dimension ({dimension}) and requested_dimensions ({requested_dimensions}) disagree. "
+                "requested_dimensions already sets the index dimension (and requests server-side "
+                "truncation); pass dimension only to declare the native size and skip the probe."
+            )
+
+        self.requested_dimensions = requested_dimensions
+        self.normalize = normalize
+        self._max_batch_size = max_batch_size
+        self._dimension: Optional[int] = requested_dimensions if requested_dimensions is not None else dimension
+
+    @property
+    def provider_name(self) -> str:
+        return "openai_compatible"
+
+    @property
+    def max_batch_size(self) -> int:
+        return self._max_batch_size
+
+    @property
+    def _endpoint(self) -> str:
+        assert self.base_url is not None
+        return f"{self.base_url.rstrip('/')}/embeddings"
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def validate_model(self) -> bool:
+        # The server decides what it serves and most cannot be enumerated
+        # reliably; an invalid name surfaces on the first request instead.
+        return True
+
+    def get_dimension(self) -> int:
+        """Return the embedding dimension, probing the server once if unknown."""
+        if self._dimension is not None:
+            return self._dimension
+        self._dimension = self._probe_dimension()
+        return self._dimension
+
+    def _probe_dimension(self) -> int:
+        payload = {"model": self.model, "input": ["dimension probe"]}
+        try:
+            with httpx.Client() as client:
+                resp = client.post(self._endpoint, headers=self._headers(), json=payload, timeout=self.timeout)
+        except httpx.RequestError as e:
+            raise self._connection_error(e) from e
+
+        if not resp.is_success:
+            self._raise_for_response(resp)
+        data = resp.json()
+
+        items = data.get("data", [])
+        if not items:
+            raise EmbeddingError(
+                f"{self._endpoint} returned no embeddings for the dimension probe. "
+                f"The server accepted the request but produced nothing -- check that "
+                f"{self.model!r} is an embedding model."
+            )
+        emb = items[0].get("embedding")
+        if not isinstance(emb, list):
+            raise EmbeddingError(
+                f"{self._endpoint} returned an unexpected embedding format (expected a list of floats, "
+                f"got {type(emb).__name__}). Pass dimension= to skip the probe if the server is "
+                f"otherwise working."
+            )
+        return len(emb)
+
+    def _connection_error(self, exc: Exception) -> EmbeddingError:
+        """Turn a bare connection failure into something actionable.
+
+        The overwhelmingly common cause is the server not running, or running
+        without embedding support enabled, and the raw httpx message says neither.
+        """
+        return EmbeddingError(
+            f"Could not reach the OpenAI-compatible server at {self._endpoint}: {exc}. "
+            f"Check that the server is running and that base_url includes the right path "
+            f"(most servers expect a '/v1' suffix). For llama.cpp the server must be started "
+            f"with --embedding, and for vLLM the loaded model must be an embedding model."
+        )
+
+    def _raise_for_response(self, response: httpx.Response) -> None:
+        """Raise the most specific error the response supports."""
+        detail = ""
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                err = body.get("error", body.get("detail"))
+                if isinstance(err, dict):
+                    detail = str(err.get("message", err))
+                elif err:
+                    detail = str(err)
+        except ValueError:
+            detail = response.text[:200]
+
+        if response.status_code == 404:
+            raise ProviderHTTPError(
+                f"{self._endpoint} returned 404. The server is reachable but has no embeddings "
+                f"endpoint there -- base_url is most likely missing or duplicating a '/v1' suffix. "
+                f"{detail}".strip(),
+                status_code=404,
+            )
+        if response.status_code in (400, 422):
+            raise ProviderHTTPError(
+                f"{self._endpoint} rejected the request ({response.status_code}): {detail or 'no detail'}. "
+                f"A model that is not an embedding model, or a server started without embedding "
+                f"support, fails this way.",
+                status_code=response.status_code,
+            )
+        raise ProviderHTTPError(
+            f"OpenAI-compatible server error at {self._endpoint} "
+            f"({response.status_code}): {detail or response.reason_phrase}",
+            status_code=response.status_code,
+        )
+
+    def _postprocess_embeddings(self, embeddings: List[List[float]]) -> List[List[float]]:
+        if not self.normalize:
+            return embeddings
+        result = []
+        for emb in embeddings:
+            vec = np.array(emb, dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            result.append(vec.tolist())
+        return result
+
+    async def _embed_single_batch(
+        self, texts: List[str], client: Optional[httpx.AsyncClient] = None, **kwargs: Any
+    ) -> List[List[float]]:
+        if not texts:
+            return []
+        headers = self._headers()
+        payload: Dict[str, Any] = {"model": self.model, "input": texts}
+        if self.requested_dimensions is not None:
+            payload["dimensions"] = self.requested_dimensions
+
+        async def _do(c: httpx.AsyncClient) -> List[List[float]]:
+            try:
+                response = await c.post(self._endpoint, headers=headers, json=payload, timeout=self.timeout)
+            except httpx.RequestError as e:
+                raise self._connection_error(e) from e
+
+            if not response.is_success:
+                self._raise_for_response(response)
+
+            data = response.json()
             embeddings = [item["embedding"] for item in data["data"]]
             return self._postprocess_embeddings(embeddings)
 
@@ -2479,6 +2734,7 @@ class EmbeddingRegistry:
 EmbeddingRegistry.register("ollama", OllamaEmbeddings)
 EmbeddingRegistry.register("openai", OpenAIEmbeddings)
 EmbeddingRegistry.register("openrouter", OpenRouterEmbeddings)
+EmbeddingRegistry.register("openai_compatible", OpenAICompatibleEmbeddings)
 EmbeddingRegistry.register("mock", MockEmbeddings)
 EmbeddingRegistry.register("google", GoogleEmbeddings)
 EmbeddingRegistry.register("jina", JinaEmbeddings)
