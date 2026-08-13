@@ -45,7 +45,23 @@ def load(dataset: str, search_type: str) -> Dict[str, dict]:
     for path in sorted(glob.glob(pattern)):
         with open(path) as fh:
             d = json.load(fh)
-        out[d["config"]["model"]] = d
+        cfg = d["config"]
+        # Key on the model PLUS any knob that makes a run distinct. Keying on
+        # config["model"] alone silently dropped an arm: the `--max-length 256`
+        # control and the 512 run it controls carry the same model string, and
+        # older artifacts do not record max_length at all (only the filename
+        # does), so one overwrote the other depending on glob order.
+        label = cfg["model"]
+        ml = cfg.get("max_length")
+        if ml is None and "__len" in os.path.basename(path):  # pre-fix artifact
+            ml = int(os.path.basename(path).split("__len")[1].split("_")[0])
+        if ml is not None and ml != 512:
+            label += f" @len{ml}"
+        if cfg.get("max_queries"):
+            label += f" @max{cfg['max_queries']}"
+        if label in out:
+            raise SystemExit(f"duplicate artifact label {label!r} ({path}) -- refusing to silently drop an arm")
+        out[label] = d
     return out
 
 

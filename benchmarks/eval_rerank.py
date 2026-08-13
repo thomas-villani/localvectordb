@@ -468,6 +468,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "search_type": args.search_type,
                     "pools": args.pools,
                     "n": len(qids),
+                    # RECORD EVERY KNOB THAT CHANGED THE RUN. `max_length` was
+                    # originally left out, and because it only appeared in the
+                    # FILENAME the 256-token control and the 512-token run it
+                    # controls wrote byte-identical configs. compare_rerankers
+                    # keyed on config["model"], so one silently overwrote the
+                    # other -- a provenance bug that reads as a missing arm.
+                    # An artifact that does not record a parameter that varied
+                    # cannot be told apart from the run it is controlling.
+                    "max_length": args.max_length if args.model in LOCAL_MODELS else None,
+                    "max_queries": args.max_queries,
                 },
                 "qids": qids,
                 "results": results,
