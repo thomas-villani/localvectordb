@@ -41,6 +41,7 @@ Source: Chen et al., BGE-M3 (``Shitao/MLDR``, CC-BY-3.0 -- Wikipedia-derived).
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import sys
@@ -91,6 +92,7 @@ def load_mldr(
     data_dir: Optional[Path] = None,
     max_queries: Optional[int] = None,
     include_negatives: bool = True,
+    max_negatives: Optional[int] = None,
 ) -> SyntheticBenchmark:
     """Load MLDR-en as a document-level retrieval benchmark.
 
@@ -105,6 +107,22 @@ def load_mldr(
         Keep each query's hard negatives in the corpus. **Default True, and
         turning it off makes the task trivially easy** -- the corpus would then
         contain only documents that are gold for some query.
+    max_negatives
+        Keep at most this many non-gold documents, shrinking the **haystack while
+        leaving the query set and its gold untouched**. That is the one knob a
+        corpus-size contrast needs: capping ``max_queries`` instead shrinks
+        queries and corpus together, which re-confounds "more distractors" with
+        "a differently-drawn query sample" -- the exact pair SYNTHESIS-v2 §22.4
+        had to separate with a dev-query subset arm.
+
+        Selection is by ``sha256(docid)`` order, not file order: file order
+        correlates with the query that introduced a passage, so a prefix of it
+        would strip the negatives of the last queries entirely and leave the
+        first queries' negatives intact. Deterministic across runs and machines,
+        so two builds of the same cap are the same corpus.
+
+        Gold is never dropped, whatever the cap. ``None`` keeps everything, so
+        every existing caller is byte-identical.
     """
     path = download(split, data_dir=data_dir)
 
@@ -133,12 +151,21 @@ def load_mldr(
             if max_queries is not None and len(queries) >= max_queries:
                 break
 
+    if max_negatives is not None:
+        gold = {d for rels in doc_qrels.values() for d in rels}
+        # A docid can be a negative for one query and gold for another, so the
+        # droppable set is the difference -- never the raw negative list.
+        droppable = sorted(set(corpus) - gold, key=lambda d: hashlib.sha256(d.encode("utf-8")).hexdigest())
+        for docid in droppable[max_negatives:]:
+            del corpus[docid]
+
     logger.info(
-        "MLDR-en %s: %d docs, %d queries (negatives=%s)",
+        "MLDR-en %s: %d docs, %d queries (negatives=%s, max_negatives=%s)",
         split,
         len(corpus),
         len(queries),
         include_negatives,
+        max_negatives,
     )
     return SyntheticBenchmark(
         name=f"mldr-en-{split}",

@@ -144,6 +144,55 @@ CORPORA: Dict[str, Dict[str, Any]] = {
         "dimension": 1536,
         "hierarchical": False,
     },
+    # MLDR is the corpus §20.6 named as the DISCRIMINATING test for "headroom x
+    # fanout", and §22.6 upgraded that to "run it at two corpus sizes" once the
+    # qasper coupling rule turned out to be a small-haystack artifact. The pair
+    # below is that design: ONE query set (all 800), TWO haystacks 4.0x apart --
+    # the same shape as qasper's 275 -> 1,088, which is what let §22.4 attribute
+    # the flip to distractors rather than to a different query sample.
+    #
+    # The `test` split, not `dev`, and the reason is POWER rather than taste: the
+    # effect under test is ~+0.008 and dev carries only 200 queries. qasper
+    # resolved +0.0099 at n=882; MLDR test gives n=800, dev would give n=200 and
+    # a null there would be uninterpretable -- indistinguishable from the
+    # underpowered non-result it probably is.
+    #
+    # `openai: True` is the hosted counterpart of `ollama: True`: INGEST runs live
+    # (no chunk of MLDR has ever been embedded under src/'s chunker, so there was
+    # nothing to read), and QUERIES are then served from the banked cache like
+    # every other leg.
+    #
+    # Serving queries live was tried first and is WRONG, for a reason worth not
+    # rediscovering: `text-embedding-3-small` is **not deterministic** -- 20 calls
+    # on identical text returned 2 distinct vectors (max elementwise diff
+    # 1.07e-4). Every arm re-embedding its own queries therefore compares two
+    # slightly different encoders, and it flipped 1 of 800 near-tied MLDR
+    # rankings, which surfaced as the inertness check accusing the pool patch.
+    # Local encoders do not do this (§5.2: 0/10,421 egemma vectors drifted), so
+    # this trap only exists on a hosted arm. Run --fill-query-cache once.
+    "mldr": {
+        "db": "poolwidth__mldr_test__text-embedding-3-small",
+        "model": "text-embedding-3-small",
+        "cache": "openai__text-embedding-3-small",
+        "dimension": 1536,
+        "hierarchical": False,
+        "openai": True,
+        "mldr": {"split": "test"},
+    },
+    # 800 gold + 720 sampled negatives = 1,520 docs against the big leg's 6,078.
+    # Gold is never dropped, so every query stays answerable in BOTH legs and the
+    # two are paired by query id. The small corpus is a strict SUBSET of the big
+    # one, which is what makes the pairing legitimate (and what the qasper leg
+    # had to verify explicitly for dev vs full).
+    "mldr_small": {
+        "db": "poolwidth__mldr_test_small__text-embedding-3-small",
+        "model": "text-embedding-3-small",
+        "cache": "openai__text-embedding-3-small",
+        "dimension": 1536,
+        "hierarchical": False,
+        "openai": True,
+        "mldr": {"split": "test", "max_negatives": 720},
+    },
 }
 
 # MAUD cannot answer this question, and the index builds fine anyway -- which is
@@ -230,16 +279,19 @@ def _construct(spec: Dict[str, Any], stub: Optional[PoolStub], *, live: bool = F
         )
 
     if live:
-        if not spec.get("ollama"):
-            raise ValueError(f"--embed refused for {spec['db']}: no local encoder declared for this corpus")
+        if not (spec.get("ollama") or spec.get("openai")):
+            raise ValueError(f"--embed refused for {spec['db']}: no live encoder declared for this corpus")
+        hosted = bool(spec.get("openai"))
         kwargs = dict(
-            embedding_provider="ollama",
+            embedding_provider="openai" if hosted else "ollama",
             embedding_model=spec["model"],
             hierarchical_embeddings=spec["hierarchical"],
             # Transport only -- it cannot change a stored vector. 2 rather than
             # the tempting 8: a long-chunk Ollama ingest at high concurrency
-            # fails with empty error messages at exactly the 300s timeout.
-            embedding_config={"max_concurrent_requests": 2},
+            # fails with empty error messages at exactly the 300s timeout. A
+            # hosted encoder has no such coupling and is latency-bound, so it
+            # keeps the provider's own default.
+            **({} if hosted else {"embedding_config": {"max_concurrent_requests": 2}}),
         )
         if spec["hierarchical"]:
             kwargs["section_vector_strategy"] = "centroid"
@@ -334,19 +386,47 @@ def fill_query_cache(spec: Dict[str, Any], queries: Dict[str, str], qids: Sequen
     that is the convention the directory was written under. It is the same string
     src/ applies through its registry, so the banked vector is what a live query
     would have produced -- checked, not assumed (``--verify-cache``).
+
+    On a HOSTED encoder this is not merely a speed-up, it is what makes a sweep
+    reproducible at all. Measured 2026-08-12: ``text-embedding-3-small`` returns
+    **2 distinct vectors across 20 calls on identical text** (max elementwise
+    difference 1.07e-4, cosine 0.9999996). That is far too small to move a score
+    a user would notice and easily enough to flip a near-tied ranking -- it broke
+    the inertness check on exactly 1 of 800 MLDR queries, which reads as a
+    fidelity bug in whatever was patched. Banking one vector per query removes
+    the encoder from the comparison entirely, so the only thing varying between
+    arms is the thing under test. Note the local encoders do NOT behave this way
+    (§5.2: 0 of 10,421 egemma vectors drifted across builds), which is why no
+    earlier leg needed this.
     """
-    from benchmarks.eval_equivalence import EGEMMA_QUERY_PREFIX
     from benchmarks.eval_hierarchical import CachedEncoder
 
+    provider = "openai" if spec.get("openai") else "ollama"
     want = (CACHE_DIR / "hier_embed" / spec["cache"]).resolve()
-    emb = CachedEncoder("ollama", spec["model"], num_ctx=2048)
+    # num_ctx keys the cache directory AND gets forwarded to Ollama; OpenAI takes
+    # neither, and passing one would write to `...__ctx2048` -- a directory the
+    # sweep's stub never reads. The guard below catches that rather than trusting
+    # this line.
+    emb = (
+        CachedEncoder("openai", spec["model"])
+        if provider == "openai"
+        else CachedEncoder("ollama", spec["model"], num_ctx=2048)
+    )
     if emb.cache_dir.resolve() != want:
         raise SystemExit(
             f"ABORT: CachedEncoder would write to {emb.cache_dir}, but the sweep's stub reads "
             f"{want}. Filling the wrong directory leaves the sweep failing on misses while the "
             "vectors sit somewhere nobody looks."
         )
-    texts = [EGEMMA_QUERY_PREFIX + queries[q] for q in qids]
+    if provider == "openai":
+        # text-embedding-3-small has no query/document prefix convention, and the
+        # NQ and MAUD vectors in this same directory were banked without one.
+        # Adding one here would write a second, shadow keyspace beside them.
+        texts = [queries[q] for q in qids]
+    else:
+        from benchmarks.eval_equivalence import EGEMMA_QUERY_PREFIX
+
+        texts = [EGEMMA_QUERY_PREFIX + queries[q] for q in qids]
     emb.encode(texts)
     logger.info("query cache: %d embedded, %d already present -> %s", emb.n_embedded, emb.n_cached, emb.cache_dir)
 
@@ -524,6 +604,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit(f"REFUSING --dataset {args.dataset}: {_REFUSED[args.dataset]}")
 
     spec = dict(CORPORA[args.dataset])
+    if spec.get("openai"):
+        # experiments/.env holds OPENAI_API_KEY. Without this the provider
+        # constructs fine and dies at the first embed with 'API key is required'
+        # -- after the ingest loop has already started, which on this corpus
+        # means minutes of chunking thrown away.
+        from benchmarks.eval_dual import _load_experiments_env
+
+        _load_experiments_env()
     stub = (
         None
         if spec.get("provider")
@@ -547,6 +635,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bench = load_qasper(split="dev" if args.dataset == "qasper" else "full", max_papers=args.max_papers)
         if args.max_papers:
             spec["db"] += f"__max{args.max_papers}"
+    elif spec.get("mldr"):
+        from benchmarks.mldr_data import load_mldr
+
+        mldr_kwargs = dict(spec["mldr"])
+        if args.max_papers:
+            # Smoke builds only, and the key MUST carry the cap: a 5-query smoke
+            # index reused by the full run scores every arm at chance while
+            # looking like a result. Same reason --max-papers suffixes on qasper.
+            mldr_kwargs["max_queries"] = args.max_papers
+            spec["db"] += f"__max{args.max_papers}"
+        bench = load_mldr(**mldr_kwargs)
     elif args.dataset == "nq":
         from benchmarks.nq_data import load_nq
 
@@ -563,8 +662,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             spec["db"] += f"__max{args.max_contracts}"
 
     if args.fill_query_cache:
-        if not spec.get("ollama"):
-            raise SystemExit(f"--fill-query-cache refused for {args.dataset}: no local encoder declared")
+        if not (spec.get("ollama") or spec.get("openai")):
+            raise SystemExit(f"--fill-query-cache refused for {args.dataset}: no encoder declared")
         # Every scored query, not just the arm being swept: a subset arm reads
         # from the same directory, and a half-filled cache fails later, not here.
         scored = [q for q in bench.queries if any(v > 0 for v in bench.doc_qrels.get(q, {}).values())]
