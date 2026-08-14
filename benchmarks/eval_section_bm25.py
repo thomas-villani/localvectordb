@@ -102,15 +102,38 @@ class FTS:
         texts: Sequence[str],
         docs: Sequence[str],
         sanitize: Optional[Any] = None,
+        weight: Optional[float] = None,
+        tokenize: Optional[str] = None,
     ) -> None:
         # ``sanitize`` swaps the query->MATCH transform for a candidate one, so a
         # proposed change to FTSQuerySanitization can be measured before it is
         # shipped. Default None keeps src's own function, which is what every
         # published number here was produced with.
         self.sanitize = sanitize
+        # ``weight`` is the body column's bm25() weight -- and, because FTS5
+        # multiplies TERM FREQUENCY rather than the score, it IS a k1 sweep:
+        # dividing through by w turns bm25 into the same expression with
+        # k1_eff = 1.2/w and a constant numerator factor, so the ranking is that
+        # of BM25 at k1_eff. See eval_bm25_k1.py for the derivation and control.
+        #
+        # None means "emit the unweighted `bm25(u)` shipped everywhere else", so
+        # every number published from this harness is reproduced by the same SQL
+        # it was produced with. weight=1.0 is a DIFFERENT thing on purpose: it
+        # forces the weighted form at the neutral value, which is what makes the
+        # equality check in eval_bm25_k1.py a real test of the plumbing.
+        # Mutable on purpose: the index is identical across the sweep, so a
+        # sweep re-points this rather than rebuilding FTS5 per grid point.
+        self.weight = weight
+        # ``tokenize`` is an FTS5 tokenizer clause, e.g. "porter unicode61". None
+        # emits no clause at all -- the default unicode61 every shipped table
+        # uses, since `grep` finds no tokenize= anywhere in src/. Stemming needs
+        # an index REBUILD to ship, but not to measure: this harness builds its
+        # own index, so the migration is a shipping cost, not an evaluation one.
+        self.tokenize = tokenize
         self.ids = list(ids)
         self.conn = sqlite3.connect(":memory:")
-        self.conn.execute("CREATE VIRTUAL TABLE u USING fts5(body, doc UNINDEXED)")
+        clause = "" if tokenize is None else f", tokenize='{tokenize}'"
+        self.conn.execute(f"CREATE VIRTUAL TABLE u USING fts5(body, doc UNINDEXED{clause})")
         self.conn.executemany(
             "INSERT INTO u(rowid, body, doc) VALUES (?, ?, ?)",
             ((i, t, d) for i, (t, d) in enumerate(zip(texts, docs, strict=True))),
@@ -135,8 +158,9 @@ class FTS:
         for sanitized in candidates:
             if not sanitized:
                 continue
-            sql = "SELECT rowid, bm25(u) AS rank FROM u WHERE u MATCH ?"
-            params: List[object] = [sanitized]
+            rank = "bm25(u)" if self.weight is None else "bm25(u, ?)"
+            sql = f"SELECT rowid, {rank} AS rank FROM u WHERE u MATCH ?"
+            params: List[object] = [sanitized] if self.weight is None else [float(self.weight), sanitized]
             if scope is not None:
                 sql += " AND doc = ?"
                 params.append(scope)
