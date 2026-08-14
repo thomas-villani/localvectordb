@@ -90,6 +90,7 @@ import sqlite3
 import sys
 from array import array
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -149,11 +150,13 @@ class LexIndex:
         b: float = B_SHIPPED,
         clamp_idf: bool = True,
         tokenize: Optional[str] = None,
+        delta: float = 0.0,
     ) -> None:
         self.ids = list(ids)
         self.docs = list(docs)
         self.k1 = k1
         self.b = b
+        self.delta = delta
         self.clamp_idf = clamp_idf
 
         conn = sqlite3.connect(":memory:")
@@ -189,8 +192,7 @@ class LexIndex:
         self.post_tf = [np.frombuffer(a, dtype=np.int32).astype(np.float64) for a in post_tf]
         self.dl = dl.astype(np.float64)
         self.avgdl = float(self.dl.mean()) if self.n_docs else 1.0
-        # 1 - b + b*D/avgdl, precomputed once: it is per-unit and k1-free.
-        self.norm = 1.0 - self.b + self.b * self.dl / max(self.avgdl, 1e-9)
+        self._recompute_norm()
         self._idf = np.array(
             [
                 math.log((self.n_docs - len(self.post_doc[i]) + 0.5) / (len(self.post_doc[i]) + 0.5))
@@ -200,6 +202,36 @@ class LexIndex:
         )
         if self.clamp_idf:
             self._idf = np.maximum(self._idf, 1e-6)
+
+    def _recompute_norm(self) -> None:
+        # 1 - b + b*D/avgdl. Per-unit and k1-free, so it is the ONLY thing a
+        # `b` change touches -- postings, document lengths and idf are all
+        # independent of both k1 and b.
+        self.norm = 1.0 - self.b + self.b * self.dl / max(self.avgdl, 1e-9)
+
+    def reparam(
+        self,
+        k1: Optional[float] = None,
+        b: Optional[float] = None,
+        delta: Optional[float] = None,
+    ) -> "LexIndex":
+        """Retune k1 / b / delta in place, without re-reading the postings.
+
+        A `b` sweep is therefore nearly free: building the index is the whole
+        cost (one fts5vocab pass over ~10^7 token rows), and every grid point
+        after the first reuses it. That is what makes a 2-D k1 x b grid
+        affordable at all -- see `benchmarks/eval_bm25_variants.py`.
+
+        Returns self so a grid loop reads as one expression.
+        """
+        if k1 is not None:
+            self.k1 = k1
+        if delta is not None:
+            self.delta = delta
+        if b is not None and b != self.b:
+            self.b = b
+            self._recompute_norm()
+        return self
 
     def idf(self, term: str) -> float:
         ti = self.term_ids.get(term)
@@ -247,7 +279,22 @@ class LexIndex:
                 continue
             f = self.post_tf[ti]
             d = self.post_doc[ti]
-            acc[d] += w * self._idf[ti] * f * (self.k1 + 1) / (f + self.k1 * self.norm[d])
+            if self.delta:
+                # BM25+ (Lv & Zhai 2011): a per-matched-term floor of idf*delta.
+                # The tf component decays to 0 as |d| grows, so a long document
+                # CONTAINING a term can score below a short one that does not
+                # contain it; delta makes presence worth a fixed minimum. Applied
+                # over the posting list, so it lifts only units where the term
+                # actually occurs -- adding it to `acc` wholesale would be a
+                # constant and could not reorder anything.
+                acc[d] += w * self._idf[ti] * (f * (self.k1 + 1) / (f + self.k1 * self.norm[d]) + self.delta)
+            else:
+                # Kept as a separate branch rather than folding delta=0 into the
+                # expression above: the two forms associate the floating-point
+                # multiplies differently, and every PRF number already published
+                # from this file came out of THIS one. A 1-ULP drift would be
+                # invisible except where it flips an exact tie.
+                acc[d] += w * self._idf[ti] * f * (self.k1 + 1) / (f + self.k1 * self.norm[d])
             touched = True
         if not touched:
             return {}
@@ -715,45 +762,34 @@ def precision_sweep(
     return 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dataset", choices=("qasper", "maud", "mldr", "nq"), default="qasper")
-    p.add_argument("--model-key", default="egemma")
-    p.add_argument("--coarse", choices=("sections", "documents"), default="sections")
-    p.add_argument("--level", choices=("chunks", "coarse"), default="chunks")
-    p.add_argument("--max-papers", type=int, default=None)
-    p.add_argument("--vector-weight", type=float, default=VECTOR_WEIGHT)
-    p.add_argument("--fb-k", type=int, default=FB_K)
-    p.add_argument("--fb-terms", type=int, default=FB_TERMS)
-    p.add_argument("--alpha", type=float, default=ALPHA)
-    p.add_argument(
-        "--vocab-gap",
-        action="store_true",
-        help="stratify the cross-modal advantage by query-term coverage of the gold units",
-    )
-    p.add_argument(
-        "--precision-sweep",
-        action="store_true",
-        help="measure nDCG vs feedback PRECISION on a fixed query set, instead of the arm table",
-    )
-    p.add_argument(
-        "--sweep-filler",
-        choices=("retrieved", "random"),
-        default="retrieved",
-        help="non-relevant feedback drawn from the query's own hybrid list (realistic) or at random",
-    )
-    p.add_argument(
-        "--rm3-select",
-        choices=("idf", "freq"),
-        default="idf",
-        help="expansion-term selection: P(t|R)*idf (default) or textbook P(t|R) alone",
-    )
-    p.add_argument("--allow-embed", action="store_true")
-    p.add_argument("--out", type=Path, default=None)
-    args = p.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
-    logging.getLogger("localvectordb.chunking").setLevel(logging.ERROR)
+@dataclass
+class Cell:
+    """One (dataset, level, coarse) evaluation cell: units, vectors and qrels.
 
+    Extracted from ``main`` verbatim so `eval_bm25_variants.py` can reuse the
+    exact same units, encoder selection and MAUD scoping. Copying it instead
+    would have let the two files drift, and a `b` sweep measured on a slightly
+    different unit set than the `k1` sweep would not be comparable to it.
+    """
+
+    bench: object
+    units: object
+    spec: object
+    texts: List[str]
+    uids: List[str]
+    udocs: List[str]
+    uv: np.ndarray
+    qv: np.ndarray
+    qids: List[str]
+    qtexts: List[str]
+    owner_sec: Optional[Dict[str, List[str]]]
+    owner_doc: Dict[str, List[str]]
+    fb_owner: Dict[str, List[str]]
+    q_scope: Optional[List[Optional[str]]]
+
+
+def build_cell(args: argparse.Namespace) -> Cell:
+    """Load the corpus, pick the retrieval unit, and fetch cached vectors."""
     from benchmarks.eval_dual import MODEL_POOL, PrefixedEncoder, _load_experiments_env, load_units
 
     _load_experiments_env()
@@ -833,6 +869,69 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         q_scope = [str(q).split("||", 1)[0] for q in qids]
 
     logger.info("%d units (%s), %d queries", len(uids), args.level, len(qids))
+    return Cell(
+        bench=bench,
+        units=units,
+        spec=spec,
+        texts=texts,
+        uids=uids,
+        udocs=udocs,
+        uv=uv,
+        qv=qv,
+        qids=qids,
+        qtexts=qtexts,
+        owner_sec=owner_sec,
+        owner_doc=owner_doc,
+        fb_owner=fb_owner,
+        q_scope=q_scope,
+    )
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--dataset", choices=("qasper", "maud", "mldr", "nq"), default="qasper")
+    p.add_argument("--model-key", default="egemma")
+    p.add_argument("--coarse", choices=("sections", "documents"), default="sections")
+    p.add_argument("--level", choices=("chunks", "coarse"), default="chunks")
+    p.add_argument("--max-papers", type=int, default=None)
+    p.add_argument("--vector-weight", type=float, default=VECTOR_WEIGHT)
+    p.add_argument("--fb-k", type=int, default=FB_K)
+    p.add_argument("--fb-terms", type=int, default=FB_TERMS)
+    p.add_argument("--alpha", type=float, default=ALPHA)
+    p.add_argument(
+        "--vocab-gap",
+        action="store_true",
+        help="stratify the cross-modal advantage by query-term coverage of the gold units",
+    )
+    p.add_argument(
+        "--precision-sweep",
+        action="store_true",
+        help="measure nDCG vs feedback PRECISION on a fixed query set, instead of the arm table",
+    )
+    p.add_argument(
+        "--sweep-filler",
+        choices=("retrieved", "random"),
+        default="retrieved",
+        help="non-relevant feedback drawn from the query's own hybrid list (realistic) or at random",
+    )
+    p.add_argument(
+        "--rm3-select",
+        choices=("idf", "freq"),
+        default="idf",
+        help="expansion-term selection: P(t|R)*idf (default) or textbook P(t|R) alone",
+    )
+    p.add_argument("--allow-embed", action="store_true")
+    p.add_argument("--out", type=Path, default=None)
+    args = p.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    logging.getLogger("localvectordb.chunking").setLevel(logging.ERROR)
+
+    cell = build_cell(args)
+    bench, spec = cell.bench, cell.spec
+    texts, uids, udocs = cell.texts, cell.uids, cell.udocs
+    uv, qv, qids, qtexts = cell.uv, cell.qv, cell.qids, cell.qtexts
+    owner_sec, owner_doc, fb_owner = cell.owner_sec, cell.owner_doc, cell.fb_owner
+    q_scope = cell.q_scope
 
     index = LexIndex(uids, texts, udocs)
     logger.info("lexical index: %d terms, avgdl %.0f", len(index.term_ids), index.avgdl)
