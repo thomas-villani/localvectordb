@@ -11,7 +11,7 @@ import logging
 import os
 import threading
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Type
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Tuple, Type
 
 import httpx
 import numpy as np
@@ -44,6 +44,12 @@ def _get_sync_event_loop() -> "asyncio.AbstractEventLoop":
 
 
 logger = logging.getLogger(__name__)
+
+# llama.cpp's ``n_batch`` default, which Ollama does not report through
+# ``/api/show``. For an encoder (non-causal) model this is the real per-input
+# ceiling -- the whole input is embedded in one batch -- so a model with an 8k
+# architectural context and no explicit batch setting still truncates at 2,048.
+_DEFAULT_NUM_BATCH = 2048
 
 
 class ModelPrefixes(NamedTuple):
@@ -458,6 +464,28 @@ class EmbeddingProvider(ABC):
         """Maximum batch size for this provider"""
         pass
 
+    @property
+    def context_tokens(self) -> Optional[int]:
+        """The encoder's *effective* context window, in tokens, or None if unknown.
+
+        Deliberately separate from :attr:`max_input_tokens`, which is a client-side
+        truncation policy: a provider that returns a value here is describing the
+        encoder, not asking us to pre-truncate. Conflating the two would give
+        Ollama a truncation pass driven by ``tiktoken``'s ``cl100k_base``, which is
+        not the tokenizer any Ollama model uses.
+
+        Read by :mod:`localvectordb.database._span_embed` to size the windows a
+        long section is split into. When every provider returned None that code
+        fell back to a fixed 24,000-char (~6,860-token) window, which overflows a
+        2,048-token encoder by ~3.3x -- so each window was silently truncated,
+        defeating the windowing it exists to perform.
+
+        "Effective" is load-bearing: report the smallest binding ceiling, not the
+        architectural maximum. Under-reporting only makes windows smaller than
+        necessary; over-reporting reintroduces the silent truncation.
+        """
+        return None
+
     def embed_sync(
         self, texts: List[str], batch_size: Optional[int] = None, *, task: EmbeddingTask = "document"
     ) -> np.ndarray:
@@ -734,6 +762,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
     """
 
     _model_info_cache: Dict[str, List[Dict]] = {}
+    _model_card_cache: Dict[Tuple[Optional[str], str], Dict[str, Any]] = {}
 
     def __init__(
         self,
@@ -817,6 +846,98 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                 self._model_info_cache[self.base_url] = models
 
         return self._model_info_cache.get(self.base_url, [])
+
+    def _get_model_card(self) -> Dict[str, Any]:
+        """``/api/show`` for this model, cached per (server, model tag).
+
+        Cached because :attr:`context_tokens` is read once per span-embedding
+        window; an uncached HTTP round trip there would show up as ingest latency.
+        Returns ``{}`` when the server is unreachable or the model is unknown, so
+        an unavailable Ollama degrades to "context unknown" rather than raising
+        from a property.
+        """
+        key = (self.base_url, self.model)
+        cached = self._model_card_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            with httpx.Client() as client:
+                response = client.post(
+                    f"{self.base_url}/api/show",
+                    json={"model": self.model},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                card: Dict[str, Any] = response.json()
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must not break ingest
+            logger.debug("Ollama /api/show failed for %s: %s: %s", self.model, type(exc).__name__, exc)
+            card = {}
+        self._model_card_cache[key] = card
+        return card
+
+    @staticmethod
+    def _parse_modelfile_params(raw: str) -> Dict[str, int]:
+        """Pull integer ``num_ctx`` / ``num_batch`` out of ``/api/show``'s ``parameters``.
+
+        The field is the Modelfile's own PARAMETER lines rendered as text, e.g.
+        ``"num_batch  2048\\nnum_ctx  2048"`` -- not JSON, and absent entirely for
+        models that set no parameters.
+        """
+        found: Dict[str, int] = {}
+        for line in (raw or "").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0] in ("num_ctx", "num_batch"):
+                try:
+                    value = int(parts[1])
+                except ValueError:
+                    continue
+                if value > 0:
+                    found[parts[0]] = value
+        return found
+
+    @property
+    def context_tokens(self) -> Optional[int]:
+        """Effective per-input token ceiling, derived from the server. No policy.
+
+        Four ceilings can bind, and the smallest one wins:
+
+        * the **architecture's** ``<family>.context_length`` from ``model_info``;
+        * the model card's own ``num_ctx`` / ``num_batch`` PARAMETER lines;
+        * whatever the caller passed for ``num_ctx`` / ``num_batch``;
+        * ``_DEFAULT_NUM_BATCH`` when nothing else pins the batch.
+
+        Taking the minimum is not defensive coding, it is required. ``nomic-embed-text``
+        ships ``num_ctx 8192`` against an architectural context of **2,048** -- trusting
+        the model card alone would overstate its window 4x and truncate three quarters
+        of every long window. And ``num_batch`` is a real ceiling for embeddings, not a
+        throughput knob: an encoder model embeds its whole input in one batch, so an
+        input longer than ``n_batch`` is truncated *regardless of* ``num_ctx``.
+
+        Checks out against the one value we measured directly: ``embeddinggemma:300m``
+        reports 2,048 on all three sources, and bisecting Ollama's real truncation
+        boundary for that model also landed on 2,048.
+        """
+        ceilings = [v for v in (self.num_ctx, self.num_batch) if isinstance(v, int) and v > 0]
+
+        card = self._get_model_card()
+        model_info = card.get("model_info") or {}
+        if isinstance(model_info, dict):
+            ceilings += [
+                v for k, v in model_info.items() if k.endswith(".context_length") and isinstance(v, int) and v > 0
+            ]
+        params = self._parse_modelfile_params(card.get("parameters", ""))
+        ceilings += list(params.values())
+
+        if not ceilings:
+            # Nothing known at all -- usually an unreachable server. Say so by
+            # returning None rather than guessing; the caller has its own fallback.
+            return None
+        if self.num_batch is None and "num_batch" not in params:
+            # No batch value anywhere, so llama.cpp's default applies and we cannot
+            # read it. Fold it in rather than reporting the architectural maximum:
+            # over-reporting here is exactly the silent truncation being fixed.
+            ceilings.append(_DEFAULT_NUM_BATCH)
+        return min(ceilings)
 
     def validate_model(self) -> bool:
         """Check if the model is available in Ollama"""
