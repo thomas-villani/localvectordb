@@ -330,6 +330,140 @@ class TestOllamaEmbeddings:
 
 
 @pytest.mark.unit
+class TestOllamaContextTokens:
+    """`context_tokens` derives the encoder's real input ceiling from /api/show.
+
+    Before this existed every Ollama provider reported no context at all, and
+    `_span_embed` sized each window at a fixed 24,000 chars (~6,860 tokens) --
+    over 3x a 2,048-token encoder, so every window was silently truncated by the
+    very code written to prevent truncation.
+
+    The payloads below are trimmed captures from a real Ollama 0.32.5 server,
+    because the shape is the part worth pinning: `parameters` is the Modelfile's
+    PARAMETER lines as *text*, not JSON, and the context key is namespaced by
+    architecture family rather than having a fixed name.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_card_cache(self):
+        OllamaEmbeddings._model_card_cache.clear()
+        yield
+        OllamaEmbeddings._model_card_cache.clear()
+
+    @staticmethod
+    def _mock_show(mock_client_class, card):
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.json.return_value = card
+        mock_response.raise_for_status = Mock()
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value.__enter__.return_value = mock_client
+        return mock_client
+
+    @patch("httpx.Client")
+    def test_all_three_sources_agree(self, mock_client_class):
+        """embeddinggemma:300m -- architecture, num_ctx and num_batch all say 2048.
+
+        The one model whose ceiling was also measured directly, by bisecting
+        Ollama's real truncation boundary. It came out at 2,048 too.
+        """
+        self._mock_show(
+            mock_client_class,
+            {
+                "details": {"family": "gemma3"},
+                "model_info": {"gemma3.context_length": 2048, "gemma3.embedding_length": 768},
+                "parameters": "num_batch                      2048\nnum_ctx                        2048",
+            },
+        )
+        assert OllamaEmbeddings("embeddinggemma:300m").context_tokens == 2048
+
+    @patch("httpx.Client")
+    def test_architecture_caps_an_overstated_model_card(self, mock_client_class):
+        """nomic-embed-text ships num_ctx 8192 against a 2,048-token architecture.
+
+        This is why the minimum is taken rather than a preference order: trusting
+        the model card here would size windows 4x too large and discard three
+        quarters of each one -- silently.
+        """
+        self._mock_show(
+            mock_client_class,
+            {
+                "details": {"family": "nomic-bert"},
+                "model_info": {"nomic-bert.context_length": 2048},
+                "parameters": "num_ctx                        8192",
+            },
+        )
+        assert OllamaEmbeddings("nomic-embed-text").context_tokens == 2048
+
+    @patch("httpx.Client")
+    def test_batch_default_binds_when_nothing_pins_it(self, mock_client_class):
+        """bge-m3 has an 8k architecture and sets no parameters at all.
+
+        llama.cpp's n_batch default then applies, and Ollama does not report it.
+        An encoder embeds its whole input in one batch, so n_batch is a real
+        ceiling -- reporting the 8,192 architectural maximum would be the same
+        over-report this property exists to avoid.
+        """
+        self._mock_show(
+            mock_client_class,
+            {
+                "details": {"family": "bert"},
+                "model_info": {"bert.context_length": 8192},
+                "parameters": "",
+            },
+        )
+        assert OllamaEmbeddings("bge-m3").context_tokens == 2048
+
+    @patch("httpx.Client")
+    def test_explicit_settings_can_raise_it_to_the_architectural_limit(self, mock_client_class):
+        """A caller who raises both num_ctx and num_batch gets the wider window."""
+        self._mock_show(
+            mock_client_class,
+            {"details": {"family": "bert"}, "model_info": {"bert.context_length": 8192}, "parameters": ""},
+        )
+        assert OllamaEmbeddings("bge-m3", num_ctx=8192, num_batch=8192).context_tokens == 8192
+
+    @patch("httpx.Client")
+    def test_explicit_settings_cannot_exceed_the_architecture(self, mock_client_class):
+        """num_ctx is a request, not a fact: the model still cannot read past its context."""
+        self._mock_show(
+            mock_client_class,
+            {
+                "details": {"family": "gemma3"},
+                "model_info": {"gemma3.context_length": 2048},
+                "parameters": "",
+            },
+        )
+        assert OllamaEmbeddings("embeddinggemma:300m", num_ctx=99999, num_batch=99999).context_tokens == 2048
+
+    @patch("httpx.Client")
+    def test_unreachable_server_reports_unknown_rather_than_raising(self, mock_client_class):
+        """A diagnostic must not break ingest, and must not invent a number either."""
+        mock_client_class.return_value.__enter__.side_effect = httpx.ConnectError("no server")
+        assert OllamaEmbeddings("any-model").context_tokens is None
+
+    @patch("httpx.Client")
+    def test_model_card_is_fetched_once_per_model(self, mock_client_class):
+        """context_tokens is read once per span window; an uncached POST would be ingest latency."""
+        mock_client = self._mock_show(
+            mock_client_class,
+            {"details": {"family": "bert"}, "model_info": {"bert.context_length": 8192}, "parameters": ""},
+        )
+        provider = OllamaEmbeddings("bge-m3")
+        assert [provider.context_tokens for _ in range(5)] == [2048] * 5
+        assert mock_client.post.call_count == 1
+
+    def test_parameters_parser_tolerates_the_shapes_ollama_emits(self):
+        """`parameters` is free text: absent, blank, multi-space, or carrying unrelated keys."""
+        parse = OllamaEmbeddings._parse_modelfile_params
+        assert parse("num_ctx     4096\nnum_batch   512") == {"num_ctx": 4096, "num_batch": 512}
+        assert parse("") == {}
+        assert parse('stop   "<|im_end|>"\ntemperature  0.7') == {}
+        assert parse("num_ctx   not-a-number") == {}
+        assert parse("num_ctx   0") == {}  # non-positive is not a ceiling
+
+
+@pytest.mark.unit
 @pytest.mark.embedding
 @pytest.mark.network
 class TestOpenAIEmbeddings:

@@ -64,15 +64,23 @@ def _estimate_tokens(text: str) -> int:
 def _provider_context_tokens(provider: object) -> Optional[int]:
     """The encoder's usable context window in tokens, if the provider exposes one.
 
-    Prefers an explicit ``num_ctx`` (e.g. an Ollama provider told to load a larger
-    window) over the generic ``max_input_tokens`` per-text cap. Returns None when
-    neither is a positive int, so the caller falls back to the fixed default.
+    Every attribute consulted here is a *ceiling*, so the binding one is the
+    smallest -- not the first found. That distinction is not academic:
+    ``nomic-embed-text`` declares ``num_ctx`` 8192 against an architectural context
+    of 2,048, and reading ``num_ctx`` first (as this did) sized its windows 4x too
+    large and truncated three quarters of each one.
+
+    ``context_tokens`` is the provider's own derivation and is preferred when
+    present, but is still min'd with the rest so an explicit caller-supplied
+    ``num_ctx`` can only ever narrow the window. Returns None when nothing is a
+    positive int, so the caller falls back to the fixed default.
     """
-    for attr in ("num_ctx", "max_input_tokens"):
+    ceilings = []
+    for attr in ("context_tokens", "num_ctx", "max_input_tokens"):
         value = getattr(provider, attr, None)
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-            return value
-    return None
+            ceilings.append(value)
+    return min(ceilings) if ceilings else None
 
 
 def _window_chars_for(provider: object) -> int:
