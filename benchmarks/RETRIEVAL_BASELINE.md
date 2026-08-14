@@ -183,9 +183,14 @@ in T1.6 — **but not on SciFact**, whose documents average 1.09 chunks.
 - SciFact is scientific claim verification: a query shares a great deal of
   vocabulary with the target abstract, and BM25 is a famously strong baseline
   there. Expect the vector/keyword ordering to shift on a paraphrase-heavy corpus.
-- Reranking (`--rerank`) is excluded from the committed baseline: it is slow on
-  CPU and, per T1.2, currently reorders an already-truncated top-`k`, so it
-  cannot improve recall by construction.
+- Reranking (`--rerank`) is excluded from the committed baseline because it is
+  slow on CPU, not because it cannot help. The "reorders an already-truncated
+  top-`k`" note from T1.2 is obsolete: `_resolve_rerank_k` over-fetches `5*k`
+  candidates, so a reranker can promote documents the search legs ranked below
+  `k`. Measured separately (`benchmarks/eval_rerank.py`), a cross-encoder is the
+  single largest lever in the pipeline — but the effect is model-specific and
+  does not transfer between corpora, so it is not a constant this baseline can
+  carry.
 - `--max-docs` / `--max-queries` truncate the corpus and inflate every metric.
   The harness refuses `--save-baseline` when either is set.
 - Runs are bit-deterministic. Any nonzero delta from `--check` is a real change,
