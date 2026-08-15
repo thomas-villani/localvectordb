@@ -9,12 +9,16 @@ reverted, not shipped.
 # Reproduce (first run downloads SciFact and builds the database, ~6 min)
 ./.venv/Scripts/python.exe benchmarks/eval_retrieval.py
 
-# Gate a change: non-zero exit if any configuration regressed
-./.venv/Scripts/python.exe benchmarks/eval_retrieval.py --check
+# Gate a change: non-zero exit if any configuration regressed on EITHER corpus
+./.venv/Scripts/python.exe benchmarks/eval_retrieval.py --dataset all --check
 ```
 
 The machine-readable copy is `benchmarks/retrieval_baseline.json` (tracked).
 `--check` diffs against it with a tolerance of 0.005 on `ndcg@10`.
+
+**Use `--dataset all`.** SciFact alone cannot gate an *aggregation* change — see
+"The second gate corpus" below for the measurement. `--dataset all` runs SciFact
+and Qasper and fails if either regressed.
 
 ### T1.6 — document scoring pruned to 3 methods (NFCorpus baseline)
 
@@ -172,14 +176,115 @@ turns out to have been *rescuing* the old fusion rather than hurting it: with
 saturated keyword scores, `best * multiplier` routinely exceeded 1.0, and the clamp
 capped the damage (+0.1024 nDCG at `vw=0.1`). Under relative-score fusion the clamp
 now costs 0.0015–0.0026. It is a band-aid over the scale bug and should be revisited
-in T1.6 — **but not on SciFact**, whose documents average 1.09 chunks.
+in T1.6 — **but not on SciFact**, whose documents average 1.08 chunks. That corpus
+now exists: revisit it on `--dataset qasper`, where the same clamp is load-bearing
+rather than marginal.
+
+## The second gate corpus — Qasper
+
+`benchmarks/retrieval_baseline_qasper.json` (tracked). Run it with
+`--dataset qasper`, or both corpora with `--dataset all`.
+
+### Why a second corpus was needed
+
+The caveat "1.09 chunks/document means this dataset barely tests aggregation"
+sat in this file for months as a footnote. Measured, it is not a footnote — it
+means the gate **cannot resolve an aggregation change at its own tolerance.**
+
+Spread between the three document aggregators (`best` / `average` /
+`frequency_boost`) at each search leg, from the two committed baselines:
+
+| leg | SciFact | Qasper |
+|---|---|---|
+| `vector` | 0.0225 | 0.0223 |
+| `keyword` | 0.0150 | 0.1041 |
+| `hybrid vw=0.3` | 0.0061 | 0.0410 |
+| `hybrid vw=0.5` ← default | 0.0046 | 0.0551 |
+| `hybrid vw=0.7` | **0.0017** | 0.0618 |
+| `hybrid vw=0.9` | 0.0032 | 0.0673 |
+| **mean, hybrid legs** | **0.0039** | **0.0563** |
+
+The gate tolerance is **0.005**. On SciFact's hybrid legs — where the library
+default lives — swapping the aggregator outright moves less than that. Replacing
+`frequency_boost` with `average` on `hybrid vw=0.7` is a 0.0017 move here and
+would pass `--check` as though nothing happened. On Qasper the same swap is
+0.0618, more than twelve times the tolerance.
+
+Note the `vector` row: the two corpora agree almost exactly (0.0225 vs 0.0223).
+SciFact is not blind everywhere, it is blind on the **hybrid and keyword** legs,
+which is where the shipped default is. That fits the mechanism: those legs
+min-max normalise within the query's own pool, so the best chunk is 1.0 by
+construction, `frequency_boost`'s `min(1.0, best * multiplier)` clamp binds, and
+with 1.08 chunks per document there is nothing for a count multiplier to count.
+
+### Why Qasper rather than another BEIR corpus
+
+Measured 2026-08-14 with the real chunker at the shipped `chunk_size=500`:
+
+| corpus | docs | queries | chunks | chunks/doc | single-chunk docs |
+|---|---|---|---|---|---|
+| SciFact | 5,183 | 300 | 5,622 | 1.08 | 92.0% |
+| NFCorpus | 3,633 | 323 | 3,949 | 1.09 | 91.7% |
+| FiQA | 57,638 | 648 | 60,937 | 1.06 | 95.9% |
+| **Qasper dev** | **275** | **882** | **2,963** | **10.77** | **0.0%** |
+
+FiQA is the worst of the three despite being 11× larger, so this is not a
+SciFact quirk — it is what BEIR is: short retrieval units. NFCorpus is
+deliberately *not* in the `--dataset all` gate set for that reason; it costs a
+run and adds no coverage. It stays available on its own for a third opinion.
+
+Qasper is NLP papers with full text, so it is long-document retrieval with a
+document target. It is also small and fast: 275 papers chunk in seconds and the
+whole 18-configuration sweep runs without a download beyond the first.
+
+### Baseline (Qasper dev, 275 papers / 882 queries, binary relevance)
+
+| configuration | recall@1 | recall@5 | recall@10 | **ndcg@10** |
+|---|---|---|---|---|
+| hybrid vw=0.3 · frequency_boost | 0.3503 | 0.5011 | 0.5578 | **0.4493** |
+| hybrid vw=0.3 · best | 0.3435 | 0.5000 | 0.5567 | 0.4444 |
+| keyword · best | 0.3481 | 0.4966 | 0.5510 | 0.4432 |
+| keyword · frequency_boost | 0.3481 | 0.4966 | 0.5510 | 0.4432 |
+| **hybrid vw=0.5 · frequency_boost** ← library default | 0.3220 | 0.4875 | 0.5476 | **0.4289** |
+| hybrid vw=0.5 · best | 0.2846 | 0.4785 | 0.5397 | 0.4098 |
+| hybrid vw=0.3 · average | 0.2914 | 0.4660 | 0.5465 | 0.4083 |
+| hybrid vw=0.5 · average | 0.2415 | 0.4456 | 0.5227 | 0.3738 |
+| hybrid vw=0.7 · frequency_boost | 0.2551 | 0.4116 | 0.5102 | 0.3671 |
+| hybrid vw=0.7 · best | 0.2460 | 0.3889 | 0.5034 | 0.3575 |
+| keyword · average | 0.1791 | 0.4059 | 0.5329 | 0.3391 |
+| hybrid vw=0.9 · frequency_boost | 0.2177 | 0.3617 | 0.4320 | 0.3167 |
+| hybrid vw=0.9 · best | 0.2177 | 0.3571 | 0.4286 | 0.3139 |
+| hybrid vw=0.7 · average | 0.1746 | 0.3560 | 0.4728 | 0.3053 |
+| vector · best | 0.2052 | 0.3481 | 0.4240 | 0.3041 |
+| vector · frequency_boost | 0.1893 | 0.3481 | 0.4184 | 0.2981 |
+| vector · average | 0.1633 | 0.3345 | 0.4195 | 0.2818 |
+| hybrid vw=0.9 · average | 0.1315 | 0.2959 | 0.3934 | 0.2494 |
+
+Two differences from SciFact worth knowing before reading a delta here:
+
+- **The `vector_weight` ordering is reversed.** SciFact peaks at `vw=0.5` and
+  Qasper at `vw=0.3` — it wants *more* BM25, not less. A question about a paper
+  shares less vocabulary with the whole paper than a claim shares with its
+  abstract, but the paper is long enough that a lexical match is decisive.
+- **Absolute scores are much lower** (0.43 vs 0.71 at the default). There is more
+  headroom here, so a change has more room to show an effect — the flip side of
+  which is that a near-ceiling result on SciFact may simply have nowhere to go.
+
+### What this corpus still cannot gate
+
+Qasper has **5 quoted phrases in 882 queries** (0.6%), so it is no better than
+SciFact (0 in 300) at gating the phrase/keyword-sanitisation path. FiQA has the
+phrases (33 in 648) and none of the fanout, so no single corpus has both. Phrase
+behaviour is gated by `tests/test_keyword_search_semantics.py` instead, and that
+is a deliberate choice rather than an oversight: 33 quoted queries is a weak
+instrument next to 10 targeted tests.
 
 ## Caveats
 
 - SciFact has binary relevance, so the graded-gain path in `ndcg_at_k` is
   exercised only by NFCorpus (`--dataset nfcorpus`) and by the unit tests.
-- 1.09 chunks/document means this dataset barely tests document-scoring
-  aggregation or hierarchical retrieval.
+- 1.08 chunks/document means SciFact barely tests document-scoring aggregation
+  or hierarchical retrieval — quantified above; this is why Qasper exists.
 - SciFact is scientific claim verification: a query shares a great deal of
   vocabulary with the target abstract, and BM25 is a famously strong baseline
   there. Expect the vector/keyword ordering to shift on a paraphrase-heavy corpus.
