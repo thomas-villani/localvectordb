@@ -6,6 +6,7 @@ Tests for hierarchical document vectors (sections, multi-level FAISS indices).
 import asyncio
 import hashlib
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -821,6 +822,46 @@ class TestHierarchicalIntegration:
         if results:
             assert results[0].type == "section"
             assert ":section:" in results[0].id
+
+    def test_section_rollup_over_fetches_chunks(self, db_with_hierarchy):
+        """Asking for k SECTIONS must retrieve more than k chunks.
+
+        The roll-up groups chunk hits by owning section, so k chunks collapse into
+        fewer than k sections and the caller silently gets a short list. Asserted
+        on the pool width handed to the search leg rather than on a returned
+        count: whether a *particular* corpus collapses depends on how the top
+        chunks happen to distribute across sections, and a mock-embedding corpus
+        scatters them -- which would make a count assertion pass either way.
+        """
+        db = db_with_hierarchy
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+
+        seen = []
+        original = db._vector_search
+
+        def spy(query, return_type, k, *args, **kwargs):
+            seen.append(k)
+            return original(query, return_type, k, *args, **kwargs)
+
+        with patch.object(db, "_vector_search", side_effect=spy):
+            db.query("neural networks", return_type="sections", k=10, search_type="vector")
+            db.query("neural networks", return_type="documents", k=10, search_type="vector")
+
+        assert seen[0] == 50, "sections roll-up must widen the chunk pool"
+        assert seen[1] == 10, "every other return_type must be left exactly as it was"
+
+    def test_chunk_rollup_pool_composes_with_rerank_overfetch(self):
+        """The two over-fetches compose rather than one replacing the other."""
+        from localvectordb.database._search import (
+            _SECTION_ROLLUP_OVERFETCH,
+            _chunk_rollup_pool_size,
+            _resolve_rerank_k,
+        )
+
+        assert _chunk_rollup_pool_size(10) == 10 * _SECTION_ROLLUP_OVERFETCH
+        # A reranked query wants 5*k *sections*, and each of those needs chunks.
+        assert _chunk_rollup_pool_size(_resolve_rerank_k(None, 10)) == 100  # ceiling binds
+        assert _chunk_rollup_pool_size(200) == 200  # never below k itself
 
     def test_query_search_level_sections(self, db_with_hierarchy):
         """query(search_level='sections') searches section FAISS index."""

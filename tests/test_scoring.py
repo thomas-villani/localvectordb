@@ -148,6 +148,77 @@ class TestComputeDocumentScores:
         assert results == []
 
 
+class TestPercentileScoring:
+    """``percentile`` -- a soft max, resurrected as an option with ONE knob.
+
+    Removed in ``54a9898`` on a sweep that varied every leg and ``vector_weight``
+    but only one candidate-pool width, which is the one axis aggregator
+    differences live on. Re-measured across six widths it is a *document-target*
+    aggregator: 3 of 4 document cells positive, 0 of 6 section wins.
+    """
+
+    def _score(self, scores, options=None):
+        doc_groups = {"doc": [_chunk("doc", s, i) for i, s in enumerate(scores)]}
+        results = LocalVectorDB._compute_document_scores(
+            "percentile", options or {}, doc_groups, {"doc": "content"}, {"doc": {}}
+        )
+        return results[0]
+
+    def test_default_is_p90(self):
+        # numpy's linear interpolation on [0.1, 0.5, 0.9]: 0.9 * (n-1) = 1.8.
+        assert self._score([0.9, 0.5, 0.1]).score == pytest.approx(0.82)
+        assert self._score([0.9, 0.5, 0.1]).metadata["_scoring"]["percentile"] == 0.9
+
+    def test_p100_is_exactly_best(self):
+        """The family CONTAINS max, which is what makes it a defensible soft max."""
+        scores = [0.9, 0.5, 0.1, 0.44]
+        assert self._score(scores, {"percentile": 1.0}).score == pytest.approx(max(scores))
+
+    def test_p0_is_the_minimum_and_p50_the_median(self):
+        scores = [0.9, 0.5, 0.1]
+        assert self._score(scores, {"percentile": 0.0}).score == pytest.approx(0.1)
+        assert self._score(scores, {"percentile": 0.5}).score == pytest.approx(0.5)
+
+    def test_single_chunk_document_is_a_no_op(self):
+        """At fanout ~1 the p90 IS the max -- the reason a fanout-1 corpus cannot measure this."""
+        for q in (0.0, 0.5, 0.9, 1.0):
+            assert self._score([0.73], {"percentile": q}).score == pytest.approx(0.73)
+
+    def test_it_softens_toward_the_mean_as_fanout_grows(self):
+        """The mechanism behind the target-unit rule: more children, more drift off max."""
+        few = self._score([0.9, 0.5])
+        many = self._score([0.9] + [0.5] * 20)
+        assert few.score > many.score
+
+    def test_never_exceeds_best(self):
+        scores = [0.9, 0.5, 0.1]
+        assert self._score(scores).score <= max(scores)
+
+    @pytest.mark.parametrize("bad", [-0.1, 1.1])
+    def test_out_of_range_percentile_raises(self, bad):
+        with pytest.raises(ValueError, match=r"must be in \[0, 1\]"):
+            self._score([0.9, 0.5], {"percentile": bad})
+
+    def test_the_removed_blend_knobs_do_not_come_back(self):
+        """The clean order statistic beat the two-percentile blend in 19 of 20 cells."""
+        plain = self._score([0.9, 0.5, 0.1])
+        with_junk = self._score([0.9, 0.5, 0.1], {"secondary_percentile": 0.7, "primary_weight": 0.7})
+        assert plain.score == pytest.approx(with_junk.score)
+
+    def test_auto_never_selects_it(self):
+        """It is an option, not a candidate default -- `auto` must not reach for it."""
+        from localvectordb.database._search import _resolve_document_scoring
+
+        for search_type in ("vector", "hybrid", "keyword"):
+            assert _resolve_document_scoring("auto", search_type) != "percentile"
+
+    def test_explicit_choice_is_never_overridden(self):
+        from localvectordb.database._search import _resolve_document_scoring
+
+        for search_type in ("vector", "hybrid", "keyword"):
+            assert _resolve_document_scoring("percentile", search_type) == "percentile"
+
+
 class TestAutoDocumentScoring:
     """``document_scoring_method="auto"`` picks the aggregator from ``search_type``.
 

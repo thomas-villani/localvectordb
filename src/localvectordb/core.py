@@ -28,6 +28,7 @@ DocumentScoringMethod = Literal[
     "best",
     "average",
     "frequency_boost",
+    "percentile",
 ]
 """
 Document scoring methods for aggregating chunk scores into a document score:
@@ -39,6 +40,9 @@ Document scoring methods for aggregating chunk scores into a document score:
 - "frequency_boost": Boosts the best chunk score by the number of quality chunks
   (good for comprehensive docs)
   - frequency_bias (0.3): How much to boost based on chunk count
+- "percentile": The p-th order statistic of the chunk scores -- a *soft* max.
+  Opt-in, never a default; see "When percentile helps" below.
+  - percentile (0.9): Which order statistic. 1.0 is exactly ``best``.
 
 Why ``"auto"`` is not one constant
 ----------------------------------
@@ -58,6 +62,23 @@ Aggregation is a property of the *unit being ranked*, not of the corpus: a
 summing aggregator never lost on a document target and never won on a section
 target across 20 measured corpus/target/leg/pool cells. Sections therefore keep a
 plain max and expose no knob.
+
+When ``percentile`` helps
+-------------------------
+It is an option, not a candidate default, and the conditions are specific.
+
+* **Document targets only.** Across ten cells on three corpora, document targets
+  were positive in 3 of 4 (best: NQ document/vector, +0.0201 nDCG@10 at a
+  400-candidate pool) and section targets won **0 of 6**, losing significantly in
+  two. A percentile is a soft max, so it drifts toward the mean as the unit owns
+  more children -- which helps a document and hurts a section.
+* **Wide pools only.** The effect is invisible at the shipped 40-candidate pool
+  (qasper document/hybrid −0.0054, null) and appears at 400 (+0.0108). Narrow
+  pools compress every aggregator toward every other, which is why the 2026-05
+  prune that removed this method measured no difference: it swept one width.
+* **Fanout sets the magnitude, the target unit sets the sign.** At fanout ~1 the
+  p90 *is* the max and this is a no-op by construction. Do not read a percentile
+  result off a corpus whose units own about one child each.
 
 Pass any explicit value to pin the behaviour; only ``"auto"`` consults
 ``search_type``.
