@@ -20,6 +20,17 @@ evaluation.
 Design note: every configuration in the sweep varies only *query-time*
 parameters, so the database is built once and reused. Rebuilding is keyed on the
 things that actually change the index (dataset, model, index type, chunking).
+
+Why two corpora (``--dataset all``): SciFact alone cannot gate an
+**aggregation** change. Measured with the real chunker at the shipped
+``chunk_size=500``, it is 1.08 chunks per document and 92.0% of its documents
+are a single chunk -- and that is not a SciFact quirk, it is what BEIR is:
+nfcorpus is 1.09 and fiqa is 1.06 despite being 11x larger. With nothing to
+aggregate, any change to document scoring, pool width or fusion reads as
+``+0.0000`` here whether it works or not, which is indistinguishable from
+inertness. Qasper's dev split is 10.77 chunks per document with *zero*
+single-chunk documents, so it can tell the difference; it is 275 papers and
+chunks in seconds, so it is cheap enough to run every time.
 """
 
 from __future__ import annotations
@@ -57,9 +68,9 @@ def _fix_sys_path() -> None:
 _fix_sys_path()
 
 from benchmarks.config import (  # noqa: E402
-    BASELINE_JSON,
     DATA_DIR,
     EVAL_DATASET,
+    EVAL_DATASETS,
     EVAL_EMBEDDING_MODEL,
     EVAL_EMBEDDING_PROVIDER,
     EVAL_K,
@@ -68,6 +79,7 @@ from benchmarks.config import (  # noqa: E402
     EVAL_RERANKER_MODEL,
     EVAL_RERANKER_PROVIDER,
     RESULTS_DIR,
+    baseline_path,
 )
 from benchmarks.metrics import evaluate  # noqa: E402
 
@@ -161,6 +173,57 @@ def preflight_embedding_model(provider: str, model: str) -> None:
             f"Embedding model {model!r} ({provider}) failed to load. "
             f"LocalVectorDB would have reported only 'not available'."
         ) from exc
+
+
+# Qasper is loaded at its dev split. ``full`` (train+dev) exists and is 4x the
+# haystack, but a gate wants the cheap arm: dev is 275 papers / 882 queries and
+# chunks in seconds. The two are emphatically not interchangeable -- §22 of the
+# pool-width study found a rule derived on dev that failed on full -- so anything
+# needing the larger haystack belongs in a study, not in a gate.
+QASPER_SPLIT = "dev"
+
+# What ``--dataset all`` runs. Deliberately two corpora, not three: nfcorpus is
+# a second BEIR corpus with the same blind spot as SciFact (fanout 1.09 against
+# 1.08), so it costs a run and adds no coverage. It stays available on its own
+# for a third opinion when a result looks corpus-specific.
+GATE_DATASETS = ("scifact", "qasper")
+
+
+def load_dataset(name: str, *, max_docs: Optional[int] = None):
+    """Load an evaluation corpus in the BEIR shape, whatever its source.
+
+    Qasper is not a BEIR dataset, and its loader returns a ``SyntheticBenchmark``
+    carrying section- and passage-level qrels too. Only the document-level ones
+    mean anything here -- this harness ranks documents -- so it is narrowed to a
+    ``BeirDataset`` at the boundary rather than special-cased downstream. The
+    other levels have their own gate (``eval_hier_gate.py``); each gate is blind
+    to the other's failure mode, which is why both must run.
+    """
+    from benchmarks import beir_data
+
+    if name != "qasper":
+        return beir_data.load(name, max_docs=max_docs)
+
+    from benchmarks import qasper_data
+
+    bench = qasper_data.load_qasper(split=QASPER_SPLIT, max_papers=max_docs)
+    return beir_data.BeirDataset(
+        name=bench.name,
+        corpus=bench.corpus,
+        queries=bench.queries,
+        qrels=bench.doc_qrels,
+    )
+
+
+def download_dataset(name: str) -> None:
+    if name == "qasper":
+        from benchmarks import qasper_data
+
+        qasper_data.download()
+        return
+    from benchmarks import beir_data
+
+    beir_data.download(name)
 
 
 def _git(*args: str) -> str:
@@ -413,6 +476,8 @@ examples:
   python benchmarks/eval_retrieval.py                      # default sweep, print table
   python benchmarks/eval_retrieval.py --save-baseline      # record the T1 baseline
   python benchmarks/eval_retrieval.py --check              # fail if nDCG@10 regressed
+  python benchmarks/eval_retrieval.py --dataset all --check    # BOTH gate corpora
+  python benchmarks/eval_retrieval.py --dataset qasper --check # aggregation only
   python benchmarks/eval_retrieval.py --all-scoring        # evidence for T1.6
   python benchmarks/eval_retrieval.py --rerank             # evidence for T1.2 (slow)
   python benchmarks/eval_retrieval.py --max-docs 500 --max-queries 30   # smoke test
@@ -422,7 +487,12 @@ examples:
   python benchmarks/eval_retrieval.py --embedding-provider ollama --embedding-model embeddinggemma:300m --no-prefix
 """,
     )
-    p.add_argument("--dataset", default=EVAL_DATASET, choices=("scifact", "nfcorpus"))
+    p.add_argument(
+        "--dataset",
+        default=EVAL_DATASET,
+        choices=(*EVAL_DATASETS, "all"),
+        help=f"Corpus to evaluate, or 'all' for the gate set ({', '.join(GATE_DATASETS)}).",
+    )
     p.add_argument("--embedding-provider", default=EVAL_EMBEDDING_PROVIDER)
     p.add_argument("--embedding-model", default=EVAL_EMBEDDING_MODEL)
     p.add_argument("--index-type", default=DEFAULT_INDEX_TYPE)
@@ -440,9 +510,14 @@ examples:
         help="Disable automatic retrieval prefixes. The control arm when measuring what the prefix is worth.",
     )
     p.add_argument("--download-only", action="store_true")
-    p.add_argument("--save-baseline", action="store_true", help=f"Write {BASELINE_JSON.name} (tracked in git).")
+    p.add_argument("--save-baseline", action="store_true", help="Write the dataset's baseline JSON (tracked in git).")
     p.add_argument("--check", action="store_true", help="Compare against the committed baseline; non-zero on drop.")
-    p.add_argument("--baseline", type=Path, default=BASELINE_JSON, help="Baseline file for --check/--save-baseline.")
+    p.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="Baseline file for --check/--save-baseline. Defaults to the one for --dataset.",
+    )
     p.add_argument("--tolerance", type=float, default=EVAL_REGRESSION_TOLERANCE)
     p.add_argument("--max-docs", type=int, default=None, help="Smoke test only. Inflates every metric.")
     p.add_argument("--max-queries", type=int, default=None, help="Smoke test only.")
@@ -453,13 +528,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
     args = parse_args(argv)
 
+    if args.dataset != "all":
+        return run_dataset(args)
+
+    if args.baseline is not None:
+        print("--baseline names one file and --dataset all needs one per corpus.", file=sys.stderr)
+        return 2
+
+    # Run every gate corpus and fail if ANY regressed -- do not stop at the
+    # first. The corpora catch different things, so halting on SciFact would
+    # leave the aggregation question unanswered, which is the same silence as
+    # never running it.
+    worst = 0
+    for name in GATE_DATASETS:
+        print(f"\n{'=' * 78}\n=== {name}\n{'=' * 78}")
+        leg = argparse.Namespace(**vars(args))
+        leg.dataset = name
+        worst = max(worst, run_dataset(leg))
+    print(f"\nGate corpora: {', '.join(GATE_DATASETS)} -- {'PASS' if worst == 0 else 'FAIL'}")
+    return worst
+
+
+def run_dataset(args: argparse.Namespace) -> int:
     from benchmarks import beir_data
 
+    if args.baseline is None:
+        # Resolved here rather than in the parser so `--dataset` is already known;
+        # a shared default would let a qasper run `--check` itself against
+        # SciFact's numbers and report every configuration as new.
+        args.baseline = baseline_path(args.dataset)
+
     if args.download_only:
-        beir_data.download(args.dataset)
+        download_dataset(args.dataset)
         return 0
 
-    dataset = beir_data.load(args.dataset, max_docs=args.max_docs)
+    dataset = load_dataset(args.dataset, max_docs=args.max_docs)
     if args.max_queries is not None:
         keep = list(dataset.queries)[: args.max_queries]
         dataset = beir_data.BeirDataset(
