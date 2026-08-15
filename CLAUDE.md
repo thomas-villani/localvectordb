@@ -68,12 +68,18 @@ bash scripts/lint.sh
 ./.venv/Scripts/python.exe benchmarks/eval_retrieval.py
 
 # Gate a retrieval change: non-zero exit if any configuration regressed
-./.venv/Scripts/python.exe benchmarks/eval_retrieval.py --check
+./.venv/Scripts/python.exe benchmarks/eval_retrieval.py --dataset all --check
 ```
 Any change to search, fusion, reranking, or document scoring must be measured
 against `benchmarks/RETRIEVAL_BASELINE.md`. `MockEmbeddings` seeds `np.random` on
 a hash of the text, so tests using it cannot tell whether the right document
 ranks first — only this harness can.
+
+**Use `--dataset all`, not the bare `--check`.** SciFact is 1.08 chunks per
+document and 92.0% of its documents are a single chunk, so anything about
+*aggregation* — document scoring, pool width, fusion — scores `+0.0000` on it
+whether it works or not. Qasper is the second corpus for exactly that reason
+(10.77 chunks/document, no single-chunk documents). Both baselines are committed.
 
 ### Documentation
 ```bash
