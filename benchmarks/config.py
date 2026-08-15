@@ -20,6 +20,31 @@ BEIR_BASE_URL = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datas
 BASELINE_JSON = BENCHMARK_DIR / "retrieval_baseline.json"
 
 EVAL_DATASET = "scifact"
+
+# Datasets the retrieval gate can run. `scifact` and `nfcorpus` are BEIR;
+# `qasper` is not, and is here for the one property no BEIR corpus has.
+#
+# Measured 2026-08-14 with the real chunker at the shipped chunk_size=500:
+# scifact 1.08 chunks/document (92.0% single-chunk), nfcorpus 1.09 (91.7%),
+# fiqa 1.06 (95.9%) -- fiqa the WORST of the three despite being 11x larger.
+# That is not a SciFact quirk, it is what BEIR is: short retrieval units. A gate
+# built on any of them cannot tell an aggregation change from a no-op, because
+# there is almost nothing to aggregate. qasper-dev is 10.77 chunks/document with
+# *zero* single-chunk documents, 882 queries over 275 papers, ~7s to chunk.
+EVAL_DATASETS = ("scifact", "nfcorpus", "qasper")
+
+
+def baseline_path(dataset: str) -> Path:
+    """Where the committed baseline for ``dataset`` lives.
+
+    The default dataset keeps the historical un-suffixed filename so the
+    existing baseline, and every documented ``--check`` invocation, stay valid.
+    """
+    if dataset == EVAL_DATASET:
+        return BASELINE_JSON
+    return BENCHMARK_DIR / f"retrieval_baseline_{dataset}.json"
+
+
 EVAL_EMBEDDING_PROVIDER = "sentence_transformers"
 EVAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 EVAL_RERANKER_PROVIDER = "sentence_transformers"
