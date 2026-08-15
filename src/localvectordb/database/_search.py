@@ -130,6 +130,30 @@ def _hybrid_pool_size(k: int) -> int:
     return max(k, min(k * 4, 100))
 
 
+def _chunk_rollup_pool_size(k: int) -> int:
+    """Chunks to retrieve when the caller asked for ``k`` *sections*.
+
+    ``return_type="sections"`` on a chunk-level search retrieves chunks and then
+    groups them by owning section, so fetching exactly ``k`` chunks cannot yield
+    ``k`` sections -- several chunks of one section collapse into one result and
+    the caller is quietly handed a short list. Nothing downstream changes: the
+    grouping already truncates afterwards, so the whole fix is the pool width.
+
+    This is ``_SECTION_ROLLUP_OVERFETCH`` one level down -- the same collapse,
+    chunk->section instead of section->document -- so it reuses that factor
+    rather than introducing a second constant for the same phenomenon. Five
+    covers the worst measured chunks-per-section fanout (1.09 on qasper, up to
+    3.68 on MAUD) with headroom.
+
+    It takes :func:`_hybrid_pool_size`'s ceiling rather than the sibling's
+    unbounded multiply, because this pool feeds the chunk level: under hybrid it
+    is multiplied again by the fusion pool, so an uncapped factor here compounds.
+    Named, like the hybrid pool, so a benchmark can sweep the real query path
+    instead of a re-implementation of it.
+    """
+    return max(k, min(k * _SECTION_ROLLUP_OVERFETCH, 100))
+
+
 def _faiss_search_with_selector(
     index: Any,
     query_embedding: np.ndarray,
@@ -853,7 +877,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Similarity threshold for semantic deduplication (0-1, higher=more similar)
         document_scoring_method : DocumentScoringMethod
             Method for aggregating chunk scores into document scores.
-            One of: {"best", "average", "frequency_boost"}.
+            One of: {"auto", "best", "average", "frequency_boost", "percentile"}.
             For detailed explanations and guidance on selecting the appropriate method,
             see the Document Scoring documentation.
         document_scoring_options : dict, optional
@@ -865,6 +889,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
             - frequency_boost
                 frequency_bias : 0.0 - 1.0, default = 0.3
                     The ratio of the frequency multiplier to apply. Higher favors documents with more matching chunks
+            - percentile
+                percentile : 0.0 - 1.0, default = 0.9
+                    Which order statistic of the chunk scores to take. 1.0 is
+                    exactly ``best``; lower values soften it toward the mean.
+                    Document targets only, and only worth it at a wide
+                    candidate pool -- see ``DocumentScoringMethod``.
         reranker : object, optional
             A reranker instance whose ``rerank()`` re-scores the candidate pool.
         reranker_config : dict, optional
@@ -936,6 +966,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
             reranking = reranker is not None or bool(reranker_config)
             fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
 
+            # `return_type="sections"` below is served by rolling chunk results up
+            # into their owning sections, and k chunks collapse into fewer than k
+            # sections. Widen only the chunk fetch, leaving `fetch_k` -- the width
+            # the roll-up and the reranker truncate to -- alone. Composed with the
+            # rerank over-fetch rather than replacing it, so a reranked section
+            # query still gets its full candidate pool of *sections*.
+            section_rollup = (
+                return_type == "sections"
+                and self._hierarchical_embeddings
+                and search_level not in ("fused", "sections", "documents")
+            )
+            chunk_fetch_k = _chunk_rollup_pool_size(fetch_k) if section_rollup else fetch_k
+
             # Fused level: blend chunk retrieval with section (raw-span) retrieval.
             if search_level == "fused":
                 if not self._hierarchical_embeddings:
@@ -977,7 +1020,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results = self._vector_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
-                    fetch_k,
+                    chunk_fetch_k,
                     score_threshold,
                     filters,
                     context_window,
@@ -991,7 +1034,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results = self._keyword_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
-                    fetch_k,
+                    chunk_fetch_k,
                     score_threshold,
                     filters,
                     context_window,
@@ -1005,7 +1048,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 results = self._hybrid_search(
                     query,
                     return_type if return_type != "sections" else "chunks",
-                    fetch_k,
+                    chunk_fetch_k,
                     score_threshold,
                     filters,
                     vector_weight,
@@ -1023,11 +1066,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             # Keep the over-fetched pool intact here (fetch_k) so reranking still sees
             # the extra candidates; the rerank step below truncates to k. (The fused
             # and hierarchical branches above already return the requested unit.)
-            if (
-                return_type == "sections"
-                and self._hierarchical_embeddings
-                and search_level not in ("fused", "sections", "documents")
-            ):
+            if section_rollup:
                 results = self._assemble_section_results(results, fetch_k)
 
             # Apply reranking if configured. Runs for every search_level (H8): the
@@ -3520,6 +3559,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 method_metadata["effective_chunk_count"] = effective_chunk_count
                 method_metadata["frequency_multiplier"] = frequency_multiplier
                 final_score = min(1.0, best_score * frequency_multiplier)
+            elif method == "percentile":
+                # A soft max: the p-th order statistic of the chunk scores, which
+                # contains `best` at p=1.0 and drifts toward the mean as a document
+                # owns more chunks. Deliberately ONE knob -- the two-percentile
+                # blend that shipped before `54a9898` lost to this clean form in 19
+                # of 20 measured cells, so its second percentile and blend weight
+                # were dead weight and do not come back with it.
+                q = float(method_options.get("percentile", 0.9))
+                if not 0.0 <= q <= 1.0:
+                    raise ValueError(f"document_scoring_options['percentile'] must be in [0, 1], got {q!r}")
+                # Matches numpy's default linear interpolation, which is what the
+                # sweep behind this measured; a different interpolation is a
+                # different aggregator at small chunk counts.
+                final_score = float(np.percentile(np.asarray(scores, dtype=float), q * 100.0))
+                method_metadata["percentile"] = q
             elif method == "auto":
                 # Reaching here means an entry point forgot to call
                 # _resolve_document_scoring. Fail loudly: silently treating it as
@@ -3532,7 +3586,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             else:
                 raise ValueError(
                     f"Unknown document_scoring_method: {method!r}. "
-                    "Valid methods are 'auto', 'best', 'average', 'frequency_boost'."
+                    "Valid methods are 'auto', 'best', 'average', 'frequency_boost', 'percentile'."
                 )
             doc_metadata = doc_metadata_batch.get(doc_id, {})
             method_metadata["_aggregation_method"] = method
