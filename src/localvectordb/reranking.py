@@ -15,7 +15,7 @@ import numpy as np
 
 from localvectordb.core import QueryResult
 from localvectordb.exceptions import RerankerError
-from localvectordb.utils import resolve_env_ref
+from localvectordb.utils import describe_exception, resolve_env_ref
 
 logger = logging.getLogger(__name__)
 
@@ -249,8 +249,8 @@ class HTTPRerankerBase(Reranker):
                 return self._parse(data, results, top_k)
             except Exception as e:
                 if attempt >= self.max_retries:
-                    raise RerankerError(f"{self.DISPLAY_NAME} reranking failed: {e}") from e
-                logger.warning(f"{self.DISPLAY_NAME} rerank attempt {attempt + 1} failed: {e}")
+                    raise RerankerError(f"{self.DISPLAY_NAME} reranking failed: {describe_exception(e)}") from e
+                logger.warning(f"{self.DISPLAY_NAME} rerank attempt {attempt + 1} failed: {describe_exception(e)}")
 
         raise RerankerError(f"All {self.DISPLAY_NAME} reranking attempts failed")
 
@@ -274,8 +274,8 @@ class HTTPRerankerBase(Reranker):
                 return self._parse(data, results, top_k)
             except Exception as e:
                 if attempt >= self.max_retries:
-                    raise RerankerError(f"{self.DISPLAY_NAME} reranking failed: {e}") from e
-                logger.warning(f"{self.DISPLAY_NAME} rerank attempt {attempt + 1} failed: {e}")
+                    raise RerankerError(f"{self.DISPLAY_NAME} reranking failed: {describe_exception(e)}") from e
+                logger.warning(f"{self.DISPLAY_NAME} rerank attempt {attempt + 1} failed: {describe_exception(e)}")
                 await asyncio.sleep(1.0 * (2**attempt))
 
         raise RerankerError(f"All {self.DISPLAY_NAME} reranking attempts failed")
@@ -573,7 +573,7 @@ class HuggingFaceReranker(Reranker):
             except Exception as e:
                 if attempt >= self.max_retries:
                     raise RerankerError(f"HuggingFace reranking failed: {e}") from e
-                logger.warning(f"HuggingFace rerank attempt {attempt + 1} failed: {e}")
+                logger.warning(f"HuggingFace rerank attempt {attempt + 1} failed: {describe_exception(e)}")
 
         raise RerankerError("All HuggingFace reranking attempts failed")
 
@@ -642,7 +642,7 @@ class RerankerRegistry:
                 cls.register(ep.name, provider_class)
                 logger.info(f"Discovered reranker provider plugin: {ep.name}")
             except Exception as e:
-                logger.warning(f"Failed to load reranker provider plugin {ep.name}: {e}")
+                logger.warning(f"Failed to load reranker provider plugin {ep.name}: {describe_exception(e)}")
 
         cls._plugins_discovered = True
 
