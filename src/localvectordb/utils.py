@@ -5,6 +5,20 @@ from datetime import datetime
 from typing import Optional, Union
 
 
+def describe_exception(exc: BaseException) -> str:
+    """Render an exception as ``Type: message``, never as an empty string.
+
+    ``httpx.ReadTimeout`` -- the single most common real failure in a bulk ingest
+    or a cross-encoder rerank -- carries no message at all, so the idiomatic
+    ``f"...: {e}"`` logs its prefix and nothing else, and an operator watching a
+    stalled job sees a blank line followed by a retry. The type name is the
+    diagnostic here; the message is the optional part.
+    """
+    name = type(exc).__name__
+    message = str(exc).strip()
+    return f"{name}: {message}" if message else name
+
+
 def resolve_env_ref(value: Optional[str], *, what: str = "value") -> Optional[str]:
     """Resolve a ``$ENV_VAR`` reference to its environment value.
 

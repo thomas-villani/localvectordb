@@ -179,6 +179,26 @@ class TestJinaReranker:
             reranker = JinaReranker(api_key="$MY_KEY")
             assert reranker.api_key == "custom-key"
 
+    def test_timeout_does_not_stringify_to_nothing(self):
+        """A cross-encoder is the slowest call in the pipeline, so it times out most.
+
+        ``httpx.ReadTimeout`` carries no message, and this error used to be built
+        as ``f"...failed: {e}"`` -- leaving an operator with a sentence that ends
+        at the colon on the one failure they are most likely to hit.
+        """
+        import httpx
+
+        from localvectordb.core import QueryResult
+        from localvectordb.exceptions import RerankerError
+
+        reranker = JinaReranker(api_key="k", max_retries=0)
+        results = [QueryResult(id="a", score=0.5, type="chunk", content="text")]
+        with patch("httpx.Client") as client:
+            client.return_value.__enter__.return_value.post.side_effect = httpx.ReadTimeout("")
+            with pytest.raises(RerankerError) as exc_info:
+                reranker.rerank("query", results)
+        assert "ReadTimeout" in str(exc_info.value)
+
 
 @pytest.mark.unit
 class TestSentenceTransformersReranker:

@@ -11,13 +11,13 @@ import logging
 import os
 import threading
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Iterator, List, Literal, NamedTuple, Optional, Sequence, Tuple, Type
 
 import httpx
 import numpy as np
 
 from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError, ProviderHTTPError
-from localvectordb.utils import resolve_env_ref
+from localvectordb.utils import describe_exception, resolve_env_ref
 
 # What a batch of text is being embedded *for*. Asymmetric retrieval models are
 # trained with a different instruction on each side, so the same text embeds to a
@@ -50,6 +50,41 @@ logger = logging.getLogger(__name__)
 # ceiling -- the whole input is embedded in one batch -- so a model with an 8k
 # architectural context and no explicit batch setting still truncates at 2,048.
 _DEFAULT_NUM_BATCH = 2048
+
+# Token budget for a single embedding request -- the second half of the batching
+# rule, since a batch is now capped by BOTH text count and token volume.
+#
+# Count alone is the wrong unit. Request duration scales with tokens, not with
+# texts, so a fixed ``max_batch_size`` makes the volume per request scale with
+# ``chunk_size``: ~32k tokens at the shipped 500, ~112k at 1750. On a local
+# server the latter cannot finish inside the default timeout, ``max_retries``
+# turns that into a dead ingest, and it is exactly the direction our own advice
+# points a user with a long-context model.
+#
+# 50,000 is chosen to be *inert* at the shipped configuration (64 x 500 = ~32k
+# is comfortably under it) and to bind only where request duration is already
+# the failure mode. It is not derived from throughput, because throughput is not
+# a constant: it varies ~6x between two local models on one box, and hosted
+# providers are faster still. Providers override the property; callers override
+# per instance.
+#
+# The hosted side gains from the same cap for a different reason: OpenAI's batch
+# ceiling is 1,000 *texts* against a documented 300,000-token limit per request,
+# so a full batch of ordinary chunks is rejected outright. Counting texts cannot
+# see that; counting tokens can.
+_DEFAULT_MAX_BATCH_TOKENS = 50_000
+
+# Characters per token, for batch *sizing* only.
+#
+# Deliberately not the same decision as truncation. A wrong estimate here makes a
+# request somewhat longer or shorter than intended; a wrong estimate at a
+# truncation boundary silently discards text, which is why that path must use a
+# real tokenizer. Measured ratios span 2.0-5.67 within a single corpus (mean
+# ~4.4 on MiniLM, ~4.2 on embeddinggemma), so 3.5 deliberately estimates HIGH
+# for ordinary prose -- the safe direction, since over-estimating only makes
+# batches smaller. A provider holding a real tokenizer should override
+# ``_estimate_tokens`` rather than tune this.
+_SIZING_CHARS_PER_TOKEN = 3.5
 
 
 class ModelPrefixes(NamedTuple):
@@ -145,6 +180,11 @@ class EmbeddingProvider(ABC):
     ----------
     model : str
         Model identifier passed to the provider.
+    max_batch_tokens : int, optional
+        Ceiling on the estimated token volume of a single request, applied on top
+        of ``max_batch_size``. Lower it when requests time out; pass ``0`` to
+        disable the token cap and batch purely by count. Defaults to the
+        provider's own value.
     document_prefix : str, optional
         Instruction prefix prepended to text embedded for storage. When None
         (the default) it is taken from the model's known training prefix; pass
@@ -165,6 +205,7 @@ class EmbeddingProvider(ABC):
         max_retries: int = 3,
         retry_delay: float = 1.0,
         max_concurrent_requests: int = 5,
+        max_batch_tokens: Optional[int] = None,
         document_prefix: Optional[str] = None,
         query_prefix: Optional[str] = None,
         auto_prefix: bool = True,
@@ -177,6 +218,7 @@ class EmbeddingProvider(ABC):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.max_concurrent_requests = max_concurrent_requests
+        self._max_batch_tokens = max_batch_tokens
         self._dimension: Optional[int] = None
 
         # Auto-detection applies only when the caller specified neither side.
@@ -198,6 +240,71 @@ class EmbeddingProvider(ABC):
     @property
     def async_supported(self) -> bool:
         return True
+
+    @property
+    def max_batch_tokens(self) -> Optional[int]:
+        """Estimated token ceiling for one request, or None for no token cap.
+
+        Applied *alongside* :attr:`max_batch_size`, not instead of it: whichever
+        binds first ends the batch. A provider that charges or rate-limits per
+        request, rather than per second of compute, can return None here and keep
+        batching by count.
+        """
+        if self._max_batch_tokens is None:
+            return _DEFAULT_MAX_BATCH_TOKENS
+        # 0 is the caller's way of saying "count only"; a negative value would
+        # otherwise emit one text per request forever.
+        return self._max_batch_tokens if self._max_batch_tokens > 0 else None
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Approximate ``text``'s token count, for batch sizing only.
+
+        Override where the provider holds the model's real tokenizer. The
+        estimate is never used to decide what to send, only how to group it, so
+        being wrong costs request efficiency rather than corpus content.
+        """
+        return max(1, int(len(text) / _SIZING_CHARS_PER_TOKEN))
+
+    def _iter_batches(self, texts: List[str], batch_size: Optional[int] = None) -> Iterator[Tuple[int, List[str]]]:
+        """Split ``texts`` into ``(start_index, batch)`` slices under both caps.
+
+        Slices stay contiguous and in order: ``start_index`` is what the caller
+        reassembles results by, so it must remain an index into ``texts``.
+
+        A single text whose own estimate exceeds the token budget is still sent
+        alone rather than split. Dividing it here would drop content on a path
+        the caller has no way to see; deciding what a model can read is
+        :meth:`_validate_and_truncate_texts`' job, and it happens earlier.
+        """
+        count_cap = max(1, min(batch_size or self.max_batch_size, self.max_batch_size))
+        token_cap = self.max_batch_tokens
+
+        start = 0
+        batch: List[str] = []
+        tokens = 0
+        for index, text in enumerate(texts):
+            cost = self._estimate_tokens(text)
+            over_count = len(batch) >= count_cap
+            over_tokens = token_cap is not None and tokens + cost > token_cap
+            if batch and (over_count or over_tokens):
+                yield start, batch
+                start, batch, tokens = index, [], 0
+            batch.append(text)
+            tokens += cost
+        if batch:
+            yield start, batch
+
+    def _describe_batch(self, texts: Sequence[str]) -> str:
+        """Summarise a request's shape for a log line.
+
+        An embedding failure is almost always about size -- a timeout, a payload
+        limit, a context overflow -- so the count and volume that produced it are
+        the first thing an operator needs and the one thing the exception never
+        carries.
+        """
+        chars = sum(len(t) for t in texts)
+        tokens = sum(self._estimate_tokens(t) for t in texts)
+        return f"{len(texts)} texts, {chars:,} chars, ~{tokens:,} tokens"
 
     @property
     def uses_prefixes(self) -> bool:
@@ -278,11 +385,14 @@ class EmbeddingProvider(ABC):
                 return await self._embed_batch_impl(texts, batch_size, progress_callback, task=task)
             except Exception as e:
                 if not self._should_retry(e, attempt):
-                    raise EmbeddingError(f"Error retrieving embeddings: {str(e)}") from e
+                    raise EmbeddingError(f"Error retrieving embeddings: {describe_exception(e)}") from e
 
                 if attempt < self.max_retries:
                     delay = self.retry_delay * (2**attempt)  # Exponential backoff
-                    logger.warning(f"Embedding failed (attempt {attempt + 1}), retrying in {delay}s: {e}")
+                    logger.warning(
+                        f"Embedding failed (attempt {attempt + 1}/{self.max_retries + 1}), "
+                        f"retrying in {delay}s: {describe_exception(e)}"
+                    )
                     await asyncio.sleep(delay)
 
         # Should never reach here, but safety net
@@ -349,11 +459,8 @@ class EmbeddingProvider(ABC):
         if not texts:
             return np.array([]).reshape(0, self.get_dimension())
 
-        batch_size = batch_size or self.max_batch_size
-        if batch_size > self.max_batch_size:
-            batch_size = self.max_batch_size
-
-        total_batches = (len(texts) + batch_size - 1) // batch_size
+        batches = list(self._iter_batches(texts, batch_size))
+        total_batches = len(batches)
         completed_batches = 0
 
         # Semaphore for concurrency control
@@ -377,14 +484,17 @@ class EmbeddingProvider(ABC):
                     return _start_index, _embeddings
 
                 except Exception as e:
-                    logger.error(f"Error processing batch {_batch_num}: {e}")
+                    logger.error(
+                        f"Error embedding batch {_batch_num + 1}/{total_batches} "
+                        f"({self._describe_batch(batch_texts)}) with {self.provider_name} "
+                        f"'{self.model}': {describe_exception(e)}"
+                    )
                     raise
 
         # Create tasks for all batches
         tasks = []
 
-        for batch_num, i in enumerate(range(0, len(texts), batch_size)):
-            batch = texts[i : i + batch_size]
+        for batch_num, (i, batch) in enumerate(batches):
             # Deliberately not named `task`: that would rebind the enclosing
             # `task` parameter this closure reads, handing providers a coroutine.
             coro = process_batch_with_progress(batch, i, batch_num)
@@ -650,11 +760,8 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
         # will see it.
         texts = self._validate_and_truncate_texts(texts)
 
-        batch_size = batch_size or self.max_batch_size
-        if batch_size > self.max_batch_size:
-            batch_size = self.max_batch_size
-
-        total_batches = (len(texts) + batch_size - 1) // batch_size
+        batches = list(self._iter_batches(texts, batch_size))
+        total_batches = len(batches)
         completed_batches = 0
 
         # Semaphore for concurrency control
@@ -678,15 +785,18 @@ class HTTPEmbeddingProvider(EmbeddingProvider, ABC):
                     return _start_index, _embeddings
 
                 except Exception as e:
-                    logger.error(f"Error processing batch {_batch_num}: {e}")
+                    logger.error(
+                        f"Error embedding batch {_batch_num + 1}/{total_batches} "
+                        f"({self._describe_batch(batch_texts)}) with {self.provider_name} "
+                        f"'{self.model}' at {self.base_url}: {describe_exception(e)}"
+                    )
                     raise
 
         async with httpx.AsyncClient() as client:
             # Create tasks for all batches
             tasks = []
 
-            for batch_num, i in enumerate(range(0, len(texts), batch_size)):
-                batch = texts[i : i + batch_size]
+            for batch_num, (i, batch) in enumerate(batches):
                 # Deliberately not named `task`: that would rebind the enclosing
                 # `task` parameter this closure reads, handing providers a coroutine.
                 coro = process_batch_with_progress(batch, client, i, batch_num)
@@ -961,7 +1071,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                 return True
             return False
         except (httpx.ConnectError, TimeoutError, ConnectionError, httpx.RequestError) as e:
-            logger.error(f"Could not connect to Ollama service: {str(e)}")
+            logger.error(f"Could not connect to Ollama service at {self.base_url}: {describe_exception(e)}")
             raise OllamaNotFoundError(f"Could not connect to Ollama service at: {self.base_url}") from e
 
     def _get_model_dimension_sync(self) -> int:
@@ -994,7 +1104,7 @@ class OllamaEmbeddings(HTTPEmbeddingProvider):
                 # dimension via embedding_config.
                 raise EmbeddingError(
                     f"Could not determine embedding dimension for Ollama model '{self.model}' at "
-                    f"{self.base_url}: {e}. Ensure the model is available, or pass an explicit "
+                    f"{self.base_url}: {describe_exception(e)}. Ensure the model is available, or pass an explicit "
                     f"dimension in embedding_config."
                 ) from e
 

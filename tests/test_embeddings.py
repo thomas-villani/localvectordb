@@ -27,6 +27,7 @@ from localvectordb.embeddings import (
     list_providers,
 )
 from localvectordb.exceptions import EmbeddingError, OllamaNotFoundError
+from localvectordb.utils import describe_exception
 
 
 @pytest.mark.unit
@@ -461,6 +462,150 @@ class TestOllamaContextTokens:
         assert parse('stop   "<|im_end|>"\ntemperature  0.7') == {}
         assert parse("num_ctx   not-a-number") == {}
         assert parse("num_ctx   0") == {}  # non-positive is not a ceiling
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestDescribeException:
+    """An embedding failure must never log as an empty message."""
+
+    def test_message_less_exception_still_names_itself(self):
+        """`httpx.ReadTimeout` carries no message -- the type IS the diagnostic."""
+        exc = httpx.ReadTimeout("")
+        assert str(exc) == ""  # the defect this exists for
+        assert describe_exception(exc) == "ReadTimeout"
+
+    def test_message_is_kept_when_there_is_one(self):
+        assert describe_exception(ValueError("model not found")) == "ValueError: model not found"
+
+    def test_whitespace_only_message_is_treated_as_absent(self):
+        assert describe_exception(RuntimeError("   \n ")) == "RuntimeError"
+
+    @pytest.mark.asyncio
+    async def test_timeout_reaches_the_caller_named(self):
+        """The wrapped EmbeddingError must not stringify to a bare prefix either."""
+        provider = MockEmbeddings("test-model", max_retries=0)
+        with patch.object(provider, "_embed_single_batch", side_effect=httpx.ReadTimeout("")):
+            with pytest.raises(EmbeddingError) as exc_info:
+                await provider.embed_batch(["a"])
+        assert "ReadTimeout" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_batch_error_log_carries_type_and_shape(self, caplog):
+        """An operator needs the request's size: failures here are almost always about size."""
+        provider = MockEmbeddings("test-model", max_retries=0)
+        with patch.object(provider, "_embed_single_batch", side_effect=httpx.ReadTimeout("")):
+            with pytest.raises(EmbeddingError):
+                await provider.embed_batch(["a" * 350] * 4)
+
+        errors = [r.message for r in caplog.records if r.levelname == "ERROR"]
+        assert errors, "the batch failure logged nothing at ERROR"
+        assert "ReadTimeout" in errors[0]
+        assert "4 texts" in errors[0]
+        assert "1,400 chars" in errors[0]
+        assert "~400 tokens" in errors[0]
+
+
+@pytest.mark.unit
+@pytest.mark.embedding
+class TestTokenAwareBatching:
+    """Batches are capped by token volume as well as by count.
+
+    Request duration scales with tokens, so a count-only cap makes the volume per
+    request scale with ``chunk_size`` -- which is how following our own advice to
+    raise it for a long-context model kills an ingest on the request timeout.
+    """
+
+    @staticmethod
+    def _text(tokens: int) -> str:
+        """A text whose *estimated* size is `tokens` (3.5 chars/token)."""
+        return "x" * int(tokens * 3.5)
+
+    def test_shipped_configuration_is_unchanged(self):
+        """64 x chunk_size=500 is ~32k tokens: under budget, so batching is inert."""
+        provider = MockEmbeddings("test-model")
+        texts = [self._text(500)] * 64
+        batches = list(provider._iter_batches(texts, batch_size=64))
+        assert len(batches) == 1
+        assert batches[0] == (0, texts)
+
+    def test_long_chunks_split_below_the_count_cap(self):
+        """chunk_size=1750 is the case in the roadmap: 64 x 1750 = ~112k tokens."""
+        provider = MockEmbeddings("test-model")
+        texts = [self._text(1750)] * 64
+        batches = list(provider._iter_batches(texts, batch_size=64))
+
+        assert len(batches) > 1
+        for _, batch in batches:
+            volume = sum(provider._estimate_tokens(t) for t in batch)
+            assert volume <= 50_000
+
+    def test_count_cap_still_binds_on_short_texts(self):
+        provider = MockEmbeddings("test-model")
+        texts = ["short"] * 10
+        batches = list(provider._iter_batches(texts, batch_size=3))
+        assert [len(b) for _, b in batches] == [3, 3, 3, 1]
+
+    def test_batches_are_contiguous_and_cover_every_text(self):
+        """`start_index` is what results are reassembled by, so it must not drift."""
+        provider = MockEmbeddings("test-model")
+        texts = [self._text(n) for n in (10, 40_000, 10, 30_000, 30_000, 10)]
+        batches = list(provider._iter_batches(texts, batch_size=64))
+
+        rebuilt = []
+        for start, batch in batches:
+            assert texts[start : start + len(batch)] == batch
+            assert start == len(rebuilt)
+            rebuilt.extend(batch)
+        assert rebuilt == texts
+
+    def test_single_oversized_text_is_sent_alone_not_split(self):
+        """Splitting here would drop content invisibly; truncation is a separate decision."""
+        provider = MockEmbeddings("test-model")
+        huge = self._text(120_000)
+        batches = list(provider._iter_batches(["a", huge, "b"], batch_size=64))
+        assert [b for _, b in batches] == [["a"], [huge], ["b"]]
+
+    def test_token_cap_can_be_disabled(self):
+        """0 means 'count only' -- for a provider billed per request, not per second."""
+        provider = MockEmbeddings("test-model", max_batch_tokens=0)
+        assert provider.max_batch_tokens is None
+        texts = [self._text(1750)] * 64
+        assert len(list(provider._iter_batches(texts, batch_size=64))) == 1
+
+    def test_token_cap_is_tunable_down(self):
+        provider = MockEmbeddings("test-model", max_batch_tokens=1000)
+        texts = [self._text(400)] * 6
+        assert [len(b) for _, b in provider._iter_batches(texts, batch_size=64)] == [2, 2, 2]
+
+    def test_batch_size_argument_cannot_exceed_the_provider_maximum(self):
+        provider = MockEmbeddings("test-model")  # max_batch_size 1000
+        batches = list(provider._iter_batches(["s"] * 2500, batch_size=99_999))
+        assert [len(b) for _, b in batches] == [1000, 1000, 500]
+
+    @pytest.mark.asyncio
+    async def test_split_batches_still_return_vectors_in_input_order(self):
+        """The reordering path is the one thing a batching change can silently break."""
+        provider = MockEmbeddings("test-model", max_batch_tokens=1000)
+        texts = [f"{i} {'y' * 1700}" for i in range(9)]
+
+        split = await provider.embed_batch(texts)
+        assert provider.number_of_calls > 1
+
+        reference = await MockEmbeddings("test-model", max_batch_tokens=0).embed_batch(texts)
+        np.testing.assert_array_equal(split, reference)
+
+    @pytest.mark.asyncio
+    async def test_progress_reports_against_the_real_batch_count(self):
+        provider = MockEmbeddings("test-model", max_batch_tokens=1000)
+        seen = []
+
+        await provider.embed_batch(
+            [self._text(400)] * 6, progress_callback=lambda done, total: seen.append((done, total))
+        )
+
+        assert [total for _, total in seen] == [3, 3, 3]
+        assert sorted(done for done, _ in seen) == [1, 2, 3]
 
 
 @pytest.mark.unit
