@@ -37,9 +37,11 @@ to change later.
 
 Ordered by user harm.
 
-**Status.** Resolved: 0a, 2, 3, 4, 5b, 5c, 5e, 6 (and 5d measured, verdict "do not ship"). Still open:
-**1** (coverage warning at DB creation), **7** (`lvdb doctor` / `db.diagnose()`) — both unblocked by
-item 2 — and **0b**, which is an unresolved policy question that interacts with item 1.
+**Status.** Resolved: 0a, 1, 2, 3, 4, 5b, 5c, 5e, 6, 7 (and 5d measured, verdict "do not ship").
+Still open: only **0b**, an unresolved policy question. Items 1 and 7 shipped together as
+`db.diagnose()` / `lvdb doctor` (`ad672c2`), which also reports the regime information 0b turns on —
+so what remains of 0b is a *decision* (change the fine-granularity default, or let the diagnostic
+carry it), not any further measurement or build.
 
 **0a. `search_type="hybrid"` is accepted and SILENTLY IGNORED at section and fused level.**
 FTS5 indexes chunks only, so `search_level="sections"` / `"fused"` return vector-only results no
@@ -127,6 +129,16 @@ Paired builds show **46% of chunks truncated with nDCG unchanged to four decimal
 displacement 0.0027); damage only appears past ~0.01 displacement. So a warning that fires on any
 truncation will cry wolf. Fire it on *substantial* loss, and say what it costs, not merely that it
 happened.
+
+**RESOLVED 2026-08-17 (`ad672c2`), built to both corrections.** The warning hooks `_save_internal` —
+the one chokepoint every mutating path crosses — rather than instrumenting eight ingest sites, reads
+the stored per-chunk token counts in a single SQL aggregate (full corpus, no sampling, no model), and
+re-checks only when the corpus has doubled, so the scan runs O(log n) times over a database's life.
+Threshold 0.80 sits between the two measured anchors: 46%-of-chunks-truncated was free, 65% coverage
+cost 0.109. The message states the measured cost and — since the stored counts are cl100k, not the
+encoder's tokenizer — says it is estimating and points at `db.diagnose()` for exact numbers. "Warn at
+DB creation" was never literally possible (measured coverage needs an ingested corpus); post-ingest,
+once per instance, is what the item's own fix specification implies.
 
 **2. `_provider_context_tokens` returns `None` for every ollama provider — RESOLVED 2026-08-14
 (`fb7f857`).** It reads only `num_ctx`
@@ -375,6 +387,19 @@ feature rather than documentation.
 Build the coverage line per item 1's two corrections: count tokens with the model's real tokenizer,
 and state uncertainty when there isn't one. A diagnostic that prints a confident wrong percentage is
 worse than one that admits it is estimating — ours was understating coverage by up to 16 points.
+
+**RESOLVED 2026-08-17 (`ad672c2`) — `db.diagnose()` / `lvdb db <name> doctor`.** Reports encoder
+coverage of chunk text, section length against the encoder window, the chunkless-section share (as
+the hard roll-up recall ceiling it is), chunks-per-document/section fanout, and per-table FTS health.
+Token counts are exact only where the encoder's own tokenizer is importable (sentence-transformers,
+local HuggingFace, OpenAI's cl100k); everywhere else the report is labelled *estimated* — tiktoken as
+the estimator, never a chars/token constant. Two framing choices worth recording: sections are
+reported as a **regime** (rawspan windows-and-pools rather than truncates, but the pooled vector
+loses 0.25–0.36 nDCG on >8k-token spans, so the summary points long corpora at `centroid`), and the
+diagnostic resolves the encoder context itself instead of adding `context_tokens` to
+sentence-transformers — doing that would have changed span-embed windowing for ST models and forced a
+re-baseline of both gates, which item 2 deliberately avoided. Sampling is evenly strided over id
+order, so repeat runs on an unchanged database measure the same rows.
 
 **Deliberately NOT here: defaulting `chunk_size` from the encoder's context.** The optimum does track
 context (§6.35/1 — the slope reverses sign between a 256-tok and a 2k encoder), but two encoders give
