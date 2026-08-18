@@ -2442,6 +2442,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
         of the overlap relation, so the UNION below adds nothing on a current
         database; it exists so a database whose ``chunk_sections`` backfill
         failed degrades to the old midpoint behaviour instead of to nothing.
+
+        Each section keeps its best chunk's score unchanged; among the sections
+        a single chunk credits (which tie exactly), the one holding the larger
+        share of that chunk ranks first. Measured against midpoint-only on
+        nDCG@10_sections: -0.0004 hybrid / +0.0009 vector on qasper dev, and
+        +0.0467 / +0.0445 on NQ — reachability repaired at no ranking cost.
         """
         if not chunk_results:
             return []
@@ -2456,20 +2462,24 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if not doc_chunk_pairs:
             return chunk_results[:k]
 
-        # Query sections for these chunks
-        section_results = {}
+        # Query sections for these chunks. The chunk's own span rides along so
+        # the overlap share is computable per (chunk, section) pair.
+        section_results: Dict[str, QueryResult] = {}
+        section_share: Dict[str, float] = {}
         with self.connection_pool.get_connection() as conn:
             for doc_id, chunk_idx, result in doc_chunk_pairs:
                 cursor = conn.execute(
                     """
-                    SELECT s.*, d.content as doc_content
+                    SELECT s.*, d.content as doc_content,
+                           c.start_pos AS chunk_start, c.end_pos AS chunk_end
                     FROM sections s
                     JOIN chunk_sections cs ON cs.section_id = s.id
                     JOIN chunks c ON c.id = cs.chunk_id
                     JOIN documents d ON s.document_id = d.id
                     WHERE c.document_id = ? AND c.chunk_index = ?
                     UNION
-                    SELECT s.*, d.content as doc_content
+                    SELECT s.*, d.content as doc_content,
+                           c.start_pos AS chunk_start, c.end_pos AS chunk_end
                     FROM sections s
                     JOIN chunks c ON c.section_id = s.id
                     JOIN documents d ON s.document_id = d.id
@@ -2478,7 +2488,25 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     (doc_id, chunk_idx, doc_id, chunk_idx),
                 )
                 for row in cursor.fetchall():
+                    # Share of the CHUNK lying inside this section: the
+                    # secondary sort key below. It must stay a tie-break and
+                    # never a score multiplier -- on vector search chunk scores
+                    # arrive as raw similarities in a narrow high band, and
+                    # multiplying by a 0..1 geometry fraction replaces the
+                    # relevance ranking with an overlap prior (measured:
+                    # -0.053 qasper / -0.147 NQ nDCG@10_sections; the
+                    # tie-break form measured -0.0004/+0.0009 and
+                    # +0.0467/+0.0445 on the same arms).
+                    chunk_span = max(1, row["chunk_end"] - row["chunk_start"])
+                    overlap = max(0, min(row["chunk_end"], row["end_pos"]) - max(row["chunk_start"], row["start_pos"]))
+                    share = overlap / chunk_span
                     section_key = f"{row['document_id']}:section:{row['section_index']}"
+                    if section_key in section_results and (result.score, share) > (
+                        section_results[section_key].score,
+                        section_share[section_key],
+                    ):
+                        section_results[section_key].score = result.score
+                        section_share[section_key] = share
                     if section_key not in section_results:
                         section_text = row["doc_content"][row["start_pos"] : row["end_pos"]]
                         section_metadata = dict(result.metadata)
@@ -2502,21 +2530,21 @@ class SearchMixin(LocalVectorDBBase, ABC):
                                 end_column=1,
                             ),
                         )
-                    else:
-                        # Update score to best chunk score
-                        if result.score > section_results[section_key].score:
-                            section_results[section_key].score = result.score
+                        section_share[section_key] = share
 
         results = list(section_results.values())
-        # Ties are STRUCTURAL at this level: sections that own no chunk of their own
-        # inherit their neighbours' chunk vectors, so 17.9% of section vectors on
-        # Qasper dev are exact duplicates and score identically. Python's sort is
-        # stable, so those ties kept FAISS order -- i.e. faiss_id order, which the
-        # threaded ingest assigns differently on every build. Identical queries on
-        # identically-built databases therefore returned different orderings (0.011
-        # nDCG spread across rebuilds). The id is intrinsic, so it breaks ties the
-        # same way everywhere, forever.
-        results.sort(key=lambda x: (-x.score, x.id))
+        # Ties are STRUCTURAL at this level: a chunk credits every section it
+        # overlaps with its one score, so the sections of a wide chunk tie
+        # exactly, and (separately) sections owning no chunk of their own
+        # inherit their neighbours' chunk vectors -- 17.9% of section vectors on
+        # Qasper dev are exact duplicates. Python's sort is stable, so ties
+        # once kept FAISS order, which the threaded ingest assigns differently
+        # on every build (0.011 nDCG spread across rebuilds). Ties therefore
+        # break on the overlap share first -- the section holding more of the
+        # matching chunk is the better answer at equal score, worth +0.013
+        # hybrid nDCG@10_sections on qasper over id-order alone -- then on the
+        # intrinsic id, which orders the same way everywhere, forever.
+        results.sort(key=lambda x: (-x.score, -section_share.get(x.id, 0.0), x.id))
         return results[:k]
 
     def _fused_search(
