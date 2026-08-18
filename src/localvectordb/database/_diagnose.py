@@ -487,9 +487,6 @@ class DiagnoseMixin(LocalVectorDBBase, ABC):
         if getattr(self, "_truncation_warned", False):
             return
         try:
-            cap = _provider_context_tokens(self.embedding_provider)
-            if not cap:
-                return
             with self.connection_pool.get_connection() as conn:
                 n = int(conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"])
                 # Re-check only when the corpus has doubled since the last look,
@@ -498,6 +495,12 @@ class DiagnoseMixin(LocalVectorDBBase, ABC):
                 if n < _MIN_CHUNKS_FOR_WARNING or n < 2 * last:
                     return
                 self._truncation_checked_at = n
+                # Resolve the context only after the cheap guards pass: for a
+                # sentence-transformers provider the property lazily loads the
+                # model, which a delete-only session should never trigger.
+                cap = _provider_context_tokens(self.embedding_provider)
+                if not cap:
+                    return
                 agg = conn.execute(
                     "SELECT SUM(MIN(tokens, ?)) AS kept, SUM(tokens) AS total FROM chunks", (cap,)
                 ).fetchone()
