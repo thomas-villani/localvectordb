@@ -3,6 +3,7 @@ from __future__ import annotations
 from localvectordb.database._comparison import ComparisonMixin
 from localvectordb.database._core import LocalVectorDBCore
 from localvectordb.database._crud import CrudMixin
+from localvectordb.database._diagnose import DiagnoseMixin, DiagnoseReport
 from localvectordb.database._ingest import PipelineMixin
 from localvectordb.database._metadata import MetadataMixin
 from localvectordb.database._repair import RepairMixin, RepairReport, open_for_repair
@@ -19,6 +20,7 @@ class LocalVectorDB(
     CrudMixin,
     ComparisonMixin,
     RepairMixin,
+    DiagnoseMixin,
     LocalVectorDBCore,
 ):
     """
@@ -78,4 +80,4 @@ class LocalVectorDB(
     pass
 
 
-__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin", "RepairReport", "open_for_repair"]
+__all__ = ["LocalVectorDB", "BaseVectorDB", "TuningMixin", "RepairReport", "DiagnoseReport", "open_for_repair"]

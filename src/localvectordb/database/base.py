@@ -766,6 +766,11 @@ class LocalVectorDBBase(BaseVectorDB, ABC):
     def _save_internal(self) -> None:
         pass
 
+    def _maybe_warn_truncation(self) -> None:
+        """Overridden by DiagnoseMixin. A concrete no-op, not an abstract method,
+        so ``_save_internal`` can call it unconditionally and partial assemblies
+        (tests, tools) that skip the mixin stay constructible."""
+
     @abstractmethod
     def _async_write_gate(self) -> "AbstractAsyncContextManager[None]":
         """Cross-thread write gate for async mutators; see LocalVectorDB._async_write_gate."""

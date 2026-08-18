@@ -893,6 +893,42 @@ Database Information
      Total Chunks: 8500
      Metadata fields: 4
 
+Corpus Diagnosis (doctor)
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Several retrieval knobs (``chunk_size``, ``search_level``, ``section_weight``,
+``vector_weight``, ...) have no defensible global default — their best values are
+properties of *your corpus*, and they disagree across corpora by more than any
+tuning effect. ``doctor`` measures which regime your corpus is in, from the
+built index, in seconds:
+
+.. code-block:: bash
+
+   lvdb db research_papers doctor
+
+It reports:
+
+- **Encoder coverage of chunk text** — the share of ingested text that actually
+  fits the embedding model's context window. Text past it never enters any
+  vector, silently; at a measured 65% coverage this cost 0.109 nDCG@10. Token
+  counts use the encoder's own tokenizer where one is importable
+  (sentence-transformers, local HuggingFace, OpenAI); otherwise they are
+  labelled *estimated* rather than reported as confident percentages.
+- **Section length against the encoder window** — long sections are windowed and
+  mean-pooled (never truncated), but pooled ``rawspan`` vectors degrade as spans
+  grow; a mostly-long corpus wants ``section_vector_strategy="centroid"``.
+- **Section reachability** — the share of sections owning no chunk, which is a
+  hard recall ceiling for ``return_type="sections"`` roll-up at any ``k``.
+- **Fanout** — chunks per document/section; at fanout ~1 every document-scoring
+  aggregator is a no-op.
+- **Keyword-leg health** — whether each FTS table is present and in step with
+  its base table. The keyword leg is worth +0.08 to +0.13 nDCG@10 where present.
+
+The same report is available in the library as ``db.diagnose()`` (returning a
+structured ``DiagnoseReport`` with a ``summary`` string), and a related warning
+fires automatically at ingest when measured coverage falls substantially — mild
+truncation is measurably free, so the warning is reserved for real loss.
+
 Document Management
 ^^^^^^^^^^^^^^^^^^^
 

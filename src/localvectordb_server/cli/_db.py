@@ -103,6 +103,43 @@ def show_db_stats(ctx):
     print_db_stats(db)
 
 
+@db_group.command("doctor")
+@click.option(
+    "--sample",
+    type=int,
+    default=5000,
+    show_default=True,
+    help="Max chunks to re-tokenize when the encoder's own tokenizer is available.",
+)
+@click.pass_context
+def doctor_db(ctx, sample):
+    """
+    Report which retrieval regime this corpus is in
+
+    Measures, from the built index: encoder coverage of chunk text (text past
+    the context window never enters any vector), section length against the
+    encoder window, the chunk->section reachability ceiling, chunks-per-document
+    fanout, and the health of each keyword (FTS) leg. The knobs without global
+    defaults (chunk_size, search_level, section_weight, ...) are corpus
+    properties; this is how you find out where your corpus sits.
+
+    Token counts use the encoder's own tokenizer where importable; otherwise
+    they are estimates and the report says so.
+
+    \b
+    Example:
+        \b
+        lvdb db mydb doctor
+    """
+    db = get_ctx_db(ctx)
+    try:
+        report = db.diagnose(sample=sample)
+    except Exception as e:
+        click.secho(f"Error diagnosing database: {str(repr(e))}", fg="bright_red", err=True)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR) from e
+    click.echo(report.summary)
+
+
 @db_group.command("list")
 @click.option("--limit", "-n", type=int, default=None, help="Limit number of ids returned")
 @click.option("--offset", "-s", type=int, default=0, help="Offset of ids returned")

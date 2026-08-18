@@ -1972,3 +1972,68 @@ class TestConfigInitCorsAndForce:
             runner.invoke(cli, ["config", "init", "--output", str(out)], input="")
         # Does not hang; file left untouched.
         assert out.read_text(encoding="utf-8") == "old"
+
+
+@pytest.mark.unit
+class TestDoctorCommand:
+    """lvdb db <name> doctor prints the DiagnoseReport summary."""
+
+    def _make_db_ctx(self, fake_config, config_file, tmp_db_folder, mock_db):
+        obj = {
+            "config": fake_config,
+            "config_path": config_file,
+            "api_key_db_path": os.path.join(tmp_db_folder, "api_keys.db"),
+            "db_folder": tmp_db_folder,
+            "db_name": "testdb",
+            "db": mock_db,
+        }
+
+        @click.pass_context
+        def _patched_cli_callback(ctx, config, db_folder, verbose=False, quiet=False):
+            ctx.ensure_object(dict)
+            ctx.obj = obj
+
+        @click.pass_context
+        def _patched_db_group_callback(ctx, name):
+            ctx.obj.update({"db_name": name, "db": mock_db})
+
+        from localvectordb_server.cli._db import db_group
+
+        return (
+            patch.object(cli, "callback", _patched_cli_callback),
+            patch.object(db_group, "callback", _patched_db_group_callback),
+        )
+
+    def test_doctor_prints_summary(self, runner, fake_config, config_file, tmp_db_folder):
+        from localvectordb.database import DiagnoseReport
+
+        mock_db = MagicMock()
+        mock_db.diagnose.return_value = DiagnoseReport(
+            database="testdb",
+            documents=3,
+            chunks=40,
+            sections=9,
+            embedding_provider="mock",
+            embedding_model="mock",
+            token_source="estimated with tiktoken cl100k_base",
+        )
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "doctor"])
+
+        assert result.exit_code == 0
+        mock_db.diagnose.assert_called_once_with(sample=5000)
+        assert "Diagnosis of 'testdb'" in result.output
+        assert "Encoder coverage" in result.output
+
+    def test_doctor_error_exits_nonzero(self, runner, fake_config, config_file, tmp_db_folder):
+        mock_db = MagicMock()
+        mock_db.diagnose.side_effect = RuntimeError("index missing")
+
+        p1, p2 = self._make_db_ctx(fake_config, config_file, tmp_db_folder, mock_db)
+        with p1, p2:
+            result = runner.invoke(cli, ["db", "testdb", "doctor"])
+
+        assert result.exit_code != 0
+        assert "Error diagnosing database" in result.output
