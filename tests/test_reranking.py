@@ -206,7 +206,10 @@ class TestSentenceTransformersReranker:
 
     def test_init(self):
         reranker = SentenceTransformersReranker()
-        assert reranker.model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        # bge-reranker-base, NOT an MS MARCO cross-encoder: measured n.s. vs no
+        # reranking on two corpora, and the wrong pick here costs -0.067 nDCG@10
+        # against the right one (benchmarks/eval_rerank.py, 2026-08).
+        assert reranker.model == "BAAI/bge-reranker-base"
         assert reranker.provider_name == "sentence_transformers"
 
     def test_validate_model_import_error(self):
