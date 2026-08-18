@@ -320,6 +320,57 @@ unit.
 Metadata filters apply at every level: for section, document, and fused searches
 the filter is matched against the parent document's metadata.
 
+Keyword and hybrid search across levels
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every ``search_level`` honours ``search_type`` — including the default
+``"hybrid"``. Each level has its own keyword index:
+
+- ``"documents"`` reads ``documents_fts``, the document-level FTS5 index every
+  database already builds and maintains.
+- ``"sections"`` reads its own ``sections_fts``. A section stores offsets into
+  its parent document rather than text of its own, so the index is written at
+  ingest from the document slice — and is **contentless** where SQLite allows
+  it (≥ 3.43), which roughly halves what a text-carrying index would add to a
+  hierarchical database, since sections tile their documents.
+- ``"fused"`` runs *each granularity* as a hybrid — the chunk leg fuses
+  chunk-vector with chunk-BM25, the section leg fuses section-vector with
+  section-BM25, both blended by ``vector_weight`` — and only then blends the
+  two granularities by ``section_weight``.
+
+.. code-block:: python
+
+   # Hybrid (vector + BM25) over the section index
+   results = db.query(
+       "gateway timeout configuration",
+       search_type="hybrid",
+       search_level="sections",
+       vector_weight=0.5,
+   )
+
+   # Hybrid inside each leg of a fused search
+   docs = db.query(
+       "gateway timeout configuration",
+       search_type="hybrid",
+       search_level="fused",
+       return_type="documents",
+   )
+
+The keyword leg is worth having: it measured **+0.084 to +0.131 nDCG@10** across
+six corpus/encoder pairs, and on one corpus document-level hybrid moved
+0.2758 → **0.4037** against vector-only. An existing hierarchical database needs
+no rebuild — it self-heals on open with a ``sections_fts`` backfill that is
+batched, resumable (an interrupted backfill continues where it stopped), and
+non-fatal (a failed backfill logs a warning and the section keyword leg degrades
+to vector-only, which is what it did before).
+
+Two caveats. On corpora where BM25 itself hurts — Wikipedia-like text that
+repeats its title terms everywhere is the classic case — the per-level
+``vector_weight`` is the escape hatch: one measured corpus's optimum was
+``0.90`` rather than the ``0.50`` default. And ``search_type="keyword"`` on
+``search_level="fused"`` is unmeasured — it ships for consistency with the
+other levels, not on evidence.
+
 Fused retrieval
 ---------------
 
@@ -418,6 +469,18 @@ should match relevance granularity.**
 So fused retrieval is a tool for long, structured corpora (papers, manuals,
 books, reports), not for short-passage collections where chunk retrieval already
 has the right granularity.
+
+Check it on your own corpus
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You do not have to take the published numbers on faith:
+``examples/section_vs_chunk_retrieval.py`` (in the repository) runs the
+section-vs-chunk-vs-fused comparison on your own documents and queries, and
+prints nDCG@10 and recall@k per retrieval mode when you supply relevance
+judgments (or a side-by-side of what each mode returns when you do not). It
+requires a real embedding backend — Ollama or ``sentence-transformers``,
+auto-detected — and refuses the ``mock`` provider, whose hash-seeded vectors
+would produce a table of noise that looks exactly like a table of results.
 
 Limitations
 -----------

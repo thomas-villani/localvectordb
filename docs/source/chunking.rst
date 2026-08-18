@@ -21,7 +21,9 @@ Chunking Methods
    ``chunk_size`` is always a **token** budget, but ``chunk_overlap`` is measured
    in the **unit of the chosen method** — sentences for ``sentences``, words for
    ``words``, lines for ``lines``/``code-blocks``, characters for ``characters``,
-   paragraphs for ``paragraphs``, and tokens *only* for ``tokens``. Setting an
+   paragraphs for ``paragraphs``, delimiter-separated segments for ``delimiter``,
+   and tokens *only* for ``tokens`` (``structure`` requires ``chunk_overlap=0``).
+   Setting an
    overlap sized as if it were tokens (e.g. ``chunk_overlap=50`` with
    ``chunking_method="sentences"``) is a common mistake: a 500-token chunk holds
    far fewer than 50 sentences, so nearly every chunk is re-emitted and results
@@ -156,6 +158,61 @@ breaks.
    PDFs, DOCX, and other documents whose heading structure is preserved during
    extraction.
 
+Structure
+~~~~~~~~~
+
+Cuts each chunk at the strongest human-authored boundary within the token
+budget, using a boundary hierarchy: **heading > paragraph break > line break >
+sentence end**. A chunk therefore ends where the document says a thought ends,
+and only falls back to an arbitrary cut when the span offers no boundary at all.
+Headings cut *before* (so they open the next chunk) and the other separators cut
+*after* (so they close the preceding one) — either way the chunks tile the
+source contiguously, so documents still reconstruct byte-exactly. Boundaries
+inside fenced code blocks are never used, so fenced code is never split.
+
+.. code-block:: python
+
+   db = VectorDB(
+       "docs",
+       "./vector_storage",
+       chunking_method="structure",
+       chunk_size=500
+       # chunk_overlap must be 0: structure chunks are logical units
+   )
+
+Two parameters are available when creating the chunker directly via
+``ChunkerFactory.create_chunker("structure", ...)``:
+
+- ``min_fill`` (float, default 0.35): fraction of ``chunk_size`` a chunk must
+  reach before a boundary becomes eligible, so a heading two lines in cannot
+  produce a sliver chunk. Set to 0 to always cut at the earliest strongest
+  boundary.
+- ``heading_finder`` (callable, optional): supplies *extra* heading-strength cut
+  positions for corpora whose headings Markdown detection cannot see — numbered
+  contract clauses, RFC section numbers, statutes. On such text the built-in
+  detection sees no ``#`` headings at all and the chunker degrades to a
+  paragraph splitter. Positions from the callable are added to the Markdown
+  ones, never replace them. Precision filtering is deliberately the caller's
+  concern: a bare ``Section \d+`` regex fires on every cross-reference and
+  table-of-contents line, and only the caller knows the document family well
+  enough to filter those out.
+
+.. code-block:: python
+
+   import re
+   from localvectordb.chunking import ChunkerFactory
+
+   def clause_headings(text):
+       # Only match clause numbers at the start of a line, not cross-references.
+       return [m.start() for m in re.finditer(r"^\d+\.\d+ ", text, re.MULTILINE)]
+
+   chunker = ChunkerFactory.create_chunker(
+       "structure", max_tokens=500, min_fill=0.35, heading_finder=clause_headings
+   )
+
+**Best for**: Long structured prose — reports, contracts, manuals — where cuts
+should land on the document's own boundaries rather than at a fixed offset
+
 Code Blocks
 ~~~~~~~~~~~
 
@@ -196,6 +253,43 @@ Fine-grained chunking at character level.
    )
 
 **Best for**: Non-Western languages, specialized text processing
+
+Delimiter
+~~~~~~~~~
+
+Splits on a literal delimiter sequence (``"\n\n"`` — a blank line — by default),
+then packs the resulting segments into chunks of up to ``chunk_size`` tokens. A
+single segment that is itself larger than ``chunk_size`` falls back to
+character-level splitting, so no chunk ever exceeds the limit. Each segment owns
+the delimiter that follows it, so the chunk spans stay contiguous and document
+reconstruction is exact.
+
+.. code-block:: python
+
+   db = VectorDB(
+       "records",
+       "./vector_storage",
+       chunking_method="delimiter",
+       chunk_size=500,
+       chunk_delimiter="\n---\n"   # persisted with the database
+       # chunk_overlap is counted in segments, not tokens
+   )
+
+The delimiter is set with the ``chunk_delimiter`` parameter and is persisted per
+database, so reopening the database chunks new documents the same way. From the
+CLI (both commands interpret the ``\n``, ``\t``, ``\r`` escapes, so a newline
+delimiter survives a shell that does not):
+
+.. code-block:: bash
+
+   # At database creation
+   lvdb create records --chunking-method delimiter --chunk-delimiter '\n---\n'
+
+   # Standalone chunking, no database involved
+   lvdb chunk records.txt -M delimiter --delimiter '\n---\n'
+
+**Best for**: Record-structured text with a known separator — transcripts,
+exported logs, concatenated snippets, form entries
 
 Custom Chunking Methods
 -----------------------
@@ -277,7 +371,7 @@ You can list all registered chunking methods at any time:
 .. code-block:: python
 
    print(ChunkerFactory.list_methods())
-   # ['sentences', 'tokens', 'words', 'lines', 'characters', 'paragraphs', 'sections', 'code-blocks', 'regex']
+   # ['sentences', 'tokens', 'words', 'lines', 'characters', 'paragraphs', 'sections', 'structure', 'code-blocks', 'delimiter', 'regex']
 
 Advanced Chunking Configuration
 -------------------------------

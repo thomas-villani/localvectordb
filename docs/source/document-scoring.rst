@@ -1,16 +1,18 @@
 Document Scoring Methods
 ========================
 
-When aggregating chunk-level search results into document-level scores, LocalVectorDB supports three scoring methods plus ``"auto"``, which is the default and picks between them based on ``search_type``. Each has a different strength depending on your use case.
+When aggregating chunk-level search results into document-level scores, LocalVectorDB supports four scoring methods plus ``"auto"``, which is the default and picks between them based on ``search_type``. Each has a different strength depending on your use case.
 
 .. note::
 
-   Earlier releases exposed eight additional heuristic methods (``worst``,
+   Earlier releases exposed seven additional heuristic methods (``worst``,
    ``weighted_average``, ``harmonic_mean``, ``diminishing_returns``, ``statistical``,
-   ``robust_mean``, ``percentile``, ``geometric_mean``). They were removed in v0.1.0:
-   measured on the NFCorpus retrieval benchmark none of them beat the three methods
-   below, they overlapped heavily, and several were non-monotonic (adding a low-scoring
-   chunk could reorder documents). Passing a removed name now raises ``ValueError``.
+   ``robust_mean``, ``geometric_mean``). They were removed in v0.1.0: measured on the
+   NFCorpus retrieval benchmark none of them beat the methods below, they overlapped
+   heavily, and several were non-monotonic (adding a low-scoring chunk could reorder
+   documents). Passing a removed name now raises ``ValueError``. ``percentile`` was
+   pruned in the same pass but has since returned in a simplified single-knob form
+   (see below) — its old two-percentile blend is gone for good.
 
 Methods
 -------
@@ -59,6 +61,34 @@ Boosts the best chunk score based on the number of quality chunks found, rewardi
 
 * ``frequency_bias`` (0.0-1.0, default=0.3): Controls how much to boost scores based on chunk frequency. Higher values favor documents with more matching chunks.
 
+``"percentile"``
+^^^^^^^^^^^^^^^^
+
+A soft maximum: the document score is the *p*-th order statistic of its chunk
+scores. At ``percentile=1.0`` it is exactly ``"best"``; lower values drift toward
+the mean as a document owns more chunks, so a document whose relevance is spread
+across several strong chunks can outrank one carried by a single outlier.
+
+This is a *document-target* aggregator. Measured against ``"best"`` when rolling
+chunks up to documents it was worth up to **~+0.02 nDCG@10** on high-fanout
+corpora (many chunks per document), and it consistently *lost* at section
+targets — which is why ``"auto"`` never selects it. Pin it explicitly via
+``document_scoring_method="percentile"`` if your workload matches.
+
+**Parameters:**
+
+* ``percentile`` (0.0-1.0, default=0.9): The order statistic to take, passed via
+  ``document_scoring_options`` (0.9 means the 90th percentile; values outside
+  [0, 1] raise ``ValueError``). Interpolation matches ``numpy.percentile``'s
+  default linear rule, which is what the sweep behind this option measured.
+
+.. note::
+
+   The percentile method that shipped before v0.1.0 was a *two*-percentile blend.
+   That form lost to this clean order statistic in 19 of 20 measured cells, so
+   its extra options do not come back with it: ``secondary_percentile`` and
+   ``primary_weight`` in ``document_scoring_options`` are silently ignored.
+
 Choosing a Method
 -----------------
 
@@ -66,6 +96,7 @@ Choosing a Method
 * **Single best passage matters most**: Use ``"best"``
 * **Overall document quality important**: Use ``"average"``
 * **Want to reward multiple relevant sections**: Use ``"frequency_boost"``
+* **Document-level ranking on a high-fanout corpus, want a soft max**: Use ``"percentile"``
 
 How Raw Scores Are Computed
 ---------------------------
