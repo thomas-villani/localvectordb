@@ -228,6 +228,56 @@ class TestChunkToSectionAssignment:
         mapping = SectionDetector.assign_chunks_to_sections(chunks, [])
         assert mapping == {}
 
+    def test_overlap_credits_every_spanned_section(self, section_detector):
+        """A chunk spanning several sections appears in each of them.
+
+        Midpoint attribution credits exactly one; the overlap relation is what
+        makes the other spanned sections reachable by the section roll-up.
+        """
+        text = "Preamble text\n# Section A\nText in A\n# Section B\nText in B"
+        sections = section_detector.detect_sections(text)
+        assert len(sections) == 3
+
+        whole_doc = Chunk(content=text, position=ChunkPosition(0, len(text), 1, 1, 5, 1), tokens=12, index=0)
+        overlap = SectionDetector.assign_chunks_to_sections_overlap([whole_doc], sections)
+        assert all(0 in overlap[s.index] for s in sections), "whole-document chunk must credit every section"
+
+        midpoint = SectionDetector.assign_chunks_to_sections([whole_doc], sections)
+        assert sum(len(v) for v in midpoint.values()) == 1, "midpoint attribution stays single-valued"
+
+    def test_overlap_contained_chunk_credits_one_section(self, section_detector):
+        """A chunk inside a single section credits only that section."""
+        text = "Preamble text\n# Section A\nText in A\n# Section B\nText in B"
+        sections = section_detector.detect_sections(text)
+        inner = Chunk(content="Text in A", position=ChunkPosition(26, 35, 3, 1, 3, 10), tokens=3, index=0)
+        overlap = SectionDetector.assign_chunks_to_sections_overlap([inner], sections)
+        assert [s.index for s in sections if inner.index in overlap[s.index]] == [1]
+
+    def test_overlap_is_superset_of_midpoint(self, section_detector):
+        """Every midpoint owner is also an overlap member, for any tiling."""
+        text = "Preamble text\n# Section A\nText in A goes here\n# Section B\nText in B goes here"
+        sections = section_detector.detect_sections(text)
+        # Tile the text with awkward 17-char chunks so spans cross boundaries.
+        chunks = []
+        for i, start in enumerate(range(0, len(text), 17)):
+            end = min(start + 17, len(text))
+            chunks.append(
+                Chunk(content=text[start:end], position=ChunkPosition(start, end, 1, 1, 1, 1), tokens=3, index=i)
+            )
+        midpoint = SectionDetector.assign_chunks_to_sections(chunks, sections)
+        overlap = SectionDetector.assign_chunks_to_sections_overlap(chunks, sections)
+        for sec_idx, members in midpoint.items():
+            assert set(members) <= set(overlap[sec_idx])
+        # And the tiling reaches every section through overlap.
+        assert all(overlap[s.index] for s in sections)
+
+    def test_overlap_empty_inputs(self, section_detector):
+        text = "# Header\nContent"
+        sections = section_detector.detect_sections(text)
+        assert SectionDetector.assign_chunks_to_sections_overlap([], sections) == {}
+        chunk = Chunk(content="text", position=ChunkPosition(0, 4, 1, 1, 1, 5), tokens=1, index=0)
+        assert SectionDetector.assign_chunks_to_sections_overlap([chunk], []) == {}
+
     def test_content_hash_computation(self, section_detector):
         """Test section content hash computation."""
         text = "# Header\nContent text"
@@ -1762,3 +1812,169 @@ class TestLocalProviderContextWindow:
         provider._transformer_model = object()
         assert provider.max_input_tokens is None
         assert _window_chars_for(provider) == _DEFAULT_WINDOW_CHARS
+
+
+class TestChunkSectionsJoinTable:
+    """The chunk_sections overlap relation: every section reachable by roll-up.
+
+    ``chunks.section_id`` credits only the section holding a chunk's midpoint,
+    which left every section without a midpoint owner (~40% on real corpora)
+    unreturnable by ``return_type="sections"`` at any k. The join table records
+    every section a chunk overlaps; these tests pin ingest, roll-up, backfill,
+    re-upsert hygiene, rebuild, and the midpoint fallback.
+    """
+
+    def _wide_chunk_db(self, tmpdir):
+        """A hierarchical DB whose chunk_size swallows MARKDOWN_DOC whole.
+
+        One chunk spanning every section is the exact shape of the defect:
+        midpoint attribution credits a single section, so all the others used
+        to be unreachable.
+        """
+        from localvectordb.database import LocalVectorDB
+
+        db = LocalVectorDB(
+            name="wide",
+            base_path=tmpdir,
+            embedding_provider="mock",
+            embedding_model="mock",
+            hierarchical_embeddings=True,
+            chunk_size=5000,
+            chunk_overlap=0,
+            enable_fts=True,
+        )
+        db.upsert([MARKDOWN_DOC], ids=["md_doc"])
+        return db
+
+    def test_ingest_writes_multi_membership(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                with db.connection_pool.get_connection() as conn:
+                    n_chunks = conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"]
+                    n_sections = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"]
+                    rows = conn.execute("SELECT COUNT(*) AS n FROM chunk_sections").fetchone()["n"]
+                    reached = conn.execute("SELECT COUNT(DISTINCT section_id) AS n FROM chunk_sections").fetchone()["n"]
+                assert n_chunks == 1 and n_sections > 1, "fixture must produce one chunk spanning many sections"
+                assert rows == n_sections, "the single chunk must credit every section it spans"
+                assert reached == n_sections, "every section must be reachable through the join table"
+            finally:
+                db.close()
+
+    def test_rollup_returns_sections_without_a_midpoint_owner(self):
+        """THE defect test: a section owning no chunk midpoint is returnable."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                with db.connection_pool.get_connection() as conn:
+                    owners = {
+                        row["section_id"]
+                        for row in conn.execute("SELECT DISTINCT section_id FROM chunks WHERE section_id IS NOT NULL")
+                    }
+                    all_sections = {row["id"] for row in conn.execute("SELECT id FROM sections")}
+                orphans = all_sections - owners
+                assert orphans, "fixture must contain sections without a midpoint owner"
+
+                results = db.query("neural networks", return_type="sections", k=20)
+                returned = {r.metadata["section_index"] for r in results}
+                with db.connection_pool.get_connection() as conn:
+                    orphan_indices = {
+                        row["section_index"]
+                        for row in conn.execute(
+                            f"SELECT section_index FROM sections WHERE id IN ({','.join('?' * len(orphans))})",
+                            list(orphans),
+                        )
+                    }
+                assert orphan_indices <= returned, "sections without a midpoint owner must be returnable by the roll-up"
+            finally:
+                db.close()
+
+    def test_rollup_falls_back_to_midpoint_owner_without_join_rows(self):
+        """A failed backfill degrades to the old midpoint reach, not to nothing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                with db.connection_pool.get_connection() as conn:
+                    conn.execute("DELETE FROM chunk_sections")
+                    conn.commit()
+                results = db.query("neural networks", return_type="sections", k=20)
+                assert len(results) == 1, "midpoint fallback must return exactly the owner section"
+            finally:
+                db.close()
+
+    def test_backfill_repopulates_a_legacy_database(self):
+        """A database that predates chunk_sections self-heals via the backfill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                with db.connection_pool.get_connection() as conn:
+                    expected = {
+                        (row["chunk_id"], row["section_id"])
+                        for row in conn.execute("SELECT chunk_id, section_id FROM chunk_sections")
+                    }
+                    conn.execute("DELETE FROM chunk_sections")
+                    conn.commit()
+
+                assert db._backfill_chunk_sections() == len(expected)
+                with db.connection_pool.get_connection() as conn:
+                    rebuilt = {
+                        (row["chunk_id"], row["section_id"])
+                        for row in conn.execute("SELECT chunk_id, section_id FROM chunk_sections")
+                    }
+                assert rebuilt == expected, "the SQL backfill must reproduce ingest-time attribution exactly"
+                # Idempotent: a second call is a no-op.
+                assert db._backfill_chunk_sections() == 0
+            finally:
+                db.close()
+
+    def test_reupsert_leaves_no_stale_join_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                db.upsert(["# Only One Heading\n\nCompletely different content now."], ids=["md_doc"])
+                with db.connection_pool.get_connection() as conn:
+                    stale_chunks = conn.execute(
+                        "SELECT COUNT(*) AS n FROM chunk_sections cs "
+                        "WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = cs.chunk_id)"
+                    ).fetchone()["n"]
+                    stale_sections = conn.execute(
+                        "SELECT COUNT(*) AS n FROM chunk_sections cs "
+                        "WHERE NOT EXISTS (SELECT 1 FROM sections s WHERE s.id = cs.section_id)"
+                    ).fetchone()["n"]
+                    live = conn.execute("SELECT COUNT(*) AS n FROM chunk_sections").fetchone()["n"]
+                assert stale_chunks == 0 and stale_sections == 0
+                assert live > 0, "the replacement document must have attribution rows"
+            finally:
+                db.close()
+
+    def test_delete_removes_join_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                db.delete(["md_doc"])
+                with db.connection_pool.get_connection() as conn:
+                    left = conn.execute("SELECT COUNT(*) AS n FROM chunk_sections").fetchone()["n"]
+                assert left == 0, "deleting the only document must empty chunk_sections"
+            finally:
+                db.close()
+
+    def test_rebuild_repopulates_join_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                with db.connection_pool.get_connection() as conn:
+                    before = {
+                        (row["chunk_id"], row["section_id"])
+                        for row in conn.execute("SELECT chunk_id, section_id FROM chunk_sections")
+                    }
+                db.rebuild_hierarchical_embeddings()
+                with db.connection_pool.get_connection() as conn:
+                    rows = conn.execute(
+                        "SELECT c.chunk_index, s.section_index FROM chunk_sections cs "
+                        "JOIN chunks c ON c.id = cs.chunk_id JOIN sections s ON s.id = cs.section_id"
+                    ).fetchall()
+                    n_sections = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"]
+                assert before, "fixture must start populated"
+                assert len(rows) == n_sections, "rebuild must restore full attribution (section ids are reissued)"
+            finally:
+                db.close()

@@ -1188,6 +1188,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         chunk_to_section_map = SectionDetector.assign_chunks_to_sections(all_chunks, section_boundaries)
                         chunk_data["section_boundaries"] = section_boundaries
                         chunk_data["chunk_to_section_map"] = chunk_to_section_map
+                        chunk_data["chunk_section_overlap_map"] = SectionDetector.assign_chunks_to_sections_overlap(
+                            all_chunks, section_boundaries
+                        )
                     chunk_queue.put(chunk_data)
                 chunk_queue.put(None)
             except Exception as e:
@@ -1810,6 +1813,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
     ) -> None:
         if chunk_indices_to_remove:
             placeholders = ",".join(["?"] * len(chunk_indices_to_remove))
+            # Explicit rather than FK-cascaded: in-memory databases run with
+            # foreign_keys OFF, so the join rows would otherwise go stale.
+            conn.execute(
+                f"DELETE FROM chunk_sections WHERE chunk_id IN "
+                f"(SELECT id FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders}))",
+                [doc_id] + chunk_indices_to_remove,
+            )
             conn.execute(
                 f"DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})",
                 [doc_id] + chunk_indices_to_remove,
@@ -1856,7 +1866,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             else:
                 self._remove_document_vectors([row["doc_faiss_id"]])
 
-        # Delete section rows (CASCADE will handle chunk.section_id SET NULL)
+        # Delete section rows (CASCADE will handle chunk.section_id SET NULL).
+        # chunk_sections is cleared explicitly rather than trusting the FK
+        # cascade, which only fires when the connection has foreign_keys ON.
+        conn.execute(
+            "DELETE FROM chunk_sections WHERE section_id IN (SELECT id FROM sections WHERE document_id = ?)",
+            (doc_id,),
+        )
         conn.execute("DELETE FROM sections WHERE document_id = ?", (doc_id,))
 
     def _store_hierarchical_data(self, conn, chunk_data: dict, all_chunks: List) -> None:
@@ -1946,7 +1962,8 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                         (row["id"], doc_text[section.start_pos : section.end_pos]),
                     )
 
-        # Update chunks with section_id FK
+        # Update chunks with section_id FK (the single midpoint *owner*, kept
+        # for centroid computation) ...
         if chunk_to_section_map and section_id_map:
             for section_idx, chunk_indices in chunk_to_section_map.items():
                 if section_idx in section_id_map:
@@ -1956,6 +1973,25 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                             "UPDATE chunks SET section_id = ? WHERE document_id = ? AND chunk_index = ?",
                             (section_row_id, doc_id, chunk_idx),
                         )
+
+        # ... and record the complete overlap relation in chunk_sections, which
+        # is what the section roll-up reads: a chunk spanning several sections
+        # must credit them all, or the sections owning no midpoint are
+        # unreachable by any chunk-level search.
+        overlap_map = chunk_data.get("chunk_section_overlap_map")
+        if overlap_map and section_id_map:
+            rows = [
+                (doc_id, chunk_idx, section_id_map[section_idx])
+                for section_idx, chunk_indices in overlap_map.items()
+                if section_idx in section_id_map
+                for chunk_idx in chunk_indices
+            ]
+            if rows:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO chunk_sections (chunk_id, section_id) "
+                    "SELECT c.id, ? FROM chunks c WHERE c.document_id = ? AND c.chunk_index = ?",
+                    [(sec_row_id, d, c) for d, c, sec_row_id in rows],
+                )
 
         # Add document embedding to FAISS index
         if document_embedding is not None and document_embedding.size > 0:
@@ -1979,6 +2015,7 @@ class PipelineMixin(LocalVectorDBBase, ABC):
 
             # Clear existing section data
             with self.connection_pool.get_connection() as conn:
+                conn.execute("DELETE FROM chunk_sections")
                 conn.execute("DELETE FROM sections")
                 conn.execute("UPDATE chunks SET section_id = NULL")
                 conn.execute("UPDATE documents SET doc_faiss_id = NULL")
@@ -2063,6 +2100,9 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     "doc_text": doc_text,
                     "section_boundaries": section_boundaries,
                     "chunk_to_section_map": chunk_to_section_map,
+                    "chunk_section_overlap_map": SectionDetector.assign_chunks_to_sections_overlap(
+                        chunks, section_boundaries
+                    ),
                     "section_embeddings": section_embeddings_arr,
                     "document_embedding": doc_embedding,
                 }
@@ -3240,6 +3280,13 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
         if chunk_indices_to_remove:
             placeholders = ",".join(["?"] * len(chunk_indices_to_remove))
+            # Explicit rather than FK-cascaded: in-memory databases run with
+            # foreign_keys OFF, so the join rows would otherwise go stale.
+            await conn.execute(
+                f"DELETE FROM chunk_sections WHERE chunk_id IN "
+                f"(SELECT id FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders}))",
+                [doc_id] + chunk_indices_to_remove,
+            )
             await conn.execute(
                 f"DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})",
                 [doc_id] + chunk_indices_to_remove,

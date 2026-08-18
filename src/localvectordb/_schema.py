@@ -369,6 +369,17 @@ class DatabaseSchema:
         UNIQUE(document_id, section_index)
     )"""
 
+    # The complete chunk<->section overlap relation. ``chunks.section_id`` keeps
+    # the single *owner* section (midpoint attribution, used for centroids);
+    # this table records every section a chunk's span overlaps, which is what
+    # lets a chunk-level search roll up to sections without leaving the ~40% of
+    # sections that own no chunk unreachable.
+    BASE_CHUNK_SECTIONS_SCHEMA = """CREATE TABLE IF NOT EXISTS chunk_sections (
+        chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+        section_id INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+        PRIMARY KEY (chunk_id, section_id)
+    ) WITHOUT ROWID"""
+
     BASE_MIGRATION_LOG_SCHEMA = """CREATE TABLE IF NOT EXISTS migration_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         version TEXT NOT NULL,
@@ -394,6 +405,7 @@ class DatabaseSchema:
         "documents": BASE_DOCUMENTS_SCHEMA,
         "chunks": BASE_CHUNKS_SCHEMA,
         "sections": BASE_SECTIONS_SCHEMA,
+        "chunk_sections": BASE_CHUNK_SECTIONS_SCHEMA,
         "metadata_schema": BASE_METADATA_SCHEMA,
         "column_embeddings": BASE_COLUMN_EMBEDDINGS_SCHEMA,
         "migration_log": BASE_MIGRATION_LOG_SCHEMA,
@@ -414,6 +426,7 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_sections_document_id ON sections(document_id)",
         "CREATE INDEX IF NOT EXISTS idx_sections_faiss_id ON sections(faiss_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chunk_sections_section_id ON chunk_sections(section_id)",
         "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON column_embeddings(document_id, field_name)",
         "CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)",
         "CREATE INDEX IF NOT EXISTS idx_migration_log_version ON migration_log(version)",

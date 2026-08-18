@@ -2432,7 +2432,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
         return results[:k]
 
     def _assemble_section_results(self, chunk_results: List[QueryResult], k: int) -> List[QueryResult]:
-        """Group chunk results by section and return section-level results."""
+        """Group chunk results by section and return section-level results.
+
+        A chunk credits *every* section its span overlaps (the ``chunk_sections``
+        join table), not just the single section holding its midpoint
+        (``chunks.section_id``). Midpoint-only crediting left ~40% of sections
+        on real corpora — every section that owned no chunk midpoint —
+        structurally unreturnable at any ``k``. The owner relation is a subset
+        of the overlap relation, so the UNION below adds nothing on a current
+        database; it exists so a database whose ``chunk_sections`` backfill
+        failed degrades to the old midpoint behaviour instead of to nothing.
+        """
         if not chunk_results:
             return []
 
@@ -2454,14 +2464,20 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     """
                     SELECT s.*, d.content as doc_content
                     FROM sections s
+                    JOIN chunk_sections cs ON cs.section_id = s.id
+                    JOIN chunks c ON c.id = cs.chunk_id
+                    JOIN documents d ON s.document_id = d.id
+                    WHERE c.document_id = ? AND c.chunk_index = ?
+                    UNION
+                    SELECT s.*, d.content as doc_content
+                    FROM sections s
                     JOIN chunks c ON c.section_id = s.id
                     JOIN documents d ON s.document_id = d.id
                     WHERE c.document_id = ? AND c.chunk_index = ?
                 """,
-                    (doc_id, chunk_idx),
+                    (doc_id, chunk_idx, doc_id, chunk_idx),
                 )
-                row = cursor.fetchone()
-                if row:
+                for row in cursor.fetchall():
                     section_key = f"{row['document_id']}:section:{row['section_index']}"
                     if section_key not in section_results:
                         section_text = row["doc_content"][row["start_pos"] : row["end_pos"]]

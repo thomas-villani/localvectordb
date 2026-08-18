@@ -184,9 +184,10 @@ class DiagnoseReport:
     median_section_tokens: Optional[int] = None
     sections_measured: int = 0
 
-    #: Share of sections owning no chunk. Those sections cannot be returned by
-    #: chunk->section roll-up at any k, so 1 - share is a hard recall ceiling
-    #: for return_type="sections" on the default search path.
+    #: Share of sections unreachable by chunk->section roll-up
+    #: (return_type="sections"): sections with neither a chunk_sections overlap
+    #: row nor a midpoint owner. ~0 on a healthy database, since chunks credit
+    #: every section they overlap; 1 - share is a hard recall ceiling.
     chunkless_section_share: Optional[float] = None
 
     mean_chunks_per_document: Optional[float] = None
@@ -244,11 +245,11 @@ class DiagnoseReport:
             if self.chunkless_section_share is not None:
                 reachable = 1.0 - self.chunkless_section_share
                 lines.append(
-                    f"Section reachability: {self.chunkless_section_share:.1%} of sections own no "
-                    f"chunk, so chunk->section roll-up (return_type='sections') can reach at most "
-                    f"{reachable:.1%} of them at any k. This happens when chunk_size exceeds the "
-                    "median section length -- a chunk's midpoint credits only one of the sections "
-                    "it spans."
+                    f"Section reachability: {reachable:.1%} of sections are reachable by "
+                    "chunk->section roll-up (return_type='sections'). Chunks credit every "
+                    "section they overlap, so this is ~100% on a healthy database; a "
+                    "shortfall means the chunk_sections backfill failed or the hierarchy "
+                    "needs rebuild_hierarchical_embeddings()."
                 )
 
         fanout = []
@@ -410,12 +411,20 @@ class DiagnoseMixin(LocalVectorDBBase, ABC):
             over = sum(1 for t in counts if t > report.context_tokens)
             report.sections_over_context_share = over / len(counts)
 
-        owned = int(
-            conn.execute("SELECT COUNT(DISTINCT section_id) AS n FROM chunks WHERE section_id IS NOT NULL").fetchone()[
-                "n"
-            ]
+        # Reachability is measured against the chunk_sections overlap relation,
+        # which is what the section roll-up reads. On a healthy database this is
+        # ~0% by construction (chunks tile the document, so every section
+        # overlaps a chunk); a non-zero share means the overlap backfill failed
+        # or the hierarchy needs a rebuild, and those sections really are
+        # unreturnable.
+        reachable = int(
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM ("
+                "SELECT section_id FROM chunk_sections "
+                "UNION SELECT section_id FROM chunks WHERE section_id IS NOT NULL)"
+            ).fetchone()["n"]
         )
-        report.chunkless_section_share = 1.0 - (owned / report.sections)
+        report.chunkless_section_share = 1.0 - (reachable / report.sections)
 
     def _measure_fanout(self, conn: Any, report: DiagnoseReport) -> None:
         if report.documents and report.chunks:
@@ -461,10 +470,12 @@ class DiagnoseMixin(LocalVectorDBBase, ABC):
             )
         if report.chunkless_section_share is not None and report.chunkless_section_share > _LONG_SECTION_NOTE_THRESHOLD:
             report.warnings.append(
-                f"{report.chunkless_section_share:.1%} of sections own no chunk and cannot be "
-                f"returned by return_type='sections' roll-up at any k (hard recall ceiling "
-                f"{1.0 - report.chunkless_section_share:.1%}). Reduce chunk_size below the median "
-                "section length, or search sections directly (search_level='sections')."
+                f"{report.chunkless_section_share:.1%} of sections cannot be reached by "
+                f"return_type='sections' roll-up at any k (hard recall ceiling "
+                f"{1.0 - report.chunkless_section_share:.1%}). Overlap attribution should make "
+                "every section reachable, so this database's chunk_sections table is incomplete: "
+                "reopen the database to re-run the backfill, or run "
+                "rebuild_hierarchical_embeddings()."
             )
 
     # -------------------------
