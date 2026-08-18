@@ -434,6 +434,31 @@ evaluate query-document pairs jointly, producing more accurate relevance scores 
        .execute()
    )
 
+   # Rerank against a self-hosted /rerank server (vLLM, text-embeddings-inference,
+   # Infinity, ...) -- the reranking counterpart of the openai_compatible
+   # embedding provider, so a fully local stack needs no hosted API
+   results = (
+       db.query_builder()
+       .search("distributed training")
+       .rerank_by_model(
+           provider="openai_compatible",
+           model="BAAI/bge-reranker-base",
+           base_url="http://localhost:8000/v1"   # required; no default endpoint
+       )
+       .execute()
+   )
+
+   # Rerank through OpenRouter's hosted rerank models (needs OPENROUTER_API_KEY)
+   results = (
+       db.query_builder()
+       .search("retrieval augmentation")
+       .rerank_by_model(
+           provider="openrouter",
+           model="some-provider/rerank-model"
+       )
+       .execute()
+   )
+
 Choosing a reranker model
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -517,8 +542,10 @@ API. Reranking is **not** available on the streaming/cursor path -- use
    the model's raw output in ``result.metadata["rerank_raw_score"]`` and the
    pre-rerank search score in ``result.metadata["original_score"]``. Jina uses its
    API's native relevance score; the SentenceTransformers and HuggingFace
-   cross-encoders squash their logits with a logistic sigmoid. None uses a
-   per-batch min-max, which would be pool-relative rather than absolute.
+   cross-encoders squash their logits with a logistic sigmoid; the
+   ``openai_compatible`` and ``openrouter`` providers decide per score via
+   ``score_transform="auto"`` (see below). None uses a per-batch min-max, which
+   would be pool-relative rather than absolute.
 
 Reranker Provider Options
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -532,6 +559,26 @@ The built-in providers accept a few construction options (passed either through
   ``"mps"``) to select where the local cross-encoder runs.
 - ``huggingface`` accepts ``base_url`` to target a self-hosted Text-Embeddings-
   Inference / custom endpoint instead of the hosted Inference API.
+- ``openai_compatible`` targets any self-hosted server exposing the
+  Jina/Cohere-shaped ``/rerank`` wire format — vLLM (``http://localhost:8000/v1``),
+  text-embeddings-inference (``http://localhost:8080``; it serves ``/rerank`` at
+  the root rather than under ``/v1``), Infinity (``http://localhost:7997``).
+  ``base_url`` is **required** — there is no default endpoint to fall back to.
+  ``api_key`` is optional (most local servers need none; falls back to the
+  ``RERANKER_API_KEY`` environment variable), and when absent no
+  ``Authorization`` header is sent at all.
+- ``openrouter`` routes to the rerank-capable models OpenRouter hosts, by model
+  slug. Requires an API key (``api_key`` or ``$OPENROUTER_API_KEY``);
+  ``base_url`` defaults to ``https://openrouter.ai/api/v1``.
+- The two providers above also accept ``score_transform`` (``"auto"``,
+  ``"none"``, or ``"sigmoid"``, default ``"auto"``). A self-hosted or routed
+  server may return either native ``[0, 1]`` relevance scores or raw
+  cross-encoder logits, and a logit-returning server would silently break
+  ``score_threshold`` filtering and cross-query comparison. ``"auto"`` decides
+  per score: values already in ``[0, 1]`` pass through, anything else is
+  squashed with a logistic sigmoid — which is what makes, say, a vLLM
+  cross-encoder safe to use with ``score_threshold``. Set ``"none"`` or
+  ``"sigmoid"`` when you know which your server produces.
 
 .. code-block:: python
 
@@ -584,19 +631,17 @@ Use the generic ``rerank()`` method for more control:
        .search("recent developments")
        .rerank("recency",
                date_field="updated_at",
-               weight=0.4,
-               decay_factor=0.95)  # How quickly recency importance decays
+               weight=0.4)  # Blend weight between search score and recency
        .execute()
    )
 
-   # Diversity reranking with threshold
+   # Diversity reranking on a metadata field
    results = (
        db.query_builder()
        .search("research papers")
        .rerank("diversity",
                field="author",
-               weight=0.6,
-               max_per_group=2)  # Maximum 2 papers per author
+               weight=0.6)  # Boost applied to the first result per author
        .execute()
    )
 

@@ -43,7 +43,11 @@ LocalVectorDB is a standard PyPI package — install it with [uv](https://docs.a
 # Add to your project with uv (recommended)
 uv add localvectordb
 
-# For server features (optional)
+# For the lvdb CLI without the HTTP server (optional, light: click + tomli-w + bcrypt)
+# Enough for create/inspect/search/chunk/backup/migrate/config — everything except `lvdb serve`
+uv add "localvectordb[cli]"
+
+# For server features (optional; includes the CLI)
 uv add "localvectordb[server]"
 
 # For all file extraction formats (optional)

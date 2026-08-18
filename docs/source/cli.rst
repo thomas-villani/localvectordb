@@ -831,9 +831,10 @@ Create Database
 - ``--embedding-model``: Embedding model to use
 - ``--embedding-provider``: Provider (ollama, openai)
 - ``--chunk-size``: Maximum tokens per chunk
-- ``--chunking-method``: Chunking strategy. One of ``sentences``, ``tokens``, ``characters``, ``words``, ``lines``, ``sections``
+- ``--chunking-method``: Chunking strategy. One of ``sentences``, ``tokens``, ``words``, ``lines``, ``characters``, ``paragraphs``, ``sections``, ``structure``, ``code-blocks``, ``delimiter`` (see :doc:`chunking`)
 - ``--chunk-overlap``: Overlap between chunks
-- ``--metadata-schema``: Predefined schema (documents, research_papers, etc.)
+- ``--chunk-delimiter``: Delimiter for ``--chunking-method delimiter`` (default: a blank line). The escapes ``\n``, ``\t``, ``\r`` are interpreted, e.g. ``--chunk-delimiter '\n---\n'``; the value is persisted with the database
+- ``--metadata-schema``: Predefined schema (``files``, ``documents``, ``research_papers``, ``code_repository``, ``customer_support``)
 
 Delete Database
 ^^^^^^^^^^^^^^^
@@ -1128,13 +1129,16 @@ Search Operations
 
 .. code-block:: bash
 
-   # Basic vector search
+   # Basic search (hybrid vector + keyword, the default)
    lvdb db my_database search "machine learning"
+
+   # Vector-only search
+   lvdb db my_database search "machine learning" --search-type vector
 
    # Keyword search
    lvdb db my_database search "neural networks" --search-type keyword
 
-   # Hybrid search
+   # Hybrid search with a custom vector/keyword blend
    lvdb db my_database search "AI algorithms" --search-type hybrid --vector-weight 0.8
 
    # Limit results
@@ -1168,9 +1172,9 @@ Search Operations
 **Options**:
 
 - ``--limit, -n``: Maximum number of results (default: 5)
-- ``--search-type, -t``: Search method (``vector``, ``keyword``, ``hybrid``) - defaults to ``vector``
+- ``--search-type, -t``: Search method (``vector``, ``keyword``, ``hybrid``) - defaults to ``hybrid`` (matching the API/MCP default)
 - ``--return-type, -r``: What to return (``documents``, ``chunks``, ``context``, ``enriched``, ``sections``) - defaults to ``documents``
-- ``--search-level``: Which index to search (``chunks``, ``sections``, ``documents``) - defaults to ``chunks``
+- ``--search-level``: Which index to search (``chunks``, ``sections``, ``documents``, ``fused``) - defaults to ``chunks``
 - ``--score-threshold``: Minimum score threshold (default: 0.0)
 - ``--vector-weight``: Weight for the vector component in hybrid search (default: 0.5)
 - ``--context-window``: Context size for ``--return-type context``/``enriched``, measured in ``--context-unit`` (default: 2)
@@ -1200,10 +1204,14 @@ budget is used, ``--context-truncate`` trims the assembled context to exactly th
    # Search the document-level index
    lvdb db my_database search "training loop" --search-level documents
 
-The ``--search-level sections``/``documents`` options and the ``sections`` value for
-``--return-type`` require a database created with ``hierarchical_embeddings=True``. On a
-standard (chunk-only) database, only ``--search-level chunks`` is available. See
-:doc:`hierarchical` for details on hierarchical embeddings.
+   # Blend chunk and section rankings
+   lvdb db my_database search "training loop" --search-level fused
+
+The ``--search-level sections``/``documents``/``fused`` options and the ``sections``
+value for ``--return-type`` require a database created with
+``hierarchical_embeddings=True``. On a standard (chunk-only) database, only
+``--search-level chunks`` is available. See :doc:`hierarchical` for details on
+hierarchical embeddings.
 
 Lexical Search (grep)
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -2127,9 +2135,10 @@ extraction (the default is auto-detection per file).
 
 **Options**:
 
-- ``--method, -M``: Chunking strategy. One of ``sentences``, ``tokens``, ``words``, ``lines``, ``characters``, ``paragraphs``, ``sections``, ``code-blocks`` (default: ``sentences``)
+- ``--method, -M``: Chunking strategy. One of ``sentences``, ``tokens``, ``words``, ``lines``, ``characters``, ``paragraphs``, ``sections``, ``structure``, ``code-blocks``, ``delimiter`` (default: ``sentences``)
 - ``--max-tokens, --chunk-size, -s``: Maximum tokens per chunk (default: 500)
 - ``--overlap``: Token overlap between consecutive chunks; ignored by some strategies (default: 0)
+- ``--delimiter``: Delimiter for ``--method delimiter`` (default: a blank line). The escapes ``\n``, ``\t``, ``\r`` are interpreted, e.g. ``--delimiter '\n---\n'``
 - ``--output, -o``: Write JSONL to this file instead of stdout
 - ``--extract/--no-extract``: Force or disable text extraction for file inputs (default: auto)
 
@@ -2207,12 +2216,13 @@ Pipeline Integration
    # Document processing pipeline
 
    # Create database if not exists.
-   # NOTE: `lvdb create --metadata-schema` accepts: documents, research_papers,
-   # code_repository, customer_support. The file-oriented `files` schema
-   # (file_path, created_at, last_modified, file_size_bytes, ...) is only available
-   # via `lvdb config init --schema files`; create a config with it first if you need
-   # those fields, since metadata not present in the schema is ignored on insert.
-   lvdb create research_pipeline --embedding-model embeddinggemma --metadata-schema documents
+   # NOTE: `lvdb create --metadata-schema` accepts: files, documents,
+   # research_papers, code_repository, customer_support. The file-oriented
+   # `files` schema (file_path, created_at, last_modified, file_size_bytes, ...)
+   # is used here because metadata not present in the schema is ignored on
+   # insert. (`lvdb config init --schema files` writes the same schema into a
+   # config file instead.)
+   lvdb create research_pipeline --embedding-model embeddinggemma --metadata-schema files
 
    # Process incoming documents
    find /incoming/documents -name "*.txt" -newer /tmp/last_processed | while IFS= read -r file; do

@@ -10,6 +10,7 @@ Overview
 
 - **Ollama**: Local embeddings without API costs
 - **OpenAI**: Cloud-based embeddings with high quality
+- **OpenAI-compatible**: Any server speaking OpenAI's ``/v1/embeddings`` — llama.cpp, LM Studio, vLLM, text-embeddings-inference, LocalAI
 - **OpenRouter**: OpenAI-compatible access to many providers' embedding models through one endpoint
 - **JinaAI**: Advanced cloud-based embedding models with more control
 - **Google**: Cloud-based Gemini Embedding
@@ -178,6 +179,68 @@ Available Models:
 - Any model listed at https://openrouter.ai/models with an ``embedding`` output
   modality, referenced by its slug (e.g. ``openai/text-embedding-3-small``,
   ``nvidia/nv-embed-v2``).
+
+OpenAI-Compatible Provider
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+One adapter for any server exposing an OpenAI-compatible ``/v1/embeddings``
+endpoint. This is a single provider rather than one per runtime because
+llama.cpp's server (started with ``--embedding``), LM Studio, vLLM,
+text-embeddings-inference, and LocalAI all speak the same wire format — only the
+address differs.
+
+.. note::
+   The provider is built into LocalVectorDB and requires no additional
+   dependencies. Ollama has its own native provider (which can enumerate
+   installed models and is preferable), though Ollama's ``/v1`` shim works here
+   too.
+
+Configuration:
+
+.. code-block:: python
+
+   # llama.cpp server started with:  llama-server -m model.gguf --embedding
+   db = VectorDB(
+       "my_db",
+       "./vector_storage",
+       embedding_provider="openai_compatible",
+       embedding_model="nomic-embed-text-v1.5",
+       embedding_config={
+           "base_url": "http://localhost:8080/v1",  # required
+           "dimension": 768,                        # declare to skip the probe
+       },
+   )
+
+Typical ``base_url`` values: ``http://localhost:8080/v1`` (llama.cpp),
+``http://localhost:1234/v1`` (LM Studio), ``http://localhost:8000/v1`` (vLLM),
+``http://localhost:8080/v1`` (text-embeddings-inference).
+
+Key configuration points:
+
+- ``base_url`` is **required** and has no default — guessing an endpoint would
+  silently embed against the wrong server. Include the ``/v1`` suffix if the
+  server uses one.
+- ``api_key`` is optional; most local servers need none. If omitted, it is read
+  from the ``OPENAI_COMPATIBLE_API_KEY`` environment variable, and when there is
+  no key at all no ``Authorization`` header is sent (some servers reject a
+  malformed one).
+- The embedding dimension is resolved in the same order as for OpenRouter:
+  ``requested_dimensions`` (also asks the server to truncate) →
+  ``dimension`` (a plain declaration of the native size) → a one-off probe
+  request the first time it is needed. Declare ``dimension`` to keep database
+  creation from making a network call.
+
+.. note::
+
+   **The endpoint is part of the vector identity.** The database persists
+   ``embedding_base_url`` alongside the provider and model, because once a
+   provider can point anywhere, provider + model alone no longer identifies a
+   vector space — the same model name served by different engines can pool
+   token vectors differently and produce non-interchangeable embeddings.
+   Opening a database against a different endpoint than the one its vectors
+   came from logs a warning rather than blocking (servers legitimately move
+   host or port); if retrieval quality looks wrong after a server change,
+   re-ingest.
 
 JinaAI Provider
 ^^^^^^^^^^^^^^^
@@ -812,6 +875,15 @@ plus provider-specific options.
 +----------------------+-------------------------------+----------------------------------------------------------+
 | Ollama               | ``normalize``                 | L2-normalize output vectors (bool)                       |
 +----------------------+-------------------------------+----------------------------------------------------------+
+| Ollama               | ``num_ctx``                   | Context window to request (``options.num_ctx``); Ollama  |
+|                      |                               | loads models at a default of often 2048 otherwise        |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Ollama               | ``num_batch``                 | Batch size (``options.num_batch``, llama.cpp's           |
+|                      |                               | ``n_batch``); defaults to ``num_ctx`` when that is set   |
++----------------------+-------------------------------+----------------------------------------------------------+
+| Ollama               | ``truncate``                  | Truncate inputs exceeding the batch/context window       |
+|                      |                               | (bool, default: True)                                    |
++----------------------+-------------------------------+----------------------------------------------------------+
 | OpenAI               | ``api_key``                   | API key (default: ``$OPENAI_API_KEY``). Prefix with      |
 |                      |                               | ``$`` to read from a custom env var, e.g. ``$MY_KEY``    |
 +----------------------+-------------------------------+----------------------------------------------------------+
@@ -821,7 +893,12 @@ plus provider-specific options.
 +----------------------+-------------------------------+----------------------------------------------------------+
 | JinaAI               | ``api_key``                   | API key (default: ``$JINA_API_KEY``)                     |
 +----------------------+-------------------------------+----------------------------------------------------------+
-| JinaAI               | ``task``                      | Task-specific optimization (see JinaAI section above)    |
+| JinaAI               | ``task``                      | Task-specific optimization (see JinaAI section above);   |
+|                      |                               | used for both sides unless overridden per side below     |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``document_task``             | Ingest-side task (e.g. ``retrieval.passage``)            |
++----------------------+-------------------------------+----------------------------------------------------------+
+| JinaAI               | ``query_task``                | Query-side task (e.g. ``retrieval.query``)               |
 +----------------------+-------------------------------+----------------------------------------------------------+
 | JinaAI               | ``requested_dimensions``      | Truncate output to N dimensions                          |
 +----------------------+-------------------------------+----------------------------------------------------------+
@@ -871,6 +948,16 @@ plus provider-specific options.
 +----------------------+-------------------------------+----------------------------------------------------------+
 | HuggingFace Local    | ``trust_remote_code``         | Trust remote code when loading model (bool)              |
 +----------------------+-------------------------------+----------------------------------------------------------+
+
+.. note::
+
+   **Ollama's batch size is the real input ceiling for embeddings.** Ollama's
+   ``/api/embed`` caps each input at ``n_batch`` (default **2048** tokens)
+   regardless of ``num_ctx``, silently truncating anything longer — so raising
+   ``num_ctx`` alone does nothing for embeddings past 2048 tokens. When
+   ``num_ctx`` is set and ``num_batch`` is not, LocalVectorDB defaults
+   ``num_batch`` to ``num_ctx`` so a raised context actually takes effect (for
+   example, embedding full 8192-token inputs with a long-context encoder).
 
 Retry behavior uses exponential backoff: the delay after attempt *n* is ``retry_delay * 2^n`` seconds.
 Retries are triggered by network errors, timeouts, HTTP 429 (rate limit), and 5xx server errors.

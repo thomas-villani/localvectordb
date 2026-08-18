@@ -324,7 +324,8 @@ All query methods support these parameters:
   reranking, defaulting to ``5 * k`` (capped at 200). Only has an effect when
   ``reranker`` or ``reranker_config`` is supplied — without over-fetching, a
   reranker can only reorder the top ``k`` it was already given, so it cannot
-  improve recall. See :doc:`embeddings` for available rerankers.
+  improve recall. See the Cross-Encoder Reranking section of :doc:`querybuilder`
+  for the available rerankers.
 * ``filters`` (dict, optional): Metadata filters to apply. Filter fields must be
   declared in the database's ``metadata_schema`` (reserved columns like ``id`` and
   ``created_at`` are also allowed); filtering on an undeclared field or using an
@@ -353,7 +354,10 @@ Search Type Specific
 
 **Document Return Type:**
 
-* ``document_scoring_method`` (str, default="frequency_boost"): How to aggregate chunk scores
+* ``document_scoring_method`` (str, default="auto"): How to aggregate chunk
+  scores. The default resolves against ``search_type`` — ``"best"`` for vector
+  search, ``"frequency_boost"`` for hybrid and keyword; passing any explicit
+  method pins it. See :doc:`document-scoring`.
 * ``document_scoring_options`` (dict, optional): Parameters for scoring methods
 
 **Hierarchical Search:**
