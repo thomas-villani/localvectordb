@@ -400,7 +400,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model's real context for this sizing too — previously they reported none, so
   the fixed fallback window was handed to (and silently truncated by) models
   with far smaller contexts.
-- **Sections owning no chunk were unretrievable, not merely down-ranked.**
+- **Every section is now reachable by `return_type="sections"`.** The
+  chunk→section roll-up read the single-valued `chunks.section_id`, which
+  credits a chunk only to the section holding its midpoint — so any section
+  without a midpoint owner was structurally unreturnable at any `k`: ~40% of
+  sections at the default `chunk_size` on two measured corpora, including 26%
+  of one corpus's *gold* sections. A new `chunk_sections` table records every
+  section a chunk's span overlaps (chunks tile the document, so this reaches
+  100% of sections by construction); existing databases self-heal on open with
+  a single set-based SQL backfill — no re-embedding, no rebuild. Sections
+  credited by the same chunk tie exactly and now rank by how much of the chunk
+  they hold, which repairs reachability at no ranking cost (measured
+  −0.0004/+0.0009 nDCG@10 on one corpus, +0.045/+0.047 on another, against
+  midpoint-only). Centroid computation deliberately keeps midpoint ownership,
+  which measures better there. The doctor's section-reachability line now
+  measures the relation the roll-up actually reads, so it reports ~100% and a
+  shortfall means a broken backfill rather than restating chunk geometry.
+- **Sections owning no chunk had zero *vectors* in the section index** (the
+  other half of the reachability defect above, fixed earlier in the cycle).
   Chunk→section attribution credits a chunk to the section holding its
   midpoint, so a section winning no midpoint got a zero vector — which scores
   zero against every query in a normalised index. Not a corner case at the
