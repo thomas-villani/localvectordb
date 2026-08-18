@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "generated": "2026-08-18T16:37:56+00:00",
+  "git_commit": "4de6de4",
+  "all2md_version": "1.7.1",
+  "files": {
+    "scripts/e2e/fixtures/climate_currents.html": {
+      "success": true,
+      "sha256": "7db34ee3079c2f651faeb409baabe61213f884cce57e464240cb189291b4bb82",
+      "chars": 1823,
+      "lines": 17,
+      "headings": 5,
+      "heading_digest": "202df660a845a46a",
+      "sections": 5
+    },
+    "scripts/e2e/fixtures/financial_report.docx": {
+      "success": true,
+      "sha256": "37737033d2543530d7598dd4cb2ce24f75167f85128e2573232cf9c98a30fc29",
+      "chars": 1567,
+      "lines": 17,
+      "headings": 5,
+      "heading_digest": "333f3ccd1c16a36b",
+      "sections": 5
+    },
+    "scripts/e2e/fixtures/french_cooking.md": {
+      "success": true,
+      "sha256": "61d7f502894ddd225232f98c3f83f6b9a924a5339b841d33b3944f029d3092d1",
+      "chars": 1783,
+      "lines": 37,
+      "headings": 5,
+      "heading_digest": "813acc5dc11e8bc7",
+      "sections": 5
+    },
+    "scripts/e2e/fixtures/machine_learning.pdf": {
+      "success": true,
+      "sha256": "6931ab6d7eb99f25b7ddb0799ace0c8b82b11282c92002d6ca6605a4b34fd390",
+      "chars": 2177,
+      "lines": 17,
+      "headings": 0,
+      "heading_digest": "e3b0c44298fc1c14",
+      "sections": 1
+    },
+    "scripts/e2e/fixtures/space_exploration.md": {
+      "success": true,
+      "sha256": "4ae28f90f11fae3631b26448286f6c679728857d61357e233ed9f4a1bffcb2b0",
+      "chars": 1795,
+      "lines": 38,
+      "headings": 5,
+      "heading_digest": "83eb8e73e2af547f",
+      "sections": 5
+    },
+    "scripts/e2e/fixtures/task_scheduler.py": {
+      "success": true,
+      "sha256": "c08300eb03a9d080aa724e52dc503a12882f7d46a13de6e33020600c70b6c0f6",
+      "chars": 2039,
+      "lines": 56,
+      "headings": 0,
+      "heading_digest": "e3b0c44298fc1c14",
+      "sections": 1
+    },
+    "scripts/e2e/fixtures/warehouse_inventory.xlsx": {
+      "success": true,
+      "sha256": "b8d0a94bcf6d3ffcf73076264c53de414e2f43560ba6b1ea5d6e01a26e4223ff",
+      "chars": 647,
+      "lines": 12,
+      "headings": 1,
+      "heading_digest": "975539506130ca12",
+      "sections": 1
+    },
+    "benchmarks/extraction_fixtures/clause_contract.docx": {
+      "success": true,
+      "sha256": "b9b18a7b871727f3a11794b4c37043be6b4274fc3d327c381d9e124dff1f733f",
+      "chars": 531,
+      "lines": 17,
+      "headings": 4,
+      "heading_digest": "d2f8911b9c62c31b",
+      "sections": 4
+    },
+    "benchmarks/extraction_fixtures/structure_stress.html": {
+      "success": true,
+      "sha256": "d87595d559b5851167dba7c0f1d3702022556bfb4026febb3d56e7fb11bded5f",
+      "chars": 465,
+      "lines": 26,
+      "headings": 4,
+      "heading_digest": "75e533b35ff11911",
+      "sections": 4
+    },
+    "benchmarks/extraction_fixtures/wrapped_headings.pdf": {
+      "success": true,
+      "sha256": "1ed3eaac3b0f2f9c9dea6a065674054d79262504555fd3d43b6d7eb9473b056b",
+      "chars": 982,
+      "lines": 31,
+      "headings": 7,
+      "heading_digest": "e300e3a9ce6d1dcd",
+      "sections": 8
+    }
+  }
+}

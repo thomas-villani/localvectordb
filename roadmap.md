@@ -266,10 +266,17 @@ de-conjoining the ones that already worked is worth ~+0.0020. **The problem was 
 ranking badly, not returning nothing.** `all_or` shipped on that evidence.
 
 Trade taken knowingly: a quoted phrase no longer constrains the result set, only ranks it (still
-matched as a phrase; a fully-quoted query still binds via the exact-phrase branch). **Both gates are
-structurally blind** — SciFact has 0/300 quoted queries — so the evidence is the MAUD number plus 10
-tests in `tests/test_keyword_search_semantics.py`. The sanitiser is otherwise injection-safe and
-crash-free across 9,333 real queries.
+matched as a phrase; a fully-quoted query still binds via the exact-phrase branch). ~~**Both gates are
+structurally blind** — SciFact has 0/300 quoted queries~~ — so at the time the evidence was the MAUD
+number plus 10 tests in `tests/test_keyword_search_semantics.py`. The sanitiser is otherwise
+injection-safe and crash-free across 9,333 real queries.
+
+> **Blind spot CLOSED 2026-08-18**: the retrieval gate now carries two derived quoted-query arms
+> (`keyword · quoted`, `hybrid vw=0.5 · quoted`) — a frozen transform quotes the first qualifying
+> bigram of each gate query (280/300 SciFact, 729/882 qasper), so a phrase-handling regression now
+> craters two gated configurations instead of passing at +0.0000. The extraction path got its own
+> gate the same day (`benchmarks/eval_extraction.py` — fingerprints of all2md output over committed
+> fixtures, including a wrapped-headings PDF that reproduces the 1.7.1→1.12 heading-merge drift).
 
 **5d. The hybrid candidate pool — MEASURED ON THE REAL PATH, and NOT to be shipped.**
 `_hybrid_search` fetches `_hybrid_pool_size(k) = max(k, min(k * 4, 100))` for both legs, so the

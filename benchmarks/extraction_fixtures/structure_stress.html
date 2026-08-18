@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html><head><title>Structure Stress</title></head><body>
+<h1>Structure Stress Document</h1>
+<p>Exercises the constructs whose markdown rendering has changed between
+all2md releases.</p>
+<h2>Nested Lists</h2>
+<ul>
+  <li>outer one
+    <ol><li>inner first</li><li>inner second</li></ol>
+  </li>
+  <li>outer two</li>
+</ul>
+<h2>A Table</h2>
+<table>
+  <tr><th>knob</th><th>default</th><th>regime</th></tr>
+  <tr><td>chunk_size</td><td>500</td><td>encoder-dependent</td></tr>
+  <tr><td>vector_weight</td><td>0.5</td><td>corpus-dependent</td></tr>
+</table>
+<h2>Code and Quotes</h2>
+<pre><code>def fingerprint(text):
+    return sha256(text)</code></pre>
+<blockquote>Extraction changes move section boundaries invisibly.</blockquote>
+</body></html>

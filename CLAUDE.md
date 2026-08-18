@@ -81,6 +81,21 @@ document and 92.0% of its documents are a single chunk, so anything about
 whether it works or not. Qasper is the second corpus for exactly that reason
 (10.77 chunks/document, no single-chunk documents). Both baselines are committed.
 
+The sweep includes two **derived quoted-query arms** (`· quoted` labels): the
+corpora contain essentially no quoted queries of their own, so phrase-handling
+changes used to pass both gates at `+0.0000` by construction. The transform rule
+in `quote_first_bigram` is frozen — the baselines depend on it.
+
+```bash
+# Extraction gate: fingerprints All2MdExtractor output over committed fixtures.
+# Run for ANY dependency bump that touches all2md (or extractor changes) —
+# neither retrieval gate sees the extraction path, and an all2md upgrade once
+# changed 30/30 PDFs (headings −7.2%) while every gated number stayed +0.0000.
+./.venv/Scripts/python.exe benchmarks/eval_extraction.py --check
+```
+On intended extraction changes: review the drift, treat file-derived corpora as
+invalidated (rebuild, never compare across the boundary), then `--update`.
+
 ### Documentation
 ```bash
 # Build Sphinx documentation
