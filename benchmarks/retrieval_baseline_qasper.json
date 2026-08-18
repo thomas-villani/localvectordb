@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generated": "2026-08-15T02:47:03+00:00",
-  "git_commit": "f3e1fbc",
+  "generated": "2026-08-18T17:09:37+00:00",
+  "git_commit": "96a7e9b-dirty",
   "dataset": {
     "name": "qasper_dev",
     "documents": 275,
@@ -132,6 +132,18 @@
       "recall@5": 0.36167800453514737,
       "recall@10": 0.43197278911564624,
       "ndcg@10": 0.3166877516166786
+    },
+    "keyword \u00b7 frequency_boost \u00b7 quoted": {
+      "recall@1": 0.3253968253968254,
+      "recall@5": 0.4331065759637188,
+      "recall@10": 0.5079365079365079,
+      "ndcg@10": 0.4050589692970227
+    },
+    "hybrid vw=0.5 \u00b7 frequency_boost \u00b7 quoted": {
+      "recall@1": 0.31179138321995464,
+      "recall@5": 0.4546485260770975,
+      "recall@10": 0.5102040816326531,
+      "ndcg@10": 0.40597457112053176
     }
   }
 }

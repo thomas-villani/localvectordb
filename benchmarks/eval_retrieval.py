@@ -110,12 +110,42 @@ SEARCH_VARIANTS = (
 )
 
 
+def quote_first_bigram(text: str) -> str:
+    """Wrap the first two consecutive >=4-char alphabetic words in double quotes.
+
+    The derived "quoted" gate leg. SciFact contains 0/300 quoted queries and
+    qasper 5/882, so the phrase-handling path (``handle_phrase_query``) was
+    structurally invisible to both gates: the ``all_or`` fix moved MAUD by
+    +0.0022 while every gated configuration read +0.0000. Transforming the
+    gate corpus's own queries gives that path a relevance-measured leg — a
+    regression back to AND-joining (dead keyword legs on real sentences) now
+    craters the quoted arms instead of passing silently.
+
+    THIS RULE IS FROZEN: the committed baselines depend on it byte-for-byte.
+    Queries with no qualifying bigram, or already containing a quote, pass
+    through unchanged — the arm measures phrase handling on the queries that
+    can express a phrase, not a different query set.
+    """
+    if '"' in text:
+        return text
+    tokens = text.split()
+    for i in range(len(tokens) - 1):
+        a, b = tokens[i], tokens[i + 1]
+        if a.isalpha() and b.isalpha() and len(a) >= 4 and len(b) >= 4:
+            return " ".join(tokens[:i] + [f'"{a} {b}"'] + tokens[i + 2 :])
+    return text
+
+
+_QUERY_TRANSFORMS = {"quoted": quote_first_bigram}
+
+
 @dataclass(frozen=True)
 class EvalConfig:
     search_type: str
     document_scoring_method: str
     vector_weight: Optional[float] = None
     rerank: bool = False
+    query_transform: Optional[str] = None
 
     @property
     def label(self) -> str:
@@ -123,6 +153,8 @@ class EvalConfig:
         if self.vector_weight is not None:
             head += f" vw={self.vector_weight:g}"
         tail = " +rerank" if self.rerank else ""
+        if self.query_transform:
+            tail += f" · {self.query_transform}"
         return f"{head} · {self.document_scoring_method}{tail}"
 
     @property
@@ -132,6 +164,7 @@ class EvalConfig:
             and self.vector_weight == 0.5
             and self.document_scoring_method == "frequency_boost"
             and not self.rerank
+            and self.query_transform is None
         )
 
 
@@ -149,6 +182,17 @@ def build_sweep(*, all_scoring: bool, rerank: bool) -> List[EvalConfig]:
             EvalConfig(search_type=st, vector_weight=vw, document_scoring_method="frequency_boost", rerank=True)
             for st, vw in SEARCH_VARIANTS
         ]
+    # The quoted-query arms. Neither gate corpus contains quoted queries, so
+    # every phrase-path change to date passed --check at +0.0000 by
+    # construction. `keyword` isolates the phrase path (no vector leg to
+    # dilute a regression); `hybrid vw=0.5` covers the default route a real
+    # quoted query takes.
+    configs += [
+        EvalConfig(search_type="keyword", document_scoring_method="frequency_boost", query_transform="quoted"),
+        EvalConfig(
+            search_type="hybrid", vector_weight=0.5, document_scoring_method="frequency_boost", query_transform="quoted"
+        ),
+    ]
     return configs
 
 
@@ -379,8 +423,11 @@ def run_config(db, dataset, config: EvalConfig, *, k: int, reranker=None) -> Dic
     if config.rerank:
         kwargs["reranker"] = reranker
 
+    transform = _QUERY_TRANSFORMS[config.query_transform] if config.query_transform else None
     run: Dict[str, List[str]] = {}
     for query_id, text in dataset.queries.items():
+        if transform is not None:
+            text = transform(text)
         run[query_id] = [hit.id for hit in db.query(text, **kwargs)]
     return run
 

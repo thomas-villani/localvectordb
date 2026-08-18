@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generated": "2026-07-10T15:08:46+00:00",
-  "git_commit": "a6d2e98",
+  "generated": "2026-08-18T16:56:39+00:00",
+  "git_commit": "96a7e9b-dirty",
   "dataset": {
     "name": "scifact",
     "documents": 5183,
@@ -9,7 +9,9 @@
   },
   "embedding": {
     "provider": "sentence_transformers",
-    "model": "all-MiniLM-L6-v2"
+    "model": "all-MiniLM-L6-v2",
+    "document_prefix": "",
+    "query_prefix": ""
   },
   "index": {
     "faiss_index_type": "IndexFlatL2"
@@ -21,7 +23,7 @@
   },
   "k": 10,
   "primary_metric": "ndcg@10",
-  "default_config": "hybrid vw=0.7 \u00b7 frequency_boost",
+  "default_config": "hybrid vw=0.5 \u00b7 frequency_boost",
   "results": {
     "vector \u00b7 best": {
       "recall@1": 0.48,
@@ -130,6 +132,18 @@
       "recall@5": 0.7417222222222223,
       "recall@10": 0.801,
       "ndcg@10": 0.6614491420705245
+    },
+    "keyword \u00b7 frequency_boost \u00b7 quoted": {
+      "recall@1": 0.475,
+      "recall@5": 0.6839999999999999,
+      "recall@10": 0.7503333333333333,
+      "ndcg@10": 0.6207460404341195
+    },
+    "hybrid vw=0.5 \u00b7 frequency_boost \u00b7 quoted": {
+      "recall@1": 0.5551111111111111,
+      "recall@5": 0.7735555555555556,
+      "recall@10": 0.8393333333333334,
+      "ndcg@10": 0.7086801896646103
     }
   }
 }
