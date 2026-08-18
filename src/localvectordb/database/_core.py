@@ -1823,6 +1823,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             self._write_gate.release()
 
     def _save_internal(self):
+        # Every mutating path crosses this method, which makes it the one place
+        # the post-ingest truncation check can live without instrumenting each
+        # ingest variant. The check is self-throttling and never raises.
+        self._maybe_warn_truncation()
         if self.is_memory_only:
             return
 
