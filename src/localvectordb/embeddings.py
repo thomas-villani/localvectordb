@@ -1581,14 +1581,14 @@ class OpenAICompatibleEmbeddings(HTTPEmbeddingProvider):
     LM Studio, vLLM, text-embeddings-inference, LocalAI and Jan all speak the same
     wire format -- only the address differs. Point ``base_url`` at the server:
 
-    ==========================  ====================================
-    Server                      Typical ``base_url``
-    ==========================  ====================================
+    ===========================  ============================
+    Server                       Typical ``base_url``
+    ===========================  ============================
     llama.cpp (``--embedding``)  ``http://localhost:8080/v1``
     LM Studio                    ``http://localhost:1234/v1``
     vLLM                         ``http://localhost:8000/v1``
     text-embeddings-inference    ``http://localhost:8080/v1``
-    ==========================  ====================================
+    ===========================  ============================
 
     Ollama is supported natively by :class:`OllamaEmbeddings`, which is preferable
     -- it can enumerate installed models -- but Ollama's own ``/v1`` shim works
