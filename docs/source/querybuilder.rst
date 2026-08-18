@@ -405,7 +405,7 @@ evaluate query-document pairs jointly, producing more accurate relevance scores 
        .search("machine learning optimization")
        .rerank_by_model(
            provider="sentence_transformers",
-           model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+           model="BAAI/bge-reranker-base",
            top_k=10
        )
        .execute()
@@ -433,6 +433,37 @@ evaluate query-document pairs jointly, producing more accurate relevance scores 
        )
        .execute()
    )
+
+Choosing a reranker model
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reranking is the single largest quality lever in the retrieval stack — worth more
+than every first-stage tuning knob combined — but **only with the right model**.
+Measured on this library's own evaluation harness (nine cross-encoders, real
+corpora, paired bootstrap CIs):
+
+- **Model choice dominates the technique.** The spread between the best and worst
+  model was 0.067 nDCG@10 — larger than the average gain of reranking itself —
+  and two of the nine models were statistically indistinguishable from not
+  reranking at all.
+- **Avoid MS MARCO cross-encoders** (``cross-encoder/ms-marco-*``). They measured
+  at or below zero on every corpus tested — including Natural Questions, their
+  home domain — at every input length, and the failure is not model size:
+  a MS MARCO model with the same backbone as ``bge-reranker-base`` is equally
+  flat. ``BAAI/bge-reranker-base`` is the measured local default.
+- **Price predicts nothing.** Cost per nDCG point spanned ~96× across hosted
+  models with no rank correlation, and a free hosted model won outright. Model
+  *rankings* also do not transfer between corpora — a leaderboard can tell you
+  what to rule out, never what to pick — so if quality matters, measure the
+  shortlist on your own corpus.
+- **Local vs. hosted is a latency trade, not a quality one.** A local
+  ``bge-reranker-base`` is statistically tied with paid hosted models but runs
+  at cross-encoder speed on CPU: throughput is quadratic in candidate length
+  (~2.8 pairs/s on short chunks, ~0.24 pairs/s on 512-token chunks on the same
+  machine), so never carry a throughput estimate across corpora.
+- **Do not truncate reranker input below 512 tokens.** ``bge-reranker-base``
+  loses two thirds of its measured gain at 256 tokens; input length is not a
+  free latency knob.
 
 Cross-encoder reranking can also be applied directly via the ``query()`` method:
 
@@ -510,7 +541,7 @@ The built-in providers accept a few construction options (passed either through
 
    reranker = create_reranker(
        "sentence_transformers",
-       model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+       model="BAAI/bge-reranker-base",
        device="cuda",
    )
 

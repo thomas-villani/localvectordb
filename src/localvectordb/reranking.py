@@ -392,14 +392,23 @@ class SentenceTransformersReranker(Reranker):
     Parameters
     ----------
     model : str
-        The cross-encoder model name. Default: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        The cross-encoder model name. Default: "BAAI/bge-reranker-base".
+
+        The default was ``cross-encoder/ms-marco-MiniLM-L-6-v2``, which measured
+        statistically indistinguishable from not reranking at all on two corpora
+        (qasper −0.0022 n.s., NQ −0.0083) — and the failure is the MS MARCO
+        training recipe, not model capacity: ``ms-marco-electra-base``, on bge's
+        exact backbone geometry, is just as flat. ``bge-reranker-base`` measured
+        +0.0297 (p<.05) on the same harness. Avoid any MS MARCO cross-encoder
+        here, and do not truncate input below 512 tokens — bge loses two thirds
+        of its gain at 256.
     device : str, optional
         Device for inference (cpu/cuda/mps). Default: auto-detect.
     """
 
     def __init__(
         self,
-        model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model: str = "BAAI/bge-reranker-base",
         *,
         device: Optional[str] = None,
         timeout: int = 90,
