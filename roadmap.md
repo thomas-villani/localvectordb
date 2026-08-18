@@ -37,11 +37,9 @@ to change later.
 
 Ordered by user harm.
 
-**Status.** Resolved: 0a, 1, 2, 3, 4, 5b, 5c, 5e, 6, 7 (and 5d measured, verdict "do not ship").
-Still open: only **0b**, an unresolved policy question. Items 1 and 7 shipped together as
-`db.diagnose()` / `lvdb doctor` (`ad672c2`), which also reports the regime information 0b turns on —
-so what remains of 0b is a *decision* (change the fine-granularity default, or let the diagnostic
-carry it), not any further measurement or build.
+**Status.** PRE-RELEASE is **complete**: 0a, 0b, 1, 2, 3, 4, 5b, 5c, 5e, 6, 7 all resolved (and 5d
+measured, verdict "do not ship"). Items 1 and 7 shipped together as `db.diagnose()` / `lvdb doctor`
+(`ad672c2`); 0b was closed as a policy decision — the diagnostic carries it (see its RESOLVED block).
 
 **0a. `search_type="hybrid"` is accepted and SILENTLY IGNORED at section and fused level.**
 FTS5 indexes chunks only, so `search_level="sections"` / `"fused"` return vector-only results no
@@ -86,6 +84,20 @@ c=219, **−0.067** on MiniLM at c=128), while rescuing badly truncated large on
 `chunk_size=500` is itself the argmax of a *hybrid* curve; on vector it loses to c=219 by 0.098
 (egemma) and to c=128 by 0.167 (MiniLM), where the curve declines monotonically with no interior
 optimum at all (§7 of `POST-CONFOUND-SYNTHESIS.md`).
+
+**RESOLVED 2026-08-18 — decision: the default stays hybrid; the diagnostic carries the regime.**
+Not deferred — decided. Three reasons, none of them new measurement:
+
+* There is no corpus-independent crossover to key a conditional default on. The sign flip depends on
+  encoder context vs. chunk size — exactly the "no defensible global default" finding that produced
+  the diagnostic in the first place. A `chunk_size < X → vector` rule would just be a new
+  unconditioned constant, the same defect this section exists to remove.
+* `db.diagnose()` / `lvdb doctor` (`ad672c2`) already reports the regime this item turns on: measured
+  encoder coverage tells a user whether their chunks are in the vector-healthy band (where hybrid
+  dilutes) or the truncated band (where it rescues). The escape hatches are documented:
+  `search_type="vector"` or per-level `vector_weight`.
+* A conditional default is a behavior change requiring re-baselining both gates immediately before
+  the first release, to ship a heuristic the study showed cannot be made globally right.
 
 **1. `chunk_size` silently discards text past the encoder's context — and this is the whole ballgame.**
 At the shipped `chunk_size=500` on a 256-token encoder (`all-MiniLM-L6-v2`, our own eval default), a
