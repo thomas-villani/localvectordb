@@ -48,150 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `db.visualize_synteny()` / `db.visualize_chord()` with or without
   `interactive=True`.
 
-### Changed
-
-- **The default embedding model is now `embeddinggemma`** (was
-  `nomic-embed-text`), which measures substantially better in our retrieval
-  evaluations at the same 768 dimensions. `ollama pull embeddinggemma` to follow
-  the quickstart. This only affects databases created *without* an explicit
-  `embedding_model`; existing databases keep the model recorded in their config.
-
-  EmbeddingGemma is markedly prefix-sensitive, which is what motivated the prefix
-  support above — it is applied automatically, so no extra configuration is
-  needed.
-
-- **Google embeddings now default to asymmetric retrieval task types**
-  (`retrieval_document` on ingest, `retrieval_query` on search) instead of
-  `semantic_similarity` on both sides. `semantic_similarity` is the wrong setting
-  for search, and was silently costing relevance on every Google-backed database.
-  Passing a single `task_type` still forces that one task on both sides, which is
-  what you want for clustering or classification. Databases built on the old
-  default should be re-ingested to move their stored vectors into the new space.
-
-- **A lighter `cli` install extra.** The `lvdb` command now installs with just
-  `pip install "localvectordb[cli]"` (click + tomli-w + bcrypt) — enough to
-  create, inspect, search, chunk, back up, migrate, and configure databases
-  without pulling fastapi/uvicorn/slowapi. The `server` extra now includes `cli`
-  and adds the HTTP stack; `lvdb serve` imports it lazily and prints an
-  actionable hint if only the `cli` extra is installed.
-- **`RepairReport.summary` is now a property**, matching the sibling `healthy`
-  property, so `report.summary` returns the human-readable line (previously
-  `report.summary()` — a bound method if the parentheses were forgotten). Access
-  it without the call.
-- **`lvdb serve` only probes for Ollama when the configured embedding provider
-  is Ollama.** A server backed by OpenAI/Jina/OpenRouter/etc. no longer requires
-  a local Ollama install at startup. `--disable-ollama-check` still overrides the
-  probe when it does run.
-- **The `lvdb` CLI no longer requires a configuration file to operate on a
-  database.** When neither a config file nor `--db-folder` is given, the current
-  working directory is used as the database folder, so `lvdb db <name> ...` works
-  in any folder that contains a database.
-- **`return_type` now defaults to `None`** on `query()`/`query_async()` (local,
-  remote, and the `query_database` MCP tool), meaning "the unit `search_level`
-  searched": documents for the default chunk search, sections for
-  `search_level="sections"`. Every existing default is unchanged — this only
-  makes "I want documents" distinguishable from "I didn't say", which is what
-  lets `search_level="sections"` honour an explicit `return_type` without
-  turning a bare section search into a document search. `RemoteVectorDB` omits
-  `return_type` from the request when unset rather than sending `"documents"`,
-  so remote and local answer a bare section search in the same unit; the server
-  resolves an absent `return_type` the same way and still echoes a concrete
-  value.
-- `MetadataFieldType.valid_types()` is annotated `Tuple[Type[Any], ...]` rather
-  than `Tuple[type, ...]`. Same runtime behaviour and same type-checker result;
-  the bare `type` had no documentable target, so Sphinx resolved the rendered
-  annotation to the unrelated `MetadataField.type` attribute.
-- **`query(search_level="sections"|"documents")` now raises `ValueError` on a
-  database created without `hierarchical_embeddings=True`**, instead of silently
-  returning chunk-level results. The old behaviour handed back plausible
-  wrong-level results, which reads as "the feature does nothing" rather than
-  "the feature is switched off". `"fused"` already raised; all three levels are
-  now consistent, in `query()` and `query_async()` alike. If you were relying on
-  the silent fallthrough, pass `search_level="chunks"` (the default) explicitly.
-- `lvdb create --chunking-method` now offers every registered chunker (it was a
-  hardcoded list missing `paragraphs` and `code-blocks` — the latter documented
-  in the README's own code-repository example but unreachable from the CLI).
-  `lvdb db <name> search --search-level` gains `fused`.
-- **`DELETE /databases/{name}` is now idempotent.** Deleting an absent database
-  returns `200` with `deleted: false` (matching document deletion) instead of
-  `404`, so a retried or duplicate delete is no longer an error. The response
-  gains a `deleted` boolean for clients that need to distinguish "removed now"
-  from "was never there".
-- **`query(return_type="sections")` now raises `ValueError` on a non-hierarchical
-  database** instead of silently returning chunk-level results — consistent with
-  the `search_level="sections"` guard. Create with `hierarchical_embeddings=True`
-  (or use `search_level="sections"`) for section results.
-- Sub-document range specs (`char_range` / `line_range` / `chunk` in the `get`
-  CLI and MCP tool) now reject negative and reversed ranges (e.g. `"5:2"`,
-  `"-3:"`) with a clear error instead of silently returning an empty or
-  wrong slice.
-- The interactive shell's `add` command now routes files through the same
-  extraction pipeline as `lvdb db add`, so PDF/DOCX/HTML/… are converted to
-  Markdown rather than skipped as "not unicode".
-
-### Fixed
-
-- **`plot_similarity_graph(layout="spring")` now runs a force-directed layout.**
-  It previously ignored `layout` entirely and always embedded the full
-  similarity matrix with MDS, which places every node by its distance to every
-  other whether or not an edge is drawn — so thresholded-away similarities still
-  dragged nodes around and connected components never visibly grouped. The
-  Fruchterman-Reingold layout added here only feels the edges that survive the
-  threshold, and takes `gravity`/`spread` to trade label legibility against how
-  sharply clusters separate. The previous behaviour is still available as
-  `layout="mds"`; an unrecognised layout now raises instead of silently falling
-  back.
-- **`chunk_labels` now does something in the interactive synteny and chord
-  plots.** Both accepted the parameter, documented it, and never drew anything —
-  they had no test coverage at all, so nothing caught it.
-- **`plot_embedding_map()` no longer drops the category legend when queries are
-  overlaid.** Colouring by category and passing `queries=` both called
-  `ax.legend()`, and the second call replaced the first, so the category key
-  silently vanished from exactly the plot that needed it most.
-- **Metadata-field vector search no longer probes for a non-existent
-  `embed_query`.** `_metadata_field_search` branched on
-  `hasattr(provider, "embed_query")`, which no provider implemented — dead code
-  that would have started returning a batch-shaped array the moment one did. It
-  now calls the real `embed_query()`, which also gives that path the query prefix
-  it was missing.
-- **Whitespace-only documents now reconstruct byte-for-byte.** Every
-  general-purpose chunker emits a single chunk for whitespace-only input instead
-  of dropping it, restoring the reconstruction invariant (truly empty input
-  still yields no chunks).
-- **`$type: "boolean"` metadata filters now agree between `filter()` and
-  `query()`.** SQLite stores booleans as `0`/`1`, so the Python post-filter used
-  by `query()` now treats an int `0`/`1` as boolean (matching the SQL `IN (0,1)`
-  check `filter()` uses), eliminating a filter/query divergence.
-- Oversized `k` no longer over-allocates: vector search clamps `k` to the number
-  of stored vectors at the FAISS boundary (FAISS does not clamp it itself), for
-  both local and remote callers.
-- Hybrid streaming/cursor results no longer drop keyword-only matches whose chunk
-  has not been embedded yet (NULL `faiss_id`); such hits now hydrate by row id.
-- Embedding reconstruction always returns one row per requested id in order
-  (zero-filling any id it cannot reconstruct), preventing score misalignment or
-  `IndexError` in deduplication / comparison consumers.
-- The SSE streaming endpoint releases its query cursor on client disconnect.
-- Cursor batch hydration loops instead of recursing when a batch is fully
-  filtered out, so a highly selective filter over a large candidate pool can no
-  longer overflow the stack.
-- MCP `MCPConfig.from_file` validates `mode` (a typo like `"readonly"` used to
-  fail open and permit writes) and reports malformed TOML with a clear error.
-- Server error envelopes for database create/load/delete/search failures no
-  longer echo the underlying exception text, which could leak filesystem paths;
-  the detail is still logged server-side.
-- PRAGMA string values are quote-escaped before execution.
-
-### Security
-
-- The server now logs a prominent startup warning when bound to a non-loopback
-  interface with API authentication disabled (open read/write access). Defaults
-  are unchanged; see the deployment docs for the hardening checklist.
-- Bumped `setuptools` to `>= 83.0.0` (Dependabot GHSA — MANIFEST.in exclusion
-  bypass via Unicode NFC/NFD collision) and, in the JavaScript SDK, forced
-  `esbuild` to `>= 0.28.1` via an npm override (dev-only arbitrary file read in
-  `esbuild serve` on Windows).
-
-### Added
 
 - **`delimiter` chunking strategy** — split a document on a literal delimiter
   sequence (`"\n\n"` by default), packing the resulting segments into chunks up
@@ -272,8 +128,224 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer inputs — so raising `num_ctx` alone does nothing for embeddings past
   2048. `num_batch` auto-defaults to `num_ctx` so a raised context actually
   takes effect (e.g. embed full 8192-token inputs with a long-context encoder).
+- **Keyword and hybrid search at every retrieval level.** FTS5 previously
+  indexed chunks only, so `search_level="documents"`, `"sections"`, and
+  `"fused"` accepted `search_type` and silently answered vector-only — including
+  the *default* `"hybrid"`. The keyword leg measures +0.084 to +0.131 nDCG@10
+  across six corpus/encoder pairs, so those levels were quietly leaving the
+  single largest retrieval effect we measured on the table. Three fixes, one per
+  level:
+  - `documents` reads the `documents_fts` index that every database already
+    built and maintained (qasper document level: vector 0.2758 → hybrid 0.4037).
+  - `sections` gains a new `sections_fts` — contentless where SQLite ≥ 3.43
+    allows it, since sections tile their parent document and a text-carrying
+    index would roughly double a hierarchical database — written at ingest from
+    the document slice, cleaned by an `AFTER DELETE` trigger, and *self-healed*
+    on existing databases by a batched, resumable backfill: no rebuild, no
+    export/import. Section-level hybrid gains +0.04 to +0.25 nDCG@10 depending
+    on corpus and `section_vector_strategy`.
+  - `fused` runs each granularity as a hybrid at its native pool width and then
+    blends, worth +0.057 to +0.123 at the document target on three of four
+    corpora (the blend topology and pool were settled by a measured sweep, the
+    weights left unchanged).
+  No query is silently downgraded any more, and the "search_type cannot be
+  honoured" warning added mid-cycle no longer has anything to warn about.
+- **`structure` chunking strategy** — a boundary hierarchy (heading > paragraph
+  > line > sentence) that cuts each chunk at the strongest boundary inside the
+  token budget rather than at a fixed offset, so chunks end at headings and
+  paragraph breaks when one is in reach. Documents still reconstruct
+  byte-exactly; `min_fill` guards against sliver chunks and fenced code blocks
+  are never split. A `heading_finder` callable can contribute extra cut
+  positions for corpora whose headings Markdown detection cannot see (numbered
+  contract clauses, say) — precision filtering is deliberately the caller's,
+  since a bare `Section \d+` regex fires on every cross-reference and table of
+  contents.
+- **`openai_compatible` embedding provider** — one adapter for every local
+  server speaking OpenAI's `/v1/embeddings`: llama.cpp, LM Studio, vLLM,
+  text-embeddings-inference, LocalAI. Point `base_url` at the server and go.
+  The database persists `embedding_base_url`, because once a provider can point
+  anywhere, provider+model alone no longer identifies a vector space — the same
+  model served by different engines pools differently. Rerankers gain the same
+  reach: `openai_compatible` and `openrouter` reranker providers for the shared
+  `/rerank` wire format, with `score_transform="auto"` squashing raw
+  cross-encoder logits so `score_threshold` keeps meaning.
+- **`document_scoring_method="percentile"`** returns as an explicit option with
+  a single knob (`percentile`, default 90) — the two-percentile blend it once
+  was is gone, since the clean order statistic beat it in 19 of 20 measured
+  cells. It is a *document-target* aggregator: worth up to +0.02 nDCG@10 when
+  rolling chunks up to documents on high-fanout corpora, consistently losing at
+  section targets — which is why `"auto"` never selects it.
+- **`db.diagnose()` and `lvdb db <name> doctor`** — the retrieval study's
+  product conclusion, turned into a feature. Six retrieval knobs have no
+  defensible global default because their argmaxes are corpus properties; what a
+  built index *can* tell you in seconds is which regime you are in. The report
+  covers: encoder coverage of chunk text (counted with the encoder's own
+  tokenizer where importable, and labelled "estimated" where it is not), section
+  length against the encoder window (long sections are windowed and mean-pooled,
+  a regime where the pooled vector measurably weakens), the chunkless-section
+  recall ceiling, chunks-per-document/section fanout, and keyword-index health
+  for all three FTS tables. Ingest also warns — once per database instance, and
+  only when measured coverage drops below 0.80, the calibrated point where
+  truncation starts costing relevance rather than clipping redundant tails — so
+  a `chunk_size` that silently overruns a small-context encoder is no longer
+  silent.
+
+### Changed
+
+- **The default embedding model is now `embeddinggemma`** (was
+  `nomic-embed-text`), which measures substantially better in our retrieval
+  evaluations at the same 768 dimensions. `ollama pull embeddinggemma` to follow
+  the quickstart. This only affects databases created *without* an explicit
+  `embedding_model`; existing databases keep the model recorded in their config.
+
+  EmbeddingGemma is markedly prefix-sensitive, which is what motivated the prefix
+  support above — it is applied automatically, so no extra configuration is
+  needed.
+
+- **Google embeddings now default to asymmetric retrieval task types**
+  (`retrieval_document` on ingest, `retrieval_query` on search) instead of
+  `semantic_similarity` on both sides. `semantic_similarity` is the wrong setting
+  for search, and was silently costing relevance on every Google-backed database.
+  Passing a single `task_type` still forces that one task on both sides, which is
+  what you want for clustering or classification. Databases built on the old
+  default should be re-ingested to move their stored vectors into the new space.
+
+- **A lighter `cli` install extra.** The `lvdb` command now installs with just
+  `pip install "localvectordb[cli]"` (click + tomli-w + bcrypt) — enough to
+  create, inspect, search, chunk, back up, migrate, and configure databases
+  without pulling fastapi/uvicorn/slowapi. The `server` extra now includes `cli`
+  and adds the HTTP stack; `lvdb serve` imports it lazily and prints an
+  actionable hint if only the `cli` extra is installed.
+- **`RepairReport.summary` is now a property**, matching the sibling `healthy`
+  property, so `report.summary` returns the human-readable line (previously
+  `report.summary()` — a bound method if the parentheses were forgotten). Access
+  it without the call.
+- **`lvdb serve` only probes for Ollama when the configured embedding provider
+  is Ollama.** A server backed by OpenAI/Jina/OpenRouter/etc. no longer requires
+  a local Ollama install at startup. `--disable-ollama-check` still overrides the
+  probe when it does run.
+- **The `lvdb` CLI no longer requires a configuration file to operate on a
+  database.** When neither a config file nor `--db-folder` is given, the current
+  working directory is used as the database folder, so `lvdb db <name> ...` works
+  in any folder that contains a database.
+- **`return_type` now defaults to `None`** on `query()`/`query_async()` (local,
+  remote, and the `query_database` MCP tool), meaning "the unit `search_level`
+  searched": documents for the default chunk search, sections for
+  `search_level="sections"`. Every existing default is unchanged — this only
+  makes "I want documents" distinguishable from "I didn't say", which is what
+  lets `search_level="sections"` honour an explicit `return_type` without
+  turning a bare section search into a document search. `RemoteVectorDB` omits
+  `return_type` from the request when unset rather than sending `"documents"`,
+  so remote and local answer a bare section search in the same unit; the server
+  resolves an absent `return_type` the same way and still echoes a concrete
+  value.
+- `MetadataFieldType.valid_types()` is annotated `Tuple[Type[Any], ...]` rather
+  than `Tuple[type, ...]`. Same runtime behaviour and same type-checker result;
+  the bare `type` had no documentable target, so Sphinx resolved the rendered
+  annotation to the unrelated `MetadataField.type` attribute.
+- **`query(search_level="sections"|"documents")` now raises `ValueError` on a
+  database created without `hierarchical_embeddings=True`**, instead of silently
+  returning chunk-level results. The old behaviour handed back plausible
+  wrong-level results, which reads as "the feature does nothing" rather than
+  "the feature is switched off". `"fused"` already raised; all three levels are
+  now consistent, in `query()` and `query_async()` alike. If you were relying on
+  the silent fallthrough, pass `search_level="chunks"` (the default) explicitly.
+- `lvdb create --chunking-method` now offers every registered chunker (it was a
+  hardcoded list missing `paragraphs` and `code-blocks` — the latter documented
+  in the README's own code-repository example but unreachable from the CLI).
+  `lvdb db <name> search --search-level` gains `fused`.
+- **`DELETE /databases/{name}` is now idempotent.** Deleting an absent database
+  returns `200` with `deleted: false` (matching document deletion) instead of
+  `404`, so a retried or duplicate delete is no longer an error. The response
+  gains a `deleted` boolean for clients that need to distinguish "removed now"
+  from "was never there".
+- **`query(return_type="sections")` now raises `ValueError` on a non-hierarchical
+  database** instead of silently returning chunk-level results — consistent with
+  the `search_level="sections"` guard. Create with `hierarchical_embeddings=True`
+  (or use `search_level="sections"`) for section results.
+- Sub-document range specs (`char_range` / `line_range` / `chunk` in the `get`
+  CLI and MCP tool) now reject negative and reversed ranges (e.g. `"5:2"`,
+  `"-3:"`) with a clear error instead of silently returning an empty or
+  wrong slice.
+- The interactive shell's `add` command now routes files through the same
+  extraction pipeline as `lvdb db add`, so PDF/DOCX/HTML/… are converted to
+  Markdown rather than skipped as "not unicode".
+- **The local cross-encoder reranker default is now `BAAI/bge-reranker-base`**
+  (was `cross-encoder/ms-marco-MiniLM-L-6-v2`). Our reranking study measured the
+  old default as statistically indistinguishable from not reranking at all —
+  including on MS MARCO's own home domain — while `bge-reranker-base` gains
+  +0.03 nDCG@10 through the identical code path, so the old default silently
+  cost more than every first-stage tuning effect in the study combined. The docs
+  gain a "Choosing a reranker model" section with the findings that generalise:
+  model choice dominates the technique, price predicts nothing, and reranker
+  input should never be truncated below 512 tokens.
+- **`document_scoring_method` now defaults to `"auto"`**, resolved from
+  `search_type`: `"best"` for pure vector search, `"frequency_boost"` (the old
+  fixed default) for hybrid and keyword. The frequency multiplier assumes the
+  min-max-normalised scale that hybrid fusion produces; on raw vector
+  similarities it mostly rewards documents for owning more chunks, and `"best"`
+  beats it there on all three corpora measured. Any explicitly passed method is
+  used unchanged.
+- **Embedding batches are now capped by estimated token volume** (50,000 by
+  default) as well as by count. A fixed count made request size scale with
+  `chunk_size` — large chunks could exceed the provider timeout, and
+  `max_retries` then killed the ingest — and OpenAI's 300,000-token request
+  limit can reject a full count-based batch outright. The cap is inert at the
+  default configuration; batch grouping cannot change the vectors produced
+  (verified bitwise).
 
 ### Fixed
+
+- **`plot_similarity_graph(layout="spring")` now runs a force-directed layout.**
+  It previously ignored `layout` entirely and always embedded the full
+  similarity matrix with MDS, which places every node by its distance to every
+  other whether or not an edge is drawn — so thresholded-away similarities still
+  dragged nodes around and connected components never visibly grouped. The
+  Fruchterman-Reingold layout added here only feels the edges that survive the
+  threshold, and takes `gravity`/`spread` to trade label legibility against how
+  sharply clusters separate. The previous behaviour is still available as
+  `layout="mds"`; an unrecognised layout now raises instead of silently falling
+  back.
+- **`chunk_labels` now does something in the interactive synteny and chord
+  plots.** Both accepted the parameter, documented it, and never drew anything —
+  they had no test coverage at all, so nothing caught it.
+- **`plot_embedding_map()` no longer drops the category legend when queries are
+  overlaid.** Colouring by category and passing `queries=` both called
+  `ax.legend()`, and the second call replaced the first, so the category key
+  silently vanished from exactly the plot that needed it most.
+- **Metadata-field vector search no longer probes for a non-existent
+  `embed_query`.** `_metadata_field_search` branched on
+  `hasattr(provider, "embed_query")`, which no provider implemented — dead code
+  that would have started returning a batch-shaped array the moment one did. It
+  now calls the real `embed_query()`, which also gives that path the query prefix
+  it was missing.
+- **Whitespace-only documents now reconstruct byte-for-byte.** Every
+  general-purpose chunker emits a single chunk for whitespace-only input instead
+  of dropping it, restoring the reconstruction invariant (truly empty input
+  still yields no chunks).
+- **`$type: "boolean"` metadata filters now agree between `filter()` and
+  `query()`.** SQLite stores booleans as `0`/`1`, so the Python post-filter used
+  by `query()` now treats an int `0`/`1` as boolean (matching the SQL `IN (0,1)`
+  check `filter()` uses), eliminating a filter/query divergence.
+- Oversized `k` no longer over-allocates: vector search clamps `k` to the number
+  of stored vectors at the FAISS boundary (FAISS does not clamp it itself), for
+  both local and remote callers.
+- Hybrid streaming/cursor results no longer drop keyword-only matches whose chunk
+  has not been embedded yet (NULL `faiss_id`); such hits now hydrate by row id.
+- Embedding reconstruction always returns one row per requested id in order
+  (zero-filling any id it cannot reconstruct), preventing score misalignment or
+  `IndexError` in deduplication / comparison consumers.
+- The SSE streaming endpoint releases its query cursor on client disconnect.
+- Cursor batch hydration loops instead of recursing when a batch is fully
+  filtered out, so a highly selective filter over a large candidate pool can no
+  longer overflow the stack.
+- MCP `MCPConfig.from_file` validates `mode` (a typo like `"readonly"` used to
+  fail open and permit writes) and reports malformed TOML with a clear error.
+- Server error envelopes for database create/load/delete/search failures no
+  longer echo the underlying exception text, which could leak filesystem paths;
+  the detail is still logged server-side.
+- PRAGMA string values are quote-escaped before execution.
+
 
 - **`POST /databases/{db}/query` returned 500 for a caller's bad arguments.**
   `query()` rejects an unsupported `search_level`/`return_type` pairing — or a
@@ -324,6 +396,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~24k-char (~8k-token) window. On a small-context encoder (e.g. a 2k-context
   local model) an over-long section is windowed and mean-pooled to represent it
   in full, rather than each 24k window overflowing and being silently truncated.
+  The sentence-transformers and local HuggingFace providers now report their
+  model's real context for this sizing too — previously they reported none, so
+  the fixed fallback window was handed to (and silently truncated by) models
+  with far smaller contexts.
+- **Sections owning no chunk were unretrievable, not merely down-ranked.**
+  Chunk→section attribution credits a chunk to the section holding its
+  midpoint, so a section winning no midpoint got a zero vector — which scores
+  zero against every query in a normalised index. Not a corner case at the
+  defaults: with 500-token chunks over ~1,300-char median sections, 38% of one
+  measured corpus's sections owned no chunk and 26% of its *gold* sections were
+  unreachable. Such sections now fall back to overlap-based attribution;
+  sections that already had a vector are untouched.
+- **The OpenAI embedding provider never retried a rate limit.** Well-formed
+  OpenAI error bodies (429 included) were re-raised as a bare `RuntimeError`
+  with the status code discarded, so the retry classifier — which handles
+  429/5xx correctly for httpx exceptions — matched nothing, and any ingest
+  large enough to reach the tokens-per-minute limit died mid-run. Provider HTTP
+  errors now carry their status and retry with the documented backoff.
+- **Section-level results are reproducible run-to-run.** Sections repaired by
+  the chunkless-section fix can share identical vectors and therefore tie
+  exactly; tied results kept FAISS insertion order, which the threaded ingest
+  assigns differently on every build. Section-level sorts now break ties on the
+  section id. (Deliberately *not* applied to chunk→document scoring, where the
+  incoming order carries BM25 rank and a lexicographic tie-break measurably
+  destroys it.)
+- **Partly-quoted queries no longer AND-join.** A query mixing a quoted phrase
+  with plain words (`how is a "chunk of posts" defined`) required *every* word
+  to appear, stopwords included — exactly what the plain-text path OR-joins to
+  avoid. On one real corpus 20.6% of queries hit this, and nearly all of them
+  got an empty keyword leg. Mixed queries now OR-join; the phrase is still
+  matched as a phrase, and a fully-quoted query still binds exact.
+- **`return_type="sections"` on a chunk-level search now returns `k` sections.**
+  The chunk pool was fetched at exactly `k`, so chunks sharing a section
+  collapsed into fewer sections than asked for — 34% of queries got a short
+  list on one measured corpus. The pool is now over-fetched before grouping.
+- **Embedding and reranking failures name the exception.** A message-less
+  `ReadTimeout` — the most common real failure in a bulk ingest — used to
+  surface as an error ending in a colon. The exception type is now the
+  fallback, and batch-failure logs carry the request's shape (`64 texts,
+  112,000 chars, ~32,000 tokens`) and the provider/model/endpoint identity,
+  because an embedding failure is almost always about size and that is the one
+  thing the exception never says.
+- **`OpenAIEmbeddings` honours `base_url`** — it accepted and stored the
+  parameter, then hard-coded `api.openai.com` at the call sites, silently
+  sending "local server" traffic to OpenAI. Also in that cluster: a database
+  now builds its embedding provider once from the *saved* config instead of
+  constructor defaults first (opening a non-Ollama database no longer requires
+  a running Ollama), a caller-supplied provider/model that conflicts with the
+  saved one is reported before the saved one wins, and a persisted
+  `embedding_dimension` that no longer matches the provider raises instead of
+  being ignored.
+
+### Security
+
+- The server now logs a prominent startup warning when bound to a non-loopback
+  interface with API authentication disabled (open read/write access). Defaults
+  are unchanged; see the deployment docs for the hardening checklist.
+- Bumped `setuptools` to `>= 83.0.0` (Dependabot GHSA — MANIFEST.in exclusion
+  bypass via Unicode NFC/NFD collision) and, in the JavaScript SDK, forced
+  `esbuild` to `>= 0.28.1` via an npm override (dev-only arbitrary file read in
+  `esbuild serve` on Windows).
 
 ## [0.1.0rc1] - 2026-07-09
 
