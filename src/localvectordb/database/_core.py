@@ -314,6 +314,12 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         if self._fts_enabled and self._hierarchical_embeddings:
             self._backfill_sections_fts()
 
+        # Likewise for chunk_sections: a database built before the overlap join
+        # table existed only records each chunk's single midpoint owner, leaving
+        # sections that own no chunk unreachable by the section roll-up.
+        if self._hierarchical_embeddings:
+            self._backfill_chunk_sections()
+
         # FAISS id allocation and dual-store integrity. Seeding must precede the
         # integrity check: the counter floor is a max() and is safe to compute even
         # on a corrupt database, which means no *new* collisions can be issued from
@@ -580,6 +586,48 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             # A failed backfill must not stop the database opening: the section
             # keyword leg degrades to vector-only, which is what it did before.
             logger.warning("sections_fts backfill skipped: %s", e)
+            return 0
+
+    def _backfill_chunk_sections(self) -> int:
+        """Populate ``chunk_sections`` for databases that predate the join table.
+
+        The overlap relation is derivable from stored spans alone, so the
+        backfill is one set-based ``INSERT OR IGNORE ... SELECT`` — atomic,
+        idempotent, and free of any text or embedding work. Returns the number
+        of join rows written.
+
+        The guard compares the number of *distinct sections* present in the
+        join table against the section count: chunks tile their document, so
+        every section of a chunked document overlaps at least one chunk, and a
+        fully populated table therefore covers (essentially) every section. A
+        current database pays two ``COUNT`` queries and nothing else.
+        """
+        try:
+            with self.connection_pool.get_connection() as conn:
+                total = conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"]
+                if not total:
+                    return 0
+                covered = conn.execute("SELECT COUNT(DISTINCT section_id) AS n FROM chunk_sections").fetchone()["n"]
+                if covered >= total:
+                    return 0
+                cursor = conn.execute("""
+                    INSERT OR IGNORE INTO chunk_sections (chunk_id, section_id)
+                    SELECT c.id, s.id
+                    FROM chunks c
+                    JOIN sections s ON s.document_id = c.document_id
+                     AND c.start_pos < s.end_pos
+                     AND s.start_pos < c.end_pos
+                    """)
+                done = cursor.rowcount or 0
+                conn.commit()
+                if done:
+                    logger.info("chunk_sections: backfilled %d overlap row(s)", done)
+                return done
+        except sqlite3.Error as e:
+            # A failed backfill must not stop the database opening: the roll-up
+            # degrades to the sections reachable through midpoint owners, which
+            # is what it reached before the join table existed.
+            logger.warning("chunk_sections backfill skipped: %s", e)
             return 0
 
     # FAISS helpers

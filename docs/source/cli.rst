@@ -917,8 +917,11 @@ It reports:
 - **Section length against the encoder window** — long sections are windowed and
   mean-pooled (never truncated), but pooled ``rawspan`` vectors degrade as spans
   grow; a mostly-long corpus wants ``section_vector_strategy="centroid"``.
-- **Section reachability** — the share of sections owning no chunk, which is a
-  hard recall ceiling for ``return_type="sections"`` roll-up at any ``k``.
+- **Section reachability** — the share of sections reachable by
+  ``return_type="sections"`` roll-up. Chunks credit every section they overlap,
+  so this is ~100% on a healthy database; a shortfall signals an incomplete
+  ``chunk_sections`` backfill or a hierarchy needing
+  ``rebuild_hierarchical_embeddings()``.
 - **Fanout** — chunks per document/section; at fanout ~1 every document-scoring
   aggregator is a no-op.
 - **Keyword-leg health** — whether each FTS table is present and in step with

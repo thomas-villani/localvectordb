@@ -51,6 +51,8 @@ def _downgrade_to_legacy(sqlite_path: Path) -> None:
         # references it, so drop the index first (an old DB never had either).
         conn.execute("DROP INDEX IF EXISTS idx_chunks_section_id")
         conn.execute("ALTER TABLE chunks DROP COLUMN section_id")
+        conn.execute("DROP INDEX IF EXISTS idx_chunk_sections_section_id")
+        conn.execute("DROP TABLE IF EXISTS chunk_sections")
         conn.execute("ALTER TABLE documents DROP COLUMN doc_faiss_id")
         conn.execute("ALTER TABLE metadata_schema DROP COLUMN embedding_enabled")
         conn.execute("ALTER TABLE metadata_schema DROP COLUMN fts_enabled")
@@ -96,6 +98,13 @@ def test_legacy_ondisk_db_auto_upgrades_on_open():
                 # Additive column guards re-created the missing columns.
                 assert "section_id" in _columns(post, "chunks")
                 assert "doc_faiss_id" in _columns(post, "documents")
+                # The chunk_sections join table is re-created by BASE_SCHEMA.
+                assert (
+                    post.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_sections'"
+                    ).fetchone()
+                    is not None
+                )
                 assert "embedding_enabled" in _columns(post, "metadata_schema")
                 assert "fts_enabled" in _columns(post, "metadata_schema")
                 # Version tracking was re-initialized.
