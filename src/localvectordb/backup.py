@@ -33,7 +33,7 @@ import numpy as np
 from localvectordb.versioning import VersionManager
 
 from .database._faiss_utils import get_faiss_external_ids
-from .utils import parse_iso8601
+from .utils import iter_sql_id_batches, parse_iso8601
 
 logger = logging.getLogger(__name__)
 
@@ -1758,37 +1758,40 @@ class IncrementalBackupManager:
             # Get chunks for changed documents
             if changes["changed_documents"]:
                 doc_ids = [doc["id"] for doc in changes["changed_documents"]]
-                placeholders = ",".join(["?"] * len(doc_ids))
-
-                cursor = conn.execute(
-                    f"""
-                    SELECT document_id, chunk_index, content, content_hash,
-                           start_pos, end_pos, start_line, start_col, end_line, end_col,
-                           tokens, faiss_id
-                    FROM chunks
-                    WHERE document_id IN ({placeholders})
-                    ORDER BY document_id, chunk_index
-                """,
-                    doc_ids,
-                )
 
                 chunks_by_doc: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-                for row in cursor.fetchall():
-                    doc_id = row[0]
-                    chunk_data = {
-                        "chunk_index": row[1],
-                        "content": row[2],
-                        "content_hash": row[3],
-                        "start_pos": row[4],
-                        "end_pos": row[5],
-                        "start_line": row[6],
-                        "start_col": row[7],
-                        "end_line": row[8],
-                        "end_col": row[9],
-                        "tokens": row[10],
-                        "faiss_id": row[11],
-                    }
-                    chunks_by_doc[doc_id].append(chunk_data)
+                # Each batch keeps every chunk of a given document together, so
+                # per-document chunk order survives the batching.
+                for id_batch in iter_sql_id_batches(doc_ids):
+                    placeholders = ",".join(["?"] * len(id_batch))
+                    cursor = conn.execute(
+                        f"""
+                        SELECT document_id, chunk_index, content, content_hash,
+                               start_pos, end_pos, start_line, start_col, end_line, end_col,
+                               tokens, faiss_id
+                        FROM chunks
+                        WHERE document_id IN ({placeholders})
+                        ORDER BY document_id, chunk_index
+                    """,
+                        id_batch,
+                    )
+
+                    for row in cursor.fetchall():
+                        doc_id = row[0]
+                        chunk_data = {
+                            "chunk_index": row[1],
+                            "content": row[2],
+                            "content_hash": row[3],
+                            "start_pos": row[4],
+                            "end_pos": row[5],
+                            "start_line": row[6],
+                            "start_col": row[7],
+                            "end_line": row[8],
+                            "end_col": row[9],
+                            "tokens": row[10],
+                            "faiss_id": row[11],
+                        }
+                        chunks_by_doc[doc_id].append(chunk_data)
 
                 # Attach chunks to documents and track FAISS changes
                 for doc in changes["changed_documents"]:
