@@ -23,6 +23,7 @@ from localvectordb.database.base import LocalVectorDBBase
 from localvectordb.exceptions import DatabaseError, DocumentNotFoundError, MetadataFilterError, PatchConflictError
 from localvectordb.patching import PatchResult, apply_ops
 from localvectordb.query_builder import QueryBuilder
+from localvectordb.utils import iter_sql_id_batches
 
 logger = logging.getLogger(__name__)
 
@@ -222,13 +223,15 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
     def _core_get_sync(self, conn, requested_ids: List[str]) -> List[Document]:
         """Core logic for retrieving documents by ID (sync version)"""
-        # Use shared business logic helpers
-        sql, params = self._build_get_documents_sql(requested_ids)
-        cursor = self._sync_executor.execute(conn, sql, params)
-        try:
-            rows = self._sync_executor.fetchall(cursor)
-        finally:
-            cursor.close()
+        # Use shared business logic helpers, batched under the SQL variable limit
+        rows = []
+        for id_batch in iter_sql_id_batches(requested_ids):
+            sql, params = self._build_get_documents_sql(list(id_batch))
+            cursor = self._sync_executor.execute(conn, sql, params)
+            try:
+                rows.extend(self._sync_executor.fetchall(cursor))
+            finally:
+                cursor.close()
 
         # Validate all documents were found using shared logic
         found_ids = {row["id"] for row in rows}
@@ -243,10 +246,12 @@ class CrudMixin(LocalVectorDBBase, ABC):
 
     async def _core_get_async(self, conn, requested_ids: List[str]) -> List[Document]:
         """Core logic for retrieving documents by ID (async version)"""
-        # Use shared business logic helpers
-        sql, params = self._build_get_documents_sql(requested_ids)
-        cursor = await self._async_executor.execute(conn, sql, params)
-        rows = await self._async_executor.fetchall(cursor)
+        # Use shared business logic helpers, batched under the SQL variable limit
+        rows = []
+        for id_batch in iter_sql_id_batches(requested_ids):
+            sql, params = self._build_get_documents_sql(list(id_batch))
+            cursor = await self._async_executor.execute(conn, sql, params)
+            rows.extend(await self._async_executor.fetchall(cursor))
 
         # Validate all documents were found using shared logic
         found_ids = {row["id"] for row in rows}
@@ -337,45 +342,58 @@ class CrudMixin(LocalVectorDBBase, ABC):
         Synchronous only; the CLI ``get`` command is the sole consumer. Add an
         async twin if a future async caller needs one.
         """
-        sql = (
+        base_sql = (
             "SELECT chunk_index, content, content_hash, start_pos, end_pos, "
             "start_line, start_col, end_line, end_col, tokens, faiss_id "
             "FROM chunks WHERE document_id = ?"
         )
-        params: List[Any] = [document_id]
-        if indices is not None:
-            if not indices:
-                return []
-            placeholders = ",".join(["?"] * len(indices))
-            sql += f" AND chunk_index IN ({placeholders})"
-            params.extend(indices)
-        sql += " ORDER BY chunk_index"
+        if indices is not None and not indices:
+            return []
+        queries: List[tuple[str, List[Any]]] = []
+        if indices is None:
+            queries.append((base_sql + " ORDER BY chunk_index", [document_id]))
+        else:
+            for idx_batch in iter_sql_id_batches(indices):
+                placeholders = ",".join(["?"] * len(idx_batch))
+                queries.append(
+                    (
+                        base_sql + f" AND chunk_index IN ({placeholders}) ORDER BY chunk_index",
+                        [document_id, *idx_batch],
+                    )
+                )
 
+        rows = []
         with self._read_write_lock.read_lock():
             with self.connection_pool.get_connection() as conn:
-                cursor = self._sync_executor.execute(conn, sql, params)
-                try:
-                    rows = self._sync_executor.fetchall(cursor)
-                finally:
-                    cursor.close()
+                for sql, params in queries:
+                    cursor = self._sync_executor.execute(conn, sql, params)
+                    try:
+                        rows.extend(self._sync_executor.fetchall(cursor))
+                    finally:
+                        cursor.close()
 
+        rows.sort(key=lambda row: row["chunk_index"])
         return [self._construct_chunk_from_row(row) for row in rows]
 
     def _core_exists_sync(self, conn, ids_list: List[str]) -> List[bool]:
         """Core logic for checking if documents exist (sync version)"""
-        sql, params = self._build_exists_sql(ids_list)
-        cursor = self._sync_executor.execute(conn, sql, params)
-        try:
-            rows = self._sync_executor.fetchall(cursor)
-        finally:
-            cursor.close()
+        rows = []
+        for id_batch in iter_sql_id_batches(ids_list):
+            sql, params = self._build_exists_sql(list(id_batch))
+            cursor = self._sync_executor.execute(conn, sql, params)
+            try:
+                rows.extend(self._sync_executor.fetchall(cursor))
+            finally:
+                cursor.close()
         return self._process_exists_results(rows, ids_list)
 
     async def _core_exists_async(self, conn, ids_list: List[str]) -> List[bool]:
         """Core logic for checking if documents exist (async version)"""
-        sql, params = self._build_exists_sql(ids_list)
-        cursor = await self._async_executor.execute(conn, sql, params)
-        rows = await self._async_executor.fetchall(cursor)
+        rows = []
+        for id_batch in iter_sql_id_batches(ids_list):
+            sql, params = self._build_exists_sql(list(id_batch))
+            cursor = await self._async_executor.execute(conn, sql, params)
+            rows.extend(await self._async_executor.fetchall(cursor))
         return self._process_exists_results(rows, ids_list)
 
     def exists(self, ids: Union[str, List[str]]) -> Union[bool, List[bool]]:
@@ -425,59 +443,63 @@ class CrudMixin(LocalVectorDBBase, ABC):
             # committing the row deletion would orphan them and report success.
             self._require_deletable("Deleting a document")
             faiss_ids_to_remove: List[int] = []
+            section_faiss_ids_to_remove: list = []
+            doc_faiss_ids_to_remove: list = []
+            deleted_count = 0
             with self.connection_pool.get_connection() as conn:
-                placeholders = ",".join(["?"] * len(ids))
+                for id_batch in iter_sql_id_batches(ids):
+                    placeholders = ",".join(["?"] * len(id_batch))
 
-                # Collect chunk FAISS IDs
-                cursor = conn.execute(
-                    f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
-                    ids,
-                )
-                try:
-                    faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
-                finally:
-                    cursor.close()
-
-                # Also collect metadata embedding FAISS IDs
-                # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
-                # when documents are deleted, but we need to collect their FAISS IDs first
-                cursor = conn.execute(
-                    f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
-                    ids,
-                )
-                try:
-                    faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
-                finally:
-                    cursor.close()
-
-                # Collect section and document FAISS IDs for hierarchical indices
-                section_faiss_ids_to_remove: list = []
-                doc_faiss_ids_to_remove: list = []
-                if self._hierarchical_embeddings:
+                    # Collect chunk FAISS IDs
                     cursor = conn.execute(
-                        f"SELECT faiss_id FROM sections WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
-                        ids,
+                        f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
+                        id_batch,
                     )
                     try:
-                        section_faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
+                        faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
                     finally:
                         cursor.close()
 
+                    # Also collect metadata embedding FAISS IDs
+                    # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
+                    # when documents are deleted, but we need to collect their FAISS IDs first
                     cursor = conn.execute(
-                        f"SELECT doc_faiss_id FROM documents WHERE id IN ({placeholders}) AND doc_faiss_id IS NOT NULL",
-                        ids,
+                        f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
+                        id_batch,
                     )
                     try:
-                        doc_faiss_ids_to_remove.extend([row["doc_faiss_id"] for row in cursor.fetchall()])
+                        faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
                     finally:
                         cursor.close()
 
-                # Delete documents (CASCADE deletes chunks, sections)
-                cursor = conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
-                try:
-                    deleted_count = cursor.rowcount
-                finally:
-                    cursor.close()
+                    # Collect section and document FAISS IDs for hierarchical indices
+                    if self._hierarchical_embeddings:
+                        cursor = conn.execute(
+                            f"SELECT faiss_id FROM sections "
+                            f"WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
+                            id_batch,
+                        )
+                        try:
+                            section_faiss_ids_to_remove.extend([row["faiss_id"] for row in cursor.fetchall()])
+                        finally:
+                            cursor.close()
+
+                        cursor = conn.execute(
+                            f"SELECT doc_faiss_id FROM documents "
+                            f"WHERE id IN ({placeholders}) AND doc_faiss_id IS NOT NULL",
+                            id_batch,
+                        )
+                        try:
+                            doc_faiss_ids_to_remove.extend([row["doc_faiss_id"] for row in cursor.fetchall()])
+                        finally:
+                            cursor.close()
+
+                    # Delete documents (CASCADE deletes chunks, sections)
+                    cursor = conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", id_batch)
+                    try:
+                        deleted_count += cursor.rowcount
+                    finally:
+                        cursor.close()
                 conn.commit()
             if deleted_count == 0:
                 if len(ids) == 1:
@@ -953,21 +975,23 @@ class CrudMixin(LocalVectorDBBase, ABC):
         # matching FAISS removal (and vice versa). See _async_write_gate.
         async with self._async_write_gate():
             async with self.async_connection_pool.get_connection_context() as conn:
-                placeholders = ",".join(["?" for _ in ids])
-                cursor = await conn.execute(
-                    f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
-                    ids,
-                )
-                faiss_ids = [row["faiss_id"] for row in await cursor.fetchall()]
+                faiss_ids = []
+                for id_batch in iter_sql_id_batches(ids):
+                    placeholders = ",".join(["?"] * len(id_batch))
+                    cursor = await conn.execute(
+                        f"SELECT faiss_id FROM chunks WHERE document_id IN ({placeholders}) AND faiss_id IS NOT NULL",
+                        id_batch,
+                    )
+                    faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
 
-                # Also collect metadata embedding FAISS IDs
-                # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
-                # when documents are deleted, but we need to collect their FAISS IDs first
-                cursor = await conn.execute(
-                    f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
-                    ids,
-                )
-                faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
+                    # Also collect metadata embedding FAISS IDs
+                    # Note: column_embeddings rows are automatically deleted via ON DELETE CASCADE
+                    # when documents are deleted, but we need to collect their FAISS IDs first
+                    cursor = await conn.execute(
+                        f"SELECT faiss_id FROM column_embeddings WHERE document_id IN ({placeholders})",
+                        id_batch,
+                    )
+                    faiss_ids.extend([row["faiss_id"] for row in await cursor.fetchall()])
 
                 # Commit SQLite first, then remove the vectors -- matching the sync path.
                 # The reverse order (which this used to do) means a rollback leaves rows
@@ -976,9 +1000,11 @@ class CrudMixin(LocalVectorDBBase, ABC):
                 # `repair` sweeps for free.
                 await conn.execute("BEGIN IMMEDIATE")
                 try:
-                    await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", ids)
-                    cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
-                    deleted_count = cursor.rowcount or 0
+                    for id_batch in iter_sql_id_batches(ids):
+                        placeholders = ",".join(["?"] * len(id_batch))
+                        await conn.execute(f"DELETE FROM chunks WHERE document_id IN ({placeholders})", id_batch)
+                        cursor = await conn.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", id_batch)
+                        deleted_count += cursor.rowcount or 0
                     await conn.commit()
                 except Exception:
                     await conn.rollback()

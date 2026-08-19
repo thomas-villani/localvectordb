@@ -2,7 +2,23 @@ import importlib.metadata
 import os
 import re
 from datetime import datetime
-from typing import Optional, Union
+from typing import Iterator, Optional, Sequence, TypeVar, Union
+
+_T = TypeVar("_T")
+
+# SQLite caps the number of bound parameters per statement at compile time:
+# 999 before 3.32, 32,766 since. Any `IN (?,?,...)` list expanded from
+# caller-supplied ids must be split into batches below the OLDER bound, or an
+# upsert/get/delete of a large corpus dies with "too many SQL variables"
+# (first seen at the 50k scale of the tier-2 insert benchmark). 900 leaves
+# headroom for the handful of fixed parameters some statements add.
+SQLITE_MAX_VARS = 900
+
+
+def iter_sql_id_batches(items: Sequence[_T], batch_size: int = SQLITE_MAX_VARS) -> Iterator[Sequence[_T]]:
+    """Yield slices of ``items`` sized to fit one SQL statement's variable limit."""
+    for start in range(0, len(items), batch_size):
+        yield items[start : start + batch_size]
 
 
 def describe_exception(exc: BaseException) -> str:

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bulk operations on ≥32,767 ids no longer die with `sqlite3.OperationalError:
+  too many SQL variables`.** Every `IN (?,?,...)` clause expanded from a
+  caller-sized id list — the `upsert()`/`insert()` existing-document pre-checks
+  (sync and async), `get()`, `exists()`, `delete()` and their async twins,
+  per-document chunk removal, and incremental backup's changed-chunk collection —
+  now batches its ids under SQLite's bound-parameter limit (999 before SQLite
+  3.32, 32,766 since; batches of 900 clear both). First seen when the tag-triggered
+  benchmark workflow ran the tier-2 insert benchmark at its 50,000-document
+  scale, which crashed inside `upsert()`'s existing-chunk pre-fetch; search-path
+  id lists are bounded by pool sizes and were never affected.
+
 ## [0.1.0] - 2026-08-19
 
 The first stable release. Everything below was developed and measured on top of

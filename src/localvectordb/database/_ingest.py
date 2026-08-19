@@ -30,7 +30,7 @@ from localvectordb.exceptions import (
 )
 from localvectordb.extractors import ExtractorRegistry
 from localvectordb.section_detection import SectionDetector
-from localvectordb.utils import parse_iso8601
+from localvectordb.utils import iter_sql_id_batches, parse_iso8601
 
 if TYPE_CHECKING:
     from faiss import Index
@@ -744,12 +744,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             elif len(ids) != len(documents):
                 raise ValueError("Number of IDs must match number of documents")
             self._validate_metadata_batch(metadata)
-            existing_ids = set()
+            existing_ids: set = set()
             with self.connection_pool.get_connection() as conn:
-                if ids:
-                    placeholders = ",".join(["?"] * len(ids))
-                    cursor = conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", ids)
-                    existing_ids = {row["id"] for row in cursor.fetchall()}
+                for id_batch in iter_sql_id_batches(ids):
+                    placeholders = ",".join(["?"] * len(id_batch))
+                    cursor = conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", id_batch)
+                    existing_ids.update(row["id"] for row in cursor.fetchall())
             docs_to_insert = []
             for doc, meta, doc_id in zip(documents, metadata, ids, strict=False):
                 if doc_id in existing_ids:
@@ -911,12 +911,12 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             if metadata is None:
                 metadata = {}
             doc_ids = list(chunks_by_document.keys())
-            existing_ids = set()
+            existing_ids: set = set()
             with self.connection_pool.get_connection() as conn:
-                if doc_ids:
-                    placeholders = ",".join(["?"] * len(doc_ids))
-                    cursor = conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", doc_ids)
-                    existing_ids = {row["id"] for row in cursor.fetchall()}
+                for id_batch in iter_sql_id_batches(doc_ids):
+                    placeholders = ",".join(["?"] * len(id_batch))
+                    cursor = conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", id_batch)
+                    existing_ids.update(row["id"] for row in cursor.fetchall())
             chunks_to_insert = {}
             metadata_to_insert = {}
             for doc_id, chunks in chunks_by_document.items():
@@ -1788,18 +1788,19 @@ class PipelineMixin(LocalVectorDBBase, ABC):
             return {}
         existing: Dict[str, Dict[int, Dict[str, Any]]] = {}
         with self.connection_pool.get_connection() as conn:
-            placeholders = ",".join(["?"] * len(doc_ids))
-            query = f"""SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
-                        WHERE document_id IN ({placeholders})"""
-            cursor = conn.execute(query, doc_ids)
-            for row in cursor.fetchall():
-                doc_id = row["document_id"]
-                if doc_id not in existing:
-                    existing[doc_id] = {}
-                existing[doc_id][row["chunk_index"]] = {
-                    "content_hash": row["content_hash"],
-                    "faiss_id": row["faiss_id"],
-                }
+            for id_batch in iter_sql_id_batches(doc_ids):
+                placeholders = ",".join(["?"] * len(id_batch))
+                query = f"""SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
+                            WHERE document_id IN ({placeholders})"""
+                cursor = conn.execute(query, id_batch)
+                for row in cursor.fetchall():
+                    doc_id = row["document_id"]
+                    if doc_id not in existing:
+                        existing[doc_id] = {}
+                    existing[doc_id][row["chunk_index"]] = {
+                        "content_hash": row["content_hash"],
+                        "faiss_id": row["faiss_id"],
+                    }
         logger.debug(f"Fetched existing chunks for {len(existing)} documents")
         return existing
 
@@ -1811,18 +1812,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         faiss_ids_to_remove: List[int],
         pending: Optional["_PendingFaissRemovals"] = None,
     ) -> None:
-        if chunk_indices_to_remove:
-            placeholders = ",".join(["?"] * len(chunk_indices_to_remove))
+        for idx_batch in iter_sql_id_batches(chunk_indices_to_remove):
+            placeholders = ",".join(["?"] * len(idx_batch))
             # Explicit rather than FK-cascaded: in-memory databases run with
             # foreign_keys OFF, so the join rows would otherwise go stale.
             conn.execute(
                 f"DELETE FROM chunk_sections WHERE chunk_id IN "
                 f"(SELECT id FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders}))",
-                [doc_id] + chunk_indices_to_remove,
+                [doc_id, *idx_batch],
             )
             conn.execute(
                 f"DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})",
-                [doc_id] + chunk_indices_to_remove,
+                [doc_id, *idx_batch],
             )
         if faiss_ids_to_remove:
             # When a transaction is in flight, defer the index removal to after the
@@ -2677,11 +2678,14 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         if not ids:
             return set()
         assert self.async_connection_pool is not None
+        existing_ids: set = set()
         async with self.async_connection_pool.get_connection_context() as conn:
-            placeholders = ",".join(["?"] * len(ids))
-            cursor = await conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", ids)
-            rows = await cursor.fetchall()
-            return {row["id"] for row in rows}
+            for id_batch in iter_sql_id_batches(ids):
+                placeholders = ",".join(["?"] * len(id_batch))
+                cursor = await conn.execute(f"SELECT id FROM documents WHERE id IN ({placeholders})", id_batch)
+                rows = await cursor.fetchall()
+                existing_ids.update(row["id"] for row in rows)
+        return existing_ids
 
     # -------------------
     # Pipelines (async)
@@ -3061,18 +3065,19 @@ class PipelineMixin(LocalVectorDBBase, ABC):
         existing: Dict[str, Dict[int, Dict[str, Any]]] = {}
         assert self.async_connection_pool is not None
         async with self.async_connection_pool.get_connection_context() as conn:
-            placeholders = ",".join(["?"] * len(doc_ids))
-            query = f"""SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
-                        WHERE document_id IN ({placeholders})"""
-            cursor = await conn.execute(query, doc_ids)
-            async for row in cursor:
-                doc_id = row["document_id"]
-                if doc_id not in existing:
-                    existing[doc_id] = {}
-                existing[doc_id][row["chunk_index"]] = {
-                    "content_hash": row["content_hash"],
-                    "faiss_id": row["faiss_id"],
-                }
+            for id_batch in iter_sql_id_batches(doc_ids):
+                placeholders = ",".join(["?"] * len(id_batch))
+                query = f"""SELECT document_id, chunk_index, content_hash, faiss_id FROM chunks
+                            WHERE document_id IN ({placeholders})"""
+                cursor = await conn.execute(query, id_batch)
+                async for row in cursor:
+                    doc_id = row["document_id"]
+                    if doc_id not in existing:
+                        existing[doc_id] = {}
+                    existing[doc_id][row["chunk_index"]] = {
+                        "content_hash": row["content_hash"],
+                        "faiss_id": row["faiss_id"],
+                    }
         logger.debug(f"Fetched existing chunks for {len(existing)} documents")
         return existing
 
@@ -3278,18 +3283,18 @@ class PipelineMixin(LocalVectorDBBase, ABC):
                     # Fallback for Python < 3.9
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(None, self._remove_old_vectors_bulk, faiss_ids_to_remove)
-        if chunk_indices_to_remove:
-            placeholders = ",".join(["?"] * len(chunk_indices_to_remove))
+        for idx_batch in iter_sql_id_batches(chunk_indices_to_remove):
+            placeholders = ",".join(["?"] * len(idx_batch))
             # Explicit rather than FK-cascaded: in-memory databases run with
             # foreign_keys OFF, so the join rows would otherwise go stale.
             await conn.execute(
                 f"DELETE FROM chunk_sections WHERE chunk_id IN "
                 f"(SELECT id FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders}))",
-                [doc_id] + chunk_indices_to_remove,
+                [doc_id, *idx_batch],
             )
             await conn.execute(
                 f"DELETE FROM chunks WHERE document_id = ? AND chunk_index IN ({placeholders})",
-                [doc_id] + chunk_indices_to_remove,
+                [doc_id, *idx_batch],
             )
         logger.debug(
             f"Removed {len(chunk_indices_to_remove)} old chunks and "
