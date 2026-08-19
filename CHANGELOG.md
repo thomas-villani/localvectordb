@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-19
+
+The first stable release. Everything below was developed and measured on top of
+`0.1.0rc1`; the retrieval-affecting changes were gated against the committed
+BEIR SciFact and Qasper baselines (see `benchmarks/RETRIEVAL_BASELINE.md`) and
+the study behind them is written up in the documentation's retrieval study and
+lab notebook pages.
+
 ### Added
 
 - **Retrieval prefixes for asymmetric embedding models.** Most modern retrieval
@@ -487,8 +495,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0rc1] - 2026-07-09
 
 This is the first release candidate. The version published to PyPI is
-`0.1.0rc1` (a pre-release); the final `0.1.0` will collect the `[Unreleased]`
-changes above. The entries below are the initial feature set as of rc1.
+`0.1.0rc1` (a pre-release); the final `0.1.0` above collected everything that
+landed after it. The entries below are the initial feature set as of rc1.
 
 ### Added
 
