@@ -46,3 +46,4 @@ AUDIT.md
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+*.stackdump
