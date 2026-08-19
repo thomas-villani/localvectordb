@@ -1248,13 +1248,20 @@ class SearchMixin(LocalVectorDBBase, ABC):
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
         if search_level == "fused":
             raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
+        if return_type == "sections":
+            # A section roll-up needs the fully materialised chunk pool -- a
+            # section's best chunk can arrive in any batch -- which is
+            # incompatible with lazy cursor hydration. Raising matches the fused
+            # precedent above; silently answering in chunks (the old behaviour)
+            # is the defect class this API no longer tolerates.
+            raise ValueError("return_type='sections' is not supported for streaming/cursor queries; use query()")
         _validate_context_unit(context_unit)
         # Resolve "auto" before it is frozen into CursorConfig, so every batch
         # this cursor yields is scored the same way a one-shot query() would be.
         document_scoring_method = _resolve_document_scoring(document_scoring_method, search_type)
 
         with self._read_write_lock.read_lock():
-            effective_return_type = return_type if return_type != "sections" else "chunks"
+            effective_return_type = return_type
             initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
             # Collect raw candidates. Push the filter down so a selective filter
@@ -1354,6 +1361,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
         if search_level == "fused":
             raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
+        if return_type == "sections":
+            # See query_cursor: batched hydration cannot roll chunks up to
+            # sections, and silently answering in chunks is worse than raising.
+            raise ValueError("return_type='sections' is not supported for streaming/cursor queries; use query()")
         _validate_context_unit(context_unit)
         # Resolve "auto" before it is frozen into CursorConfig, so every batch
         # this cursor yields is scored the same way a one-shot query() would be.
@@ -1363,7 +1374,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
         await self._ensure_async_schema_initialized()
 
         loop = asyncio.get_event_loop()
-        effective_return_type = return_type if return_type != "sections" else "chunks"
+        effective_return_type = return_type
         initial_k = k * 4 if semantic_dedup_threshold else (k * 3 if return_type == "documents" else k * 2)
 
         # Collect raw candidates (FAISS/FTS search). A SQL-expressible filter is
@@ -4002,6 +4013,14 @@ class SearchMixin(LocalVectorDBBase, ABC):
         reranking = reranker is not None or bool(reranker_config)
         fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
 
+        # Mirror the sync path's chunk->section roll-up: k chunks collapse into
+        # fewer than k sections, so widen only the chunk fetch and let the
+        # roll-up truncate back to fetch_k for the reranker. This used to be
+        # missing here entirely -- the async path silently answered a 'sections'
+        # request with chunk results while the sync path rolled up.
+        section_rollup = return_type == "sections" and self._hierarchical_embeddings
+        chunk_fetch_k = _chunk_rollup_pool_size(fetch_k) if section_rollup else fetch_k
+
         query_embedding: Optional[np.ndarray] = None
         if search_type in ["vector", "hybrid"]:
             query_embedding = await self.embedding_provider.embed_query_async(query)
@@ -4010,7 +4029,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
             query_embedding,
             search_type,
             return_type if return_type != "sections" else "chunks",
-            fetch_k,
+            chunk_fetch_k,
             score_threshold,
             filters,
             vector_weight,
@@ -4021,6 +4040,13 @@ class SearchMixin(LocalVectorDBBase, ABC):
             context_unit,
             context_truncate,
         )
+
+        # Post-process: group chunk results by section, exactly as query() does.
+        # The helper is synchronous (a few SQLite reads); run it in the executor
+        # the way the non-chunk levels delegate their whole query.
+        if section_rollup:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, self._assemble_section_results, results, fetch_k)
 
         # Apply reranking if configured
         if reranker is not None:

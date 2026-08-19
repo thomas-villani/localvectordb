@@ -416,6 +416,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which measures better there. The doctor's section-reachability line now
   measures the relation the roll-up actually reads, so it reports ~100% and a
   shortfall means a broken backfill rather than restating chunk geometry.
+- **`query_async` now rolls chunk results up to sections exactly as `query()`
+  does.** The async chunk-level path converted `return_type="sections"` to
+  `"chunks"` and returned chunk results with no warning — sync/async parity is
+  a stated contract, and this was the one query shape that broke it. Cursor
+  and streaming queries (`query_cursor`, `query_stream`, and their async
+  variants) now raise `ValueError` for `return_type="sections"` instead of
+  silently answering in chunks: batched hydration cannot roll up (a section's
+  best chunk can arrive in any batch), and refusing matches the existing
+  `fused` precedent. Use `query()` for section results.
 - **Sections owning no chunk had zero *vectors* in the section index** (the
   other half of the reachability defect above, fixed earlier in the cycle).
   Chunk→section attribution credits a chunk to the section holding its
