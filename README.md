@@ -20,6 +20,7 @@ A high-performance, document-first vector database with SQLite + FAISS backend, 
 - [Quick Start](#-quick-start) — install, index, search
 - [Use with Claude Code & other AI agents](#-use-with-claude-code--other-ai-agents)
 - [Features](#-features)
+- [Measured, Not Guessed](#-measured-not-guessed) — the retrieval study behind the defaults
 - [Server Deployment](#️-server-deployment)
 - [TypeScript SDK](#-typescript-sdk)
 - [API Reference](#-api-reference)
@@ -276,7 +277,7 @@ for the full tool list, configuration reference, and security guidance.
 - **Lexical (grep) Search**: Exact/regex, line-oriented `db.grep()` with line numbers and surrounding context — a precise-string complement to semantic search that agents combine with vector + keyword to great effect
 - **Reranking**: Optional cross-encoder reranking via Jina, Sentence Transformers, or HuggingFace
 - **Metadata Filtering**: MongoDB-style queries on structured metadata
-- **Document Scoring**: Three chunk-to-document aggregation strategies (`best`, `average`, `frequency_boost`) for tuning relevance
+- **Document Scoring**: Four chunk-to-document aggregation strategies (`best`, `average`, `frequency_boost`, `percentile`) plus a measured `auto` default that picks by search type
 
 ### 🧬 **Hierarchical Retrieval**
 - **Raw-Span Section Vectors**: Each section is embedded from *its own text*, not averaged from its chunks — averaging blurs away the cross-chunk structure that makes a section retrievable in the first place. This costs one extra embedding call per section at ingest (sections are far fewer than chunks, so it is modest — but it is not free). Sections longer than the encoder's context are window-pooled, never truncated
@@ -318,6 +319,30 @@ for the full tool list, configuration reference, and security guidance.
 - **Configuration**: TOML/JSON config with environment variable support
 - **Comprehensive Logging**: Structured logging with performance monitoring
 - **Type Safety**: Full type annotations and validation
+
+## 🔬 Measured, Not Guessed
+
+Nearly every retrieval default in this library was chosen by measurement: an
+exhaustive study across four real corpora (research papers, Wikipedia QA, long
+documents, legal contracts), three encoders, and every knob we ship — with
+confidence intervals on everything. Four findings that shape how the library works:
+
+- **The keyword (BM25) leg is worth +0.08 to +0.13 nDCG@10 per retrieval level** —
+  roughly 10× any vector-side tuning we did. Every level (chunks, sections,
+  documents, fused) carries one.
+- **Reranking is a model choice, not a technique**: a 0.067 spread between
+  cross-encoders, with popular MS MARCO models measuring indistinguishable from no
+  reranking at all. The default is one that measurably works.
+- **Six retrieval knobs have no defensible global default** — their optima are
+  corpus properties. So instead of pretending otherwise, `lvdb doctor` /
+  `db.diagnose()` reads your built index and tells you which regime you're in.
+- **Exactly one rule generalised**: how chunk scores aggregate depends on the unit
+  being ranked, never the corpus — shipped as `document_scoring_method="auto"`.
+
+Read the study: [The Retrieval Study](https://thomas-villani.github.io/localvectordb/retrieval-study.html)
+(findings), and [The Lab Notebook](https://thomas-villani.github.io/localvectordb/retrieval-lab-notebook.html)
+(how we measured — including the six wrong conclusions our own controls caught).
+Or run the headline comparison on your own corpus: `examples/section_vs_chunk_retrieval.py`.
 
 ## 🖥️ Server Deployment
 
