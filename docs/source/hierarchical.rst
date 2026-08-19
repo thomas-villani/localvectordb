@@ -513,7 +513,18 @@ afterwards to populate the sidecar indices.
 :class:`~localvectordb.database.LocalVectorDB` feature. Remote databases
 (``RemoteVectorDB``) raise ``NotImplementedError`` for a fused query, and the
 streaming/cursor query paths do not support it — use a materialised
-:meth:`~localvectordb.database.LocalVectorDB.query` instead.
+:meth:`~localvectordb.database.LocalVectorDB.query` instead. The same applies
+to ``return_type="sections"`` on a chunk-level search: the roll-up needs the
+fully materialised chunk pool (a section's best chunk can arrive in any
+batch), so cursor and streaming queries raise ``ValueError`` for it rather
+than silently answering in chunks.
+
+**Incremental restore does not carry the hierarchical sidecars.** A full
+backup restores everything, but incremental restore copies documents and
+chunks only — after incrementally restoring a hierarchical database, run
+:meth:`~localvectordb.database.LocalVectorDB.rebuild_hierarchical_embeddings`
+to repopulate sections and their indices (the chunk↔section attribution table
+self-heals on open either way).
 
 **Gains are real but modest, and corpus-dependent.** On real long documents the
 improvement is a low single-digit nDCG@10 gain (see :doc:`hierarchical-evaluation`

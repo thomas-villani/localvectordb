@@ -1958,6 +1958,39 @@ class TestChunkSectionsJoinTable:
             finally:
                 db.close()
 
+    def test_async_section_rollup_matches_sync(self):
+        """query_async must roll chunks up to sections exactly as query() does.
+
+        The async chunk-level path used to convert 'sections' to 'chunks' and
+        return chunk results with no warning -- the accepted-and-ignored defect
+        class -- while the sync path rolled up.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                sync_hits = db.query("neural networks", return_type="sections", k=20)
+                async_hits = asyncio.run(db.query_async("neural networks", return_type="sections", k=20))
+                assert [h.id for h in async_hits] == [h.id for h in sync_hits]
+                assert all(h.type == "section" for h in async_hits)
+            finally:
+                db.close()
+
+    def test_cursor_rejects_section_return(self):
+        """Cursors cannot roll up across batches; they must refuse, not downgrade."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self._wide_chunk_db(tmpdir)
+            try:
+                with pytest.raises(ValueError, match="sections.*not supported.*cursor"):
+                    db.query_cursor("neural networks", return_type="sections", k=5)
+
+                async def _async_cursor():
+                    return await db.query_cursor_async("neural networks", return_type="sections", k=5)
+
+                with pytest.raises(ValueError, match="sections.*not supported.*cursor"):
+                    asyncio.run(_async_cursor())
+            finally:
+                db.close()
+
     def test_rebuild_repopulates_join_rows(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = self._wide_chunk_db(tmpdir)
