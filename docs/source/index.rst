@@ -144,6 +144,8 @@ feature is worth enabling for *your* corpus and encoder, and why.
    document-scoring
    hierarchical
    hierarchical-evaluation
+   retrieval-study
+   retrieval-lab-notebook
 
 .. toctree::
    :caption: Advanced features
