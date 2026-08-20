@@ -625,6 +625,7 @@ class DatabaseManager:
         metadata_schema: Optional[Dict[str, MetadataFieldType]],
         db_config: DatabaseSettings,
         embedding_config: EmbeddingSettings,
+        reranker_config: Optional[Dict[str, Any]] = None,
     ) -> "LocalVectorDB":
         """Create a new database with coordination and comprehensive error handling"""
 
@@ -692,6 +693,7 @@ class DatabaseManager:
                         embedding_provider=embedding_config.provider,
                         embedding_model=embedding_config.model,
                         embedding_config=embedding_config_dict,
+                        reranker_config=reranker_config,
                         chunking_method=db_config.chunking_method,
                         chunk_size=db_config.chunk_size,
                         chunk_overlap=db_config.chunk_overlap,
@@ -960,8 +962,16 @@ class DatabaseManager:
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
+        rerank: Optional[bool] = None,
     ) -> Dict[str, Union[List, str]]:
-        """Search across multiple databases with enhanced error handling"""
+        """Search across multiple databases with enhanced error handling.
+
+        ``reranker_config``/``rerank_k`` are forwarded to each database's
+        ``query()``; ``rerank=False`` disables each database's persisted
+        default reranker for this call.
+        """
 
         if database_names is None:
             database_names = self.list_databases()
@@ -993,6 +1003,9 @@ class DatabaseManager:
                     context_window=context_window,
                     context_unit=context_unit,
                     context_truncate=context_truncate,
+                    reranker=False if rerank is False else None,
+                    reranker_config=reranker_config,
+                    rerank_k=rerank_k,
                 )
 
                 results[db_name] = db_results

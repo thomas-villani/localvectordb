@@ -1430,6 +1430,11 @@ class QueryExecutor(_QueryExecutorBase):
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
             document_scoring_options=self.builder._document_scoring_options,
+            # When the builder has its own rerank step, suppress the database's
+            # persisted default reranker in the underlying query -- otherwise a
+            # cross_encoder builder on a DB with a default would rerank twice.
+            # With no builder rerank config, the default applies as usual.
+            reranker=False if self.builder._rerank_config else None,
         )
 
         if self.builder._semantic_filters:
@@ -1708,6 +1713,9 @@ class AsyncQueryExecutor(_QueryExecutorBase):
             semantic_dedup_threshold=self.builder._semantic_dedup_threshold,
             document_scoring_method=self.builder._document_scoring_method,
             document_scoring_options=self.builder._document_scoring_options,
+            # Suppress the database's default reranker when the builder has its
+            # own rerank step (see the sync twin) -- prevents double-reranking.
+            reranker=False if self.builder._rerank_config else None,
         )
 
         if self.builder._semantic_filters:

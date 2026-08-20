@@ -158,6 +158,16 @@ export interface CreateDatabaseOptions {
     model?: string;
     config?: Record<string, unknown>;
   };
+  /**
+   * Persisted default reranker for the new database, e.g.
+   * `{ provider: "sentence_transformers", model: "BAAI/bge-reranker-base" }`.
+   * The server saves it in the database config and applies it to every query
+   * unless overridden per call (`rerank: false` disables for one call). Store
+   * credentials as environment references (`api_key: "$MY_KEY_VAR"`), never
+   * raw secrets. Ignored (silently dropped) by pre-0.1.2 servers — check the
+   * echoed `config.reranker` to confirm it took effect.
+   */
+  reranker?: Record<string, unknown>;
 }
 
 export interface UpsertOptions {
@@ -226,9 +236,15 @@ export interface BaseQueryOptions {
   reranker_config?: Record<string, unknown>;
   /**
    * Candidate-pool size fetched before reranking down to `k`. Only used when
-   * `reranker_config` is set. Server default is `5 * k`, clamped to 200.
+   * reranking is active. Server default is `5 * k`, clamped to 200.
    */
   rerank_k?: number;
+  /**
+   * Tri-state switch over the database's persisted default reranker: omit to
+   * inherit it, `false` to disable it for this call. (`true` is a no-op — the
+   * default applies anyway.) Pre-0.1.2 servers reject the field.
+   */
+  rerank?: boolean;
 }
 
 export interface QueryOptions extends BaseQueryOptions {
@@ -369,6 +385,8 @@ export interface CreateDatabaseConfig {
   chunk_overlap: number;
   fts_enabled: boolean;
   metadata_schema: Record<string, MetadataFieldDefinition>;
+  /** Persisted default reranker (api_key redacted), or null/absent if none. */
+  reranker?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
 

@@ -765,6 +765,7 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         embedding_provider: str = "ollama",
         embedding_model: str = "embeddinggemma",
         embedding_config: Optional[Dict[str, Any]] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
         chunking_method: str = "sentences",
         chunk_size: int = 500,
         chunk_overlap: int = 1,
@@ -804,6 +805,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self._embedding_provider = embedding_provider
         self._embedding_model = embedding_model
         self._embedding_config = embedding_config or {}
+        # Persisted default reranker requested at creation (server-side state;
+        # applied by the server's query path, never client-side). None after
+        # load unless the server reports one.
+        self._reranker_config = reranker_config
         self._chunking_method = chunking_method
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
@@ -1001,6 +1006,10 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self._chunk_size = int(config.get("chunk_size", self._chunk_size))
         self._chunk_overlap = int(config.get("chunk_overlap", self._chunk_overlap))
         self._enable_fts = bool(config.get("fts_enabled", self._enable_fts))
+        # Tolerate absence: an old server never echoes the key. Only adopt when
+        # the server reports it, so a pre-feature server leaves ours untouched.
+        if "reranker" in config:
+            self._reranker_config = config.get("reranker")
 
         self._last_ping_timestamp = time.time()
         self._last_ping_status = True
@@ -1054,6 +1063,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
                 "enable_fts": self._enable_fts,
             },
         }
+        if self._reranker_config is not None:
+            # Persisted default reranker. Sent only when requested: an old
+            # server ignores the key (extra="ignore"), so the echo below is the
+            # only reliable signal of whether it took effect.
+            payload["reranker"] = self._reranker_config
 
         response = self._make_request_with_retry("POST", url, json=payload)
 
@@ -1078,6 +1092,21 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         self._chunk_size = int(config.get("chunk_size", self._chunk_size))
         self._chunk_overlap = int(config.get("chunk_overlap", self._chunk_overlap))
         self._enable_fts = bool(config.get("fts_enabled", self._enable_fts))
+        # See _load_database_info: adopt only when the server reports the key.
+        if "reranker" in config:
+            self._reranker_config = config.get("reranker")
+
+    def get_default_reranker(self) -> Optional[Dict[str, Any]]:
+        """The database's persisted default reranker as the server reports it.
+
+        Read-only parity with ``LocalVectorDB.get_default_reranker()``: the
+        server redacts any raw ``api_key`` before echoing, and there is no
+        remote ``set_default_reranker`` endpoint yet -- change the default by
+        recreating the database or via server-side access.
+        """
+        import copy
+
+        return copy.deepcopy(self._reranker_config)
 
     @property
     def embedding_provider(self) -> EmbeddingProvider:
@@ -1889,7 +1918,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         List[QueryResult]
             Search results with normalized scores
         """
-        if reranker is not None:
+        # reranker=False is the explicit per-call disable of the server-side
+        # database default (wire form: {"rerank": false}); only an actual
+        # instance is unserializable and rejected.
+        rerank_flag: Optional[bool] = None
+        if reranker is False:
+            rerank_flag = False
+        elif reranker is not None:
             raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
         if search_level == "fused":
             raise NotImplementedError(_REMOTE_FUSED_UNSUPPORTED)
@@ -1928,6 +1963,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if rerank_k is not None:
             payload["rerank_k"] = rerank_k
 
+        if rerank_flag is not None:
+            # Sent only on explicit disable; an old server's strict QueryBody
+            # would 422 on the unknown key otherwise.
+            payload["rerank"] = rerank_flag
+
         url = self._build_url(f"/api/v1/databases/{self.name}/query")
         response = self._make_request_with_retry("POST", url, json=payload)
         result = self._handle_response(response)
@@ -1949,6 +1989,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Query across multiple columns (main content + embedding-enabled metadata fields)
@@ -1976,12 +2019,26 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Method for aggregating chunk scores into document scores
         document_scoring_options : dict, optional
             Parameters for the scoring method
+        reranker : False, optional
+            ``False`` disables the database's persisted default reranker for
+            this call. Instances cannot cross HTTP; use ``reranker_config``.
+        reranker_config : dict, optional
+            Config the server constructs a reranker from, applied once to the
+            merged multi-column pool; overrides the persisted default.
+        rerank_k : int, optional
+            Merged-pool width handed to the reranker before truncating to ``k``.
 
         Returns
         -------
         List[QueryResult]
             Search results with column attribution
         """
+        rerank_flag: Optional[bool] = None
+        if reranker is False:
+            rerank_flag = False
+        elif reranker is not None:
+            raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
+
         # Prepare request payload
         payload = {
             "query": query,
@@ -1999,6 +2056,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if filters is not None:
             payload["filters"] = filters
+
+        if reranker_config is not None:
+            payload["reranker_config"] = reranker_config
+        if rerank_k is not None:
+            payload["rerank_k"] = rerank_k
+        if rerank_flag is not None:
+            payload["rerank"] = rerank_flag
 
         url = self._build_url(f"/api/v1/databases/{self.name}/query-multi-column")
         response = self._make_request_with_retry("POST", url, json=payload)
@@ -3353,7 +3417,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Search results with normalized scores
         """
 
-        if reranker is not None:
+        # reranker=False is the explicit per-call disable of the server-side
+        # database default (wire form: {"rerank": false}); only an actual
+        # instance is unserializable and rejected.
+        rerank_flag: Optional[bool] = None
+        if reranker is False:
+            rerank_flag = False
+        elif reranker is not None:
             raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
         if search_level == "fused":
             raise NotImplementedError(_REMOTE_FUSED_UNSUPPORTED)
@@ -3388,6 +3458,11 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         if rerank_k is not None:
             payload["rerank_k"] = rerank_k
 
+        if rerank_flag is not None:
+            # Sent only on explicit disable; an old server's strict QueryBody
+            # would 422 on the unknown key otherwise.
+            payload["rerank"] = rerank_flag
+
         url = self._build_url(f"/api/v1/databases/{self.name}/query")
         response = await self._make_request_with_retry_async("POST", url, json=payload)
         result = self._handle_response(response)
@@ -3409,6 +3484,9 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
         vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Async query across multiple columns (main content + embedding-enabled metadata fields)
@@ -3436,12 +3514,26 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
             Method for aggregating chunk scores into document scores
         document_scoring_options : dict, optional
             Parameters for the scoring method
+        reranker : False, optional
+            ``False`` disables the database's persisted default reranker for
+            this call. Instances cannot cross HTTP; use ``reranker_config``.
+        reranker_config : dict, optional
+            Config the server constructs a reranker from, applied once to the
+            merged multi-column pool; overrides the persisted default.
+        rerank_k : int, optional
+            Merged-pool width handed to the reranker before truncating to ``k``.
 
         Returns
         -------
         List[QueryResult]
             Search results with column attribution
         """
+        rerank_flag: Optional[bool] = None
+        if reranker is False:
+            rerank_flag = False
+        elif reranker is not None:
+            raise ValueError(_REMOTE_RERANKER_INSTANCE_UNSUPPORTED)
+
         # Prepare request payload
         payload = {
             "query": query,
@@ -3459,6 +3551,13 @@ class RemoteVectorDB(TuningMixin, BaseVectorDB):
 
         if filters is not None:
             payload["filters"] = filters
+
+        if reranker_config is not None:
+            payload["reranker_config"] = reranker_config
+        if rerank_k is not None:
+            payload["rerank_k"] = rerank_k
+        if rerank_flag is not None:
+            payload["rerank"] = rerank_flag
 
         url = self._build_url(f"/api/v1/databases/{self.name}/query-multi-column")
         response = await self._make_request_with_retry_async("POST", url, json=payload)

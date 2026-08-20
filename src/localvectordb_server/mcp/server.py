@@ -327,6 +327,9 @@ async def query_database(
     """
     Search a database using vector, keyword, or hybrid search
 
+    If the database was created with a persisted default reranker, results are
+    automatically reranked by it (cross-encoder re-scoring of the candidate pool).
+
     Args:
         database_name: Name of the database to search
         query: Search query text

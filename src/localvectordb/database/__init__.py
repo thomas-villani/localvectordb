@@ -58,6 +58,17 @@ class LocalVectorDB(
         An existing database reuses the prefixes it was built with -- they are part
         of its vector space -- so these take effect on a new database, or on a
         re-ingest. See the Embeddings guide for details.
+    reranker_config : Dict[str, Any], optional
+        Persisted default reranker for this database, applied by every
+        ``query()`` unless overridden per call (``reranker=False`` disables for
+        one call). Same shape as ``query()``'s per-call ``reranker_config``:
+        ``{"provider": ..., "model": ..., **kwargs}``. Saved in the database's
+        config (like the embedding provider) so the CLI, MCP and server all
+        inherit it. For hosted providers store credentials as environment
+        references (``api_key="$MY_KEY_VAR"``), never raw secrets. Change or
+        clear it later with ``set_default_reranker()``. On reopen, an explicit
+        value here overrides (and re-persists over) the saved one, with a
+        warning; ``None`` means "use what is saved".
     chunking_method : str, optional
         Chunking method, by default "sentences"
     chunk_size : int, optional

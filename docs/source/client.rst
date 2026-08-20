@@ -460,6 +460,14 @@ Search and Query Operations
 :doc:`hierarchical`. The options are forwarded to the server, which must host a
 database created with ``hierarchical_embeddings=True``.
 
+**Reranking**: pass ``reranker_config`` per call (the server constructs the
+reranker; instances cannot cross HTTP), or create the database with a persisted
+default — ``RemoteVectorDB(..., reranker_config={...})`` sends it at creation,
+and the server then applies it to every query automatically. ``reranker=False``
+disables the persisted default for one call (wire form ``rerank: false``);
+``db.get_default_reranker()`` reads back what the server reports (``api_key``
+redacted). See :doc:`query` for the precedence rules.
+
 .. note::
 
    ``search_level="fused"`` is **not** available on remote databases — a fused

@@ -400,9 +400,35 @@ class SearchMixin(LocalVectorDBBase, ABC):
         @classmethod
         def _index_supports_id_selector(cls, index: Any) -> bool: ...
 
+        def _get_default_reranker_instance(self) -> Optional[Any]: ...
+
     # -----------------
     # Helper methods
     # -----------------
+    def _effective_reranker(
+        self, reranker: Any, reranker_config: Optional[Dict[str, Any]]
+    ) -> Tuple[Optional[Any], Optional[Dict[str, Any]]]:
+        """Resolve per-call rerank arguments against the persisted database default.
+
+        Precedence: per-call instance > per-call config > ``reranker=False``
+        (explicit disable for this one call) > the database's persisted default
+        reranker. Returns ``(instance, config)`` with at most one non-None;
+        ``(None, None)`` means no reranking. The default is returned as a
+        cached instance (built lazily on first use) so a model-loading reranker
+        is not re-constructed per query.
+        """
+        if reranker is False:
+            if reranker_config:
+                raise ValueError(
+                    "reranker=False disables reranking for this call and cannot be " "combined with reranker_config"
+                )
+            return None, None
+        if reranker is not None:
+            return reranker, None
+        if reranker_config:
+            return None, reranker_config
+        return self._get_default_reranker_instance(), None
+
     def _fts_rank_to_similarity(self, rank: float) -> float:
         """
         Convert FTS5 bm25 rank to similarity score with consistent formula.
@@ -895,16 +921,22 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     exactly ``best``; lower values soften it toward the mean.
                     Document targets only, and only worth it at a wide
                     candidate pool -- see ``DocumentScoringMethod``.
-        reranker : object, optional
+        reranker : object or False, optional
             A reranker instance whose ``rerank()`` re-scores the candidate pool.
+            Pass ``False`` to disable reranking for this one call, including
+            the database's persisted default reranker (see
+            ``set_default_reranker``); ``None`` (the default) means "use the
+            database default, if one is configured".
         reranker_config : dict, optional
             Config from which the server/factory constructs a reranker, e.g.
             ``{"provider": "jina", "model": "jina-reranker-v2-base-multilingual"}``.
+            Overrides the database's persisted default for this call.
         rerank_k : int, optional
             Size of the candidate pool to fetch and hand to the reranker before
-            truncating to ``k``. Only has an effect when a ``reranker`` or
-            ``reranker_config`` is supplied. Defaults to ``5*k`` (clamped to at
-            most 200); a reranker given only ``k`` candidates cannot improve
+            truncating to ``k``. Only has an effect when reranking is active (a
+            ``reranker`` or ``reranker_config`` is supplied, or the database
+            has a persisted default reranker). Defaults to ``5*k`` (clamped to
+            at most 200); a reranker given only ``k`` candidates cannot improve
             recall, since it never sees the results ranked just below the cutoff.
 
         Returns
@@ -957,13 +989,15 @@ class SearchMixin(LocalVectorDBBase, ABC):
         if filters:
             validate_filter_spec(filters, self.metadata_schema)
         with self._read_write_lock.read_lock():
-            # When a reranker is configured, over-fetch a larger candidate pool so
-            # it can promote results the search legs ranked below `k`; otherwise the
+            # When a reranker is configured -- per call, or as this database's
+            # persisted default -- over-fetch a larger candidate pool so it can
+            # promote results the search legs ranked below `k`; otherwise the
             # rerank is a no-op on recall. `fetch_k == k` when no reranker, so the
             # non-rerank path is byte-for-byte unchanged -- including the fused and
             # hierarchical levels below, which are called with `fetch_k` too so the
             # shared rerank block (H8) can re-score their pool before truncating to k.
-            reranking = reranker is not None or bool(reranker_config)
+            _rr_instance, _rr_config = self._effective_reranker(reranker, reranker_config)
+            reranking = _rr_instance is not None or bool(_rr_config)
             fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
 
             # `return_type="sections"` below is served by rolling chunk results up
@@ -1071,17 +1105,19 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
             # Apply reranking if configured. Runs for every search_level (H8): the
             # fused/hierarchical branches used to early-return above this block, so
-            # a reranker passed with those levels was silently ignored.
-            if reranker is not None:
-                results = reranker.rerank(query, results, top_k=k)
-            elif reranker_config:
+            # a reranker passed with those levels was silently ignored. The
+            # database's persisted default arrives here as `_rr_instance` (cached);
+            # a per-call config still constructs fresh, preserving prior behaviour.
+            if _rr_instance is not None:
+                results = _rr_instance.rerank(query, results, top_k=k)
+            elif _rr_config:
                 from localvectordb.reranking import RerankerRegistry
 
-                _provider: str = reranker_config.get("provider", "")
+                _provider: str = _rr_config.get("provider", "")
                 _reranker = RerankerRegistry.create_reranker(
                     _provider,
-                    reranker_config.get("model"),
-                    **{kk: v for kk, v in reranker_config.items() if kk not in ("provider", "model")},
+                    _rr_config.get("model"),
+                    **{kk: v for kk, v in _rr_config.items() if kk not in ("provider", "model")},
                 )
                 results = _reranker.rerank(query, results, top_k=k)
 
@@ -1244,7 +1280,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
             requires scoring the fully materialized result set, which is
             incompatible with lazy cursor hydration; use ``query()`` instead.
         """
-        if reranker is not None or reranker_config:
+        # `reranker is not False`: an explicit disable is not a rerank request,
+        # and cursors never apply the database's persisted default reranker --
+        # so neither the default nor `reranker=False` may trip this guard.
+        if (reranker is not None and reranker is not False) or reranker_config:
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
         if search_level == "fused":
             raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
@@ -1357,7 +1396,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
         Raises ``ValueError`` if a ``reranker``/``reranker_config`` is supplied;
         reranking is incompatible with lazy cursor hydration (use ``query_async()``).
         """
-        if reranker is not None or reranker_config:
+        # `reranker is not False`: an explicit disable is not a rerank request,
+        # and cursors never apply the database's persisted default reranker --
+        # so neither the default nor `reranker=False` may trip this guard.
+        if (reranker is not None and reranker is not False) or reranker_config:
             raise ValueError(_RERANK_STREAMING_UNSUPPORTED)
         if search_level == "fused":
             raise ValueError("search_level='fused' is not supported for streaming/cursor queries; use query()")
@@ -3685,6 +3727,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Query across multiple columns (main content + embedding-enabled metadata fields)
@@ -3718,6 +3763,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Method for aggregating chunk scores into document scores
         document_scoring_options : dict, optional
             Parameters for the scoring method
+        reranker : object or False, optional
+            A reranker instance applied ONCE to the merged multi-column pool
+            (never per column leg, which would re-score legs inconsistently).
+            ``False`` disables reranking for this call, including the
+            database's persisted default; ``None`` uses the default if set.
+        reranker_config : dict, optional
+            Config from which a reranker is constructed for the merged pool;
+            overrides the database's persisted default for this call.
+        rerank_k : int, optional
+            Merged-pool width handed to the reranker before truncating to
+            ``k``. Defaults to ``5*k`` (clamped to at most 200).
 
         Returns
         -------
@@ -3744,6 +3800,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 if not search_columns:
                     logger.warning("No valid columns specified for search")
                     return []
+            # Reranking (per-call or the database default) is applied ONCE to the
+            # merged pool below -- never inside a column leg, where it would
+            # re-score the content leg but not the metadata legs and merge
+            # incomparable scores. `reranker=False` on the leg call pins that.
+            _rr_instance, _rr_config = self._effective_reranker(reranker, reranker_config)
+            _mc_reranking = _rr_instance is not None or bool(_rr_config)
             all_results: List[QueryResult] = []
             if "content" in search_columns:
                 content_results = self.query(
@@ -3756,6 +3818,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     vector_weight=vector_weight,
                     document_scoring_method=document_scoring_method,
                     document_scoring_options=document_scoring_options,
+                    reranker=False,
                 )
                 for result in content_results:
                     result.metadata = result.metadata or {}
@@ -3772,7 +3835,26 @@ class SearchMixin(LocalVectorDBBase, ABC):
                         result.metadata["_search_column"] = field_name
                         all_results.append(result)
             all_results.sort(key=lambda x: x.score, reverse=True)
-            limited_results = all_results[:k]
+            if _mc_reranking:
+                # Widen the merge cut so the reranker can promote candidates the
+                # legs ranked below `k`, then truncate to `k` -- the multi-column
+                # analogue of query()'s fetch_k over-fetch.
+                pool = all_results[: _resolve_rerank_k(rerank_k, k)]
+                limited_results: List[QueryResult]
+                if _rr_instance is not None:
+                    limited_results = _rr_instance.rerank(query, pool, top_k=k)
+                else:
+                    from localvectordb.reranking import RerankerRegistry
+
+                    assert _rr_config is not None
+                    _mc_reranker = RerankerRegistry.create_reranker(
+                        _rr_config.get("provider", ""),
+                        _rr_config.get("model"),
+                        **{kk: v for kk, v in _rr_config.items() if kk not in ("provider", "model")},
+                    )
+                    limited_results = _mc_reranker.rerank(query, pool, top_k=k)
+            else:
+                limited_results = all_results[:k]
             if return_type == "documents":
                 return self._aggregate_document_scores_with_method(
                     limited_results, document_scoring_method, document_scoring_options
@@ -3949,9 +4031,11 @@ class SearchMixin(LocalVectorDBBase, ABC):
             For complete parameter documentation and examples, see the Document Scoring documentation.
         rerank_k : int, optional
             Size of the candidate pool to fetch and hand to the reranker before
-            truncating to ``k``. Only has an effect when a ``reranker`` or
-            ``reranker_config`` is supplied. Defaults to ``5*k`` (clamped to at
-            most 200). See ``query()`` for the rationale.
+            truncating to ``k``. Only has an effect when reranking is active (a
+            ``reranker`` or ``reranker_config`` is supplied, or the database
+            has a persisted default reranker; ``reranker=False`` disables the
+            default for this call). Defaults to ``5*k`` (clamped to at most
+            200). See ``query()`` for the rationale.
 
         Returns
         -------
@@ -4011,8 +4095,12 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         # Over-fetch a larger pool when reranking so the reranker can promote
         # candidates the legs ranked below `k`; `fetch_k == k` otherwise, leaving
-        # the non-rerank path unchanged. Mirrors the sync `query()`.
-        reranking = reranker is not None or bool(reranker_config)
+        # the non-rerank path unchanged. Mirrors the sync `query()`. The
+        # fused/hierarchical delegation above forwards the RAW per-call args
+        # (including `reranker=False`), so sync `query()` is the only resolver
+        # of the database default on that path -- no double-apply.
+        _rr_instance, _rr_config = self._effective_reranker(reranker, reranker_config)
+        reranking = _rr_instance is not None or bool(_rr_config)
         fetch_k = _resolve_rerank_k(rerank_k, k) if reranking else k
 
         # Mirror the sync path's chunk->section roll-up: k chunks collapse into
@@ -4050,17 +4138,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
             loop = asyncio.get_event_loop()
             results = await loop.run_in_executor(None, self._assemble_section_results, results, fetch_k)
 
-        # Apply reranking if configured
-        if reranker is not None:
-            results = await reranker.rerank_async(query, results, top_k=k)
-        elif reranker_config:
+        # Apply reranking if configured (per call, or the database default)
+        if _rr_instance is not None:
+            results = await _rr_instance.rerank_async(query, results, top_k=k)
+        elif _rr_config:
             from localvectordb.reranking import RerankerRegistry
 
-            _async_provider: str = reranker_config.get("provider", "")
+            _async_provider: str = _rr_config.get("provider", "")
             _reranker = RerankerRegistry.create_reranker(
                 _async_provider,
-                reranker_config.get("model"),
-                **{kk: v for kk, v in reranker_config.items() if kk not in ("provider", "model")},
+                _rr_config.get("model"),
+                **{kk: v for kk, v in _rr_config.items() if kk not in ("provider", "model")},
             )
             results = await _reranker.rerank_async(query, results, top_k=k)
 
@@ -5152,6 +5240,9 @@ class SearchMixin(LocalVectorDBBase, ABC):
         vector_weight: float = 0.5,
         document_scoring_method: DocumentScoringMethod = "auto",
         document_scoring_options: Optional[dict] = None,
+        reranker: Optional[Any] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
+        rerank_k: Optional[int] = None,
     ) -> List[QueryResult]:
         """
         Async query across multiple columns (main content + embedding-enabled metadata fields)
@@ -5185,6 +5276,17 @@ class SearchMixin(LocalVectorDBBase, ABC):
             Method for aggregating chunk scores into document scores
         document_scoring_options : dict, optional
             Parameters for the scoring method
+        reranker : object or False, optional
+            A reranker instance applied ONCE to the merged multi-column pool
+            (never per column leg, which would re-score legs inconsistently).
+            ``False`` disables reranking for this call, including the
+            database's persisted default; ``None`` uses the default if set.
+        reranker_config : dict, optional
+            Config from which a reranker is constructed for the merged pool;
+            overrides the database's persisted default for this call.
+        rerank_k : int, optional
+            Merged-pool width handed to the reranker before truncating to
+            ``k``. Defaults to ``5*k`` (clamped to at most 200).
 
         Returns
         -------
@@ -5216,6 +5318,10 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 logger.warning("No valid columns specified for search")
                 return []
 
+        # Reranking (per-call or the database default) is applied ONCE to the
+        # merged pool below -- never inside a column leg (see the sync twin).
+        _rr_instance, _rr_config = self._effective_reranker(reranker, reranker_config)
+        _mc_reranking = _rr_instance is not None or bool(_rr_config)
         all_results = []
 
         # Search main content if requested
@@ -5230,6 +5336,7 @@ class SearchMixin(LocalVectorDBBase, ABC):
                 vector_weight=vector_weight,
                 document_scoring_method=document_scoring_method,
                 document_scoring_options=document_scoring_options,
+                reranker=False,
             )
 
             # Add column attribution
@@ -5263,7 +5370,25 @@ class SearchMixin(LocalVectorDBBase, ABC):
 
         # Sort all results by score and limit
         all_results.sort(key=lambda x: x.score, reverse=True)
-        limited_results = all_results[:k]
+        if _mc_reranking:
+            # Widen the merge cut so the reranker can promote candidates the
+            # legs ranked below `k`, then truncate to `k` (see the sync twin).
+            pool = all_results[: _resolve_rerank_k(rerank_k, k)]
+            limited_results: List[QueryResult]
+            if _rr_instance is not None:
+                limited_results = await _rr_instance.rerank_async(query, pool, top_k=k)
+            else:
+                from localvectordb.reranking import RerankerRegistry
+
+                assert _rr_config is not None
+                _mc_reranker = RerankerRegistry.create_reranker(
+                    _rr_config.get("provider", ""),
+                    _rr_config.get("model"),
+                    **{kk: v for kk, v in _rr_config.items() if kk not in ("provider", "model")},
+                )
+                limited_results = await _mc_reranker.rerank_async(query, pool, top_k=k)
+        else:
+            limited_results = all_results[:k]
 
         if return_type == "documents":
             # Aggregate chunks into documents

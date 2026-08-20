@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A persisted per-database default reranker.** Pass `reranker_config` at
+  creation (or call `set_default_reranker()` later) and every `query()` applies
+  it — library, CLI, MCP and server alike — without per-call ceremony. The
+  config is saved in the database's own config table like the embedding
+  provider, so it survives reopen. Reranking measured ~9× the effect of any
+  first-stage parameter in the retrieval study, but it was previously
+  reachable only by passing the full config on every single call.
+  - Precedence per call: a `reranker` instance > `reranker_config` >
+    `reranker=False` > the persisted default. `reranker=False` (wire form
+    `"rerank": false`) disables reranking for one call; combining it with a
+    `reranker_config` raises.
+  - The default reranker is constructed lazily on the first query that needs
+    it and cached per database, so opening a database never loads a model.
+  - Cursors and streaming still never rerank, and now ignore the persisted
+    default rather than erroring on it; passing an explicit reranker to a
+    cursor still raises.
+  - Store credentials as environment references (`api_key="$MY_KEY_VAR"`);
+    a raw key warns at set time and is redacted from every echo.
+- CLI: `lvdb create --reranker-provider/--reranker-model` persists the default;
+  `lvdb db <name> search` gains `--rerank/--no-rerank`, `--rerank-provider`,
+  `--rerank-model` and `--rerank-k`. Neither surface had any rerank flag.
+- HTTP: `POST /databases` accepts a `reranker` block and echoes the resolved
+  (redacted) config from both create and `GET /databases/{name}/info`;
+  `QueryBody` gains `rerank` for the per-call disable. `RemoteVectorDB` sends
+  the block at creation and exposes read-only `get_default_reranker()`.
+- MCP `query_database` inherits the database default with no new tool surface.
+
+### Fixed
+
+- **`/query-multi-column` and the global `/search` accepted `reranker_config`
+  and `rerank_k` and then silently discarded them** — reranking requested
+  through either route simply never happened. Both now forward the parameters,
+  which required `query_multi_column()`/`query_multi_column_async()` and
+  `search_databases()` to grow the parameters in the first place.
+- **Multi-column search would have reranked only its content leg**, merging
+  re-scored content hits with un-rescored metadata-field hits into one ranking.
+  Reranking now runs exactly once, over the merged pool, with the same
+  `rerank_k` over-fetch `query()` uses.
+- **A `QueryBuilder` rerank step on a database with a default reranker would
+  have reranked twice.** The builder now suppresses the database default for
+  its underlying query whenever it carries its own rerank configuration; a
+  builder without one inherits the default as usual.
+
+### Security
+
+- A persisted reranker's `base_url` is now gated by the same SSRF policy as
+  embedding provider URLs (`embedding.allow_custom_provider_url` plus the host
+  allowlist), since the server POSTs to it on every query. Per-request
+  `reranker_config.base_url` on `/query` remains ungated — tracked separately.
+
 ## [0.1.1] - 2026-08-19
 
 ### Fixed

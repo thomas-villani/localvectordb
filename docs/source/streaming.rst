@@ -253,7 +253,9 @@ Performance Considerations
 
 * **Reranking limitation**: Cross-encoder reranking requires the full text of all candidates to re-score them.
   When reranking is configured, use the standard ``query()`` method instead of cursors. This will be addressed in a
-  future release.
+  future release. A database's *persisted default reranker* (see :doc:`query`) is silently ignored by cursors for
+  the same reason — cursor results are never reranked; passing an explicit ``reranker``/``reranker_config`` to a
+  cursor still raises.
 
 Exceptions
 ----------

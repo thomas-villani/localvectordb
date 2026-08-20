@@ -293,6 +293,20 @@ def list_databases(ctx, details):
     help="Instruction prefix prepended to a search query before embedding. "
     "Defaults to the model's known training prefix; pass '' to force none.",
 )
+@click.option(
+    "--reranker-provider",
+    default=None,
+    type=str,
+    help="Persist a default reranker for this database (e.g. sentence_transformers, "
+    "jina, openai_compatible). Every search then applies it automatically; "
+    "disable per call with --no-rerank on `db <name> search`.",
+)
+@click.option(
+    "--reranker-model",
+    default=None,
+    type=str,
+    help="Model for --reranker-provider (provider default when omitted).",
+)
 @click.pass_context
 def create_vector_database(
     ctx,
@@ -306,6 +320,8 @@ def create_vector_database(
     metadata_schema,
     document_prefix,
     query_prefix,
+    reranker_provider,
+    reranker_model,
 ):
     """
     Create a new vector database.
@@ -367,6 +383,22 @@ def create_vector_database(
         )
         raise click.exceptions.Exit(EXIT_CODE_ERROR)
 
+    if reranker_model is not None and reranker_provider is None:
+        click.secho("--reranker-model requires --reranker-provider", fg="bright_red", err=True)
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
+    if reranker_provider is not None:
+        from localvectordb.reranking import RerankerRegistry
+
+        available_rerankers = RerankerRegistry.list()
+        if reranker_provider.lower() not in available_rerankers:
+            click.secho(
+                f"Unknown reranker provider '{reranker_provider}'. "
+                f"Available: {', '.join(sorted(available_rerankers))}",
+                fg="bright_red",
+                err=True,
+            )
+            raise click.exceptions.Exit(EXIT_CODE_ERROR)
+
     # Prepare metadata schema
     schema_dict = None
     if metadata_schema:
@@ -393,6 +425,14 @@ def create_vector_database(
     if embedding_config:
         extra_kwargs["embedding_config"] = embedding_config
 
+    # Persisted default reranker: saved in the database config so every search
+    # (CLI, library, MCP, server) applies it without per-call flags.
+    if reranker_provider is not None:
+        reranker_config = {"provider": reranker_provider}
+        if reranker_model is not None:
+            reranker_config["model"] = reranker_model
+        extra_kwargs["reranker_config"] = reranker_config
+
     try:
         from localvectordb.database import LocalVectorDB
 
@@ -410,6 +450,7 @@ def create_vector_database(
         resolved_delimiter = db.chunk_delimiter
         resolved_doc_prefix = db.embedding_provider.document_prefix
         resolved_query_prefix = db.embedding_provider.query_prefix
+        resolved_reranker = db.get_default_reranker()
         db.close()
 
         click.secho(f"Created database '{name}' in {os.path.abspath(db_folder)}", fg="green")
@@ -428,6 +469,9 @@ def create_vector_database(
             click.echo(f"   chunk_delimiter: {resolved_delimiter!r}")
         if metadata_schema:
             click.echo(f"   metadata_schema: {metadata_schema}")
+        if resolved_reranker:
+            resolved_rr_model = resolved_reranker.get("model") or "(provider default model)"
+            click.echo(f"   default_reranker: {resolved_reranker.get('provider')} / {resolved_rr_model}")
 
     except Exception as e:
         click.secho(f"Error creating database: {str(repr(e))}", fg="bright_red", err=True)

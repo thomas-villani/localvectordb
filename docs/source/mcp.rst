@@ -341,7 +341,10 @@ Available in both read-only and read-write modes:
    Get detailed information about a specific database, including statistics, configuration, and metadata schema.
 
 **query_database**
-   Search using vector, keyword, or hybrid search with configurable parameters:
+   Search using vector, keyword, or hybrid search with configurable parameters.
+   If the database was created with a persisted default reranker (see
+   :doc:`query`), results are automatically reranked by it — no MCP-side
+   configuration needed. Parameters:
 
    * ``search_type``: "vector", "keyword", or "hybrid"
    * ``return_type``: "documents", "chunks", "context", "enriched", or "sections".

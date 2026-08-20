@@ -835,6 +835,8 @@ Create Database
 - ``--chunk-overlap``: Overlap between chunks
 - ``--chunk-delimiter``: Delimiter for ``--chunking-method delimiter`` (default: a blank line). The escapes ``\n``, ``\t``, ``\r`` are interpreted, e.g. ``--chunk-delimiter '\n---\n'``; the value is persisted with the database
 - ``--metadata-schema``: Predefined schema (``files``, ``documents``, ``research_papers``, ``code_repository``, ``customer_support``)
+- ``--reranker-provider``: Persist a default reranker for the database (e.g. ``sentence_transformers``, ``jina``). Every search — CLI, library, MCP, server — then reranks with it automatically; ``--no-rerank`` on ``db <name> search`` disables it per call
+- ``--reranker-model``: Model for ``--reranker-provider`` (provider default when omitted)
 
 Delete Database
 ^^^^^^^^^^^^^^^
@@ -1181,6 +1183,10 @@ Search Operations
 - ``--context-unit``: Unit for ``--context-window`` (``chunks``, ``tokens``, ``words``, ``characters``) - defaults to ``chunks``
 - ``--context-truncate``: Hard-truncate assembled context to exactly the budget (non-chunk ``--context-unit`` only)
 - ``--metadata-filter``: Metadata filter in JSON format
+- ``--rerank/--no-rerank``: ``--rerank`` asserts reranking happens (via the database's persisted default or ``--rerank-provider``) and fails if neither exists; ``--no-rerank`` disables the persisted default for this search. Omitted: the persisted default applies when configured
+- ``--rerank-provider``: One-off reranker for this search (e.g. ``sentence_transformers``, ``jina``), overriding any persisted default
+- ``--rerank-model``: Model for ``--rerank-provider`` (provider default when omitted)
+- ``--rerank-k``: Candidate-pool size handed to the reranker before truncating to ``--limit`` (default ``5 * limit``, clamped to 200)
 - ``--metadata/--no-metadata``: Include metadata in output
 - ``--pretty, -p``: Human-readable, titled output
 - ``--format, -f``: Output format (``table`` or ``json``, default ``table``); ``-j`` is a shortcut for ``--format json``

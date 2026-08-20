@@ -89,6 +89,9 @@ class DatabaseManagerMock:
         context_window: int = 2,
         context_unit: str = "chunks",
         context_truncate: bool = False,
+        reranker_config=None,
+        rerank_k=None,
+        rerank=None,
     ):
         names = database_names or list(self._created_dbs)
         all_results = {}
@@ -120,7 +123,9 @@ class DatabaseManagerMock:
             self.databases.pop(name)
         return True
 
-    def create_db(self, new_db_name: str, metadata_schema=None, db_config=None, embedding_config=None):
+    def create_db(
+        self, new_db_name: str, metadata_schema=None, db_config=None, embedding_config=None, reranker_config=None
+    ):
         self._created_dbs.add(new_db_name)
         db_file = self.base_path / f"{new_db_name}.sqlite"
         db_file.touch()
@@ -150,6 +155,9 @@ class DatabaseManagerMock:
         db.chunk_overlap = 1
         db.metadata_schema = {}
         db.fts_enabled = True
+        # A Mock would leak into the create/info echo's `reranker` field (a
+        # StrictModel Optional[dict]); mirror the real "no default" case.
+        db.get_default_reranker = lambda: None
         db._stats = {"documents": 0, "chunks": 0, "index_vectors": 0}
         db.get_stats = lambda: db._stats
 

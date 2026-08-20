@@ -372,4 +372,17 @@ def validate_database_creation_params(data: Dict[str, Any]) -> Dict[str, Any]:
                     field="embedding.provider",
                     value=provider,
                 )
+    if "reranker" in data:
+        validate_field_type(data, "reranker", dict)
+        rr_config = data["reranker"]
+        from localvectordb.reranking import RerankerRegistry
+
+        rr_available = RerankerRegistry.list()
+        rr_provider = rr_config.get("provider")
+        if not isinstance(rr_provider, str) or rr_provider.lower() not in rr_available:
+            raise ValidationError(
+                f"reranker provider must be one of: {', '.join(sorted(rr_available))}",
+                field="reranker.provider",
+                value=rr_provider,
+            )
     return data
