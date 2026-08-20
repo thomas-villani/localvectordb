@@ -12,6 +12,14 @@ export type MetadataFieldType =
 
 export type SearchType = "vector" | "keyword" | "hybrid";
 
+/**
+ * Retrieval granularity: which unit is searched. `"chunks"` (the default)
+ * searches chunk vectors; `"sections"` and `"documents"` search the
+ * hierarchical indexes (requires the database to have been built with
+ * hierarchical embeddings). All levels support all three `search_type`s.
+ */
+export type SearchLevel = "chunks" | "sections" | "documents";
+
 export type ContextUnit = "chunks" | "tokens" | "words" | "characters";
 
 export type ReturnType =
@@ -21,10 +29,19 @@ export type ReturnType =
   | "context"
   | "enriched";
 
+/**
+ * How chunk scores aggregate into a document score when `return_type` is
+ * `"documents"`. The server default is `"auto"`: `"best"` for a pure vector
+ * search, `"frequency_boost"` otherwise — measured, leave it unless you have a
+ * reason. `"percentile"` takes an order statistic over a document's chunk
+ * scores; configure it via `document_scoring_options: { percentile: 0.9 }`.
+ */
 export type DocumentScoringMethod =
+  | "auto"
   | "best"
   | "average"
-  | "frequency_boost";
+  | "frequency_boost"
+  | "percentile";
 
 export type QueryResultType =
   | "document"
@@ -163,7 +180,16 @@ export interface InsertOptions extends UpsertOptions {
  */
 export interface BaseQueryOptions {
   search_type?: SearchType;
+  /**
+   * Unit of the returned results. When omitted, the server returns the natural
+   * unit of `search_level` (a section search answers in sections) — prefer
+   * omitting it over hardcoding `"documents"`. Streaming
+   * ({@link StreamQueryOptions}) rejects `"sections"`; use `query()` for
+   * section results.
+   */
   return_type?: ReturnType;
+  /** Retrieval granularity. Defaults to `"chunks"`. See {@link SearchLevel}. */
+  search_level?: SearchLevel;
   k?: number;
   score_threshold?: number;
   filters?: Record<string, unknown>;
@@ -191,6 +217,18 @@ export interface BaseQueryOptions {
   semantic_dedup_threshold?: number;
   document_scoring_method?: DocumentScoringMethod;
   document_scoring_options?: Record<string, unknown>;
+  /**
+   * Cross-encoder reranking of the candidate pool, e.g.
+   * `{ provider: "sentence_transformers", model: "BAAI/bge-reranker-base" }`.
+   * Mirrors the library's `query(reranker_config=...)`; the server constructs
+   * the reranker from this config.
+   */
+  reranker_config?: Record<string, unknown>;
+  /**
+   * Candidate-pool size fetched before reranking down to `k`. Only used when
+   * `reranker_config` is set. Server default is `5 * k`, clamped to 200.
+   */
+  rerank_k?: number;
 }
 
 export interface QueryOptions extends BaseQueryOptions {

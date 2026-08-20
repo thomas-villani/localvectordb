@@ -35,6 +35,28 @@ jobs:
       - name: Security lint with bandit
         run: uv run bandit -c pyproject.toml -r src/
 
+  # The JS SDK's typecheck/tests otherwise run only in the tag-triggered npm
+  # release workflow, where a failure blocks a release already in flight —
+  # catch it at PR time instead. Cheap (~30s), so no path filter.
+  sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+
   test:
     needs: lint
     runs-on: ${{ matrix.os }}

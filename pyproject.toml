@@ -334,6 +334,16 @@ filename = "docs/source/conf.py"
 search = 'release = "{current_version}"'
 replace = 'release = "{new_version}"'
 
+# The npm release workflow refuses a v* tag whose version differs from the JS
+# SDK's package.json, so keep it in lock-step too. CAVEAT: npm requires strict
+# semver, so PEP 440 pre-releases (0.2.0rc1) must NOT be bumped through this
+# entry — npm would need 0.2.0-rc.1. For an rc, bump package.json by hand (or
+# skip publishing the SDK for that rc); final X.Y.Z versions round-trip fine.
+[[tool.bumpversion.files]]
+filename = "sdk/js/package.json"
+search = "\"version\": \"{current_version}\""
+replace = "\"version\": \"{new_version}\""
+
 # Keep the MCP bundle (mcpb/) in version lock-step with the package: the
 # manifest's own version, the bundle pyproject's version, and its pin on the
 # published package.
