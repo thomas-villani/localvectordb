@@ -5,7 +5,26 @@ All notable changes to `@localvectordb/sdk` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [Unreleased]
+
+### Added
+
+- Query options the server already supported but the SDK could not express:
+  - `search_level` (`"chunks" | "sections" | "documents"`) — hierarchical
+    retrieval granularity, previously unreachable from TypeScript.
+  - `reranker_config` / `rerank_k` — cross-encoder reranking of the candidate
+    pool, mirroring the library's `query(reranker_config=...)`.
+- `DocumentScoringMethod` gains the missing `"auto"` (the server default:
+  `best` for vector search, `frequency_boost` otherwise) and `"percentile"`
+  (configured via `document_scoring_options: { percentile: 0.9 }`).
+
+### Changed
+
+- `return_type` documentation now states the omission semantics (the server
+  answers in the natural unit of `search_level`) and that streaming rejects
+  `"sections"`.
+
+## [0.1.0] - 2026-08-19
 
 Initial public release. Targets the LocalVectorDB **v0.1.0** server HTTP API
 (all routes under `/api/v1`).

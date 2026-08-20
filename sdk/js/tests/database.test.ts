@@ -400,6 +400,36 @@ describe("DatabaseHandle", () => {
     expect(body.context_truncate).toBe(true);
   });
 
+  it("query() forwards search_level, scoring, and reranker options", async () => {
+    const db = client().database("testdb");
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      jsonResponse({ results: [], search_type: "hybrid", return_type: "sections", total_results: 0 }),
+    );
+
+    await db.query("test", {
+      search_level: "sections",
+      document_scoring_method: "auto",
+      document_scoring_options: { percentile: 0.9 },
+      reranker_config: { provider: "sentence_transformers", model: "BAAI/bge-reranker-base" },
+      rerank_k: 50,
+    });
+
+    const body = JSON.parse(
+      vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string,
+    );
+    expect(body.search_level).toBe("sections");
+    expect(body.document_scoring_method).toBe("auto");
+    expect(body.document_scoring_options).toEqual({ percentile: 0.9 });
+    expect(body.reranker_config).toEqual({
+      provider: "sentence_transformers",
+      model: "BAAI/bge-reranker-base",
+    });
+    expect(body.rerank_k).toBe(50);
+    // return_type deliberately omitted: the server answers in the natural
+    // unit of search_level, so the SDK must not inject one.
+    expect(body).not.toHaveProperty("return_type");
+  });
+
   it("filter() sends filters + options", async () => {
     const db = client().database("testdb");
     vi.mocked(globalThis.fetch).mockResolvedValue(
