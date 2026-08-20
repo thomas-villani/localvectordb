@@ -1472,8 +1472,6 @@ class TestFusedSearch:
                 db.close()
 
     def test_fused_async(self):
-        import asyncio
-
         with tempfile.TemporaryDirectory() as tmpdir:
             db = _make_hier_db(tmpdir)
             try:

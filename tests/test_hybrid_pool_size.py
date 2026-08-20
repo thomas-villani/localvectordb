@@ -21,8 +21,12 @@ from unittest.mock import patch
 
 import pytest
 
-from localvectordb.database import LocalVectorDB
-from localvectordb.database._search import _hybrid_pool_size
+from localvectordb.database import LocalVectorDB, _search
+
+
+def _hybrid_pool_size(k: int) -> int:
+    """Read through the module so a monkeypatched value is observed."""
+    return _search._hybrid_pool_size(k)
 
 
 class TestPoolArithmetic:

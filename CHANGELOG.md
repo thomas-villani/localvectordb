@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-19
+
 ### Fixed
 
 - **Bulk operations on ≥32,767 ids no longer die with `sqlite3.OperationalError:
@@ -19,6 +21,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   benchmark workflow ran the tier-2 insert benchmark at its 50,000-document
   scale, which crashed inside `upsert()`'s existing-chunk pre-fetch; search-path
   id lists are bounded by pool sizes and were never affected.
+- **JavaScript SDK: the query surface the server already supported is now
+  expressible from TypeScript** — `search_level` (hierarchical retrieval was
+  unreachable), `reranker_config`/`rerank_k` (cross-encoder reranking), and the
+  missing `DocumentScoringMethod` values `"auto"` (the server default) and
+  `"percentile"`. The SDK never sent wrong values — these were type-surface
+  gaps, and the server rejects unknown fields, so the affected features were
+  simply unusable from JS. See `sdk/js/CHANGELOG.md`.
+- All nine open CodeQL alerts resolved (quality-level, none security-severity):
+  an unexplained bare `except` in section-metadata hydration, NaN checks
+  spelled `v != v` in a benchmark reporter, a test override whose signature had
+  drifted from `embed_batch`'s, and assorted test hygiene.
+
+### Security
+
+- Bumped the locked (transitive) `cryptography` from 48.0.1 to 50.0.0
+  (GHSA: PKCS#7 `EnvelopedData` decryption Bleichenbacher oracle). Pulled in
+  via the MCP extra's auth stack (authlib/joserfc) and all2md's Outlook
+  extra (msoffcrypto-tool); localvectordb never calls the vulnerable PKCS#7
+  path itself.
+
+### Infrastructure
+
+- The JS SDK's typecheck/tests/build now run in PR-time CI; previously they ran
+  only inside the tag-triggered npm release workflow, where a failure blocks a
+  release already in flight.
+- `bump-my-version` now keeps `sdk/js/package.json` in version lock-step (the
+  npm tag workflow refuses a mismatch). Caveat documented for PEP 440 rc
+  versions, which npm's semver cannot represent.
 
 ## [0.1.0] - 2026-08-19
 

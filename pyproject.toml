@@ -1,6 +1,6 @@
 [project]
 name = "localvectordb"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 license-files = ["LICENSE"]
 description = "A document-first vector database on SQLite + FAISS: measured section-level retrieval, reverse-RAG fact-checking, and pluggable local or hosted embeddings"
@@ -267,7 +267,7 @@ dev = [
 
 
 [tool.bumpversion]
-current_version = "0.1.0"
+current_version = "0.1.1"
 # PEP 440 versions with an optional release-candidate suffix (e.g. 0.1.0rc1).
 # A final release omits the pre-release parts; pre_l defaults to "final" which
 # selects the short serialize form below.

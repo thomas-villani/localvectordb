@@ -1344,7 +1344,7 @@ class TestEmbeddingRegistry:
             def max_batch_size(self):
                 return 100
 
-            async def embed_batch(self, texts, batch_size=None):
+            async def embed_batch(self, texts, batch_size=None, progress_callback=None, *, task="document"):
                 return np.array([])
 
             def get_dimension(self):

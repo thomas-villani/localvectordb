@@ -2746,6 +2746,8 @@ class SearchMixin(LocalVectorDBBase, ABC):
                     raw = row["metadata"]
                     section_metadata.update(json.loads(raw) if isinstance(raw, str) else raw)
                 except (json.JSONDecodeError, TypeError):
+                    # Malformed stored section metadata must not fail the query;
+                    # the result simply carries the document-level metadata.
                     pass
             results.append(
                 QueryResult(
