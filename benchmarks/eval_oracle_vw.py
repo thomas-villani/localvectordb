@@ -67,6 +67,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--max-papers", type=int, default=None)
     p.add_argument("--allow-embed", action="store_true")
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument(
+        "--per-query-out",
+        type=Path,
+        default=None,
+        help="Dump per-query data for router training: qids/qtexts, the full "
+        "per-query x per-weight nDCG matrix per target, and pre-fusion leg "
+        "stats. The aggregate --out file is unchanged by this flag.",
+    )
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("localvectordb.chunking").setLevel(logging.ERROR)
@@ -79,6 +87,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     fts = FTS(uids, texts, udocs)
     kw_cap = [fts.search(t, SEARCH_K, q_scope[i] if q_scope else None) for i, t in enumerate(qtexts)]
     captured = list(zip(vec_cap, kw_cap, strict=True))
+
+    per_query: Optional[Dict[str, object]] = None
+    if args.per_query_out:
+        # Per-query leg stats, computed BEFORE fusion and roll-up, so they are
+        # target-independent and cost nothing extra. kw scores are raw FTS5
+        # bm25 where NEGATIVE is better (the fuse() negation happens later), so
+        # "kw_bm25_best" is the MINIMUM. Query-text-only features (length,
+        # quoting, IDF profile) are recomputed downstream from qtexts.
+        leg: Dict[str, list] = {
+            "n_kw_hits": [],
+            "kw_bm25_best": [],
+            "vec_top1": [],
+            "vec_margin": [],
+            "vec_top10_mean": [],
+        }
+        for vec, kw in captured:
+            vs = sorted((float(s) for s in vec.values()), reverse=True)
+            leg["n_kw_hits"].append(len(kw))
+            leg["kw_bm25_best"].append(float(min(kw.values())) if kw else None)
+            leg["vec_top1"].append(vs[0] if vs else None)
+            leg["vec_margin"].append(vs[0] - vs[1] if len(vs) > 1 else None)
+            leg["vec_top10_mean"].append(float(np.mean(vs[:10])) if vs else None)
+        per_query = {
+            "dataset": args.dataset,
+            "level": args.level,
+            "model_key": args.model_key,
+            "vw_grid": list(VW_GRID),
+            "qids": list(qids),
+            "qtexts": list(qtexts),
+            "leg": leg,
+            "targets": {},
+        }
 
     bench = cell.bench
     targets = [("section", bench.section_qrels), ("doc", bench.doc_qrels)]
@@ -128,6 +168,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"  {moved:.1%} of queries argmax at a non-fixed weight; "
             f"{big_gain:.1%} gain more than 0.05 nDCG from a personal weight"
         )
+        if per_query is not None:
+            per_query["targets"][tname] = {"ndcg_by_vw": [[float(x) for x in row] for row in pq]}  # type: ignore[index]
         results[tag] = {
             "n_queries": len(qids),
             "vw_grid": list(VW_GRID),
@@ -146,6 +188,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.out:
         args.out.write_text(json.dumps(results, indent=2), encoding="utf-8")
         logger.info("Wrote %s", args.out)
+    if per_query is not None:
+        args.per_query_out.write_text(json.dumps(per_query), encoding="utf-8")
+        logger.info("Wrote %s", args.per_query_out)
     return 0
 
 
