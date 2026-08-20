@@ -1,6 +1,6 @@
 {
   "name": "@localvectordb/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript SDK for LocalVectorDB — a document-first vector database with SQLite + FAISS, hybrid search, and an HTTP server",
   "type": "module",
   "author": "Tom Villani <thomas.villani@gmail.com>",

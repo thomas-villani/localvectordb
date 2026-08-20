@@ -201,6 +201,8 @@ class TestAsyncUpsert:
                 if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
+                # Best-effort teardown: a pool already closed by the test body
+                # must not fail the test.
                 pass
 
 
@@ -535,6 +537,8 @@ class TestAsyncInMemorySpecific:
                 if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
+                # Best-effort teardown: a pool already closed by the test body
+                # must not fail the test.
                 pass
 
     async def test_concurrent_async_operations_in_memory(self):
@@ -570,6 +574,8 @@ class TestAsyncInMemorySpecific:
                 if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
+                # Best-effort teardown: a pool already closed by the test body
+                # must not fail the test.
                 pass
 
 
@@ -619,6 +625,8 @@ class TestAsyncErrorHandling:
                 if hasattr(db, "async_connection_pool") and db.async_connection_pool:
                     await db.async_connection_pool.close_all()
             except Exception:
+                # Best-effort teardown: a pool already closed by the test body
+                # must not fail the test.
                 pass
 
 

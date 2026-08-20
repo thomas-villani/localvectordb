@@ -69,6 +69,7 @@ import bisect
 import dataclasses
 import json
 import logging
+import math
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -1616,11 +1617,11 @@ def print_chunks(res: Dict[str, Any]) -> None:
                     r["ndcg"],
                     r["n_vectors"],
                     r["median_tokens"],
-                    "--" if cross != cross else "%.1f%%" % (100 * cross),
+                    "--" if math.isnan(cross) else "%.1f%%" % (100 * cross),
                 )
                 for name, _, _ in BANDS:
                     v = r["banded"][name]
-                    line += " %9s" % ("--" if v != v else "%.4f" % v)
+                    line += " %9s" % ("--" if math.isnan(v) else "%.4f" % v)
                 print(line)
             print("\n  marginal return per index growth:")
             for step, mm in a["marginal"].items():
@@ -1853,7 +1854,7 @@ def print_hier(res: Dict[str, Any]) -> None:
                 line = "    %-18s %7.4f" % (arm, overall)
                 for name, _, _ in BANDS:
                     v = t["banded"][arm][name]
-                    line += " %8s" % ("--" if v != v else "%.4f" % v)
+                    line += " %8s" % ("--" if math.isnan(v) else "%.4f" % v)
                 print(line)
             b = t["boot"]["rawspan_vs_centroid"]
             print(
@@ -1916,7 +1917,7 @@ def print_diag(res: Dict[str, Any]) -> None:
             line = "      %6s %+9.4f" % (d, row["delta_overall"])
             for name, _, _ in BANDS:
                 v = row["delta_banded"][name]
-                line += " %9s" % ("--" if v != v else "%+.4f" % v)
+                line += " %9s" % ("--" if math.isnan(v) else "%+.4f" % v)
             print(line)
 
         print("\n  T2  within-scope geometry (mean pairwise cos / effective directions)")
