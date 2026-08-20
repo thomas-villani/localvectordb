@@ -322,10 +322,10 @@ All query methods support these parameters:
   queries (see the warning under ``search_type="hybrid"`` above).
 * ``rerank_k`` (int, optional): Size of the candidate pool fetched *before*
   reranking, defaulting to ``5 * k`` (capped at 200). Only has an effect when
-  ``reranker`` or ``reranker_config`` is supplied — without over-fetching, a
-  reranker can only reorder the top ``k`` it was already given, so it cannot
-  improve recall. See the Cross-Encoder Reranking section of :doc:`querybuilder`
-  for the available rerankers.
+  reranking is active — without over-fetching, a reranker can only reorder the
+  top ``k`` it was already given, so it cannot improve recall. See the
+  Cross-Encoder Reranking section of :doc:`querybuilder` for the available
+  rerankers, and `Reranking and the persisted default`_ below.
 * ``filters`` (dict, optional): Metadata filters to apply. Filter fields must be
   declared in the database's ``metadata_schema`` (reserved columns like ``id`` and
   ``created_at`` are also allowed); filtering on an undeclared field or using an
@@ -333,8 +333,49 @@ All query methods support these parameters:
   ``ValueError`` subclass; HTTP 400 ``INVALID_FILTER`` over the server API).
   See :doc:`metadata.filtering`.
 
-Search Type Specific
-^^^^^^^^^^^^^^^^^^^^
+Reranking and the persisted default
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Cross-encoder reranking re-scores the fetched candidate pool with a model that
+reads the query and each candidate together — in our retrieval study it was
+worth roughly 9× any first-stage parameter, with model choice dominating the
+effect (bge-base-class or hosted rerankers transfer; MS-MARCO minis measured
+null-to-negative). There are two ways to turn it on:
+
+**Per call**, as before::
+
+    results = db.query(
+        "what is attention?",
+        reranker_config={"provider": "sentence_transformers",
+                         "model": "BAAI/bge-reranker-base"},
+    )
+
+**Persisted per database** — set once at creation (or later), applied by every
+``query()`` on every surface (library, CLI, MCP, server) with no per-call
+ceremony::
+
+    db = LocalVectorDB(
+        "mydb",
+        reranker_config={"provider": "sentence_transformers",
+                         "model": "BAAI/bge-reranker-base"},
+    )
+    # ... or on an existing database:
+    db.set_default_reranker({"provider": "jina", "api_key": "$JINA_API_KEY"})
+    db.get_default_reranker()      # read it back
+    db.set_default_reranker(None)  # clear it
+
+The default is stored in the database's own config (like the embedding
+provider) and survives reopen. For hosted providers store credentials as
+environment references (``api_key="$MY_KEY_VAR"``, resolved when the reranker
+is constructed) — a raw key would be written into the database file.
+
+Precedence per call: a ``reranker`` instance > ``reranker_config`` >
+``reranker=False`` > the persisted default. ``reranker=False`` disables
+reranking (including the default) for that one call; over HTTP the same switch
+is the ``rerank: false`` request field. Cursors and streaming never rerank, so
+they simply ignore the persisted default. The default reranker is constructed
+lazily on the first query that uses it and cached per database — opening a
+database never loads a model.
 
 **Hybrid Search:**
 

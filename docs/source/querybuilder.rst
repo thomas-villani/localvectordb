@@ -397,6 +397,15 @@ Use a cross-encoder or reranking model to re-score results for higher relevance.
 evaluate query-document pairs jointly, producing more accurate relevance scores than bi-encoder
 (embedding) similarity alone.
 
+.. note::
+   ``QueryBuilder.rerank()`` and friends are *post-processing* steps
+   (recency, diversity, cross-encoder) applied to the builder's result set —
+   distinct from ``db.query(reranker=...)`` and from the database's
+   *persisted default reranker* (see :doc:`query`). When a builder configures
+   any rerank method, the persisted default is automatically suppressed for
+   the underlying query so results are never reranked twice; a builder with
+   no rerank step inherits the persisted default as usual.
+
 .. code-block:: python
 
    # Rerank using a local cross-encoder model (requires sentence-transformers)

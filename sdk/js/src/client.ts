@@ -69,6 +69,7 @@ export class LocalVectorDBClient {
       metadata_schema: options?.metadata_schema,
       database: options?.database,
       embedding: options?.embedding,
+      reranker: options?.reranker,
     });
   }
 

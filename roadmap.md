@@ -116,18 +116,27 @@ The study says this gap matters more than any tuning knob: reranking was worth
 bge-base-class or hosted, never MS-MARCO minis, which measured null-to-negative
 on our workloads). Plan:
 
-- **A persisted per-database default reranker** (`reranker_config` at creation,
-  like the embedding provider), so `query()` applies it without per-call
-  ceremony and every surface — CLI, MCP, server — inherits it for free. Per-call
-  parameters stay as overrides.
-- **CLI flags** on `search` (`--rerank`, `--rerank-model`, `--rerank-k`) for
-  one-off use without touching the database config.
+- ~~**A persisted per-database default reranker**~~ **DONE** — `reranker_config`
+  at creation (or `set_default_reranker()` later), persisted in the DB config,
+  applied by `query()` on every surface; per-call params override,
+  `reranker=False` / wire `rerank: false` disables per call; cursors ignore it.
+  Along the way: the `/query-multi-column` and global `/search` routes silently
+  dropped `reranker_config`/`rerank_k` (fixed), multi-column now reranks the
+  merged pool exactly once, and a builder rerank step suppresses the DB default
+  (no double-rerank).
+- ~~**CLI flags** on `search`~~ **DONE** — `--rerank/--no-rerank`,
+  `--rerank-provider`, `--rerank-model`, `--rerank-k`; creation flags
+  `--reranker-provider`/`--reranker-model` on `lvdb create`.
 - **Naming cleanup** for the `QueryBuilder.rerank()` collision — likely
   `postprocess()` or documenting the distinction loudly; renaming after 1.0
-  would be a break, now it is a deprecation alias.
-- MCP: decide deliberately whether `query_database` grows a rerank argument or
-  simply respects the database default (the default-config route needs no new
-  tool surface, which is probably right for agents).
+  would be a break, now it is a deprecation alias. (Distinction + no-double-apply
+  now documented in querybuilder docs; the rename itself is still open.)
+- ~~MCP~~ **DECIDED: respects the database default** — `query_database` inherits
+  it through `db.query_async()` with zero new tool surface (right for agents;
+  documented in the tool description).
+- Follow-up (security): per-request `reranker_config.base_url` on `/query` is
+  ungated (pre-existing); the *persisted* reranker base_url now goes through
+  the embedding SSRF policy at create time.
 
 ### 3. `lvdb` CLI review and the `db` command restructure
 

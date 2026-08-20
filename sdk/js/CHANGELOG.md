@@ -5,6 +5,17 @@ All notable changes to `@localvectordb/sdk` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `CreateDatabaseOptions.reranker` — persist a default reranker on the database
+  at creation, applied by every query server-side. The resolved (redacted)
+  config comes back on `CreateDatabaseConfig.reranker`; servers older than the
+  feature ignore the key, so check the echo rather than assuming it took.
+- Query options gain `rerank?: boolean` — pass `false` to disable the
+  database's persisted default reranker for one call.
+
 ## [0.1.1] - 2026-08-19
 
 ### Added

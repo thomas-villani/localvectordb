@@ -1260,6 +1260,7 @@ class TestQueryExecutorExecution:
             semantic_dedup_threshold=None,
             document_scoring_method="auto",
             document_scoring_options=None,
+            reranker=None,
         )
 
         assert results == sample_query_results
@@ -1298,6 +1299,7 @@ class TestQueryExecutorExecution:
             semantic_dedup_threshold=None,
             document_scoring_method="auto",
             document_scoring_options=None,
+            reranker=None,
         )
 
     def test_execute_filter_only_query(self, mock_db):

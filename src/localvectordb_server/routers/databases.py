@@ -46,6 +46,11 @@ class CreateDatabaseBody(StrictModel):
     metadata_schema: Optional[Dict[str, Any]] = None
     database: Optional[Dict[str, Any]] = None
     embedding: Optional[Dict[str, Any]] = None
+    # Persisted default reranker for the new database, same shape as query()'s
+    # per-call reranker_config: {"provider": ..., "model": ..., **kwargs}.
+    # Declared first-class deliberately: extra="ignore" above would otherwise
+    # swallow the key silently and the caller would never learn it was dropped.
+    reranker: Optional[Dict[str, Any]] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -69,6 +74,8 @@ class DatabaseConfigInfo(StrictModel):
     chunk_overlap: int
     metadata_schema: Dict[str, MetadataFieldInfo]
     fts_enabled: bool
+    # The database's persisted default reranker (api_key redacted), or None.
+    reranker: Optional[Dict[str, Any]] = None
 
 
 class CreateDatabaseConfigInfo(DatabaseConfigInfo):
@@ -179,6 +186,60 @@ def _enforce_embedding_url_policy(request_embedding: Dict[str, Any], server_embe
             )
 
 
+def _enforce_reranker_url_policy(request_reranker: Dict[str, Any], server_embedding: EmbeddingSettings) -> None:
+    """Reject request-supplied reranker base_urls per the same SSRF policy.
+
+    A persisted default reranker's ``base_url`` is an SSRF sink exactly like an
+    embedding provider's: the server POSTs to it at query time, on every query,
+    forever. The operator's embedding URL policy (allow flag + host allowlist +
+    trusted server URLs) governs it identically.
+    """
+    url = request_reranker.get("base_url")
+    if not (isinstance(url, str) and url):
+        return
+    if url in _server_trusted_urls(server_embedding):
+        return
+    if not server_embedding.allow_custom_provider_url:
+        raise APIError(
+            message=(
+                "Custom reranker provider URLs are not permitted. The operator must set "
+                "embedding.allow_custom_provider_url=true (and optionally embedding.allowed_provider_hosts) "
+                "to enable per-request provider URLs."
+            ),
+            error_code="RERANKER_URL_NOT_ALLOWED",
+            status_code=403,
+            recoverable=False,
+        )
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValidationError(
+            f"Reranker base_url must use http or https (got scheme {parsed.scheme!r})",
+            field="reranker.base_url",
+        )
+    host = parsed.hostname
+    if not host:
+        raise ValidationError("Reranker base_url must include a host", field="reranker.base_url")
+    allowed = server_embedding.allowed_provider_hosts
+    if allowed is not None and not validate_host_against_patterns(host, allowed):
+        raise APIError(
+            message=f"Reranker provider host '{host}' is not in the configured allowlist",
+            error_code="RERANKER_URL_HOST_NOT_ALLOWED",
+            status_code=403,
+            recoverable=False,
+        )
+
+
+def _redacted_reranker(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A reranker config safe to echo: raw api_key masked, ``$VAR`` refs kept."""
+    if not config:
+        return None
+    out = dict(config)
+    key = out.get("api_key")
+    if isinstance(key, str) and key and not key.startswith("$"):
+        out["api_key"] = "***"
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
@@ -206,6 +267,8 @@ async def create_database(
             data["database"] = body.database
         if body.embedding is not None:
             data["embedding"] = body.embedding
+        if body.reranker is not None:
+            data["reranker"] = body.reranker
 
         data = validate_database_creation_params(data)
         name = data["name"]
@@ -243,13 +306,21 @@ async def create_database(
             except Exception as e:
                 raise ValidationError(f"Invalid embedding configuration: {str(e)}") from e
 
+        reranker_config = data.get("reranker")
+        if reranker_config is not None:
+            # Same SSRF stance as embeddings: the persisted base_url is a
+            # query-time POST target, gated by the operator's URL policy.
+            _enforce_reranker_url_policy(reranker_config, config.embedding)
+
         db_logger.log_query("create_database", database_name=name)
 
         try:
             # create_db validates the embedding model (a network round-trip for
             # provider backends) and writes to disk -- both blocking. Offload so
             # the event loop keeps serving other requests.
-            db = await run_in_threadpool(db_manager.create_db, name, metadata_schema, db_config, embedding_config)
+            db = await run_in_threadpool(
+                db_manager.create_db, name, metadata_schema, db_config, embedding_config, reranker_config
+            )
             db_logger.log_query("create_database_success", database_name=name)
 
             return {
@@ -273,6 +344,7 @@ async def create_database(
                         for field_name, field in (db.metadata_schema or {}).items()
                     },
                     "fts_enabled": db.fts_enabled,
+                    "reranker": _redacted_reranker(db.get_default_reranker()),
                 },
             }
         except Exception as e:
@@ -328,6 +400,7 @@ def get_database_info(db_name: str, db=Depends(get_db)):
                         for field_name, field in (db.metadata_schema or {}).items()
                     },
                     "fts_enabled": db.fts_enabled,
+                    "reranker": _redacted_reranker(db.get_default_reranker()),
                 },
             }
         except Exception as e:

@@ -145,9 +145,14 @@ class QueryBody(StrictModel):
     document_scoring_method: DocumentScoringMethod = "auto"
     document_scoring_options: Optional[Dict[str, Any]] = None
     reranker_config: Optional[Dict[str, Any]] = None
-    # Candidate-pool size fetched before reranking (only used when reranker_config
-    # is set). Clamped server-side to <= 200; see database `query(rerank_k=...)`.
+    # Candidate-pool size fetched before reranking (only used when reranking is
+    # active). Clamped server-side to <= 200; see database `query(rerank_k=...)`.
     rerank_k: Optional[int] = Field(default=None, ge=1)
+    # Tri-state switch over the database's PERSISTED default reranker: None
+    # (omitted) inherits it, false disables it for this call (maps to
+    # query(reranker=False)), true is a no-op (the default applies anyway --
+    # there is nothing extra to turn on without a reranker_config).
+    rerank: Optional[bool] = None
 
     @field_validator("query")
     @classmethod

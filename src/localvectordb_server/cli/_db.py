@@ -423,6 +423,35 @@ def _render_query_results(results, *, title, output_as_json, output, metadata, p
 )
 @click.option("--metadata-filter", help="Metadata filter in JSON format")
 @click.option(
+    "--rerank/--no-rerank",
+    "rerank",
+    default=None,
+    help="--rerank asserts reranking happens (the persisted default, or "
+    "--rerank-provider) and fails if neither exists; --no-rerank disables the "
+    "database's persisted default reranker for this search. Omitted: the "
+    "persisted default applies when configured.",
+)
+@click.option(
+    "--rerank-provider",
+    default=None,
+    type=str,
+    help="Rerank this search with a one-off reranker (e.g. sentence_transformers, "
+    "jina), overriding any persisted default.",
+)
+@click.option(
+    "--rerank-model",
+    default=None,
+    type=str,
+    help="Model for --rerank-provider (provider default when omitted).",
+)
+@click.option(
+    "--rerank-k",
+    default=None,
+    type=int,
+    help="Candidate-pool size handed to the reranker before truncating to --limit "
+    "(default 5*limit, clamped to 200).",
+)
+@click.option(
     "--format",
     "-f",
     "output_format",
@@ -449,6 +478,10 @@ def search(
     context_unit,
     context_truncate,
     metadata_filter,
+    rerank,
+    rerank_provider,
+    rerank_model,
+    rerank_k,
     output_format,
     output,
     metadata,
@@ -479,6 +512,35 @@ def search(
 
     db = get_ctx_db(ctx)
 
+    # Resolve the rerank flags into query() arguments.
+    if rerank_model is not None and rerank_provider is None:
+        error("Error: --rerank-model requires --rerank-provider")
+    reranker_config = None
+    if rerank_provider is not None:
+        from localvectordb.reranking import RerankerRegistry
+
+        available_rerankers = RerankerRegistry.list()
+        if rerank_provider.lower() not in available_rerankers:
+            error(
+                f"Error: Unknown reranker provider '{rerank_provider}'. "
+                f"Available: {', '.join(sorted(available_rerankers))}"
+            )
+        reranker_config = {"provider": rerank_provider}
+        if rerank_model is not None:
+            reranker_config["model"] = rerank_model
+    reranker_arg = None
+    if rerank is False:
+        if reranker_config is not None:
+            error("Error: --no-rerank cannot be combined with --rerank-provider")
+        reranker_arg = False  # explicit per-call disable of the persisted default
+    elif rerank is True and reranker_config is None and db.get_default_reranker() is None:
+        # A bare --rerank asserts reranking will happen; without a persisted
+        # default or a one-off provider there is nothing to rerank with.
+        error(
+            "Error: --rerank requires a persisted default reranker (create the "
+            "database with --reranker-provider) or an explicit --rerank-provider."
+        )
+
     # Read from stdin
     if query == "-":
         query = get_stdin_input(True, "Error: No query provided!")
@@ -498,6 +560,9 @@ def search(
             context_window=context_window,
             context_unit=context_unit,
             context_truncate=context_truncate,
+            reranker=reranker_arg,
+            reranker_config=reranker_config,
+            rerank_k=rerank_k,
         )
     except Exception as e:
         click.secho(f"Search error: {str(e)}", fg="bright_red", err=True)

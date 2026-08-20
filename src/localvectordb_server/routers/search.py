@@ -184,6 +184,9 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
     document_scoring_options = search_params.get("document_scoring_options", None)
     reranker_config = search_params.get("reranker_config")
     rerank_k = search_params.get("rerank_k")
+    # rerank=false disables the database's persisted default reranker for this
+    # call; None/true leave the default in force (see QueryBody.rerank).
+    rerank = search_params.get("rerank")
     semantic_filters = search_params.get("semantic_filters")
 
     try:
@@ -214,6 +217,7 @@ async def search_handler(db, db_name: str, search_params: Dict[str, Any]) -> Dic
                 semantic_dedup_threshold=semantic_dedup_threshold,
                 document_scoring_method=document_scoring_method,
                 document_scoring_options=document_scoring_options,
+                reranker=False if rerank is False else None,
                 reranker_config=reranker_config,
                 rerank_k=rerank_k,
             )
@@ -512,6 +516,10 @@ async def query_multi_column(db_name: str, body: MultiColumnBody, db=Depends(get
                 vector_weight=body.vector_weight,
                 document_scoring_method=body.document_scoring_method,
                 document_scoring_options=body.document_scoring_options,
+                # Previously accepted by the body model but silently dropped.
+                reranker=False if body.rerank is False else None,
+                reranker_config=body.reranker_config,
+                rerank_k=body.rerank_k,
             )
 
             # Serialize results
@@ -706,6 +714,10 @@ async def global_search(body: GlobalSearchBody, db_manager=Depends(get_db_manage
                 context_window=body.context_window,
                 context_unit=body.context_unit,
                 context_truncate=body.context_truncate,
+                # Previously accepted by the body model but silently dropped.
+                reranker_config=body.reranker_config,
+                rerank_k=body.rerank_k,
+                rerank=body.rerank,
             )
             for db_name, db_results in results.items():
                 results[db_name] = [serialize_query_result(result) for result in db_results]

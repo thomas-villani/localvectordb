@@ -100,6 +100,7 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         embedding_provider: Optional[str] = None,
         embedding_model: Optional[str] = None,
         embedding_config: Optional[Dict[str, Any]] = None,
+        reranker_config: Optional[Dict[str, Any]] = None,
         chunking_method: Union[str, Any] = "sentences",
         chunk_size: int = 500,
         chunk_overlap: int = 1,
@@ -274,6 +275,22 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 self.chunker = self._build_chunker()
 
                 embedding_config = self._resolve_saved_prefixes(embedding_config, loaded_config)
+
+            # Default reranker: resolved against saved config BEFORE _save_config()
+            # below re-persists, so the resolved value round-trips on every open.
+            # Never constructed here -- a sentence_transformers reranker loads a
+            # cross-encoder on validate/first-use, and opening a database must not
+            # load a model (same rule as the embedding provider above). Built
+            # lazily, once, by _get_default_reranker_instance().
+            self._default_reranker_config: Optional[Dict[str, Any]] = self._resolve_saved_reranker(
+                reranker_config, loaded_config
+            )
+            if self._default_reranker_config is not None:
+                # Secret warning only when the caller is supplying the config now;
+                # reopening a database that already persisted one stays quiet.
+                self._validate_reranker_config(self._default_reranker_config, warn_secret=reranker_config is not None)
+            self._default_reranker_instance: Optional[Any] = None
+            self._default_reranker_lock: threading.Lock = threading.Lock()
 
             # Build the embedding provider once, from the resolved identity.
             self._embedding_provider = EmbeddingRegistry.create_provider(
@@ -1535,6 +1552,122 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 )
         return resolved
 
+    @staticmethod
+    def _resolve_saved_reranker(
+        requested: Optional[Dict[str, Any]], loaded_config: Dict[str, str]
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve the default reranker against what this database persisted.
+
+        Unlike the embedding identity, a reranker leaves no stored artifact --
+        it is pure post-processing -- so there is nothing on disk that a new
+        choice could misinterpret. The honest precedence is therefore the
+        ``_resolve_saved_prefixes`` one, not "saved always wins": an explicit
+        constructor argument wins (with a warning when it diverges from disk),
+        the saved value applies when the caller says nothing, and a database
+        with no ``default_reranker`` key -- fresh, or written before this
+        feature existed -- simply has no default.
+
+        ``requested=None`` means "said nothing", never "clear the default":
+        clearing an existing default is ``set_default_reranker(None)``.
+        """
+        if "default_reranker" not in loaded_config:
+            return requested
+        try:
+            saved: Optional[Dict[str, Any]] = json.loads(loaded_config["default_reranker"])
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "Ignoring unreadable default_reranker config saved in this database "
+                "(not valid JSON). Reconfigure it with set_default_reranker()."
+            )
+            return requested
+        if requested is None:
+            return saved
+        if requested != saved:
+            logger.warning(
+                f"reranker_config={requested!r} overrides the persisted default reranker "
+                f"{saved!r}. The override is now this database's persisted default."
+            )
+        return requested
+
+    @staticmethod
+    def _validate_reranker_config(config: Dict[str, Any], *, warn_secret: bool = False) -> None:
+        """Name-only validation of a default reranker config.
+
+        Deliberately does NOT construct the reranker: construction can demand
+        API keys or download a cross-encoder, and neither belongs in open() or
+        create(). Unknown providers still fail fast via the registry lookup.
+        """
+        from localvectordb.reranking import RerankerRegistry
+
+        provider = config.get("provider")
+        if not provider or not isinstance(provider, str):
+            raise ValueError("reranker_config requires a non-empty 'provider' key")
+        RerankerRegistry.get(provider)  # raises ValueError on an unknown provider
+        if warn_secret:
+            api_key = config.get("api_key")
+            if isinstance(api_key, str) and api_key and not api_key.startswith("$"):
+                logger.warning(
+                    "Persisting a raw api_key in the default reranker config stores the "
+                    "secret in the database file. Use an environment reference like "
+                    "'$MY_KEY_VAR' instead (resolved at construction time)."
+                )
+
+    def get_default_reranker(self) -> Optional[Dict[str, Any]]:
+        """Return a copy of this database's persisted default reranker config, if any."""
+        import copy
+
+        return copy.deepcopy(self._default_reranker_config)
+
+    def set_default_reranker(self, config: Optional[Dict[str, Any]], persist: bool = True) -> None:
+        """Set (or clear, with ``None``) the database's default reranker.
+
+        Validates the provider name against the registry without constructing
+        the reranker, invalidates the cached instance, and -- when ``persist``
+        -- writes only its own ``default_reranker`` config key (deleting it
+        when clearing), following the ``set_sqlite_tuning`` pattern.
+        """
+        if config is not None:
+            self._validate_reranker_config(config, warn_secret=True)
+        with self._default_reranker_lock:
+            self._default_reranker_config = dict(config) if config is not None else None
+            self._default_reranker_instance = None
+        if persist:
+            with self.connection_pool.get_connection() as conn:
+                if config is None:
+                    conn.execute("DELETE FROM config WHERE key = ?", ("default_reranker",))
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                        ("default_reranker", json.dumps(self._default_reranker_config)),
+                    )
+                conn.commit()
+
+    def _get_default_reranker_instance(self) -> Optional[Any]:
+        """The cached default reranker, built lazily on first use.
+
+        Construction is deferred to the first query that needs it (never open
+        time), and the instance is cached per database: a sentence_transformers
+        reranker loads its cross-encoder once per instance, so re-constructing
+        per call would reload the model on every query.
+        """
+        if self._default_reranker_config is None:
+            return None
+        inst = self._default_reranker_instance
+        if inst is None:
+            with self._default_reranker_lock:
+                inst = self._default_reranker_instance
+                cfg = self._default_reranker_config
+                if inst is None and cfg is not None:
+                    from localvectordb.reranking import RerankerRegistry
+
+                    inst = RerankerRegistry.create_reranker(
+                        cfg.get("provider", ""),
+                        cfg.get("model"),
+                        **{k: v for k, v in cfg.items() if k not in ("provider", "model")},
+                    )
+                    self._default_reranker_instance = inst
+        return inst
+
     def _save_config(self):
         config = {
             "embedding_provider": self.embedding_provider.provider_name,
@@ -1568,6 +1701,11 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
         # non-hierarchical DB later turned hierarchical still defaults to rawspan.
         if self._hierarchical_embeddings and self._section_vector_strategy:
             config["section_vector_strategy"] = self._section_vector_strategy
+        # Persist the default reranker ONLY when configured: writing str(None)
+        # would both corrupt the key-absence check _resolve_saved_reranker relies
+        # on and fail json.loads on the next open.
+        if self._default_reranker_config is not None:
+            config["default_reranker"] = json.dumps(self._default_reranker_config)
         with self.connection_pool.get_connection() as conn:
             for key, value in config.items():
                 conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, str(value)))
