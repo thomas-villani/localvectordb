@@ -468,11 +468,28 @@ Examples:
 Version Tracking
 ^^^^^^^^^^^^^^^^
 
-Database version is tracked using:
+A database file carries **two independent version registers**, and it helps to
+know which one you are looking at:
+
+**Your metadata-migration lineage** (what this page is about). Every database
+starts at the ``1.0.0`` baseline and moves to the version of the last
+user-authored migration applied. It is stored as:
 
 1. **SQLite PRAGMA user_version**: Integer representation
-2. **Config table**: Full semantic version string (for legacy databases)
-3. **Migration log**: History of applied migrations
+2. **Config table** (``db_version``): Full semantic version string
+3. **Migration log**: History of applied migrations, which is also what
+   ``rollback("1.0.0")`` returns to
+
+**LocalVectorDB's own table layout** (``config.schema_version``). An integer
+that moves only when a release changes the on-disk tables, columns or indexes
+the library itself expects. It is maintained automatically: opening a database
+written by an older release applies the numbered, idempotent schema migrations
+above its stored version and stamps the new number. You never edit it, and
+your migrations never move it. ``db.diagnose()`` / ``lvdb db <name> doctor``
+report it as ``Schema: version N of N, created by localvectordb X.Y.Z``, and
+``get_stats()`` exposes it as ``schema_version`` / ``created_by_version``. A
+file whose stored number is *higher* than the running package knows is opened
+as-is with a warning rather than rewritten — upgrade the package.
 
 .. code-block:: python
 

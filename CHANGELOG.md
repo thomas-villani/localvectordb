@@ -51,6 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have reranked twice.** The builder now suppresses the database default for
   its underlying query whenever it carries its own rerank configuration; a
   builder without one inherits the default as usual.
+- **The on-disk schema version now means something.** A database used to be
+  stamped "1.0.0" on creation and never again, while its table layout changed
+  six times (`section_id`, `doc_faiss_id`, `embedding_enabled`, `fts_enabled`,
+  `chunk_sections`, `column_embeddings`) behind per-column existence checks that
+  swallowed their own errors — so two files stamped 1.0.0 could have different
+  schemas, and the stamp collided with the register the metadata
+  `MigrationEngine` uses for *user* migration versions. The two are now
+  separate: `config.schema_version` is an integer table-layout version advanced
+  by numbered, idempotent `SCHEMA_MIGRATIONS` (`_schema.py`), applied on open
+  above the stored version and refused (with a warning) when the file was
+  written by a newer release; `PRAGMA user_version` / `config.db_version` stay
+  the user's metadata-migration lineage with its `1.0.0` baseline. The package
+  version that created a file is recorded once as `created_by_version`. Both
+  surface in `get_stats()` and in `db.diagnose()` / `lvdb db <name> doctor`
+  (`Schema: version 5 of 5, created by localvectordb 0.1.2`). The three
+  per-database INFO lines at creation ("Database version updated to 1.0.0" ×3)
+  are gone; they were the metadata baseline, now logged once at DEBUG.
 
 ### Security
 
