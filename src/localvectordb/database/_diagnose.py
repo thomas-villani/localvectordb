@@ -164,6 +164,13 @@ class DiagnoseReport:
     embedding_provider: str = ""
     embedding_model: str = ""
 
+    #: On-disk table-layout version (``config.schema_version``) against the
+    #: version this package expects; they match after any successful open.
+    schema_version: Optional[int] = None
+    expected_schema_version: int = 0
+    #: localvectordb version that created the file, when recorded.
+    created_by_version: Optional[str] = None
+
     #: The encoder's context window in tokens, or None when no provider reports one.
     context_tokens: Optional[int] = None
     #: True when token counts came from the encoder's own tokenizer.
@@ -212,6 +219,13 @@ class DiagnoseReport:
             f"Encoder: {self.embedding_model} ({self.embedding_provider}), "
             + (f"context {self.context_tokens:,} tokens" if self.context_tokens else "context unknown"),
             f"Token counts: {'exact -- ' if self.tokens_exact else ''}{self.token_source}",
+            "Schema: "
+            + (
+                f"version {self.schema_version} of {self.expected_schema_version}"
+                if self.schema_version is not None
+                else "version not recorded"
+            )
+            + (f", created by localvectordb {self.created_by_version}" if self.created_by_version else ""),
             "",
         ]
 
@@ -332,6 +346,7 @@ class DiagnoseMixin(LocalVectorDBBase, ABC):
             report.documents = int(conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"])
             report.chunks = int(conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"])
             report.sections = int(conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"])
+            self._read_schema_version(conn, report)
 
             self._measure_chunks(conn, report, counter, exact, sample)
             if report.sections:
@@ -349,6 +364,21 @@ class DiagnoseMixin(LocalVectorDBBase, ABC):
     # -----------------
     # Measurement legs
     # -----------------
+    @staticmethod
+    def _read_schema_version(conn: Any, report: DiagnoseReport) -> None:
+        from localvectordb._schema import SCHEMA_VERSION
+
+        report.expected_schema_version = SCHEMA_VERSION
+        rows = conn.execute(
+            "SELECT key, value FROM config WHERE key IN ('schema_version', 'created_by_version')"
+        ).fetchall()
+        values = {row["key"]: row["value"] for row in rows}
+        try:
+            report.schema_version = int(values["schema_version"]) if "schema_version" in values else None
+        except (TypeError, ValueError):
+            report.schema_version = None
+        report.created_by_version = values.get("created_by_version")
+
     def _measure_chunks(
         self, conn: Any, report: DiagnoseReport, counter: Callable[[str], int], exact: bool, sample: int
     ) -> None:

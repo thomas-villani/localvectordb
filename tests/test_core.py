@@ -267,6 +267,10 @@ class TestDatabaseSchema:
         mock_conn = Mock()
         # Correctly set up the context manager to return mock_conn
         mock_connect.return_value.__enter__.return_value = mock_conn
+        # The schema-migration runner inspects PRAGMA table_info rows; give it
+        # an empty (iterable) result rather than a bare Mock.
+        mock_conn.execute.return_value.fetchall.return_value = []
+        mock_conn.execute.return_value.fetchone.return_value = None
 
         db_path = temp_dir / "test.db"
         read_write_lock = ReadWriteLock()

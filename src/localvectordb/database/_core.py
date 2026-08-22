@@ -2073,12 +2073,17 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
             - chunk_size
             - chunk_overlap
             - fts_enabled
+            - schema_version (on-disk table-layout version) and created_by_version
         """
         with self.connection_pool.get_connection() as conn:
             doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
             chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
             section_count = conn.execute("SELECT COUNT(*) FROM sections").fetchone()[0]
             index_size = self.index.ntotal if self.index is not None else 0
+            version_rows = conn.execute(
+                "SELECT key, value FROM config WHERE key IN ('schema_version', 'created_by_version')"
+            ).fetchall()
+            version_info = {row[0]: row[1] for row in version_rows}
             stats = {
                 "documents": doc_count,
                 "chunks": chunk_count,
@@ -2092,6 +2097,10 @@ class LocalVectorDBCore(LocalVectorDBBase, ABC):
                 "chunk_overlap": self.chunk_overlap,
                 "fts_enabled": self.fts_enabled,
                 "hierarchical_embeddings": self._hierarchical_embeddings,
+                # On-disk table-layout version (see _schema.SCHEMA_VERSION) and the
+                # package that created the file -- the two numbers a bug report needs.
+                "schema_version": int(version_info["schema_version"]) if "schema_version" in version_info else None,
+                "created_by_version": version_info.get("created_by_version"),
             }
             if self._hierarchical_embeddings:
                 stats["section_index_vectors"] = self.section_index.ntotal if self.section_index else 0

@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -12,9 +13,173 @@ from localvectordb._pools import ReadWriteLock
 from localvectordb._sqlite_uri import is_sqlite_uri, normalize_db_path
 from localvectordb.core import MetadataField, MetadataFieldType
 from localvectordb.database._utils import AsyncDatabaseExecutor, SyncDatabaseExecutor
-from localvectordb.versioning import CURRENT_SCHEMA_VERSION, DatabaseVersion, VersionManager
+from localvectordb.utils import get_system_version
+from localvectordb.versioning import INITIAL_MIGRATION_VERSION, DatabaseVersion, VersionManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Internal schema (table-layout) versioning
+# ---------------------------------------------------------------------------
+#
+# Two version registers live in a LocalVectorDB file, and they mean different
+# things:
+#
+# * ``config.schema_version`` (an integer, this section) is the TABLE LAYOUT:
+#   which columns, tables and indexes localvectordb itself expects. It moves
+#   only when the on-disk layout changes, via the numbered migrations below.
+# * ``PRAGMA user_version`` / ``config.db_version`` (semver, see
+#   :mod:`localvectordb.versioning`) is the USER's metadata-migration lineage --
+#   the ``MigrationEngine`` stamps it with the version of the last user-authored
+#   migration applied, starting from the ``1.0.0`` baseline every database gets.
+#
+# They used to share one register, which made the stored number mean nothing:
+# the layout changed six times while the stamp stayed at "1.0.0". Every entry
+# below is idempotent (existence-guarded), so a database whose stored version
+# is unknown or too low simply re-runs them harmlessly; only a version HIGHER
+# than this code knows is refused (that file was written by a newer release).
+
+
+@dataclass(frozen=True)
+class SchemaMigration:
+    """One numbered, idempotent change to the on-disk table layout.
+
+    ``ops`` is an ordered tuple of operations:
+
+    * ``("add_column", table, column, column_ddl)`` -- ``ALTER TABLE ... ADD
+      COLUMN`` if the column is absent.
+    * ``("sql", statement)`` -- run unconditionally (use ``IF NOT EXISTS`` DDL).
+    * ``("sql_if_added", statement)`` -- run only if the preceding
+      ``add_column`` actually added its column (one-time data fixups).
+    """
+
+    version: int
+    description: str
+    ops: tuple
+
+
+def _column_names(rows) -> set:
+    return {row[1] for row in rows}
+
+
+class _SchemaMigrationRunner:
+    """Applies :data:`SCHEMA_MIGRATIONS` above a stored version (sync + async)."""
+
+    @staticmethod
+    def read_version(conn: sqlite3.Connection) -> int:
+        try:
+            row = conn.execute("SELECT value FROM config WHERE key = 'schema_version'").fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        try:
+            return int(row[0]) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def apply(conn: sqlite3.Connection) -> int:
+        stored = _SchemaMigrationRunner.read_version(conn)
+        if stored > SCHEMA_VERSION:
+            logger.warning(
+                "Database schema version %d is newer than this localvectordb (%d); "
+                "opening as-is -- upgrade the package to avoid missing-column errors.",
+                stored,
+                SCHEMA_VERSION,
+            )
+            return stored
+        for migration in SCHEMA_MIGRATIONS:
+            if migration.version <= stored:
+                continue
+            last_added = False
+            for op in migration.ops:
+                kind = op[0]
+                if kind == "add_column":
+                    _, table, column, ddl = op
+                    cols = _column_names(conn.execute(f"PRAGMA table_info({table})").fetchall())
+                    last_added = column not in cols
+                    if last_added:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                        logger.info("Schema migration %d: added %s.%s", migration.version, table, column)
+                elif kind == "sql":
+                    conn.execute(op[1])
+                elif kind == "sql_if_added":
+                    if last_added:
+                        conn.execute(op[1])
+                else:  # pragma: no cover - registry typo guard
+                    raise ValueError(f"Unknown schema migration op {kind!r}")
+        _SchemaMigrationRunner._stamp(conn, stored)
+        return SCHEMA_VERSION
+
+    @staticmethod
+    def _stamp(conn: sqlite3.Connection, stored: int) -> None:
+        now = datetime.now(UTC).isoformat()
+        package_version = get_system_version()
+        if stored != SCHEMA_VERSION:
+            conn.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
+            )
+            conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version_updated_at', ?)", (now,))
+            logger.debug("Schema version %d -> %d (localvectordb %s)", stored, SCHEMA_VERSION, package_version)
+        # The package that created the file is the number an operator actually
+        # wants in a bug report; written once, never overwritten.
+        conn.execute(
+            "INSERT OR IGNORE INTO config (key, value) VALUES ('created_by_version', ?)",
+            (package_version,),
+        )
+
+    @staticmethod
+    async def apply_async(conn) -> int:
+        try:
+            cursor = await conn.execute("SELECT value FROM config WHERE key = 'schema_version'")
+            row = await cursor.fetchone()
+            stored = int(row[0]) if row else 0
+        except (sqlite3.OperationalError, TypeError, ValueError):
+            stored = 0
+        if stored > SCHEMA_VERSION:
+            logger.warning(
+                "Database schema version %d is newer than this localvectordb (%d); "
+                "opening as-is -- upgrade the package to avoid missing-column errors.",
+                stored,
+                SCHEMA_VERSION,
+            )
+            return stored
+        for migration in SCHEMA_MIGRATIONS:
+            if migration.version <= stored:
+                continue
+            last_added = False
+            for op in migration.ops:
+                kind = op[0]
+                if kind == "add_column":
+                    _, table, column, ddl = op
+                    cursor = await conn.execute(f"PRAGMA table_info({table})")
+                    cols = _column_names(await cursor.fetchall())
+                    last_added = column not in cols
+                    if last_added:
+                        await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                        logger.info("Schema migration %d: added %s.%s", migration.version, table, column)
+                elif kind == "sql":
+                    await conn.execute(op[1])
+                elif kind == "sql_if_added":
+                    if last_added:
+                        await conn.execute(op[1])
+                else:  # pragma: no cover - registry typo guard
+                    raise ValueError(f"Unknown schema migration op {kind!r}")
+        now = datetime.now(UTC).isoformat()
+        package_version = get_system_version()
+        if stored != SCHEMA_VERSION:
+            await conn.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
+            )
+            await conn.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version_updated_at', ?)", (now,)
+            )
+            logger.debug("Schema version %d -> %d (localvectordb %s)", stored, SCHEMA_VERSION, package_version)
+        await conn.execute(
+            "INSERT OR IGNORE INTO config (key, value) VALUES ('created_by_version', ?)",
+            (package_version,),
+        )
+        return SCHEMA_VERSION
 
 
 def validate_sql_identifier(identifier: str) -> None:
@@ -810,54 +975,6 @@ class DatabaseSchema:
             """,
         ]
 
-    def _migrate_hierarchical_columns(self, conn: sqlite3.Connection) -> None:
-        """Add hierarchical embedding columns to existing databases if missing."""
-        # Add section_id to chunks table if missing
-        try:
-            cursor = conn.execute("PRAGMA table_info(chunks)")
-            chunk_columns = {row[1] for row in cursor.fetchall()}
-            if "section_id" not in chunk_columns:
-                conn.execute(
-                    "ALTER TABLE chunks ADD COLUMN section_id INTEGER " "REFERENCES sections(id) ON DELETE SET NULL"
-                )
-                logger.info("Added section_id column to chunks table")
-        except Exception as e:
-            logger.debug(f"section_id migration check: {e}")
-
-        # Add doc_faiss_id to documents table if missing
-        try:
-            cursor = conn.execute("PRAGMA table_info(documents)")
-            doc_columns = {row[1] for row in cursor.fetchall()}
-            if "doc_faiss_id" not in doc_columns:
-                conn.execute("ALTER TABLE documents ADD COLUMN doc_faiss_id INTEGER")
-                logger.info("Added doc_faiss_id column to documents table")
-        except Exception as e:
-            logger.debug(f"doc_faiss_id migration check: {e}")
-
-    async def _migrate_hierarchical_columns_async(self, conn) -> None:
-        """Add hierarchical embedding columns to existing databases if missing (async)."""
-        try:
-            cursor = await conn.execute("PRAGMA table_info(chunks)")
-            rows = await cursor.fetchall()
-            chunk_columns = {row[1] for row in rows}
-            if "section_id" not in chunk_columns:
-                await conn.execute(
-                    "ALTER TABLE chunks ADD COLUMN section_id INTEGER " "REFERENCES sections(id) ON DELETE SET NULL"
-                )
-                logger.info("Added section_id column to chunks table")
-        except Exception as e:
-            logger.debug(f"section_id migration check: {e}")
-
-        try:
-            cursor = await conn.execute("PRAGMA table_info(documents)")
-            rows = await cursor.fetchall()
-            doc_columns = {row[1] for row in rows}
-            if "doc_faiss_id" not in doc_columns:
-                await conn.execute("ALTER TABLE documents ADD COLUMN doc_faiss_id INTEGER")
-                logger.info("Added doc_faiss_id column to documents table")
-        except Exception as e:
-            logger.debug(f"doc_faiss_id migration check: {e}")
-
     def _core_initialize_sync(self, metadata_schema: Optional[Dict[str, MetadataField]], conn: sqlite3.Connection):
         """Core logic for initializing database schema (sync version)"""
         # Enable foreign keys
@@ -867,8 +984,9 @@ class DatabaseSchema:
         for _, ddl in self.BASE_SCHEMA.items():
             self._sync_executor.execute(conn, ddl)
 
-        # Migrate existing databases to add hierarchical columns
-        self._migrate_hierarchical_columns(conn)
+        # Bring an existing database's table layout up to SCHEMA_VERSION
+        # (idempotent; a new database is a no-op and just gets stamped).
+        _SchemaMigrationRunner.apply(conn)
 
         # Create base indexes (uses IF NOT EXISTS so safe for existing DBs)
         for index_ddl in self.BASE_INDEXES:
@@ -878,7 +996,7 @@ class DatabaseSchema:
         if metadata_schema:
             self._setup_metadata_schema(conn, metadata_schema)
 
-        # Initialize version tracking for new databases
+        # Start the metadata-migration lineage (1.0.0 baseline) on a new database
         self._initialize_version_tracking(conn)
 
     async def _core_initialize_async(self, metadata_schema: Optional[Dict[str, MetadataField]], conn):
@@ -890,8 +1008,9 @@ class DatabaseSchema:
         for _, ddl in self.BASE_SCHEMA.items():
             await self._async_executor.execute(conn, ddl)
 
-        # Migrate existing databases to add hierarchical columns
-        await self._migrate_hierarchical_columns_async(conn)
+        # Bring an existing database's table layout up to SCHEMA_VERSION
+        # (idempotent; a new database is a no-op and just gets stamped).
+        await _SchemaMigrationRunner.apply_async(conn)
 
         # Create base indexes
         for index_ddl in self.BASE_INDEXES:
@@ -1161,48 +1280,22 @@ class DatabaseSchema:
                     conn.execute(trigger_sql)
 
     def _ensure_enhanced_metadata_schema(self, db_connection):
-        """
-        Ensure metadata_schema table has embedding_enabled and fts_enabled columns.
-        This handles migration from older database versions.
+        """Bring the table layout up to :data:`SCHEMA_VERSION` on a raw connection.
+
+        Kept as the entry point ``load_metadata_schema`` uses, so a database
+        opened through that path alone still gets the per-field embedding/FTS
+        columns and the ``column_embeddings`` table (migrations 3 and 4).
         """
         with db_connection as conn:
-            # Check if the columns exist
-            cursor = conn.execute("PRAGMA table_info(metadata_schema)")
-            columns = {row[1] for row in cursor.fetchall()}
-
-            if "embedding_enabled" not in columns:
-                logger.info("Migrating metadata_schema table to add embedding_enabled column")
-                conn.execute("ALTER TABLE metadata_schema ADD COLUMN embedding_enabled BOOLEAN DEFAULT FALSE")
-
-            if "fts_enabled" not in columns:
-                logger.info("Migrating metadata_schema table to add fts_enabled column")
-                conn.execute("ALTER TABLE metadata_schema ADD COLUMN fts_enabled BOOLEAN DEFAULT FALSE")
-
-                # Auto-enable FTS for indexed TEXT fields
-                conn.execute("""
-                    UPDATE metadata_schema
-                    SET fts_enabled = TRUE
-                    WHERE field_type = 'text' AND indexed = TRUE
-                """)
-
-            # Ensure column_embeddings table exists
-            conn.execute(self.BASE_COLUMN_EMBEDDINGS_SCHEMA)
-
-            # Create indexes for column_embeddings if not already present
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field ON "
-                "column_embeddings(document_id, field_name)"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)")
-
+            _SchemaMigrationRunner.apply(conn)
             conn.commit()
 
     def _initialize_version_tracking(self, conn: sqlite3.Connection):
         """
-        Initialize version tracking for new databases.
+        Start the metadata-migration lineage on a new database.
 
         Sets up PRAGMA user_version and records initial state in migration_log.
-        For existing databases, checks and updates version tracking as needed.
+        For existing databases, back-records the lineage if migration_log is absent.
         """
         try:
             version_manager = VersionManager(self.db_path)
@@ -1211,8 +1304,7 @@ class DatabaseSchema:
             current_version = version_manager.get_database_version(conn)
 
             if current_version == DatabaseVersion("0.0.0"):
-                # New database - initialize with current schema version
-                logger.info("Initializing version tracking for new database")
+                # New database - start the metadata-migration lineage at its baseline
                 version_manager.initialize_version_tracking(conn)
             else:
                 # Existing database - ensure version tracking is up to date
@@ -1262,9 +1354,8 @@ class DatabaseSchema:
                     pass
 
             if current_version == DatabaseVersion("0.0.0"):
-                # New database - initialize with the current schema version.
-                logger.info("Initializing version tracking for new database")
-                target = DatabaseVersion(CURRENT_SCHEMA_VERSION)
+                # New database - start the metadata-migration lineage at its baseline.
+                target = DatabaseVersion(INITIAL_MIGRATION_VERSION)
                 now = datetime.now(UTC).isoformat()
                 # PRAGMA does not accept bound parameters; the value is an int.
                 await conn.execute(f"PRAGMA user_version = {target.to_sqlite_version()}")
@@ -2355,3 +2446,57 @@ def get_common_metadata_schemas(
                 f"{", ".join(schemas.keys())}"
             )
         return schemas[schema]
+
+
+# Ordered, append-only. Add a new entry (and never edit an old one) whenever the
+# table layout changes; SCHEMA_VERSION follows automatically. Each op must be
+# idempotent -- existence-guarded ADD COLUMN or IF NOT EXISTS DDL -- because a
+# database with an unknown/legacy stamp re-runs every entry on first open.
+SCHEMA_MIGRATIONS: tuple = (
+    SchemaMigration(
+        1,
+        "hierarchical embeddings: chunks.section_id (midpoint owner)",
+        (("add_column", "chunks", "section_id", "INTEGER REFERENCES sections(id) ON DELETE SET NULL"),),
+    ),
+    SchemaMigration(
+        2,
+        "document-level vectors: documents.doc_faiss_id",
+        (("add_column", "documents", "doc_faiss_id", "INTEGER"),),
+    ),
+    SchemaMigration(
+        3,
+        "per-field embeddings: metadata_schema.embedding_enabled + column_embeddings table",
+        (
+            ("add_column", "metadata_schema", "embedding_enabled", "BOOLEAN DEFAULT FALSE"),
+            ("sql", DatabaseSchema.BASE_COLUMN_EMBEDDINGS_SCHEMA),
+            (
+                "sql",
+                "CREATE INDEX IF NOT EXISTS idx_column_embeddings_doc_field "
+                "ON column_embeddings(document_id, field_name)",
+            ),
+            ("sql", "CREATE INDEX IF NOT EXISTS idx_column_embeddings_faiss ON column_embeddings(faiss_id)"),
+        ),
+    ),
+    SchemaMigration(
+        4,
+        "per-field FTS: metadata_schema.fts_enabled (auto-enabled for indexed TEXT fields on upgrade)",
+        (
+            ("add_column", "metadata_schema", "fts_enabled", "BOOLEAN DEFAULT FALSE"),
+            (
+                "sql_if_added",
+                "UPDATE metadata_schema SET fts_enabled = TRUE WHERE field_type = 'text' AND indexed = TRUE",
+            ),
+        ),
+    ),
+    SchemaMigration(
+        5,
+        "multi-valued chunk->section attribution: chunk_sections join table",
+        (
+            ("sql", DatabaseSchema.BASE_CHUNK_SECTIONS_SCHEMA),
+            ("sql", "CREATE INDEX IF NOT EXISTS idx_chunk_sections_section_id ON chunk_sections(section_id)"),
+        ),
+    ),
+)
+
+#: Current table-layout version; a database below it is migrated on open.
+SCHEMA_VERSION: int = SCHEMA_MIGRATIONS[-1].version

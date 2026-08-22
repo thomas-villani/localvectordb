@@ -1,8 +1,15 @@
-"""Database versioning and migration tracking system for LocalVectorDB.
+"""Metadata-migration version tracking for LocalVectorDB.
 
-This module provides comprehensive database versioning capabilities using SQLite's
-built-in PRAGMA user_version along with additional metadata tracking for migrations
-and schema evolution.
+This module tracks the version of the USER's metadata-schema migration lineage --
+the semver stamped by :class:`localvectordb.migration.MigrationEngine` after each
+user-authored migration -- in SQLite's ``PRAGMA user_version`` plus the ``config``
+table, with a ``migration_log`` history. Every database starts that lineage at
+:data:`INITIAL_MIGRATION_VERSION`.
+
+It does NOT describe localvectordb's own table layout. That is the integer
+``config.schema_version`` maintained by :mod:`localvectordb._schema`
+(``SCHEMA_VERSION`` / ``SCHEMA_MIGRATIONS``), which moves only when the on-disk
+layout changes. The two registers are independent on purpose.
 
 Classes:
     DatabaseVersion: Manages version comparison and representation
@@ -18,8 +25,10 @@ from typing import Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
-# Current LocalVectorDB schema version
-CURRENT_SCHEMA_VERSION = "1.0.0"
+# Baseline of every database's metadata-migration lineage: user migrations are
+# numbered upward from here, and ``MigrationEngine.rollback("1.0.0")`` returns to
+# it. Not a table-layout version -- see the module docstring.
+INITIAL_MIGRATION_VERSION = "1.0.0"
 
 
 class DatabaseVersion:
@@ -264,7 +273,7 @@ class VersionManager:
                     ("version_updated_at", datetime.now(UTC).isoformat()),
                 )
 
-                logger.info(f"Database version updated to {version}")
+                logger.debug(f"Metadata migration version set to {version}")
 
         finally:
             if should_close:
@@ -346,7 +355,7 @@ class VersionManager:
                     (version, datetime.now(UTC).isoformat(), rollback_script, checksum),
                 )
 
-                logger.info(f"Recorded migration to version {version}")
+                logger.debug(f"Recorded metadata migration {version}")
 
         finally:
             if should_close:
@@ -360,8 +369,8 @@ class VersionManager:
 
         Parameters
         ----------
-        target_version : DatabaseVersion, optional
-            Target version to check against. Defaults to CURRENT_SCHEMA_VERSION.
+        target_version : DatabaseVersion
+            Target metadata-migration version to check against (required).
         conn : sqlite3.Connection, optional
             Database connection to use. If None, creates a new connection.
 
@@ -371,16 +380,17 @@ class VersionManager:
             True if migration is needed
         """
         if target_version is None:
-            target_version = DatabaseVersion(CURRENT_SCHEMA_VERSION)
+            raise ValueError("needs_migration() requires a target_version (e.g. DatabaseVersion('1.2.0'))")
 
         current_version = self.get_database_version(conn)
         return current_version < target_version
 
     def initialize_version_tracking(self, conn: Optional[sqlite3.Connection] = None) -> None:
         """
-        Initialize version tracking for a new database.
+        Start a new database's metadata-migration lineage at the baseline.
 
-        Sets the database to the current schema version and records initial state.
+        Stamps :data:`INITIAL_MIGRATION_VERSION` and records it in ``migration_log``
+        so user migrations (and rollbacks to the baseline) have an anchor.
 
         Parameters
         ----------
@@ -392,7 +402,7 @@ class VersionManager:
             conn = sqlite3.connect(self.db_path)
 
         try:
-            current_version = DatabaseVersion(CURRENT_SCHEMA_VERSION)
+            current_version = DatabaseVersion(INITIAL_MIGRATION_VERSION)
             self.set_database_version(current_version, conn)
 
             # Record initial state
@@ -400,7 +410,7 @@ class VersionManager:
                 str(current_version), rollback_script=None, checksum=None, conn=conn  # No rollback for initial version
             )
 
-            logger.info(f"Initialized version tracking at {current_version}")
+            logger.debug(f"Metadata migration lineage started at {current_version}")
 
         finally:
             if should_close:
