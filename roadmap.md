@@ -27,7 +27,7 @@ path. Raising that ceiling within our lane is planned (see v0.5.0), but chasing
 
 ---
 
-## Shipped: v0.1.0 (2026-08-19) and the pre-release retrieval study
+## Shipped: v0.1.0 (2026-08-19), v0.1.1 (2026-08-20), and the retrieval study
 
 The seven-item PRE-RELEASE section that used to live here — measured-default
 fixes, the keyword-leg repairs, `db.diagnose()` / `lvdb doctor`, the gate
@@ -40,195 +40,288 @@ measurements went wrong and were caught) pages for why, and
 The one standing rule worth restating outside those pages: **no retrieval
 default changes without moving a gated number on more than one corpus.**
 
+v0.1.1 carried the SQLite bound-parameter batching fix and the JS SDK surface
+fix. Landed on main since, for the next release: a persisted per-database
+default reranker with CLI flags (the old "rerankers are invisible outside the
+library" item — done except for the `QueryBuilder.rerank()` rename below), the
+per-query oracle `vector_weight` dump for router training, and a real on-disk
+schema-version register.
+
+### Ordering principle, revised 2026-08-22
+
+The earlier draft ran *review pass → trust/ops → agent depth*. That put the
+operator work (metrics, key scoping, writer locks) ahead of the thing the
+product is actually for. Two observations changed the order:
+
+- The agent-driven MCP review and the "fuller MCP navigation surface" were the
+  same work: the review *produces* the tool list. Running them as separate
+  releases would have meant designing the tools twice.
+- Most of the trust items are for people running `lvdb serve` in production; most
+  users reach the product through the `.mcpb` and the CLI. The trust work is
+  still real, but it is not what makes this product different, and the
+  freeze-sensitive surface changes get more expensive each release they wait.
+
+So: **v0.2.0 is the agent-native surface**, v0.3.0 is trust and operations, and
+the research track runs alongside both. Only the trust items that protect the
+research asset (retrieval gating in CI) are pulled into v0.2.0.
+
 ---
 
-## v0.1.x — Post-release review pass and the next experiment slate
+## v0.2.0 — Agent-native surface
 
-v0.1.0 shipped 2026-08-19 (PyPI, npm, GitHub Release with the `.mcpb` bundle).
-Before the v0.2.0 trust work starts, a short pass over the surfaces users
-actually touch — reviewed by *using* them, not by reading them — plus the
-experiment slate the retrieval study left open. These are ordered so that each
-review's findings can still change the API cheaply; v0.2.0's freeze-adjacent
-work makes them expensive later.
+The surfaces an agent actually touches — MCP, CLI, HTTP/SDK, the public Python
+API — reviewed by *using* them, then consolidated. Everything here is cheap now
+and a break after the v0.8.0 freeze.
 
-### 1. Agent-driven review — and consolidation — of the MCP server
+### 1. MCP: agent-driven review, then dispatch tools
 
-The MCP surface has accumulated ~18 flat tools (`query_database`,
-`get_document`, `grep_documents`, `list_prefixes`, `find_related_documents`,
-`patch_document`, schema and lifecycle tools, split read-only/read-write). Two
-tracks, review first so the redesign is evidence-based:
+The MCP surface is 18 flat tools (11 read-only, 7 read-write, in
+`mcp/server.py`): `query_database`, `get_document`, `grep_documents`,
+`list_prefixes`, `find_related_documents`, `patch_document`, schema and lifecycle
+tools. Eighteen tool schemas is context-window tax an agent pays on every session
+whether or not it uses them.
 
-**Consolidate into dispatch tools.** Eighteen tool schemas is context-window
-tax an agent pays on every session, whether or not it uses them. Restructure
-around one or two "master tools" with a `command` argument — CLI-like
-semantics (`lvdb query ...`, `lvdb get_document ...`, `lvdb grep ...`), which
-agents already know how to drive. Likely shape: a read tool and a write tool
-(preserving the existing read-only/read-write mode split at the dispatch
-boundary), each documenting its commands the way a CLI documents subcommands.
-The per-command help must be reachable *through* the tool (a `help` command or
-self-describing errors), because a dispatch tool's schema can no longer carry
-every argument's documentation.
-
-**Range retrieval is an HTTP gap, not an MCP gap — close it there.** Measured,
-not assumed: MCP `get_document` and the CLI already share the full portion
-selector (`document_portions.py`: chunk index/range, `char_range`,
-`line_range`, `section`, `outline`). The HTTP API is the surface that only
-returns whole documents (`GET /databases/{db}/documents/{id}` takes no portion
-parameters), which means the remote client and the JS SDK inherit the gap.
-Expose the same five selectors as query parameters on that endpoint and thread
-them through `RemoteVectorDB` and the SDK.
-
-**The agent-driven review** runs structured agent sessions (research task,
-editing task, corpus-navigation task) against a built corpus and logs friction
-rather than opinions:
+**Review first, so the redesign is evidence-based.** Structured agent sessions
+(research task, editing task, corpus-navigation task) against a built corpus,
+logging friction rather than opinions:
 
 - **Token economics.** Which tools return more than the agent needed? A `query`
   result an agent immediately follows with `get_document` calls is a signature
   worth counting — it may mean result payloads are too thin (or too fat).
 - **Affordance gaps.** What did the agent *try* to do that no tool supported?
-  This is the empirical version of v0.3.0's speculative list (`get_section`,
-  `get_outline`, `find_related` at the section level) — let the sessions
-  confirm or replace it.
+  Candidates from the earlier speculative list — `get_section`, `get_outline`,
+  `find_related` at the section level, a stable citation token so an agent can
+  quote and cite without a second round-trip — let the sessions confirm or
+  replace them.
 - **Argument-shape traps.** Wrong-but-plausible calls (metadata filter syntax,
   `return_type` values) and whether the error message got the agent back on
-  track in one step. An MCP error an agent cannot self-correct from is a bug —
-  doubly so under a dispatch design, where the error text *is* the docs.
-- **Defaults.** `query_database` should be checked against the study's shipped
-  defaults — does the MCP path get hybrid + auto scoring + section roll-up
-  parity with `db.query()`, or has it drifted?
+  track in one step. Under a dispatch design the error text *is* the docs, so an
+  error an agent cannot self-correct from is a bug.
+- **Defaults.** Does the MCP path get hybrid + auto scoring + section roll-up +
+  the persisted reranker, in parity with `db.query()`, or has it drifted?
+- **The `skills/` directory** (`semantic-search`, `fact-checking`,
+  `document-comparison`) is part of this surface: a skill that teaches an agent
+  to drive the tools well may be worth more than any tool tweak. Review them in
+  the same sessions and keep them in lock-step with the dispatch design.
 
-The deliverable is a findings list with transcripts, then the consolidation
-informed by them — same discipline as the retrieval study: capture first,
-judge afterwards. Ship the dispatch tools alongside the flat ones for one
-release, then retire the flat set before v0.2.0 freezes anything.
+**Then consolidate into dispatch tools.** One read tool and one write tool with
+a `command` argument — CLI-like semantics (`query`, `get_document`, `grep`,
+`outline`, ...), which agents already know how to drive — preserving the
+read-only/read-write mode split at the dispatch boundary. Per-command help must
+be reachable *through* the tool (a `help` command plus self-describing errors),
+because a dispatch tool's schema can no longer carry every argument's
+documentation. Ship the dispatch tools in v0.2.0 with the flat set hidden behind
+a compatibility flag, and remove the flat set in v0.3.0 — not "alongside for a
+release", which is how surfaces become permanent.
 
-### 2. Rerankers are invisible outside the library
+**Document outline in metadata.** Extraction already yields structure; stash the
+outline at ingest so `outline` is a lookup, not a re-parse, and an agent can
+navigate a document without reading all of it.
 
-Current exposure, measured not assumed: `db.query(reranker=...,
-reranker_config=..., rerank_k=...)` works, and the HTTP server passes all three
-through. **The CLI and MCP expose none of it** — `lvdb db <name> search` has no
-rerank flag at all — and `QueryBuilder.rerank()` is a *different feature*
-(recency/metadata post-processing) that collides with the name, which will
-mislead exactly the user who goes looking.
+### 2. HTTP, remote client, SDK: close the portion-retrieval gap
 
-The study says this gap matters more than any tuning knob: reranking was worth
-~9× every first-stage parameter we tuned (with model choice dominating — ship
-bge-base-class or hosted, never MS-MARCO minis, which measured null-to-negative
-on our workloads). Plan:
+Measured, not assumed: MCP `get_document` and the CLI share the full portion
+selector (`document_portions.py`: chunk index/range, `char_range`, `line_range`,
+`section`, `outline`). `GET /databases/{db}/documents/{id}` takes no portion
+parameters, so `RemoteVectorDB` and the JS SDK inherit the gap. Expose the same
+five selectors as query parameters and thread them through both clients. Also
+the carried-forward server parity items: honor upload `extractor_kwargs` on the
+remote backend (without letting clients override hardened extraction-security
+defaults) and expose `chunk_delimiter` over HTTP.
 
-- ~~**A persisted per-database default reranker**~~ **DONE** — `reranker_config`
-  at creation (or `set_default_reranker()` later), persisted in the DB config,
-  applied by `query()` on every surface; per-call params override,
-  `reranker=False` / wire `rerank: false` disables per call; cursors ignore it.
-  Along the way: the `/query-multi-column` and global `/search` routes silently
-  dropped `reranker_config`/`rerank_k` (fixed), multi-column now reranks the
-  merged pool exactly once, and a builder rerank step suppresses the DB default
-  (no double-rerank).
-- ~~**CLI flags** on `search`~~ **DONE** — `--rerank/--no-rerank`,
-  `--rerank-provider`, `--rerank-model`, `--rerank-k`; creation flags
-  `--reranker-provider`/`--reranker-model` on `lvdb create`.
-- **Naming cleanup** for the `QueryBuilder.rerank()` collision — likely
-  `postprocess()` or documenting the distinction loudly; renaming after 1.0
-  would be a break, now it is a deprecation alias. (Distinction + no-double-apply
-  now documented in querybuilder docs; the rename itself is still open.)
-- ~~MCP~~ **DECIDED: respects the database default** — `query_database` inherits
-  it through `db.query_async()` with zero new tool surface (right for agents;
-  documented in the tool description).
-- Follow-up (security): per-request `reranker_config.base_url` on `/query` is
-  ungated (pre-existing); the *persisted* reranker base_url now goes through
-  the embedding SSRF policy at create time.
+### 3. CLI: `lvdb db <command> --db <name>`, and a default database
 
-### 3. `lvdb` CLI review and the `db` command restructure
+The dynamic name sitting between two static tokens is the awkward part: help and
+shell completion cannot enumerate it, `lvdb db --help` describes a group you
+cannot invoke without a name you have to already know, and the pattern matches
+no mainstream CLI (resource-as-flag is the norm: `psql -d`, `mysql -D`,
+`aws --profile`). The verb-first form unlocks the real win: **a default
+database** from `LVDB_DB` or config, so an agent or script sets it once and every
+call is `lvdb db search "query"`. Keep `lvdb db <name> <command>` as a hidden
+deprecated alias for one minor release (unambiguous — a first token that matches
+no subcommand is a name), warn, then drop.
 
-**Restructure `lvdb db <name> <command>` to `lvdb db <command> --db <name>`.**
-The dynamic name sitting between two static tokens is the awkward part: help
-and shell completion cannot enumerate it, `lvdb db --help` describes a group
-you cannot invoke without a name you have to already know, and the pattern
-matches no mainstream CLI (resource-as-flag is the common semantics:
-`psql -d`, `mysql -D`, `aws --profile`). The verb-first form also unlocks the
-real ergonomic win: **a default database** from `LVDB_DB` (env var) or config,
-so an agent or a script sets it once and every subsequent call is just
-`lvdb db search "query"`. Migration is cheap now and a break after 1.0: keep
-`lvdb db <name> <command>` as a hidden deprecated alias for one minor release
-(it is unambiguous — a first token that matches no subcommand is a name),
-warn, then drop.
+Then a consistency pass over the tree (16 `db` subcommands plus `chunk`, backup,
+tuning, auth, serve, mcp), driven by a scripted create → ingest → search →
+doctor → backup session: flag parity with the library (`--document-scoring`,
+`--section-weight`, quoted-query behaviour end-to-end), `--format json` stable
+enough to pipe, exit codes and error text on failure paths, `--json` on `lvdb
+list` / `db info`. `lvdb shell` is the natural home for the stay-scoped-to-one-
+database workflow the positional form served.
 
-The rest is a consistency pass over the broad tree (16 `db` subcommands plus
-`chunk`, backup, tuning, auth, serve, mcp), again driven by use — a scripted
-session covering create → ingest → search → doctor → backup → compact-someday:
+### 4. Python API hygiene — the batch that gets dearer every release
 
-- Flag parity with the library (`search` lacks rerank as above; check
-  `--document-scoring`, `--section-weight`, quoted-query behaviour end-to-end).
-- Output contract: `--format/-f {table,json}` unification shipped in rc-era
-  cleanup; verify no stragglers, and that JSON output is stable enough to pipe
-  (agents script the CLI too).
-- Exit codes and error text on the failure paths (the rc-era pass fixed the
-  worst; re-verify against the current tree).
-- `lvdb shell` deserves its own look: it is the closest thing to a REPL demo of
-  the product — and under the restructure it is the natural home for the
-  "stay scoped to one database" workflow the old positional form served.
+Each of these is an hour now and a deprecation cycle after 1.0. (The v0.1.0
+freeze pass already cleared several once on this list — the
+`get_stats_async`/`get_async_stats` name trap, `Document`/`QueryResult`/`Chunk`
+in `__all__`, comparison promoted to the base class — check the tree before
+working an item, not the old audit.)
 
-### 4. Experiment slate — adaptive retrieval
+- `QueryBuilder.rerank()` collides with the cross-encoder reranker — it is
+  recency/metadata post-processing. Rename to `postprocess()` with `rerank()` as
+  a deprecation alias.
+- A `DatabaseStats` dataclass for `get_stats()` (currently a plain dict on both
+  backends).
+- `QueryOptions` dataclass: `query()`'s keyword parameters are copy-pasted across
+  several methods and the cursor/async/multi-column variants have drifted before
+  (v0.1.0 fixed one such `return_type` downgrade). Consolidate.
+- `filter(where=)` vs `query(filters=)` vocabulary; embedding providers'
+  inconsistent `normalize` defaults.
+- Local/remote method parity where it is an oversight, not a decision:
+  visualization and `get_chunks`. (Remote `fact_check` was *dropped
+  deliberately* at the freeze — item 5 below is where it comes back, or not.)
+- OpenAPI: stop advertising 422 shapes the server never returns; `response_model`
+  on the search family.
 
-The study's constant refrain was "no defensible global default" — every knob's
-argmax is corpus-dependent. The next tranche of experiments is about making the
-*system* adaptive instead of finding better constants. Standing rules: every
-arm runs on all four corpora (qasper, NQ, MLDR, MAUD) through the real
-`query()` path where possible; both gates (`--dataset all` + hier) before any
-src/ change; capture-once-sweep-offline for anything with an LLM in the loop.
+### 5. Ephemeral fact-checking — ground an answer against sources handed to you
 
-- **Per-query `vector_weight` router.** The oracle bound justifies the attempt:
-  a perfect router beats the best fixed weight by **+0.051 (section) / +0.060
-  (doc)** on qasper — large compared to every constant we tuned. NQ/MLDR/MAUD
-  oracle bounds are queued. If the bound holds up, train a cheap router
-  (features: query length, IDF profile, quoted-phrase presence, corpus stats —
-  no LLM call) and measure how much of the oracle gap a real predictor
-  captures. If a corpus's bound is small, that corpus is evidence *against*
-  routing and caps the expected win honestly.
-- **Query augmentation, keyword and vector legs.** What is already known:
-  cross-modal PRF helps NQ only (+0.1010) and hurts everywhere else — the
-  refuted version is *unconditional* PRF, not PRF. LLM-side expansion (HyDE,
-  keyword synonym injection) is unmeasured here and has a different cost model
-  (an LLM call per query). Design: capture expansions once per query set, sweep
-  offline; the interesting arm is *routed* augmentation — expand only where a
-  cheap signal (short query, low IDF mass, zero keyword hits) predicts benefit,
-  since the PRF result shows the per-corpus sign flip is the whole game.
-- **Automatic metadata generation** (pull-forward of v0.7.0's LLM-metadata
-  item, as an experiment first). At ingest, an LLM writes typed fields
-  (doc_type, entities, dates, topics) into the existing metadata schema.
-  Machinery exists end-to-end (schema, indexes, filter pushdown); what does not
-  exist is an eval that can *score* it — none of the four corpora have
-  metadata-dependent relevance. **Build the eval leg first** (same order-of-work
-  rule as the multimodal plan): a corpus slice with queries whose answers
-  require a filter ("what did X say in 2023"), then measure
-  generation+filtering against pure retrieval on identical documents.
-- **Automatic metadata filtering** (self-querying). The complement: at query
-  time, translate the natural-language query into a `QueryBuilder` filter plus
-  a residual text query. The pushdown machinery
-  (`_faiss_search_with_selector` + `IDSelectorBatch`) already exists. Two
-  measured cautions transfer directly: a wrong filter is a *hard recall gate*
-  (the cascade result — BM25 prefiltering capped recall at 0.54 on qasper), so
-  the default must be soft (boost, not filter) or verified-then-hard; and the
-  gates are blind to it (no gated query needs a filter), so it ships behind the
-  new eval leg or not at all.
+Today `FactChecker` requires standing `LocalVectorDB` instances, which limits it
+to corpora you ingested ahead of time. The motivating use case is a research
+agent with web tools: it produced a final answer from pages it just fetched, and
+the answer should be checked against *those sources*, which live nowhere.
 
-Sequencing note: items 1–3 are cheap and should land before v0.2.0 freezes
-surfaces. Item 4 is a research track that runs alongside; nothing in it ships
-without moving a gated number.
+The machinery is nearly all in place: `:memory:` databases are a worn path
+(`_core.py` builds a shared-cache in-memory SQLite per unique name), and
+`FactChecker` already takes any `LocalVectorDB`. What is missing is one public
+function that composes them:
+
+```python
+result = localvectordb.fact_check(
+    text=final_answer,
+    documents=[{"id": url, "text": page_text}, ...],   # or plain strings
+    llm=anthropic_client,            # claim extraction + polarity, as today
+    embeddings=...,                  # optional — see below
+)
+```
+
+Build the ephemeral DB, ingest, run the existing check, tear down — unless the
+caller wants the corpus. `path=` (or `keep=True` with a named location) persists
+the database instead: what started as a fact-check corpus is then a normal
+LocalVectorDB the session can keep querying, which matters because a research
+agent's fetched sources *are* its working memory. Ephemeral is only the default,
+not the design. Design points:
+
+- **Keyword-only should be the no-setup path.** With no embedding provider the
+  function builds an FTS-only ephemeral DB and runs `search_type="keyword"` —
+  zero model downloads, no API key beyond the LLM, and claim-vs-source overlap
+  is exactly the vocabulary-shared regime where BM25 recall is strong. Pass an
+  embedding provider to get hybrid. Never MockEmbeddings by proxy: an ephemeral
+  hybrid check with fake vectors would report noise as grounding.
+- **Per-call cost is embedding the sources**, so this is for the 5–50-document
+  case, which is what an agent's working set is. Content-hash reuse across calls
+  is a later optimisation, not a requirement.
+- **MCP is the natural surface**: a `fact_check` command on the v0.2.0 dispatch
+  tool taking `text` + inline `sources`, so any research agent can call it with
+  what it already holds. `annotate_response` spans make the result actionable
+  (which sentence is ungrounded, not just a score).
+- **HTTP stays dropped until this proves itself.** The `/factcheck` router was
+  removed deliberately at the v0.1.0 freeze; if the ephemeral function earns a
+  remote surface, it re-enters as one endpoint wrapping this function, not as
+  the old per-database route.
+- The `skills/fact-checking` skill updates to teach the ephemeral form — it is
+  the form most agents can actually use.
+
+**Tool capture — the corpus builds itself.** The hand-in form still requires the
+agent to remember what it saw. The stronger version intercepts at the tool
+boundary: wrap the agent's own tools (web search, fetch, whatever) so every
+response is automatically ingested into the database on the way back to the
+agent. The agent researches as normal; the sources corpus accrues as a side
+effect; the final answer is checked against *everything the agent actually
+read*, not what it thought to pass along. The same corpus doubles as session
+memory ("have I already fetched this?"), provenance ("which call produced this
+claim?"), and — kept via `path=` — a reusable research artifact.
+
+Two tiers, deliberately staged:
+
+- **Python wrapper, ships with this item.** `capture = ToolCapture(db);
+  wrapped_tool = capture.wrap(tool)` — a decorator/wrapper that records the
+  call, ingests the response as a document (doc_id from URL or call id;
+  metadata: tool name, args digest, timestamp), and returns it unchanged.
+  Framework-agnostic: anything callable, including Anthropic SDK tool_runner
+  tools. This is a small amount of code because ingest already handles the hard
+  parts.
+- **MCP proxy, staged behind the wrapper.** `lvdb mcp proxy --target <server>`:
+  lvdb sits between the agent and an existing MCP server, passing tools through
+  while ingesting responses. fastmcp (already our MCP framework) provides the
+  proxy primitive (`FastMCP.as_proxy`), so the skeleton is cheap — the real
+  work is pass-through fidelity (auth, streaming, list-changed notifications)
+  and deciding what *not* to ingest. Ship it only after the wrapper proves the
+  capture schema.
+
+Cautions that are design inputs, not afterthoughts: captured web content is
+untrusted input (the hardened extraction defaults apply; never execute or
+re-fetch anything from it), responses need a filter predicate (ingesting a
+9 MB JSON blob or a binary is a bug, not coverage), and capture must never
+break the tool — ingest failures log and pass the response through.
+
+### 6. The gate in CI
+
+The one trust item that cannot wait: wire `eval_retrieval.py --dataset all
+--check` and the hier gate into CI with a threshold, so a pull request that
+lowers nDCG@10 fails. The study is the asset; this is its lock. The e2e suite
+(`scripts/e2e/`) goes in alongside because out of CI it silently drifts from
+renamed routes and flags — and items 2–3 rename routes and flags.
 
 ---
 
-## v0.2.0 — Trust: measurement, concurrency, operations
+## Research track — adaptive retrieval (runs alongside v0.2.0 and v0.3.0)
 
-Making the thing provable and operable.
+The study's constant refrain was "no defensible global default" — every knob's
+argmax is corpus-dependent. This tranche is about making the *system* adaptive
+instead of finding better constants. Standing rules: every arm runs on all four
+corpora (qasper, NQ, MLDR, MAUD) through the real `query()` path where possible;
+both gates before any src/ change; capture-once-sweep-offline for anything with
+an LLM in the loop; nothing ships without moving a gated number.
 
-- **Retrieval-quality regression gating in CI.** The evaluation harness
-  (`benchmarks/eval_retrieval.py`, with `--check`) exists; wire it into CI with a
-  threshold so a pull request that lowers nDCG@10 fails.
-- **Run the end-to-end suite in CI.** `scripts/e2e/` is where real retrieval
-  correctness against live embedding backends is checked, and because it is not
-  in CI it silently drifts from renamed routes and flags.
-- **Concurrency and crash-recovery tests.** Add real fault injection — kill
+- **Per-query `vector_weight` router — first, and ready to run.** The oracle
+  bound is measured on all four corpora: a perfect router beats the best fixed
+  weight by **+0.020 to +0.062** everywhere (qasper +0.051 sect / +0.060 doc, NQ
+  +0.062 sect, MAUD +0.044 sect, MLDR +0.021 doc), the second-largest lever in
+  the study after reranking and the only per-query one. The gain is concentrated
+  in 5–21% of queries, so the router is an anomaly detector with an abstain
+  class, not a regressor. Training data already exists
+  (`experiments/oracle_vw_*_perquery.json`: per-query nDCG × 21 weights plus
+  pre-fusion leg features — no re-embedding), the design is pre-registered in
+  `experiments/ORACLE-VW-ROUTER.md`, and the success bar is written:
+  leave-one-corpus-out capture ≥ 30% on ≥ 3 corpora, never worse than the shipped
+  0.5 anywhere. Expect 20–45% realised capture, ~+0.01–0.03 nDCG. Both gates run
+  at fixed `vector_weight` and are therefore **blind to a router**; shipping it
+  means extending a gate first.
+- **Routed query augmentation.** Cross-modal PRF helps NQ only (+0.1010) and
+  hurts everywhere else — the refuted version is *unconditional* PRF. LLM-side
+  expansion (HyDE, keyword synonym injection) is unmeasured and has a different
+  cost model (an LLM call per query). Capture expansions once per query set,
+  sweep offline; the interesting arm is expansion gated on a cheap signal (short
+  query, low IDF mass, zero keyword hits), since the per-corpus sign flip is the
+  whole game. Shares the feature set with the router.
+- **Automatic metadata generation** (pull-forward of v0.7.0). At ingest an LLM
+  writes typed fields (doc_type, entities, dates, topics) into the existing
+  schema. Machinery exists end-to-end; what does not exist is an eval that can
+  *score* it — none of the four corpora have metadata-dependent relevance.
+  **Build the eval leg first**: a corpus slice with queries whose answers require
+  a filter ("what did X say in 2023"), then measure generation+filtering against
+  pure retrieval on identical documents.
+- **Automatic metadata filtering** (self-querying). Translate the query into a
+  `QueryBuilder` filter plus a residual text query; pushdown
+  (`_faiss_search_with_selector` + `IDSelectorBatch`) already exists. Two
+  measured cautions transfer: a wrong filter is a *hard recall gate* (the
+  cascade capped recall at 0.54 on qasper), so the default must be soft (boost,
+  not filter) or verified-then-hard; and the gates are blind to it, so it ships
+  behind the new eval leg or not at all.
+- **Write-up.** `experiments/PAPER-OUTLINE.md` drafts the study as a paper; the
+  compressed-scale mechanism, "aggregation tracks the target unit", and "BM25
+  knobs are one knob" are findings the practitioner literature does not have.
+  Whether and where to publish is a decision to make once the router result is
+  in — it is the natural last chapter.
+
+---
+
+## v0.3.0 — Trust: measurement, concurrency, operations
+
+Making the thing provable and operable, for the people who run `lvdb serve`.
+
+- **Retire the flat MCP tools** behind the v0.2.0 compatibility flag.
+- **Concurrency and crash-recovery tests.** Real fault injection — kill
   mid-write, truncate the index, reopen — rather than only asserting "no
   exception" against mocked stores.
 - **Enforce single-writer.** An advisory cross-process lock that *refuses* a
@@ -241,37 +334,15 @@ Making the thing provable and operable.
   histograms, error rate, active databases), and OpenTelemetry spans on the
   existing request id.
 - **Per-database API key scoping.** Today a read-write key works on every database
-  on the server; scope keys to specific databases.
+  on the server; scope keys to specific databases. Also the ungated per-request
+  `reranker_config.base_url` on `/query` (the persisted reranker already goes
+  through the embedding SSRF policy).
 - **Re-embedding migration.** The embedding model and dimension are baked in at
-  database creation and treated as immutable. Add `lvdb db <name> reembed
-  --model ...` to change them.
-- **`QueryOptions` dataclass.** `query()` takes many keyword parameters,
-  copy-pasted across several methods; consolidate them to prevent signature drift.
-
----
-
-## v0.3.0 — Agent-native depth
-
-Where the differentiation lives: tools that expose hierarchical retrieval and
-provenance specifically, not a generic `query(collection, k)` server.
-
-- **Provenance-grade results.** Every result carries a document id, character
-  span, and section path (it largely does today); add a stable citation token so
-  an agent can quote and cite without a second round-trip.
-- **A fuller MCP navigation surface.** Building on the read-only tools already
-  shipped (`grep_documents`, `list_prefixes`, portion-aware `get`, `patch`), add
-  `get_section`, `get_outline`, and `find_related` so an agent can walk a document
-  by structure.
-- **Document outline in metadata.** Extraction already yields structure; stash the
-  outline at ingest so an agent can navigate a document without reading all of it.
-- **Contextual Retrieval** (chunk prefixing). Independent reproductions show
-  ~5–15% gains, and it is cheap with prompt caching. Gated on the eval harness.
-- **True coarse-to-fine hierarchy.** Section hits and chunk hits are currently
-  independent paths blended by score; make section hits actually *constrain* the
-  chunk search for genuine two-stage retrieval.
-- **Complexity router for agentic retrieval.** Single-shot for simple queries,
-  iterative for multi-hop. Iterative retrieval is costly, so route rather than
-  default.
+  database creation and treated as immutable. Add `lvdb db reembed --model ...`.
+  Note the embedding cache keys on the exact model tag; this is also the
+  prerequisite for any "compare two models on *your* corpus" story `lvdb doctor`
+  could offer.
+- **Performance regression gating** in CI (currently report-only).
 
 ---
 
@@ -280,13 +351,26 @@ provenance specifically, not a generic `query(collection, k)` server.
 Only what has demonstrably won, gated on the eval harness: anything that does not
 move nDCG on a real dataset does not ship.
 
+- **Contextual Retrieval** (chunk prefixing). Independent reproductions show
+  ~5–15% gains, and it is cheap with prompt caching.
+- **True coarse-to-fine hierarchy.** Section hits and chunk hits are currently
+  independent paths blended by score; make section hits actually *constrain* the
+  chunk search for genuine two-stage retrieval. The cascade caveat below applies:
+  a constraining stage is a recall gate.
+- **Complexity router for agentic retrieval.** Single-shot for simple queries,
+  iterative for multi-hop. Iterative retrieval is costly, so route rather than
+  default — and note this is a different measurement from nDCG (an agent issuing
+  three filtered queries is not a ranked list); the harness has to be designed
+  before the feature.
+
 - **Late-interaction / multi-vector (ColBERT).** Now table stakes across the major
   engines; the strongest infrastructure signal in the space.
 - **Matryoshka truncate + full-vector rescore.** Providers already expose
   truncation; the missing piece is the two-pass rescore.
 - **MMR / embedding-space diversity.** Real max-marginal-relevance in embedding
   space, distinct from the current metadata-field diversity boost.
-- **Query expansion / HyDE**, behind the eval gate.
+- **Query expansion / HyDE** — whatever the research track's routed-augmentation
+  arm licenses, behind the eval gate.
 - **Learned sparse (SPLADE)** as an optional third retriever. BM25 stays the
   default — SPLADE needs far more compute and a GPU.
 
@@ -632,7 +716,6 @@ nothing and constrains the image path.
 - **Namespace the database object.** The many top-level `visualize_*` and
   `sqlite_*` methods move to `db.viz.*` / `db.tuning.*`.
 - **`mypy --strict`.**
-- **Performance regression gating** in CI (currently report-only).
 - **A resolved concurrency story**: single-writer plus read replicas, or a real
   write coordinator.
 - **Security hardening**: per-database scoping, an audit log, and secure-by-default
@@ -644,14 +727,11 @@ nothing and constrains the image path.
 
 Not yet scheduled above:
 
-- A `DatabaseStats` dataclass for `get_stats()` (currently a plain dict on both
-  backends).
-- Honor upload `extractor_kwargs` on the remote backend without letting clients
-  override hardened extraction-security defaults.
-- Expose `chunk_delimiter` (the delimiter chunking strategy) over the HTTP server
-  and remote client, matching the local library.
 - Response-key naming consistency across endpoints (low value, high client
   coupling — tracked, not urgent).
+- Sphinx duplicate-object warnings.
+- `mmap_index=True`: make it honest (it is inert on flat indexes, see v0.5.0) or
+  delete it.
 
 ## Non-goals
 
