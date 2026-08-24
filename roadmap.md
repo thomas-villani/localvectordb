@@ -118,6 +118,51 @@ release", which is how surfaces become permanent.
 outline at ingest so `outline` is a lookup, not a re-parse, and an agent can
 navigate a document without reading all of it.
 
+**MCP hardening — bugs the review turned up (#70–#79).** The agent-driven review
+above was run (four agents, clean-room, no source access) and found real defects
+in the *shipped* flat surface that the dispatch redesign should not paper over.
+Three are correctness/security holes worth fixing on `main` independently of the
+consolidation:
+
+- **Path traversal (#70, security).** `create_database`/`delete_database` don't
+  validate `name`; a `..` escapes `--databases-root` and creates or deletes
+  `.sqlite` files anywhere — verified on disk. Exactly the research-agent threat
+  model (untrusted string reaches a tool argument). `config.get_database_path()`
+  ignores the name entirely.
+- **`update_metadata_schema` false-success (#71).** `BEGIN IMMEDIATE` on an
+  already-open pooled connection rolls the `ALTER TABLE` back, but the in-RAM
+  schema cache updates anyway — so the call reports success, then *every*
+  subsequent read on that db fails `no such column` for the life of the process,
+  and the change never persists. Reproduced by three of four agents.
+- **`return_type="chunks"` crash (#72).** `server.py:419` reads
+  `result.position.index`, which `ChunkPosition` doesn't have — one documented
+  enum value dead on arrival.
+
+The rest are data-integrity and ergonomics defects that the consolidation is the
+natural place to fix, because the redesign already rewrites these code paths:
+metadata silently dropped for undeclared fields (lenient write / strict read,
+#73), `upsert` wiping metadata where `update_document` merges (#74 — the dispatch
+`write` command wants an explicit `metadata_mode`), same-batch duplicate ids
+desyncing FAISS/SQLite (#75), thin input validation (#76), lifecycle
+false-success (#77), Windows delete leaving readable `-wal`/`-shm` (#78), and a
+tracking issue for response/error consistency (#79 — one error envelope, move
+`_scoring` out of the user metadata namespace, real `outputSchema`s, enum
+discoverability). Under a dispatch design the error text *is* the docs, so #79 is
+not cosmetic. **What the review confirmed works and must survive the redesign:**
+`patch_document`'s exact-occurrence + `expect_hash` contract, read-only mode
+enforcement (write tools absent from `list_tools`, discoverable up front), the
+portion selectors, and byte-exact id round-tripping.
+
+**On the dispatch shape itself, the review argued for one refinement:** split the
+two tools on *object* (`db.*` lifecycle/admin, `docs.*` retrieval+mutation), not
+on read/write — read/write is a permission boundary (enforce it per-command, as
+the existing `enabled_tools` gating already does), and splitting there separates
+`get_document` from `patch_document` even though patch is always read-then-write.
+And keep per-command validation real: a discriminated union on `command`
+(`oneOf` + `if/then` on the const) preserves the enums that were the only reason
+agents discovered `search_type`/`return_type` values instead of guessing — a
+free-form `params` blob would throw that away.
+
 ### 2. HTTP, remote client, SDK: close the portion-retrieval gap
 
 Measured, not assumed: MCP `get_document` and the CLI share the full portion
