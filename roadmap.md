@@ -246,7 +246,11 @@ Two tiers, deliberately staged:
   proxy primitive (`FastMCP.as_proxy`), so the skeleton is cheap — the real
   work is pass-through fidelity (auth, streaming, list-changed notifications)
   and deciding what *not* to ingest. Ship it only after the wrapper proves the
-  capture schema.
+  capture schema. Scope guidance belongs in the docs from day one: the proxy is
+  for a **single-purpose research agent whose entire tool surface sits behind
+  it** — if the agent also holds tools outside the boundary, the corpus is no
+  longer "everything the agent read" and the fact-check silently loses its
+  completeness claim.
 
 Cautions that are design inputs, not afterthoughts: captured web content is
 untrusted input (the hardened extraction defaults apply; never execute or
