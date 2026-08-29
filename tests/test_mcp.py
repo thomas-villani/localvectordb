@@ -392,6 +392,23 @@ class TestMCPManager:
             assert result is mock_db
             assert "newdb" in manager.databases
 
+    def test_create_database_rejects_existing_name(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        (tmp_path / "existing.sqlite").touch()
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+
+        with pytest.raises(FileExistsError, match="already exists"):
+            _run(manager.create_database("existing", embedding_model="different"))
+
+    def test_delete_database_rejects_missing_name(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+
+        with pytest.raises(DatabaseNotFoundError, match="not found"):
+            _run(manager.delete_database("missing"))
+
     def test_cleanup(self):
         from localvectordb_server.mcp.server import MCPManager
 
@@ -1121,6 +1138,13 @@ class TestCreateDatabaseTool:
         assert "error" in result
         assert "disk full" in result["error"]
 
+    def test_create_existing_database(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import create_database
+
+        mcp_manager_fixture.create_database = AsyncMock(side_effect=FileExistsError("already exists"))
+        result = _run(create_database("existing"))
+        assert result["error_code"] == "DATABASE_ALREADY_EXISTS"
+
 
 @pytest.mark.unit
 class TestDeleteDatabaseTool:
@@ -1137,6 +1161,13 @@ class TestDeleteDatabaseTool:
         mcp_manager_fixture.config.mode = "read-only"
         result = _run(delete_database("olddb"))
         assert result["error_code"] == "PERMISSION_DENIED"
+
+    def test_delete_missing_database(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import delete_database
+
+        mcp_manager_fixture.delete_database = AsyncMock(side_effect=DatabaseNotFoundError("not found"))
+        result = _run(delete_database("missing"))
+        assert result["error_code"] == "DATABASE_NOT_FOUND"
 
 
 @pytest.mark.unit
