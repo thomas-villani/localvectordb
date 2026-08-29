@@ -95,22 +95,25 @@ class MCPManager:
         # Get path for new database
         db_path = self.config.get_database_path(name)
 
-        # Parse metadata schema if provided
-        parsed_schema = None
-        if metadata_schema:
-            parsed_schema = parse_metadata_schema(metadata_schema)
-
-        # Merge defaults with provided kwargs
-        db_kwargs = self.config.db_defaults.copy()
-        db_kwargs.update(kwargs)
-
-        # Create database
-        db = VectorDB(
-            name=name, base_path=db_path, metadata_schema=parsed_schema, create_if_not_exists=True, **db_kwargs
-        )
-
-        # Cache it
         async with self._lock:
+            db_file = None if db_path.startswith(("http://", "https://")) else Path(db_path) / f"{name}.sqlite"
+            if name in self.databases or name in self.config.databases_map or (db_file and db_file.exists()):
+                raise FileExistsError(f"Database '{name}' already exists")
+
+            # Parse metadata schema if provided
+            parsed_schema = None
+            if metadata_schema:
+                parsed_schema = parse_metadata_schema(metadata_schema)
+
+            # Merge defaults with provided kwargs
+            db_kwargs = self.config.db_defaults.copy()
+            db_kwargs.update(kwargs)
+
+            # Create database
+            db = VectorDB(
+                name=name, base_path=db_path, metadata_schema=parsed_schema, create_if_not_exists=True, **db_kwargs
+            )
+
             self.databases[name] = db
 
         return db
@@ -119,8 +122,16 @@ class MCPManager:
         """Delete a database (write mode only)"""
         self.config.check_write_permission("delete_database")
 
-        # Remove from cache
+        db_path = self.config.get_database_path(name)
+        if db_path.startswith(("http://", "https://")):
+            raise ValueError(f"Remote database '{name}' cannot be deleted by the MCP server")
+
+        db_file = Path(db_path) / f"{name}.sqlite"
+        faiss_file = Path(db_path) / f"{name}.faiss"
+
         async with self._lock:
+            if name not in self.databases and not db_file.exists() and not faiss_file.exists():
+                raise DatabaseNotFoundError(f"Database '{name}' not found")
             if name in self.databases:
                 # Close if it's a local database
                 db = self.databases[name]
@@ -128,16 +139,9 @@ class MCPManager:
                     db.close()
                 del self.databases[name]
 
-        # Delete files if it's a local database
-        db_path = self.config.get_database_path(name)
-        if not db_path.startswith(("http://", "https://")):
-            # Local database - delete files
-            db_file = Path(db_path) / f"{name}.sqlite"
             if db_file.exists():
                 db_file.unlink()
 
-            # Delete FAISS index
-            faiss_file = Path(db_path) / f"{name}.faiss"
             if faiss_file.exists():
                 faiss_file.unlink()
 
@@ -934,6 +938,8 @@ async def create_database(
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
+    except FileExistsError as e:
+        return {"error": str(e), "error_code": "DATABASE_ALREADY_EXISTS"}
     except Exception as e:
         logger.error(f"Error creating database: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
@@ -960,6 +966,8 @@ async def delete_database(name: str) -> Dict[str, Any]:
 
     except PermissionError as e:
         return {"error": str(e), "error_code": "PERMISSION_DENIED"}
+    except DatabaseNotFoundError as e:
+        return {"error": str(e), "error_code": "DATABASE_NOT_FOUND"}
     except Exception as e:
         logger.error(f"Error deleting database: {e}")
         return {"error": str(e), "error_type": type(e).__name__}
