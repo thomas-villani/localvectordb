@@ -697,3 +697,113 @@ class TestAsyncKeywordFilterParity:
         sync_ids = {r.id for r in kw_db.query("python", search_type="keyword", filters=filters, k=10)}
         async_ids = {r.id for r in await kw_db.query_async("python", search_type="keyword", filters=filters, k=10)}
         assert async_ids == sync_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+class TestAsyncMetadataSchemaUpdate:
+    """update_metadata_schema_async over the pooled-connection path (issue #71).
+
+    The async path used to BEGIN IMMEDIATE and then run the whole no-mapping
+    update inside ``if column_mapping:`` — a plain add-a-field call committed
+    nothing, reported success, and returned the pooled connection to the pool
+    with its transaction still open, failing every later call on the database.
+    """
+
+    def _open_db(self, temp_dir):
+        return LocalVectorDB(
+            name="schema_upd",
+            base_path=str(temp_dir),
+            embedding_provider="mock",
+            embedding_model="test-model",
+            metadata_schema={"topic": MetadataField(MetadataFieldType.TEXT)},
+        )
+
+    async def _close_db(self, db):
+        try:
+            if getattr(db, "connection_pool", None):
+                db.connection_pool.close_all()
+            if getattr(db, "async_connection_pool", None):
+                await db.async_connection_pool.close_all()
+        except Exception as exc:
+            warnings.warn(f"Cleanup failed: {exc!r}", RuntimeWarning, stacklevel=2)
+
+    async def test_add_field_applies_persists_and_leaves_session_usable(self, temp_dir):
+        db = self._open_db(temp_dir)
+        try:
+            await db.upsert_async(["Cold brew steeps overnight."], metadata=[{"topic": "coffee"}], ids=["n1"])
+
+            new_schema = {
+                "topic": MetadataField(MetadataFieldType.TEXT),
+                "due": MetadataField(MetadataFieldType.DATE),
+            }
+            changes = await db.update_metadata_schema_async(new_schema)
+            assert "due" in changes["added_fields"]
+            assert changes["errors"] == []
+
+            # The pooled connection must come back without a dangling
+            # transaction: reads on pre-existing documents keep working.
+            doc = await db.get_async("n1")
+            assert doc.metadata["topic"] == "coffee"
+
+            # And a second schema update in the same session must also work
+            # (this used to fail with "cannot start a transaction within a
+            # transaction").
+            wider = dict(new_schema, prio=MetadataField(MetadataFieldType.INTEGER))
+            changes2 = await db.update_metadata_schema_async(wider)
+            assert "prio" in changes2["added_fields"]
+
+            # The new column physically exists and is writable.
+            await db.upsert_async(
+                ["Espresso pulls in 30 seconds."],
+                metadata=[{"topic": "coffee", "prio": 1}],
+                ids=["n2"],
+            )
+            doc2 = await db.get_async("n2")
+            assert doc2.metadata["prio"] == 1
+        finally:
+            await self._close_db(db)
+
+        # The DDL was committed, not rolled back: the fields survive a reopen.
+        db2 = LocalVectorDB(
+            name="schema_upd",
+            base_path=str(temp_dir),
+            embedding_provider="mock",
+            embedding_model="test-model",
+        )
+        try:
+            reopened = db2.metadata_schema
+            assert "due" in reopened
+            assert "prio" in reopened
+            assert db2.get("n1").metadata["topic"] == "coffee"
+        finally:
+            await self._close_db(db2)
+
+    async def test_failed_update_does_not_poison_pool(self, temp_dir):
+        db = self._open_db(temp_dir)
+        try:
+            await db.upsert_async(["Doc one."], metadata=[{"topic": "a"}], ids=["d1"])
+
+            # An invalid field name fails validation mid-update; the savepoint
+            # must be rolled back and released so the connection is clean.
+            bad_schema = {
+                "topic": MetadataField(MetadataFieldType.TEXT),
+                "bad;name": MetadataField(MetadataFieldType.TEXT),
+            }
+            with pytest.raises(DatabaseError):
+                await db.update_metadata_schema_async(bad_schema)
+
+            # In-memory schema must not have picked up the phantom field.
+            assert "bad;name" not in db.metadata_schema
+
+            # And the session keeps working.
+            doc = await db.get_async("d1")
+            assert doc.metadata["topic"] == "a"
+            ok_schema = {
+                "topic": MetadataField(MetadataFieldType.TEXT),
+                "extra": MetadataField(MetadataFieldType.TEXT),
+            }
+            changes = await db.update_metadata_schema_async(ok_schema)
+            assert "extra" in changes["added_fields"]
+        finally:
+            await self._close_db(db)
