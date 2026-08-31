@@ -133,12 +133,12 @@ String Operators
    * - Operator
      - Description
    * - ``$like``
-     - SQL ``LIKE`` pattern matching. This uses SQLite's built-in ``LIKE``,
-       which is case-insensitive for ASCII characters by default.
+     - Case-sensitive literal substring test. ``%`` and ``_`` are ordinary
+       characters, not wildcards — there is no SQL ``LIKE`` pattern syntax.
+       (``$like`` and ``$contains`` behave identically on text fields;
+       ``$contains`` additionally understands JSON list fields.)
    * - ``$ilike``
-     - Case-insensitive ``LIKE`` matching. Lowercases both the column and the
-       value (``LOWER(field) LIKE ...``) for reliable case-insensitive
-       matching regardless of SQLite's ``LIKE`` settings.
+     - Case-insensitive literal substring test (both sides lowercased).
    * - ``$contains``
      - Contains substring
    * - ``$startswith``
@@ -254,12 +254,12 @@ Search and match text content:
    docs = db.filter(where={
        "title": {"$contains": "python"},
        "author": {"$startswith": "Dr."},
-       "description": {"$ilike": "%machine learning%"}
+       "description": {"$ilike": "machine learning"}
    })
 
    # Find documents with company emails and tutorial categories
    docs = db.filter(where={
-       "email": {"$like": "%@company.com"},
+       "email": {"$like": "@company.com"},
        "category": {"$endswith": "_tutorial"}
    })
 
