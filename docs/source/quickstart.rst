@@ -136,10 +136,10 @@ Server Example
     lvdb create my_database --embedding-model embeddinggemma
 
     # Add documents
-    lvdb db my_database add document.txt
+    lvdb db add document.txt --db my_database
 
     # Search documents
-    lvdb db my_database search "query text" --limit 5
+    lvdb db search "query text" --limit 5 --db my_database
 
 
 Remote Database Example

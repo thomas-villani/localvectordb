@@ -41,22 +41,22 @@ Examples:
 
     Add documents to a database::
 
-        $ lvdb db mydatabase add document.txt
-        $ lvdb db mydatabase add "documents/*.py"
-        $ cat document.txt | lvdb db mydatabase add -
+        $ lvdb db add document.txt --db mydatabase
+        $ lvdb db add "documents/*.py" --db mydatabase
+        $ cat document.txt | lvdb db add - --db mydatabase
 
     Search documents::
 
-        $ lvdb db mydatabase search "query text" --limit 5
-        $ lvdb db mydatabase search "query text" --search-type hybrid --metadata-filter '{"author":"Smith"}'
+        $ lvdb db search "query text" --limit 5 --db mydatabase
+        $ lvdb db search "query text" --search-type hybrid --metadata-filter '{"author":"Smith"}' --db mydatabase
 
     Get document by ID::
 
-        $ lvdb db mydatabase get doc_1
+        $ lvdb db get doc_1 --db mydatabase
 
     Manage database interactively::
 
-        $ lvdb db mydatabase shell
+        $ lvdb db shell --db mydatabase
 
     Create and manage backups::
 
@@ -159,7 +159,7 @@ def cli(ctx, config, db_folder, verbose, quiet):
             cfg.database.root_dir = db_folder
 
     # When neither a config file nor --db-folder supplied a database folder,
-    # assume the current working directory. This lets `lvdb db NAME ...` work in
+    # assume the current working directory. This lets `lvdb db <cmd> --db NAME` work in
     # any folder containing a database without first creating a config file.
     if not db_folder:
         db_folder = "."

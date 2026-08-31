@@ -123,6 +123,11 @@ class DatabaseSettings(BaseSettings):
     """Settings related to database operations and connections"""
 
     root_dir: str = "./.lvdb"
+
+    # Default database for `lvdb db <command>` when neither --db nor LVDB_DB is
+    # given, so a script or agent can set it once in config and every call is
+    # just `lvdb db search ...`.
+    default_database: Optional[str] = None
     timeout: int = 300  # seconds
     connection_pool_size: int = 10
     enable_gpu: bool = False
@@ -150,6 +155,11 @@ class DatabaseSettings(BaseSettings):
         # Validate root_dir
         if not isinstance(self.root_dir, str) or not self.root_dir:
             raise ConfigurationError("root_dir must be a non-empty string")
+
+        if self.default_database is not None and (
+            not isinstance(self.default_database, str) or not self.default_database
+        ):
+            raise ConfigurationError("default_database must be a non-empty string or omitted")
 
         # Validate numeric settings
         if not isinstance(self.timeout, int) or self.timeout <= 0:

@@ -69,28 +69,28 @@ model = "{model}"
         c.check("lvdb list shows database", r.returncode == 0 and DB in r.stdout, r.stdout[-300:])
 
         c.section("add documents (file + inline text)")
-        r = lvdb("db", DB, "add", str(fixtures / "space_exploration.md"), "--id", "space_exploration")
+        r = lvdb("db", "add", str(fixtures / "space_exploration.md"), "--id", "space_exploration", "--db", DB)
         c.check("add file succeeds", r.returncode == 0, r.stderr[-300:] or r.stdout[-300:])
-        r = lvdb("db", DB, "add", str(fixtures / "french_cooking.md"), "--id", "french_cooking")
+        r = lvdb("db", "add", str(fixtures / "french_cooking.md"), "--id", "french_cooking", "--db", DB)
         c.check("add second file succeeds", r.returncode == 0, r.stderr[-300:] or r.stdout[-300:])
         r = lvdb(
             "db",
-            DB,
             "add",
             "A proper espresso extracts 36 grams of coffee in thirty seconds at nine bars of pressure.",
             "--id",
             "espresso",
+            "--db",
+            DB,
         )
         c.check("add inline text with id succeeds", r.returncode == 0, r.stderr[-300:] or r.stdout[-300:])
 
-        r = lvdb("db", DB, "list")
+        r = lvdb("db", "list", "--db", DB)
         expected_ids = ["space_exploration", "french_cooking", "espresso"]
         c.check("doc list shows all ids", all(s in r.stdout for s in expected_ids), r.stdout[-400:])
 
         c.section("search")
         r = lvdb(
             "db",
-            DB,
             "search",
             "the Apollo moon landings",
             "--search-type",
@@ -99,6 +99,8 @@ model = "{model}"
             "3",
             "--format",
             "json",
+            "--db",
+            DB,
         )
         c.check("hybrid search succeeds", r.returncode == 0, r.stderr[-300:])
         c.check("search finds space doc", "space_exploration" in r.stdout, r.stdout[-400:])
@@ -110,25 +112,25 @@ model = "{model}"
         except (json.JSONDecodeError, IndexError, KeyError) as exc:
             c.check("search --format json is valid JSON", False, f"{exc}: {r.stdout[:200]}")
 
-        r = lvdb("db", DB, "search", "brunoise", "--search-type", "keyword", "--limit", "2")
+        r = lvdb("db", "search", "brunoise", "--search-type", "keyword", "--limit", "2", "--db", DB)
         c.check("keyword search finds cooking doc", r.returncode == 0 and "french_cooking" in r.stdout, r.stdout[-300:])
 
         c.section("get + related")
-        r = lvdb("db", DB, "get", "space_exploration", "--format", "json", "--metadata")
+        r = lvdb("db", "get", "space_exploration", "--format", "json", "--metadata", "--db", DB)
         c.check("get returns document", r.returncode == 0 and "Apollo" in r.stdout, r.stdout[-300:])
-        r = lvdb("db", DB, "related", "french_cooking", "--limit", "2")
+        r = lvdb("db", "related", "french_cooking", "--limit", "2", "--db", DB)
         c.check("related succeeds", r.returncode == 0, r.stderr[-300:] or r.stdout[-300:])
 
         c.section("stats + info")
-        r = lvdb("db", DB, "stats")
+        r = lvdb("db", "stats", "--db", DB)
         c.check("stats succeeds", r.returncode == 0, r.stderr[-300:])
-        r = lvdb("db", DB, "info")
+        r = lvdb("db", "info", "--db", DB)
         c.check("info shows embedding model", r.returncode == 0 and model in r.stdout, r.stdout[-300:])
 
         c.section("delete document + database")
-        r = lvdb("db", DB, "delete", "espresso")
+        r = lvdb("db", "delete", "espresso", "--db", DB)
         c.check("doc delete succeeds", r.returncode == 0 and "deleted" in r.stdout.lower(), r.stdout[-300:])
-        r = lvdb("db", DB, "list")
+        r = lvdb("db", "list", "--db", DB)
         c.check("deleted doc gone from list", "espresso" not in r.stdout, r.stdout[-300:])
         r = lvdb("delete", DB, "--confirm")
         c.check("database delete succeeds", r.returncode == 0, r.stderr[-300:] or r.stdout[-300:])

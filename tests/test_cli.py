@@ -78,6 +78,7 @@ def fake_config(tmp_db_folder):
     @dataclass
     class _Database:
         root_dir: str = ""
+        default_database: Optional[str] = None
         chunk_size: int = 500
         chunk_overlap: int = 1
         chunking_method: str = "sentences"
@@ -864,8 +865,9 @@ class TestDbAdd:
             ctx.obj = obj
 
         @click.pass_context
-        def _patched_db_group_callback(ctx, name):
-            ctx.obj.update({"db_name": name, "db": mock_db})
+        def _patched_db_group_callback(ctx, db_name):
+            ctx.obj.pop("_positional_db", None)
+            ctx.obj.update({"db_name": db_name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
 
@@ -998,8 +1000,9 @@ class TestDbPatch:
             ctx.obj = obj
 
         @click.pass_context
-        def _patched_db_group_callback(ctx, name):
-            ctx.obj.update({"db_name": name, "db": mock_db})
+        def _patched_db_group_callback(ctx, db_name):
+            ctx.obj.pop("_positional_db", None)
+            ctx.obj.update({"db_name": db_name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
 
@@ -1095,8 +1098,9 @@ class TestDbSearch:
             ctx.obj = obj
 
         @click.pass_context
-        def _patched_db_group_callback(ctx, name):
-            ctx.obj.update({"db_name": name, "db": mock_db})
+        def _patched_db_group_callback(ctx, db_name):
+            ctx.obj.pop("_positional_db", None)
+            ctx.obj.update({"db_name": db_name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
 
@@ -1246,8 +1250,9 @@ class TestDbRelated:
             ctx.obj = obj
 
         @click.pass_context
-        def _patched_db_group_callback(ctx, name):
-            ctx.obj.update({"db_name": name, "db": mock_db})
+        def _patched_db_group_callback(ctx, db_name):
+            ctx.obj.pop("_positional_db", None)
+            ctx.obj.update({"db_name": db_name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
 
@@ -1606,8 +1611,9 @@ class TestDbAddDefaultIds:
             ctx.obj = obj
 
         @click.pass_context
-        def _patched_db_group_callback(ctx, name):
-            ctx.obj.update({"db_name": name, "db": mock_db})
+        def _patched_db_group_callback(ctx, db_name):
+            ctx.obj.pop("_positional_db", None)
+            ctx.obj.update({"db_name": db_name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
 
@@ -1698,8 +1704,9 @@ def _db_ctx_patches(fake_config, config_file, tmp_db_folder, mock_db, db_name="t
         ctx.obj = obj
 
     @click.pass_context
-    def _patched_db_group_callback(ctx, name):
-        ctx.obj.update({"db_name": name, "db": mock_db})
+    def _patched_db_group_callback(ctx, db_name):
+        ctx.obj.pop("_positional_db", None)
+        ctx.obj.update({"db_name": db_name, "db": mock_db})
 
     from localvectordb_server.cli._db import db_group
 
@@ -1994,8 +2001,9 @@ class TestDoctorCommand:
             ctx.obj = obj
 
         @click.pass_context
-        def _patched_db_group_callback(ctx, name):
-            ctx.obj.update({"db_name": name, "db": mock_db})
+        def _patched_db_group_callback(ctx, db_name):
+            ctx.obj.pop("_positional_db", None)
+            ctx.obj.update({"db_name": db_name, "db": mock_db})
 
         from localvectordb_server.cli._db import db_group
 
@@ -2037,3 +2045,106 @@ class TestDoctorCommand:
 
         assert result.exit_code != 0
         assert "Error diagnosing database" in result.output
+
+
+# ============================================================================
+# v0.2.0: database selection for `lvdb db` (--db / LVDB_DB / config default /
+# deprecated positional form)
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestDbSelection:
+    """The verb-first form resolves the database from --db, LVDB_DB, or the
+    config default, and still accepts the deprecated positional form.
+
+    No database is created: get_ctx_db's "Database 'X' was not found" error
+    reveals which name won resolution, exercising the real callback and
+    resolve_command paths with zero mocking of the group itself.
+    """
+
+    def _invoke(self, runner, fake_config, config_file, tmp_db_folder, args, env=None):
+        with _patch_cli_init(fake_config, config_file, tmp_db_folder):
+            return runner.invoke(cli, ["--db-folder", tmp_db_folder, *args], env=env)
+
+    def test_db_flag_before_command(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "--db", "abc", "stats"])
+        assert result.exit_code == 1
+        assert "Database 'abc' was not found" in result.stderr
+
+    def test_db_flag_trailing(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "stats", "--db", "abc"])
+        assert result.exit_code == 1
+        assert "Database 'abc' was not found" in result.stderr
+
+    def test_env_var(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(
+            runner, fake_config, config_file, tmp_db_folder, ["db", "stats"], env={"LVDB_DB": "envdb"}
+        )
+        assert result.exit_code == 1
+        assert "Database 'envdb' was not found" in result.stderr
+
+    def test_config_default_database(self, runner, fake_config, config_file, tmp_db_folder):
+        fake_config.database.default_database = "cfgdb"
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "stats"])
+        assert result.exit_code == 1
+        assert "Database 'cfgdb' was not found" in result.stderr
+
+    def test_flag_beats_env_and_config(self, runner, fake_config, config_file, tmp_db_folder):
+        fake_config.database.default_database = "cfgdb"
+        result = self._invoke(
+            runner,
+            fake_config,
+            config_file,
+            tmp_db_folder,
+            ["db", "stats", "--db", "flagdb"],
+            env={"LVDB_DB": "envdb"},
+        )
+        assert result.exit_code == 1
+        assert "Database 'flagdb' was not found" in result.stderr
+
+    def test_positional_form_is_deprecated_but_works(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "posdb", "stats"])
+        assert result.exit_code == 1
+        assert "deprecated" in result.stderr
+        assert "Database 'posdb' was not found" in result.stderr
+
+    def test_positional_beats_env(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(
+            runner, fake_config, config_file, tmp_db_folder, ["db", "posdb", "stats"], env={"LVDB_DB": "envdb"}
+        )
+        assert result.exit_code == 1
+        assert "Database 'posdb' was not found" in result.stderr
+
+    def test_positional_plus_flag_conflicts(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(
+            runner, fake_config, config_file, tmp_db_folder, ["db", "--db", "flagdb", "posdb", "stats"]
+        )
+        assert result.exit_code == 2
+        assert "given twice" in result.stderr
+
+    def test_no_database_specified(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "stats"])
+        assert result.exit_code == 1
+        assert "No database specified" in result.stderr
+
+    def test_unknown_command_mentions_new_form(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "bogusname"])
+        assert result.exit_code == 2
+        assert "No such command 'bogusname'" in result.stderr
+        assert "--db bogusname" in result.stderr
+
+    def test_group_help_without_database(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "--help"])
+        assert result.exit_code == 0
+        assert "--db NAME" in result.output
+
+    def test_subcommand_help_without_database(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "search", "--help"])
+        assert result.exit_code == 0
+        assert "--db NAME" in result.output
+
+    def test_schema_subgroup_trailing_db_flag(self, runner, fake_config, config_file, tmp_db_folder):
+        result = self._invoke(runner, fake_config, config_file, tmp_db_folder, ["db", "schema", "show", "--db", "abc"])
+        assert result.exit_code == 1
+        assert "Database 'abc' was not found" in result.stderr

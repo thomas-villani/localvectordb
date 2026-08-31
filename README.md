@@ -208,7 +208,7 @@ extracted to Markdown automatically):
 
 ```bash
 lvdb create technical_docs --embedding-model embeddinggemma
-lvdb db technical_docs add ./docs/*.md ./manual.pdf
+lvdb db add ./docs/*.md ./manual.pdf --db technical_docs
 ```
 
 ### Claude Code
@@ -589,21 +589,21 @@ lvdb delete mydb --confirm
 
 ```bash
 # Add documents
-lvdb db mydb add document.txt
-lvdb db mydb add "docs/*.py"
-cat content.txt | lvdb db mydb add -
+lvdb db add document.txt --db mydb
+lvdb db add "docs/*.py" --db mydb
+cat content.txt | lvdb db add - --db mydb
 
 # Search documents
-lvdb db mydb search "query text" --search-type hybrid --limit 10
+lvdb db search "query text" --search-type hybrid --limit 10 --db mydb
 
 # Get document (or a portion: --chunk / --range / --lines / --section / --outline)
-lvdb db mydb get doc_1 --format json --metadata
+lvdb db get doc_1 --format json --metadata --db mydb
 
 # Find documents related to an existing one (nearest neighbours)
-lvdb db mydb related doc_1 --limit 5
+lvdb db related doc_1 --limit 5 --db mydb
 
 # Interactive shell
-lvdb db mydb shell
+lvdb db shell --db mydb
 ```
 
 ### Configuration
@@ -624,7 +624,7 @@ lvdb config set database.chunk_size 1000
 | `lvdb serve` | Start the HTTP server |
 | `lvdb create` / `list` / `delete` / `rename` | Database lifecycle |
 | `lvdb version` | Show the installed version |
-| `lvdb db <name> ...` | Operate on one database: `info`, `stats`, `search`, `add`, `get`, `related`, `update`, `patch`, `delete`, `repair`, `shell`, `schema` |
+| `lvdb db ... --db <name>` | Operate on one database: `info`, `stats`, `search`, `add`, `get`, `related`, `update`, `patch`, `delete`, `repair`, `shell`, `schema` |
 | `lvdb chunk` | Chunk text to JSONL without a database — useful for inspecting a chunking strategy |
 | `lvdb backup` | `create`, `list`, `restore`, `verify`, `cleanup`, `pitr` |
 | `lvdb migrate` | Metadata schema evolution: `status`, `apply`, `rollback`, `create`, `list` |

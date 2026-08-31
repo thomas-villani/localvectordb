@@ -1095,8 +1095,8 @@ The same thing from the CLI:
 
 .. code-block:: bash
 
-    lvdb db my_docs repair --dry-run
-    lvdb db my_docs repair
+    lvdb db repair --dry-run --db my_docs
+    lvdb db repair --db my_docs
 
 Best Practices
 --------------

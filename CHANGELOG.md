@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CLI: verb-first `lvdb db` with a default database.** Database subcommands
+  are now `lvdb db <command> --db <name>`; the database resolves from `--db`
+  (accepted before or after the subcommand), the `LVDB_DB` environment
+  variable, then a new `database.default_database` config key — set it once and
+  every call is just `lvdb db search "..."`. The old positional form
+  `lvdb db <name> <command>` still works for one minor release with a
+  deprecation warning (an explicit positional name beats `LVDB_DB`/config;
+  combining it with `--db` is an error).
+
 ### Added
 
 - **A persisted per-database default reranker.** Pass `reranker_config` at
