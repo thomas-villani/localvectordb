@@ -110,7 +110,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --dev --extra sentence-transformers
 
       # Immutable downloads (BEIR SciFact, Qasper dev, FiQA for the synthetic
       # superdocs leg). Static key; restore-keys are safe here because a
@@ -168,7 +168,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --dev --extra sentence-transformers
 
       - name: Cache embedding model
         uses: actions/cache@v4
