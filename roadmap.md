@@ -402,10 +402,24 @@ move nDCG on a real dataset does not ship.
 
 - **Contextual Retrieval** (chunk prefixing). Independent reproductions show
   ~5–15% gains, and it is cheap with prompt caching.
+- **Mixed hierarchy: per-leg `search_type` on `fused` — measured 2026-08-28, licensed at the
+  section target.** A section-BM25 leg blended with a chunk-vector leg (the `fused` topology with
+  the section leg keyword-only) beats the tuned chunk hybrid at the *section* target on MAUD
+  (+0.0150 [+.010,+.021]) and NQ (+0.0317 [+.024,+.040]) with **no section vectors at all** — it
+  ties tuned `fused` on MAUD and at every document target, and `sections_fts` already ships, so
+  the marginal index cost is zero. Where section vectors are the big lever (NQ section: `fused`
+  +0.112) keyword recovers only a quarter of it — a cheap partial `fused`, not a replacement.
+  Harness `benchmarks/eval_mixed_hierarchy.py`; write-up `experiments/mixed-hierarchy-findings.md`.
+  Shipping shape: `_fused_search` already threads `search_type`/`vector_weight` per leg, so this is
+  a per-leg argument plus both gates (deltas are tuned-on-test upper bounds; `sw` argmax ranges
+  0.2–0.65 by corpus, so it ships as an option, not a default).
 - **True coarse-to-fine hierarchy.** Section hits and chunk hits are currently
   independent paths blended by score; make section hits actually *constrain* the
-  chunk search for genuine two-stage retrieval. The cascade caveat below applies:
-  a constraining stage is a recall gate.
+  chunk search for genuine two-stage retrieval. The cascade caveat below now has
+  a measurement: gating the chunk-vector search on top-N section-BM25 lost in
+  every cell of the 2026-08-28 sweep (−0.01 to −0.08 vs the tuned chunk hybrid),
+  even at 0.99 ceiling recall — a constraining stage is a recall gate AND it
+  drops the chunk keyword leg. Blend, don't gate, unless latency is the goal.
 - **Complexity router for agentic retrieval.** Single-shot for simple queries,
   iterative for multi-hop. Iterative retrieval is costly, so route rather than
   default — and note this is a different measurement from nDCG (an agent issuing
@@ -439,7 +453,10 @@ and only where vector search is actually the bottleneck — with flat FAISS at o
 it is not. The machinery already exists (`_faiss_search_with_selector` + `faiss.IDSelectorBatch`, used
 for metadata pushdown today); only a doc-id→faiss-id helper is missing. If it is ever pursued, measure
 a **hybrid** stage 1 first: the ceilings above are for a pure-keyword stage 1 and a union of keyword
-and vector candidates has a higher one.
+and vector candidates has a higher one. The 2026-08-28 mixed-hierarchy sweep measured the
+chunk-level stage 2 (`cascade@N` in `benchmarks/eval_mixed_hierarchy.py`): it lost to the tuned
+chunk hybrid in every cell, including at 0.99 ceiling recall — the quality story is closed; only
+the latency story remains.
 
 ---
 
