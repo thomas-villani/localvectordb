@@ -1,0 +1,180 @@
+name: Retrieval gate
+
+# The relevance lock (roadmap v0.2.0 item 6): a pull request that lowers a
+# gated retrieval number fails here. Three gates plus the mock-free e2e suite:
+#
+#   extraction  eval_extraction.py --check      all2md output fingerprints over
+#                                               committed fixtures. Neither
+#                                               retrieval gate sees the
+#                                               extraction path (an all2md bump
+#                                               once changed 30/30 PDFs while
+#                                               every gated number stayed
+#                                               +0.0000), so this runs on every
+#                                               dependency bump.
+#   retrieval   eval_retrieval.py --dataset all --check
+#                                               nDCG@10 / recall@k on SciFact +
+#                                               Qasper with real embeddings
+#                                               (all-MiniLM-L6-v2, local CPU).
+#                                               SciFact alone cannot gate
+#                                               aggregation (1.08 chunks/doc);
+#                                               Qasper (10.77) covers it.
+#   hier        eval_hier_gate.py --check       section-level regression gate;
+#                                               the chunk gate contains zero
+#                                               occurrences of "section", so
+#                                               src/ changes need BOTH.
+#   e2e         scripts/e2e/run_all.py          release-qualification against a
+#                                               real embedding backend; out of
+#                                               CI it silently drifts from
+#                                               renamed routes and flags.
+#
+# Cache discipline: the harness reuses a built database purely on the presence
+# of its directory + .complete marker, and its key covers dataset/model/index/
+# chunking but NOT the src/ code that transformed the text before embedding
+# (see the project's cache-key blind-spot note). So the db cache key here
+# hashes src/ + the benchmark builders + uv.lock, with NO restore-keys: a
+# partial match would resurrect vectors built by different code and the gate
+# would pass on stale embeddings. Raw dataset downloads are immutable, so they
+# cache under a static key.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "benchmarks/**"
+      - "scripts/e2e/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/retrieval-gate.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "benchmarks/**"
+      - "scripts/e2e/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/retrieval-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retrieval-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  TOKENIZERS_PARALLELISM: "false"
+
+jobs:
+  extraction-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      # scripts/e2e/fixtures/ is generated, not committed; the extraction gate
+      # fingerprints extractor OUTPUT over these inputs, so the generator must
+      # produce byte-stable text content for the gate to hold across platforms.
+      - name: Generate e2e fixtures
+        run: uv run python scripts/e2e/make_fixtures.py
+
+      - name: Extraction gate
+        run: uv run python benchmarks/eval_extraction.py --check
+
+  retrieval-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      # Immutable downloads (BEIR SciFact, Qasper dev, FiQA for the synthetic
+      # superdocs leg). Static key; restore-keys are safe here because a
+      # partial hit only ever restores the same bytes.
+      - name: Cache gate datasets
+        uses: actions/cache@v4
+        with:
+          path: |
+            benchmarks/data/scifact
+            benchmarks/data/qasper
+            benchmarks/data/fiqa
+          key: gate-datasets-v1
+
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v1
+
+      # Built databases (chunk + embed, the slow step). Exact-match only: the
+      # harness's own key cannot see src/ changes, so the CI key must.
+      - name: Cache built gate databases
+        uses: actions/cache@v4
+        with:
+          path: benchmarks/data/db
+          key: gate-dbs-${{ runner.os }}-${{ hashFiles('src/**', 'benchmarks/*.py', 'uv.lock') }}
+
+      - name: Retrieval gate (SciFact + Qasper)
+        run: uv run python benchmarks/eval_retrieval.py --dataset all --check
+
+      - name: Hierarchical gate (qasper + superdocs legs)
+        run: uv run python benchmarks/eval_hier_gate.py --check
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-gate-results-${{ github.run_id }}
+          path: benchmarks/results/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v1
+
+      - name: End-to-end suite (real embeddings, no mocks)
+        run: uv run python scripts/e2e/run_all.py --provider sentence_transformers
