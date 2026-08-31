@@ -2120,7 +2120,11 @@ class DatabaseSchema:
                 if validation_errors:
                     changes["errors"].extend(validation_errors)
                     return changes
-            await db_connection.execute("BEGIN IMMEDIATE")
+            # A pooled connection may already be inside a transaction (aiosqlite
+            # runs with autocommit off, so any prior DML begins one implicitly),
+            # and BEGIN would then raise "cannot start a transaction within a
+            # transaction". A savepoint is atomic either way.
+            await db_connection.execute("SAVEPOINT metadata_schema_update")
 
             # Process column remapping first
             if column_mapping:
@@ -2129,125 +2133,123 @@ class DatabaseSchema:
                 )
                 changes["remapped_columns"].extend(remapped)
 
-                # Process added and modified fields
-                for field_name, field_def in new_schema.items():
-                    if field_name not in current_schema:
-                        # Add new field
-                        await self._add_metadata_column_async(db_connection, field_name, field_def)
-                        changes["added_fields"].append(field_name)
+            # Process added and modified fields
+            for field_name, field_def in new_schema.items():
+                if field_name not in current_schema:
+                    # Add new field
+                    await self._add_metadata_column_async(db_connection, field_name, field_def)
+                    changes["added_fields"].append(field_name)
 
-                        # Populate defaults if needed
-                        populated = await self._populate_field_defaults_async(db_connection, field_name, field_def)
-                        if populated:
-                            changes["populated_defaults"].append(populated)
-                    else:
-                        # Check for modifications
-                        old_def = current_schema[field_name]
-                        modifications: List[Dict[str, Any]] = []
+                    # Populate defaults if needed
+                    populated = await self._populate_field_defaults_async(db_connection, field_name, field_def)
+                    if populated:
+                        changes["populated_defaults"].append(populated)
+                else:
+                    # Check for modifications
+                    old_def = current_schema[field_name]
+                    modifications: List[Dict[str, Any]] = []
 
-                        # Check type change
-                        assert isinstance(old_def.type, MetadataFieldType)
-                        assert isinstance(field_def.type, MetadataFieldType)
-                        if old_def.type != field_def.type:
-                            if not self._are_types_compatible(old_def.type, field_def.type):
-                                changes["warnings"].append(
-                                    f"Type change for '{field_name}' from {old_def.type.value} "
-                                    f"to {field_def.type.value} may cause data loss"
-                                )
-                            modifications.append(
-                                {"change": "type", "from": old_def.type.value, "to": field_def.type.value}
+                    # Check type change
+                    assert isinstance(old_def.type, MetadataFieldType)
+                    assert isinstance(field_def.type, MetadataFieldType)
+                    if old_def.type != field_def.type:
+                        if not self._are_types_compatible(old_def.type, field_def.type):
+                            changes["warnings"].append(
+                                f"Type change for '{field_name}' from {old_def.type.value} "
+                                f"to {field_def.type.value} may cause data loss"
                             )
+                        modifications.append({"change": "type", "from": old_def.type.value, "to": field_def.type.value})
 
-                        # Check index change
-                        if old_def.indexed != field_def.indexed:
-                            quoted_field = quote_sql_identifier(field_name)
-                            index_name = f"idx_documents_{field_name}"
-                            if field_def.indexed:
-                                await db_connection.execute(
-                                    f"CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})"
-                                )
-                                modifications.append({"change": "index", "action": "added"})
-                            else:
-                                await db_connection.execute(f"DROP INDEX IF EXISTS {index_name}")
-                                modifications.append({"change": "index", "action": "removed"})
-
-                        # Check required change
-                        if old_def.required != field_def.required:
-                            modifications.append(
-                                {"change": "required", "from": old_def.required, "to": field_def.required}
+                    # Check index change
+                    if old_def.indexed != field_def.indexed:
+                        quoted_field = quote_sql_identifier(field_name)
+                        index_name = f"idx_documents_{field_name}"
+                        if field_def.indexed:
+                            await db_connection.execute(
+                                f"CREATE INDEX IF NOT EXISTS {index_name} ON documents({quoted_field})"
                             )
+                            modifications.append({"change": "index", "action": "added"})
+                        else:
+                            await db_connection.execute(f"DROP INDEX IF EXISTS {index_name}")
+                            modifications.append({"change": "index", "action": "removed"})
 
-                            # If making field required, populate defaults for NULLs
-                            if field_def.required and not old_def.required:
-                                populated = await self._populate_field_defaults_async(
-                                    db_connection, field_name, field_def, old_def
-                                )
-                                if populated:
-                                    changes["populated_defaults"].append(populated)
+                    # Check required change
+                    if old_def.required != field_def.required:
+                        modifications.append({"change": "required", "from": old_def.required, "to": field_def.required})
 
-                        # Check default value change
-                        if old_def.default_value != field_def.default_value:
-                            modifications.append(
-                                {
-                                    "change": "default_value",
-                                    "from": old_def.default_value,
-                                    "to": field_def.default_value,
-                                }
+                        # If making field required, populate defaults for NULLs
+                        if field_def.required and not old_def.required:
+                            populated = await self._populate_field_defaults_async(
+                                db_connection, field_name, field_def, old_def
                             )
+                            if populated:
+                                changes["populated_defaults"].append(populated)
 
-                        if modifications:
-                            changes["modified_fields"].append(
-                                {"field_name": field_name, "modifications": modifications}
-                            )
-
-                # Process removed fields
-                removed_fields = set(current_schema.keys()) - set(new_schema.keys())
-
-                # Don't mark remapped source columns as removed
-                if column_mapping:
-                    removed_fields -= set(column_mapping.keys())
-
-                for field_name in removed_fields:
-                    changes["removed_fields"].append(field_name)
-                    if drop_columns:
-                        # SQLite doesn't support DROP COLUMN in older versions
-                        # This is a placeholder - would need table recreation for full support
-                        changes["warnings"].append(
-                            f"Column '{field_name}' marked for removal but SQLite "
-                            "requires table recreation for column drops"
+                    # Check default value change
+                    if old_def.default_value != field_def.default_value:
+                        modifications.append(
+                            {
+                                "change": "default_value",
+                                "from": old_def.default_value,
+                                "to": field_def.default_value,
+                            }
                         )
 
-                    # Remove from metadata_schema table
-                    await db_connection.execute("DELETE FROM metadata_schema WHERE field_name = ?", (field_name,))
+                    if modifications:
+                        changes["modified_fields"].append({"field_name": field_name, "modifications": modifications})
 
-                # Update metadata_schema table for all fields in new schema
-                for field_name, field_def in new_schema.items():
-                    assert isinstance(field_def.type, MetadataFieldType)
-                    await db_connection.execute(
-                        """
-                        INSERT OR REPLACE INTO metadata_schema
-                        (field_name, field_type, indexed, required, default_value)
-                        VALUES (?, ?, ?, ?, ?)
-                    """,
-                        (
-                            field_name,
-                            field_def.type.value,
-                            field_def.indexed,
-                            field_def.required,
-                            json.dumps(field_def.default_value) if field_def.default_value is not None else None,
-                        ),
+            # Process removed fields
+            removed_fields = set(current_schema.keys()) - set(new_schema.keys())
+
+            # Don't mark remapped source columns as removed
+            if column_mapping:
+                removed_fields -= set(column_mapping.keys())
+
+            for field_name in removed_fields:
+                changes["removed_fields"].append(field_name)
+                if drop_columns:
+                    # SQLite doesn't support DROP COLUMN in older versions
+                    # This is a placeholder - would need table recreation for full support
+                    changes["warnings"].append(
+                        f"Column '{field_name}' marked for removal but SQLite "
+                        "requires table recreation for column drops"
                     )
 
-                await db_connection.commit()
+                # Remove from metadata_schema table
+                await db_connection.execute("DELETE FROM metadata_schema WHERE field_name = ?", (field_name,))
 
-            # Update in-memory schema
+            # Update metadata_schema table for all fields in new schema
+            for field_name, field_def in new_schema.items():
+                assert isinstance(field_def.type, MetadataFieldType)
+                await db_connection.execute(
+                    """
+                    INSERT OR REPLACE INTO metadata_schema
+                    (field_name, field_type, indexed, required, default_value)
+                    VALUES (?, ?, ?, ?, ?)
+                """,
+                    (
+                        field_name,
+                        field_def.type.value,
+                        field_def.indexed,
+                        field_def.required,
+                        json.dumps(field_def.default_value) if field_def.default_value is not None else None,
+                    ),
+                )
+
+            await db_connection.execute("RELEASE SAVEPOINT metadata_schema_update")
+            await db_connection.commit()
+
+            # Update in-memory schema only once the DDL is durably committed
             self.metadata_fields = new_schema.copy()
 
         except Exception as e:
             try:
-                await db_connection.execute("ROLLBACK")
+                # Roll back only our savepoint, then discard it, so a pooled
+                # connection is handed back without a dangling transaction.
+                await db_connection.execute("ROLLBACK TO SAVEPOINT metadata_schema_update")
+                await db_connection.execute("RELEASE SAVEPOINT metadata_schema_update")
             except Exception:
-                pass  # Ignore rollback errors
+                pass  # The savepoint may not exist yet (failure before SAVEPOINT ran)
             changes["errors"].append(f"Schema update failed: {str(e)}")
             raise e
         finally:
