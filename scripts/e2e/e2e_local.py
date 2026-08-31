@@ -151,8 +151,12 @@ def main() -> int:
                 [d.id for d in docs] == ["ml", "space", "cooking"],
                 f"got {[d.id for d in docs]}",
             )
-            docs = db.filter(where={"title": {"$like": "%French%"}})
+            # $like is a literal, case-sensitive substring test (AUDIT M7);
+            # % and _ are ordinary characters, not wildcards.
+            docs = db.filter(where={"title": {"$like": "French"}})
             c.check("filter $like", [d.id for d in docs] == ["cooking"], f"got {[d.id for d in docs]}")
+            docs = db.filter(where={"title": {"$like": "%French%"}})
+            c.check("filter $like treats % literally", [d.id for d in docs] == [], f"got {[d.id for d in docs]}")
             docs = db.filter(where={"$and": [{"rating": {"$lt": 4.0}}, {"topic": {"$ne": "garden"}}]})
             c.check("filter $and/$lt/$ne", [d.id for d in docs] == ["finance"], f"got {[d.id for d in docs]}")
             docs = db.filter(where={"tags": {"$contains": "french"}})

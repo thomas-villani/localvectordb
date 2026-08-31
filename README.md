@@ -532,7 +532,7 @@ docs = db.filter(
 
 # Logical operators and pattern matching
 docs = db.filter(
-    where={"$and": [{"author": {"$like": "%Smith%"}}, {"rating": {"$gt": 4.0}}]}
+    where={"$and": [{"author": {"$like": "Smith"}}, {"rating": {"$gt": 4.0}}]}
 )
 ```
 
