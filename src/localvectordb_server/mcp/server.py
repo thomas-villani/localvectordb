@@ -10,9 +10,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from localvectordb import VectorDB
 from localvectordb.database._search import _resolve_return_type
@@ -326,7 +327,7 @@ async def query_database(
     search_type: Literal["vector", "keyword", "hybrid"] = "hybrid",
     return_type: Optional[Literal["documents", "chunks", "context", "enriched", "sections"]] = None,
     search_level: Literal["chunks", "sections", "documents"] = "chunks",
-    k: int = 10,
+    k: Annotated[int, Field(ge=1)] = 10,
     score_threshold: float = 0.0,
     filters: Optional[Dict] = None,
     vector_weight: float = 0.5,
@@ -371,6 +372,14 @@ async def query_database(
     Returns:
         Search results with scores and metadata
     """
+    # Validate at the tool boundary: an internal assert gives an agent a blank
+    # error, and an empty query reaches the ranker and returns confident-looking
+    # scores for unrelated documents (issue #76).
+    if not isinstance(query, str) or not query.strip():
+        return {"error": "query must be a non-empty string", "error_code": "INVALID_ARGUMENT"}
+    if not isinstance(k, int) or k < 1:
+        return {"error": f"k must be >= 1 (got {k})", "error_code": "INVALID_ARGUMENT"}
+
     try:
         manager = _get_manager()
         db = await manager.get_database(database_name)

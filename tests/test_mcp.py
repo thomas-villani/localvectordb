@@ -1634,3 +1634,51 @@ class TestQueryReturnTypesEndToEnd:
         # "sections" on a non-hierarchical database must error helpfully, not crash.
         sections = _run(query_database("smoke", "prefers", search_type="keyword", k=2, return_type="sections"))
         assert "error" in sections
+
+
+@pytest.mark.unit
+class TestQueryDatabaseInputValidation:
+    """query_database must fail loudly at the tool boundary (issue #76)."""
+
+    @pytest.mark.parametrize("bad_k", [0, -1, -100])
+    def test_k_below_one_is_rejected(self, mcp_manager_fixture, bad_k):
+        from localvectordb_server.mcp.server import query_database
+
+        mcp_manager_fixture.get_database = AsyncMock()
+        result = _run(query_database("testdb", "coffee", k=bad_k))
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert "k must be >= 1" in result["error"]
+        # Rejected before any database work.
+        mcp_manager_fixture.get_database.assert_not_awaited()
+
+    @pytest.mark.parametrize("bad_query", ["", "   ", "\n\t", None])
+    def test_empty_query_is_rejected(self, mcp_manager_fixture, bad_query):
+        from localvectordb_server.mcp.server import query_database
+
+        mcp_manager_fixture.get_database = AsyncMock()
+        result = _run(query_database("testdb", bad_query, k=2))
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert "query must be a non-empty string" in result["error"]
+        mcp_manager_fixture.get_database.assert_not_awaited()
+
+    def test_valid_query_still_works(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import query_database
+
+        mock_db = MagicMock()
+        mock_db.query.return_value = [_make_query_result()]
+        del mock_db.query_async
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(query_database("testdb", "coffee", k=1))
+        assert "error" not in result
+        assert result["total_results"] == 1
+
+    def test_k_schema_declares_minimum(self):
+        # The tool schema should steer agents away from k<1, not just reject it.
+        import typing
+
+        from localvectordb_server.mcp.server import query_database
+
+        hints = typing.get_type_hints(query_database, include_extras=True)
+        k_meta = typing.get_args(hints["k"])[1]
+        assert k_meta.metadata and getattr(k_meta.metadata[0], "ge", None) == 1
