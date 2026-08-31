@@ -1,4 +1,4 @@
-"""Tests for sub-document retrieval on ``lvdb db <name> get``.
+"""Tests for sub-document retrieval on ``lvdb db get``.
 
 Covers the pure ``parse_range_spec`` helper (unit) and the ``--chunk`` /
 ``--range`` / ``--lines`` / ``--section`` / ``--outline`` selection flags driven
@@ -94,11 +94,12 @@ def _patches(real_db):
     @click.pass_context
     def _cli_cb(ctx, *args, **kwargs):
         ctx.ensure_object(dict)
-        ctx.obj = {"db": real_db, "db_folder": "unused"}
+        ctx.obj = {"db": real_db, "db_name": "getparts", "db_folder": "unused"}
 
     @click.pass_context
-    def _db_cb(ctx, name):
-        ctx.obj.update({"db_name": name, "db": real_db})
+    def _db_cb(ctx, db_name):
+        ctx.obj.pop("_positional_db", None)
+        ctx.obj.update({"db_name": db_name or "getparts", "db": real_db})
 
     from localvectordb_server.cli._db import db_group
 
@@ -110,7 +111,7 @@ class TestGetParts:
     def _invoke(self, runner, real_db, args):
         p1, p2 = _patches(real_db)
         with p1, p2:
-            return runner.invoke(cli, ["db", "getparts", "get", *args])
+            return runner.invoke(cli, ["db", "get", "--db", "getparts", *args])
 
     def test_whole_document(self, runner, get_db):
         db, doc_id = get_db

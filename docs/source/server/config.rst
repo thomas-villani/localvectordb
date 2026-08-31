@@ -794,7 +794,7 @@ Configuration Backup
    cp /etc/localvectordb/production.toml /backup/config_$(date +%Y%m%d).toml
 
    # Export database metadata
-   lvdb db my_database list --format json > /backup/my_database_docs_$(date +%Y%m%d).json
+   lvdb db list --format json > /backup/my_database_docs_$(date +%Y%m%d).json --db my_database
 
 Troubleshooting
 ---------------

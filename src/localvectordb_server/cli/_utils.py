@@ -121,10 +121,10 @@ def find_config_file(config_path: Optional[str] = None) -> Optional[str]:
 
 
 def get_ctx_db(ctx: "click.Context") -> LocalVectorDB:
-    """Open the database for the current ``lvdb db NAME`` invocation, lazily.
+    """Open the database for the current ``lvdb db <cmd> --db NAME`` invocation, lazily.
 
     The ``db`` group callback only records the database name; the database is
-    opened here on first use so that ``lvdb db NAME <cmd> --help`` (and shell
+    opened here on first use so that ``lvdb db <cmd> --help`` (and shell
     completion) work without the database — or even the DB folder — existing.
     If ``ctx.obj["db"]`` is already populated (e.g. by tests), it is returned
     as-is.
@@ -133,7 +133,15 @@ def get_ctx_db(ctx: "click.Context") -> LocalVectorDB:
     if db is not None:
         return db
 
-    name = ctx.obj["db_name"]
+    name = ctx.obj.get("db_name")
+    if not name:
+        click.secho(
+            "No database specified. Pass --db NAME, set the LVDB_DB environment "
+            "variable, or set database.default_database in the config file.",
+            fg="bright_red",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_CODE_ERROR)
     db_folder = ctx.obj.get("db_folder")
 
     if not db_folder or not os.path.exists(db_folder):

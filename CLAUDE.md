@@ -138,8 +138,8 @@ lvdb serve --debug
 lvdb create testdb --embedding-model nomic-embed-text
 
 # Run database operations
-lvdb db testdb add "sample document"
-lvdb db testdb search "query text" --search-type hybrid
+lvdb db add "sample document" --db testdb
+lvdb db search "query text" --search-type hybrid --db testdb
 ```
 
 ## Architecture Overview

@@ -108,7 +108,7 @@ Starting the Server
 .. note::
    A configuration file is not required for database operations. When neither a
    config file nor ``--db-folder`` is given, the current working directory is used
-   as the database folder, so ``lvdb db <name> ...`` works in any folder that
+   as the database folder, so ``lvdb db <command> --db <name>`` works in any folder that
    contains a database.
 
 Configuration Management
@@ -866,7 +866,14 @@ The command aborts if ``OLD`` does not exist or if a database named ``NEW`` alre
 Database-Specific Operations
 ----------------------------
 
-All database-specific operations use the ``lvdb db <database_name>`` prefix.
+All database-specific operations use the ``lvdb db <command> --db <database_name>`` form (or set ``LVDB_DB`` / ``database.default_database`` once and omit ``--db``).
+
+The database is resolved in this order: the ``--db`` flag (accepted both before
+and after the subcommand), the ``LVDB_DB`` environment variable, then
+``database.default_database`` in the config file -- so a script or agent can set
+the database once and every call is just ``lvdb db search "..."``. The
+pre-v0.2.0 positional form ``lvdb db <database_name> <command>`` still works but
+is deprecated (a warning is printed) and will be removed in a future release.
 
 Database Information
 ^^^^^^^^^^^^^^^^^^^^
@@ -874,10 +881,10 @@ Database Information
 .. code-block:: bash
 
    # Show database info
-   lvdb db research_papers info
+   lvdb db info --db research_papers
 
    # Show detailed statistics
-   lvdb db research_papers stats
+   lvdb db stats --db research_papers
 
 **Example Output**:
 
@@ -907,7 +914,7 @@ built index, in seconds:
 
 .. code-block:: bash
 
-   lvdb db research_papers doctor
+   lvdb db doctor --db research_papers
 
 It reports:
 
@@ -944,21 +951,21 @@ Add Documents
 .. code-block:: bash
 
    # Add single file
-   lvdb db my_database add document.txt
+   lvdb db add document.txt --db my_database
 
    # Add multiple files
-   lvdb db my_database add file1.txt file2.txt
+   lvdb db add file1.txt file2.txt --db my_database
    # Or with globs
-   lvdb db my_database add *.txt
+   lvdb db add *.txt --db my_database
 
    # Add with metadata
-   lvdb db my_database add paper.txt --metadata '{"title": "Research Paper", "author": "Dr. Smith"}'
+   lvdb db add paper.txt --metadata '{"title": "Research Paper", "author": "Dr. Smith"}' --db my_database
 
    # Add from stdin
-   cat document.txt | lvdb db my_database add -
+   cat document.txt | lvdb db add - --db my_database
 
    # Add with custom IDs
-   lvdb db my_database add file1.txt file2.txt --id "doc_1,doc_2"
+   lvdb db add file1.txt file2.txt --id "doc_1,doc_2" --db my_database
 
 .. note::
 
@@ -980,19 +987,19 @@ Get Documents
 .. code-block:: bash
 
    # Get document by ID
-   lvdb db my_database get doc_1
+   lvdb db get doc_1 --db my_database
 
    # Get with metadata
-   lvdb db my_database get doc_1 --metadata
+   lvdb db get doc_1 --metadata --db my_database
 
    # Pretty formatted output
-   lvdb db my_database get doc_1 --pretty
+   lvdb db get doc_1 --pretty --db my_database
 
    # Save to file
-   lvdb db my_database get doc_1 --output retrieved_doc.txt
+   lvdb db get doc_1 --output retrieved_doc.txt --db my_database
 
    # JSON output
-   lvdb db my_database get doc_1 --format json
+   lvdb db get doc_1 --format json --db my_database
 
 By default ``get`` returns the whole document. The following flags return a
 **part** of the document instead and are mutually exclusive (only one may be
@@ -1002,20 +1009,20 @@ given per invocation). They compose with ``--format, -f``, ``--pretty``,
 .. code-block:: bash
 
    # A single chunk (0-based index) or an inclusive chunk range, as indexed
-   lvdb db my_database get doc_1 --chunk 3
-   lvdb db my_database get doc_1 --chunk 2:5
+   lvdb db get doc_1 --chunk 3 --db my_database
+   lvdb db get doc_1 --chunk 2:5 --db my_database
 
    # A character slice (0-based, end-exclusive — like Python's content[M:N])
-   lvdb db my_database get doc_1 --range 0:200
+   lvdb db get doc_1 --range 0:200 --db my_database
 
    # A line range (1-based, inclusive)
-   lvdb db my_database get doc_1 --lines 10:20
+   lvdb db get doc_1 --lines 10:20 --db my_database
 
    # A section by its Markdown heading (case-insensitive)
-   lvdb db my_database get doc_1 --section "Installation"
+   lvdb db get doc_1 --section "Installation" --db my_database
 
    # The document's section outline (headings, levels, start lines)
-   lvdb db my_database get doc_1 --outline
+   lvdb db get doc_1 --outline --db my_database
 
 **Selection options**:
 
@@ -1042,13 +1049,13 @@ Update Documents
 .. code-block:: bash
 
    # Update content from file
-   lvdb db my_database update doc_1 new_content.txt
+   lvdb db update doc_1 new_content.txt --db my_database
 
    # Update from stdin
-   echo "New content" | lvdb db my_database update doc_1 -
+   echo "New content" | lvdb db update doc_1 - --db my_database
 
    # Update metadata only
-   lvdb db my_database update doc_1 --metadata '{"status": "revised"}'
+   lvdb db update doc_1 --metadata '{"status": "revised"}' --db my_database
 
 Patch Documents (in-place edit)
 """""""""""""""""""""""""""""""
@@ -1061,17 +1068,17 @@ disjoint spans.
 .. code-block:: bash
 
    # Exact find/replace
-   lvdb db my_database patch doc_1 --find "brown" --replace "red"
+   lvdb db patch doc_1 --find "brown" --replace "red" --db my_database
 
    # Replace all N occurrences (fails unless exactly N match)
-   lvdb db my_database patch doc_1 --find "TODO" --replace "DONE" --count 3
+   lvdb db patch doc_1 --find "TODO" --replace "DONE" --count 3 --db my_database
 
    # Append / prepend
-   lvdb db my_database patch doc_1 --append " (revised)"
-   lvdb db my_database patch doc_1 --prepend "DRAFT: "
+   lvdb db patch doc_1 --append " (revised)" --db my_database
+   lvdb db patch doc_1 --prepend "DRAFT: " --db my_database
 
    # Optimistic concurrency: fail if the document changed since you read it
-   lvdb db my_database patch doc_1 --find "v1" --replace "v2" --expect-hash 9f2b...
+   lvdb db patch doc_1 --find "v1" --replace "v2" --expect-hash 9f2b... --db my_database
 
 Delete Documents
 """"""""""""""""
@@ -1079,7 +1086,7 @@ Delete Documents
 .. code-block:: bash
 
    # Delete document
-   lvdb db my_database delete doc_1
+   lvdb db delete doc_1 --db my_database
 
 List Documents
 """"""""""""""
@@ -1087,16 +1094,16 @@ List Documents
 .. code-block:: bash
 
    # List document IDs
-   lvdb db my_database list
+   lvdb db list --db my_database
 
    # List with pagination
-   lvdb db my_database list --limit 20 --offset 40
+   lvdb db list --limit 20 --offset 40 --db my_database
 
    # Save to file
-   lvdb db my_database list --output doc_ids.txt
+   lvdb db list --output doc_ids.txt --db my_database
 
    # JSON format
-   lvdb db my_database list --format json
+   lvdb db list --format json --db my_database
 
 Browse Document IDs
 """""""""""""""""""
@@ -1110,16 +1117,16 @@ top level.
 .. code-block:: bash
 
    # List the top-level "folders" and documents
-   lvdb db my_database ls
+   lvdb db ls --db my_database
 
    # List the children of a prefix
-   lvdb db my_database ls docs/
+   lvdb db ls docs/ --db my_database
 
    # Use a custom delimiter
-   lvdb db my_database ls "a::" --delimiter "::"
+   lvdb db ls "a::" --delimiter "::" --db my_database
 
    # JSON output
-   lvdb db my_database ls docs/ --format json
+   lvdb db ls docs/ --format json --db my_database
 
 **Options**:
 
@@ -1132,44 +1139,44 @@ Search Operations
 .. code-block:: bash
 
    # Basic search (hybrid vector + keyword, the default)
-   lvdb db my_database search "machine learning"
+   lvdb db search "machine learning" --db my_database
 
    # Vector-only search
-   lvdb db my_database search "machine learning" --search-type vector
+   lvdb db search "machine learning" --search-type vector --db my_database
 
    # Keyword search
-   lvdb db my_database search "neural networks" --search-type keyword
+   lvdb db search "neural networks" --search-type keyword --db my_database
 
    # Hybrid search with a custom vector/keyword blend
-   lvdb db my_database search "AI algorithms" --search-type hybrid --vector-weight 0.8
+   lvdb db search "AI algorithms" --search-type hybrid --vector-weight 0.8 --db my_database
 
    # Limit results
-   lvdb db my_database search "deep learning" --limit 3
+   lvdb db search "deep learning" --limit 3 --db my_database
 
    # Return chunks instead of documents
-   lvdb db my_database search "optimization" --return-type chunks
+   lvdb db search "optimization" --return-type chunks --db my_database
 
    # Return matching chunks with surrounding context (2 neighbouring chunks each side)
-   lvdb db my_database search "optimization" --return-type context --context-window 2
+   lvdb db search "optimization" --return-type context --context-window 2 --db my_database
 
    # Size the context by a token budget instead of a chunk count, hard-truncating to fit
    lvdb db my_database search "optimization" \
      --return-type enriched --context-unit tokens --context-window 400 --context-truncate
 
    # Search with metadata filter
-   lvdb db my_database search "research" --metadata-filter '{"journal": "Science"}'
+   lvdb db search "research" --metadata-filter '{"journal": "Science"}' --db my_database
 
    # Minimum score threshold
-   lvdb db my_database search "neural" --score-threshold 0.8
+   lvdb db search "neural" --score-threshold 0.8 --db my_database
 
    # Pretty output
-   lvdb db my_database search "machine learning" --pretty
+   lvdb db search "machine learning" --pretty --db my_database
 
    # Save results
-   lvdb db my_database search "AI" --output search_results.txt
+   lvdb db search "AI" --output search_results.txt --db my_database
 
    # JSON output
-   lvdb db my_database search "algorithms" --format json --metadata
+   lvdb db search "algorithms" --format json --metadata --db my_database
 
 **Options**:
 
@@ -1205,13 +1212,13 @@ budget is used, ``--context-truncate`` trims the assembled context to exactly th
 .. code-block:: bash
 
    # Search the section-level index and return whole sections
-   lvdb db my_database search "training loop" --search-level sections --return-type sections
+   lvdb db search "training loop" --search-level sections --return-type sections --db my_database
 
    # Search the document-level index
-   lvdb db my_database search "training loop" --search-level documents
+   lvdb db search "training loop" --search-level documents --db my_database
 
    # Blend chunk and section rankings
-   lvdb db my_database search "training loop" --search-level fused
+   lvdb db search "training loop" --search-level fused --db my_database
 
 The ``--search-level sections``/``documents``/``fused`` options and the ``sections``
 value for ``--return-type`` require a database created with
@@ -1231,19 +1238,19 @@ order, not by relevance.
 .. code-block:: bash
 
    # Literal substring match
-   lvdb db my_database grep "TODO"
+   lvdb db grep "TODO" --db my_database
 
    # Case-insensitive, with two lines of context each side
-   lvdb db my_database grep error -i -C 2
+   lvdb db grep error -i -C 2 --db my_database
 
    # Regex, scoped to a document-id prefix
-   lvdb db my_database grep "^def " --regex --prefix code/
+   lvdb db grep "^def " --regex --prefix code/ --db my_database
 
    # Whole-word match, capped at 100 total results
-   lvdb db my_database grep error --word --limit 100
+   lvdb db grep error --word --limit 100 --db my_database
 
    # JSON output
-   lvdb db my_database grep "TODO" --format json
+   lvdb db grep "TODO" --format json --db my_database
 
 **Options**:
 
@@ -1296,21 +1303,21 @@ itself.
 .. code-block:: bash
 
    # Documents most related to doc_1
-   lvdb db my_database related doc_1
+   lvdb db related doc_1 --db my_database
 
    # Limit the number of neighbours
-   lvdb db my_database related doc_1 --limit 10
+   lvdb db related doc_1 --limit 10 --db my_database
 
    # Only return sufficiently similar documents
-   lvdb db my_database related doc_1 --score-threshold 0.6
+   lvdb db related doc_1 --score-threshold 0.6 --db my_database
 
    # Restrict candidates with a metadata filter
-   lvdb db my_database related doc_1 --metadata-filter '{"category": "research"}'
+   lvdb db related doc_1 --metadata-filter '{"category": "research"}' --db my_database
 
    # Pretty, JSON, or file output (same conventions as search)
-   lvdb db my_database related doc_1 --pretty --metadata
-   lvdb db my_database related doc_1 --format json
-   lvdb db my_database related doc_1 --output related.txt
+   lvdb db related doc_1 --pretty --metadata --db my_database
+   lvdb db related doc_1 --format json --db my_database
+   lvdb db related doc_1 --output related.txt --db my_database
 
 **Options**:
 
@@ -1339,16 +1346,16 @@ View Current Schema
 .. code-block:: bash
 
    # Display current schema (pretty format)
-   lvdb db my_database schema show
+   lvdb db schema show --db my_database
 
    # Table format for overview
-   lvdb db my_database schema show --format table
+   lvdb db schema show --format table --db my_database
 
    # JSON format for programmatic use
-   lvdb db my_database schema show --format json
+   lvdb db schema show --format json --db my_database
 
    # Save schema to file
-   lvdb db my_database schema show --format json --output current_schema.json
+   lvdb db schema show --format json --output current_schema.json --db my_database
 
 **Options**:
 
@@ -1376,7 +1383,7 @@ Update database metadata schema from files or JSON strings, with optional column
 .. code-block:: bash
 
    # Update schema from JSON file
-   lvdb db my_database schema update --schema new_schema.json
+   lvdb db schema update --schema new_schema.json --db my_database
 
    # Update with column remapping
    lvdb db my_database schema update \
@@ -1388,13 +1395,13 @@ Update database metadata schema from files or JSON strings, with optional column
      --schema '{"title": "text", "author": "text", "year": "integer"}'
 
    # Dry run to preview changes
-   lvdb db my_database schema update --schema new_schema.json --dry-run
+   lvdb db schema update --schema new_schema.json --dry-run --db my_database
 
    # Skip confirmation prompts
-   lvdb db my_database schema update --schema new_schema.json --force
+   lvdb db schema update --schema new_schema.json --force --db my_database
 
    # Verbose output with detailed progress
-   lvdb db my_database schema update --schema new_schema.json --verbose
+   lvdb db schema update --schema new_schema.json --verbose --db my_database
 
    # Column mapping from file
    lvdb db my_database schema update \
@@ -1455,7 +1462,7 @@ Update database metadata schema from files or JSON strings, with optional column
 
 .. code-block:: console
 
-   $ lvdb db papers schema update --schema new_schema.json --mapping '{"old_author": "author"}'
+   $ lvdb db schema update --schema new_schema.json --mapping '{"old_author": "author"}' --db papers
 
    Planned Changes:
      New fields: author, genre, rating
@@ -1501,13 +1508,13 @@ Export current metadata schema to a file for backup or editing:
 .. code-block:: bash
 
    # Export to JSON file
-   lvdb db my_database schema export --output current_schema.json
+   lvdb db schema export --output current_schema.json --db my_database
 
    # Export with sample data for reference
-   lvdb db my_database schema export --output schema_with_samples.json --include-data
+   lvdb db schema export --output schema_with_samples.json --include-data --db my_database
 
    # Export to TOML format (requires: pip install toml)
-   lvdb db my_database schema export --output schema.toml --format toml
+   lvdb db schema export --output schema.toml --format toml --db my_database
 
 **Options**:
 
@@ -1519,7 +1526,7 @@ Export current metadata schema to a file for backup or editing:
 
 .. code-block:: console
 
-   $ lvdb db papers schema export --output backup_schema.json
+   $ lvdb db schema export --output backup_schema.json --db papers
    Schema exported to backup_schema.json
    Fields exported: 4
 
@@ -1572,17 +1579,17 @@ Common Schema Evolution Patterns
 .. code-block:: bash
 
    # 1. Backup current schema
-   lvdb db my_database schema export --output backup_$(date +%Y%m%d).json
+   lvdb db schema export --output backup_$(date +%Y%m%d).json --db my_database
 
    # 2. Test changes with dry run
-   lvdb db my_database schema update --schema new_schema.json --mapping mappings.json --dry-run
+   lvdb db schema update --schema new_schema.json --mapping mappings.json --dry-run --db my_database
 
    # 3. Apply changes if satisfied
-   lvdb db my_database schema update --schema new_schema.json --mapping mappings.json --verbose
+   lvdb db schema update --schema new_schema.json --mapping mappings.json --verbose --db my_database
 
    # 4. Verify results
-   lvdb db my_database schema show --format table
-   lvdb db my_database search "test query" --limit 3
+   lvdb db schema show --format table --db my_database
+   lvdb db search "test query" --limit 3 --db my_database
 
 Best Practices
 """"""""""""""
@@ -1592,14 +1599,14 @@ Best Practices
 .. code-block:: bash
 
    # Always export current schema before major changes
-   lvdb db my_database schema export --output backup_schema.json
+   lvdb db schema export --output backup_schema.json --db my_database
 
    # Use dry-run to preview all changes
-   lvdb db my_database schema update --schema new_schema.json --dry-run
+   lvdb db schema update --schema new_schema.json --dry-run --db my_database
 
    # Test on a copy of your database first
    cp -r my_database my_database_test
-   lvdb db my_database_test schema update --schema new_schema.json
+   lvdb db schema update --schema new_schema.json --db my_database_test
 
 **Column Mapping Guidelines**:
 
@@ -1613,11 +1620,11 @@ Best Practices
 .. code-block:: bash
 
    # If something goes wrong, restore from backup
-   lvdb db my_database schema update --schema backup_schema.json --force
+   lvdb db schema update --schema backup_schema.json --force --db my_database
 
    # Check for data integrity after major changes
-   lvdb db my_database stats
-   lvdb db my_database search "test query"
+   lvdb db stats --db my_database
+   lvdb db search "test query" --db my_database
 
 **Production Considerations**:
 
@@ -1685,7 +1692,7 @@ Start an interactive shell for comprehensive database operations, including docu
 
 .. code-block:: bash
 
-   lvdb db my_database shell
+   lvdb db shell --db my_database
 
 The interactive shell provides a REPL (Read-Eval-Print Loop) environment for performing multiple operations without repeatedly connecting to the database. It includes full schema management capabilities alongside traditional document operations.
 
@@ -1693,7 +1700,7 @@ The interactive shell provides a REPL (Read-Eval-Print Loop) environment for per
 
 .. code-block:: console
 
-   $ lvdb db research_papers shell
+   $ lvdb db shell --db research_papers
    Connected to database: research_papers
    Documents: 1250, Chunks: 8500
    Type 'help' for available commands, 'exit' to quit
@@ -2078,7 +2085,7 @@ Shell vs CLI Command Comparison
 .. code-block:: bash
 
    # Data exploration and analysis
-   lvdb db research shell
+   lvdb db shell --db research
    # > search "topic A" 10
    # > search "topic B" 10
    # > search "topic C" 10
@@ -2100,13 +2107,13 @@ Shell vs CLI Command Comparison
 .. code-block:: bash
 
    # Scripting and automation
-   lvdb db prod search "query" --format json > results.json
+   lvdb db search "query" --format json > results.json --db prod
 
    # One-time operations
-   lvdb db prod add important_doc.txt
+   lvdb db add important_doc.txt --db prod
 
    # Production deployments
-   lvdb db prod schema update --schema prod_schema.json --force
+   lvdb db schema update --schema prod_schema.json --force --db prod
 
 This enhanced interactive shell provides a powerful environment for both day-to-day database operations and complex
 schema evolution tasks, making it easy to iterate, test, and deploy changes safely.
@@ -2183,17 +2190,17 @@ Bulk Operations
 .. code-block:: bash
 
    # Add all markdown files in a directory tree
-   lvdb db papers add "documents/**/*.md"
+   lvdb db add "documents/**/*.md" --db papers
 
    # Add with structured metadata from JSON
-   lvdb db papers add papers.txt --metadata metadata.json --id ids.txt
+   lvdb db add papers.txt --metadata metadata.json --id ids.txt --db papers
 
    # Search and save results for further processing
-   lvdb db papers search "deep learning" --format json --output dl_papers.json
+   lvdb db search "deep learning" --format json --output dl_papers.json --db papers
 
    # Batch process search results
    for query in "neural networks" "machine learning" "computer vision"; do
-     lvdb db papers search "$query" --limit 10 --output "results_${query// /_}.txt"
+     lvdb db search "$query" --limit 10 --output "results_${query// /_}.txt" --db papers
    done
 
 Configuration and Deployment
@@ -2249,14 +2256,14 @@ Pipeline Integration
         "$file" "$last_modified" "$file_size_bytes" "$created_at")
 
       # Add record using lvdb add command with metadata
-      lvdb db research_pipeline add "$file" --metadata "$metadata"
+      lvdb db add "$file" --metadata "$metadata" --db research_pipeline
    done
 
    # Update timestamp
    touch /tmp/last_processed
 
    # Search and generate report
-   lvdb db research_pipeline search "quarterly report" --format json > quarterly_matches.json
+   lvdb db search "quarterly report" --format json > quarterly_matches.json --db research_pipeline
 
 Troubleshooting
 ---------------

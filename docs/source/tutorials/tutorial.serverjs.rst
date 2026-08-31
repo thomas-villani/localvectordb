@@ -76,7 +76,7 @@ Now create the database and add all the documents:
 
    # Add all documents from the server-docs folder
    # NOTE: only plaintext files can be added from the cli this way. You must convert PDFs or DOCX files first.
-   lvdb db search_demo add "server-docs/*.txt"
+   lvdb db add "server-docs/*.txt" --db search_demo
 
 Start the Server
 ----------------
@@ -893,16 +893,16 @@ You can easily add more documents to your search engine using the CLI:
 .. code-block:: bash
 
    # Add a single document file
-   lvdb db search_demo add /path/to/your/document.txt
+   lvdb db add /path/to/your/document.txt --db search_demo
 
    # Add multiple documents from a folder
-   lvdb db search_demo add "/path/to/documents/*.txt"
+   lvdb db add "/path/to/documents/*.txt" --db search_demo
 
    # Add documents with custom metadata
-   lvdb db search_demo add server-docs/new-doc.txt --metadata '{"category":"tutorial","author":"you"}'
+   lvdb db add server-docs/new-doc.txt --metadata '{"category":"tutorial","author":"you"}' --db search_demo
 
    # Add all files from your server-docs folder again (if you add more)
-   lvdb db search_demo add "server-docs/*.txt"
+   lvdb db add "server-docs/*.txt" --db search_demo
 
 Troubleshooting
 ===============
@@ -928,7 +928,7 @@ Troubleshooting
 
    .. code-block:: bash
 
-      lvdb db search_demo list
+      lvdb db list --db search_demo
 
 **JavaScript Errors**
    Open your browser's developer console (F12) to see detailed error messages.

@@ -648,12 +648,12 @@ Database Operations
    lvdb create mydatabase --embedding-model embeddinggemma
 
    # Add and search documents  
-   lvdb db mydatabase add document.txt
-   lvdb db mydatabase add "docs/*.md"
-   lvdb db mydatabase search "query text" --limit 5 --search-type hybrid
+   lvdb db add document.txt --db mydatabase
+   lvdb db add "docs/*.md" --db mydatabase
+   lvdb db search "query text" --limit 5 --search-type hybrid --db mydatabase
 
    # Interactive shell
-   lvdb db mydatabase shell
+   lvdb db shell --db mydatabase
 
 Migration and Best Practices
 ----------------------------

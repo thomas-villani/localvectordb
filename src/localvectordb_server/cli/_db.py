@@ -19,29 +19,137 @@ from localvectordb_server.cli._utils import (
     warn,
 )
 
+_DB_OVERRIDE_PARAM = "db_name_override"
 
-@click.group("db")
-@click.argument("name")
-@click.pass_context
-def db_group(ctx, name):
+
+def _make_db_option() -> click.Option:
+    """The per-subcommand ``--db`` override.
+
+    The group-level ``--db`` must precede the subcommand (``lvdb db --db x
+    search``), but the natural spelling is trailing (``lvdb db search q --db
+    x``), so every leaf subcommand also carries the option. It overrides the
+    group-level resolution (flag > LVDB_DB > config default) via ctx.obj rather
+    than a function parameter, so subcommands need no signature change.
     """
-    Commands related to a specific database NAME.
+
+    def _set_db(ctx, param, value):
+        if value is not None and value != ctx.obj.get("db_name"):
+            ctx.obj["db_name"] = value
+            ctx.obj["db"] = None
+        return value
+
+    return click.Option(
+        ["--db", _DB_OVERRIDE_PARAM],
+        metavar="NAME",
+        default=None,
+        expose_value=False,
+        callback=_set_db,
+        help="Database to operate on (overrides LVDB_DB and the config default).",
+    )
+
+
+class _DbOptionInjector(click.Group):
+    """A group whose leaf subcommands all accept the trailing ``--db`` override."""
+
+    def add_command(self, cmd, name=None):
+        if not isinstance(cmd, click.Group) and not any(p.name == _DB_OVERRIDE_PARAM for p in cmd.params):
+            cmd.params.append(_make_db_option())
+        super().add_command(cmd, name)
+
+    def group(self, *args, **kwargs):
+        kwargs.setdefault("cls", _DbOptionInjector)
+        return super().group(*args, **kwargs)
+
+
+class DBGroup(_DbOptionInjector):
+    """``lvdb db <command> --db <name>``, accepting the deprecated positional form.
+
+    A first token that matches no subcommand is unambiguous: it can only be a
+    database name in the pre-v0.2.0 ``lvdb db <name> <command>`` form. Accept
+    it for one minor release, warn, and re-resolve on the next token.
+    """
+
+    def resolve_command(self, ctx, args):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            if len(args) >= 2 and args[1] in ctx.help_option_names:
+                # Deprecated `lvdb db <name> --help`: render the group help, as
+                # the positional form always did.
+                click.echo(ctx.get_help())
+                ctx.exit(0)
+            if len(args) < 2 or self.get_command(ctx, args[1]) is None:
+                # Not the positional form either -- surface the original
+                # "no such command" but point at the new spelling, since a
+                # database name in command position is the likeliest cause.
+                raise click.UsageError(
+                    f"No such command '{args[0]}'. If that is a database name, the positional "
+                    f"form is deprecated: use 'lvdb db <command> --db {args[0]}'.",
+                    ctx=ctx,
+                ) from None
+            warn(
+                f"The positional form 'lvdb db {args[0]} {args[1]}' is deprecated and will be "
+                f"removed in a future release; use 'lvdb db {args[1]} --db {args[0]}' "
+                f"(or set LVDB_DB / database.default_database)."
+            )
+            # resolve_command runs BEFORE the group callback in click's
+            # MultiCommand.invoke, so hand the name over in a side channel the
+            # callback resolves precedence from -- writing db_name directly
+            # here would be overwritten by the callback.
+            ctx.obj["_positional_db"] = args[0]
+            return super().resolve_command(ctx, args[1:])
+
+
+@click.group("db", cls=DBGroup)
+@click.option(
+    "--db",
+    "db_name",
+    metavar="NAME",
+    default=None,
+    envvar="LVDB_DB",
+    help="Database to operate on. Falls back to the LVDB_DB environment variable, "
+    "then database.default_database in the config file.",
+)
+@click.pass_context
+def db_group(ctx, db_name):
+    """
+    Commands operating on one database, chosen with --db.
 
     Provides subcommands for interacting with a specific database, such as adding, searching,
-    updating, and deleting documents.
+    updating, and deleting documents. The database is chosen by --db, the LVDB_DB
+    environment variable, or database.default_database in the config file -- so a
+    script or agent can set it once and every call is just 'lvdb db search ...'.
 
     \b
     Examples:
         \b
-        lvdb db mydb info
-        lvdb db mydb add document.txt
-        lvdb db mydb search "query text"
-        lvdb db mydb shell
+        lvdb db info --db mydb
+        lvdb db add document.txt --db mydb
+        export LVDB_DB=mydb        # or database.default_database in config
+        lvdb db search "query text"
+        lvdb db shell
 
     """
+    positional = ctx.obj.pop("_positional_db", None)
+    if positional is not None:
+        from click.core import ParameterSource
+
+        if db_name is not None and ctx.get_parameter_source("db_name") is ParameterSource.COMMANDLINE:
+            raise click.UsageError(
+                f"Database given twice: positionally as '{positional}' and via --db '{db_name}'. "
+                f"Drop the positional form.",
+                ctx=ctx,
+            )
+        # The deprecated-but-explicit positional beats the ambient LVDB_DB /
+        # config default; the deprecation warning was already printed by
+        # DBGroup.resolve_command.
+        db_name = positional
+    elif db_name is None:
+        cfg = ctx.obj.get("config")
+        db_name = getattr(getattr(cfg, "database", None), "default_database", None)
     # The database is opened lazily by get_ctx_db() on first use, so that
     # subcommand --help works without the database (or DB folder) existing.
-    ctx.obj.update({"db_name": name, "db": None})
+    ctx.obj.update({"db_name": db_name, "db": None})
 
 
 @db_group.command("info")
@@ -56,7 +164,7 @@ def show_db_info(ctx):
     \b
     Example:
         \b
-        lvdb db mydb info
+        lvdb db info --db mydb
     """
     db = get_ctx_db(ctx)
 
@@ -97,7 +205,7 @@ def show_db_stats(ctx):
     \b
     Example:
         \b
-        lvdb db mydb stats
+        lvdb db stats --db mydb
     """
     db = get_ctx_db(ctx)
     print_db_stats(db)
@@ -129,7 +237,7 @@ def doctor_db(ctx, sample):
     \b
     Example:
         \b
-        lvdb db mydb doctor
+        lvdb db doctor --db mydb
     """
     db = get_ctx_db(ctx)
     try:
@@ -165,8 +273,8 @@ def list_document_ids(ctx, limit, offset, output, output_format):
     \b
     Examples:
         \b
-        lvdb db mydb list
-        lvdb db mydb list --limit 10 --offset 20 --format json
+        lvdb db list --db mydb
+        lvdb db list --limit 10 --offset 20 --format json --db mydb
     """
     db = get_ctx_db(ctx)
     output_as_json = output_format == "json"
@@ -215,9 +323,9 @@ def list_prefixes_cmd(ctx, prefix, delimiter, output_format):
     \b
     Examples:
         \b
-        lvdb db mydb ls
-        lvdb db mydb ls docs/
-        lvdb db mydb ls docs/ --format json
+        lvdb db ls --db mydb
+        lvdb db ls docs/ --db mydb
+        lvdb db ls docs/ --format json --db mydb
     """
     db = get_ctx_db(ctx)
     listing = db.list_prefixes(prefix, delimiter=delimiter)
@@ -280,9 +388,9 @@ def grep_documents(
     \b
     Examples:
         \b
-        lvdb db mydb grep "TODO"
-        lvdb db mydb grep "^def " --regex --prefix code/
-        lvdb db mydb grep error -i -C 2
+        lvdb db grep "TODO" --db mydb
+        lvdb db grep "^def " --regex --prefix code/ --db mydb
+        lvdb db grep error -i -C 2 --db mydb
     """
     db = get_ctx_db(ctx)
     matches = db.grep(
@@ -496,8 +604,8 @@ def search(
     \b
     Examples:
     \b
-        lvdb db mydb search "search text" --limit 5 --search-type hybrid
-        lvdb db mydb search "search text" --metadata-filter '{"author":"Smith"}' --format json
+        lvdb db search "search text" --limit 5 --search-type hybrid --db mydb
+        lvdb db search "search text" --metadata-filter '{"author":"Smith"}' --format json --db mydb
 
     """
     output_as_json = output_format == "json"
@@ -638,11 +746,11 @@ def add_to_database(ctx, files_or_text, metadata, id, extract, text):
     \b
     Examples:
         \b
-        lvdb db mydb add file.txt
-        lvdb db mydb add report.pdf
-        lvdb db mydb add "docs/*.md"
-        cat file.txt | lvdb db mydb add -
-        lvdb db mydb add file1.txt file2.txt --metadata '[{"author":"A"},{"author":"B"}]' --id "id1,id2"
+        lvdb db add file.txt --db mydb
+        lvdb db add report.pdf --db mydb
+        lvdb db add "docs/*.md" --db mydb
+        cat file.txt | lvdb db add - --db mydb
+        lvdb db add file1.txt file2.txt --metadata '[{"author":"A"},{"author":"B"}]' --id "id1,id2" --db mydb
     """
     db = get_ctx_db(ctx)
 
@@ -657,9 +765,9 @@ def add_to_database(ctx, files_or_text, metadata, id, extract, text):
             "Error: FILES_OR_TEXT is required. Must be file path, glob, str to add, or '-' "
             "to read from stdin\n"
             "Usage:\n"
-            "   $ lvdb db <DB_NAME> add path/to/the/file.txt [OPTIONS]\n"
-            "   $ lvdb db <DB_NAME> add path/to/the/*.glob [OPTIONS]\n"
-            "   $ echo 'text to add' | lvdb db <DB_NAME> add - [OPTIONS]",
+            "   $ lvdb db add path/to/the/file.txt --db <DB_NAME> [OPTIONS]\n"
+            "   $ lvdb db add path/to/the/*.glob --db <DB_NAME> [OPTIONS]\n"
+            "   $ echo 'text to add' | lvdb db add - --db <DB_NAME> [OPTIONS]",
             fg="bright_red",
             err=True,
         )
@@ -901,13 +1009,13 @@ def get_document(
     \b
     Examples:
         \b
-        lvdb db mydb get doc_1
-        lvdb db mydb get doc_1 --format json --metadata
-        lvdb db mydb get doc_1 --chunk 2:5
-        lvdb db mydb get doc_1 --range 0:200
-        lvdb db mydb get doc_1 --lines 10:20
-        lvdb db mydb get doc_1 --section "Installation"
-        lvdb db mydb get doc_1 --outline
+        lvdb db get doc_1 --db mydb
+        lvdb db get doc_1 --format json --metadata --db mydb
+        lvdb db get doc_1 --chunk 2:5 --db mydb
+        lvdb db get doc_1 --range 0:200 --db mydb
+        lvdb db get doc_1 --lines 10:20 --db mydb
+        lvdb db get doc_1 --section "Installation" --db mydb
+        lvdb db get doc_1 --outline --db mydb
     """
     db = get_ctx_db(ctx)
     output_as_json = output_format == "json"
@@ -1036,9 +1144,9 @@ def related(ctx, doc_id, limit, score_threshold, metadata_filter, output_format,
     \b
     Examples:
         \b
-        lvdb db mydb related doc_1
-        lvdb db mydb related doc_1 --limit 10 --format json
-        lvdb db mydb related doc_1 --metadata-filter '{"author":"Smith"}' --metadata
+        lvdb db related doc_1 --db mydb
+        lvdb db related doc_1 --limit 10 --format json --db mydb
+        lvdb db related doc_1 --metadata-filter '{"author":"Smith"}' --metadata --db mydb
     """
     output_as_json = output_format == "json"
 
@@ -1112,8 +1220,8 @@ def update_document(ctx, doc_id, file_or_text, metadata):
     \b
     Examples:
         \b
-        lvdb db mydb update doc_1 new_content.txt
-        echo "new content" | lvdb db mydb update doc_1 -
+        lvdb db update doc_1 new_content.txt --db mydb
+        echo "new content" | lvdb db update doc_1 - --db mydb
     """
     db = get_ctx_db(ctx)
 
@@ -1173,9 +1281,9 @@ def patch_document(ctx, doc_id, find_text, replace_text, count, append_text, pre
     \b
     Examples:
         \b
-        lvdb db mydb patch doc_1 --find "brown" --replace "red"
-        lvdb db mydb patch doc_1 --append " (revised)"
-        lvdb db mydb patch doc_1 --find "TODO" --replace "DONE" --count 3
+        lvdb db patch doc_1 --find "brown" --replace "red" --db mydb
+        lvdb db patch doc_1 --append " (revised)" --db mydb
+        lvdb db patch doc_1 --find "TODO" --replace "DONE" --count 3 --db mydb
     """
     ops: list = []
     if find_text is not None:
@@ -1225,7 +1333,7 @@ def delete_document(ctx, doc_id):
     \b
     Example:
         \b
-        lvdb db mydb delete doc_1
+        lvdb db delete doc_1 --db mydb
 
     """
     db = get_ctx_db(ctx)
@@ -1267,8 +1375,8 @@ def repair_database(ctx, dry_run):
     \b
     Example:
         \b
-        lvdb db mydb repair --dry-run
-        lvdb db mydb repair
+        lvdb db repair --dry-run --db mydb
+        lvdb db repair --db mydb
 
     """
     from localvectordb.database._repair import open_for_repair
@@ -1338,9 +1446,9 @@ def schema_group(ctx):
     \b
     Examples:
         \b
-        lvdb db mydb schema show
-        lvdb db mydb schema update --schema schema.json
-        lvdb db mydb schema update --schema '{"title": "text", "author": "text"}' --mapping '{"old_author": "author"}'
+        lvdb db schema show --db mydb
+        lvdb db schema update --schema schema.json --db mydb
+        lvdb db schema update --db mydb --schema '{"title": "text"}' --mapping '{"old_author": "author"}'
     """
     pass
 
@@ -1361,9 +1469,9 @@ def show_schema(ctx, format, output):
     \b
     Examples:
         \b
-        lvdb db mydb schema show
-        lvdb db mydb schema show --format json
-        lvdb db mydb schema show --format table --output schema.json
+        lvdb db schema show --db mydb
+        lvdb db schema show --format json --db mydb
+        lvdb db schema show --format table --output schema.json --db mydb
     """
     db = get_ctx_db(ctx)
 
@@ -1489,19 +1597,19 @@ def update_schema(ctx, schema, mapping, drop_columns, dry_run, force, verbose):
     Examples:
         \b
         # Update schema from file
-        lvdb db mydb schema update --schema new_schema.json
+        lvdb db schema update --schema new_schema.json --db mydb
 
         # Update with column remapping
-        lvdb db mydb schema update --schema new_schema.json --mapping '{"old_author": "author"}'
+        lvdb db schema update --schema new_schema.json --mapping '{"old_author": "author"}' --db mydb
 
         # Dry run to see changes
-        lvdb db mydb schema update --schema new_schema.json --dry-run
+        lvdb db schema update --schema new_schema.json --dry-run --db mydb
 
         # Update with file-based mapping
-        lvdb db mydb schema update --schema new_schema.json --mapping mappings.json
+        lvdb db schema update --schema new_schema.json --mapping mappings.json --db mydb
 
         # Shorthand schema with string input
-        lvdb db mydb schema update --schema '{"title": "text", "author": "text"}' --mapping '{"old_author": "author"}'
+        lvdb db schema update --db mydb --schema '{"title": "text"}' --mapping '{"old_author": "author"}'
     """
     db = get_ctx_db(ctx)
 
@@ -1692,9 +1800,9 @@ def export_schema(ctx, output, format, include_data):
     \b
     Examples:
         \b
-        lvdb db mydb schema export --output current_schema.json
-        lvdb db mydb schema export --output schema.toml --format toml
-        lvdb db mydb schema export --output schema_with_samples.json --include-data
+        lvdb db schema export --output current_schema.json --db mydb
+        lvdb db schema export --output schema.toml --format toml --db mydb
+        lvdb db schema export --output schema_with_samples.json --include-data --db mydb
     """
     db = get_ctx_db(ctx)
 

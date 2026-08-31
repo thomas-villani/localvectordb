@@ -48,14 +48,14 @@ Use the ``lvdb`` CLI to create and populate specialized databases:
    lvdb create technical_docs --embedding-model embeddinggemma
 
    # Add documents using the CLI (the command is `add`; it accepts files, globs, or stdin)
-   lvdb db technical_docs add ./docs/user_guide.md
+   lvdb db add ./docs/user_guide.md --db technical_docs
 
    # Rich formats are extracted to Markdown automatically (PDF, DOCX, HTML, CSV, ...);
    # plain text and source files are read as-is. Override with --extract/--no-extract.
-   lvdb db technical_docs add ./docs/manual.pdf
+   lvdb db add ./docs/manual.pdf --db technical_docs
 
    # Add text from stdin with `-`
-   echo "Key troubleshooting steps..." | lvdb db technical_docs add - --metadata '{"type": "troubleshooting"}'
+   echo "Key troubleshooting steps..." | lvdb db add - --metadata '{"type": "troubleshooting"}' --db technical_docs
 
 **Step 2: Configure Minimal Tool Set**
 
