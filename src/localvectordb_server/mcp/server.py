@@ -1028,7 +1028,8 @@ async def upsert_documents(
         database_name: Name of the database
         documents: Document(s) to upsert
         metadata: Metadata for documents
-        ids: Optional document IDs
+        ids: Optional document IDs. Each id may appear at most once per call;
+            reusing an id in a later call updates that document.
         batch_size: Batch size for processing
         similarity_threshold: Threshold for similarity detection
 
@@ -1046,6 +1047,28 @@ async def upsert_documents(
             metadata = [metadata]
         if ids and isinstance(ids, str):
             ids = [ids]
+
+        # The same id repeated within one batch desyncs FAISS from SQLite: both
+        # copies get embedded, only one row survives, and the orphan vector is
+        # discovered later by an unrelated get_database_info call (issue #75).
+        # Duplicate ids across separate calls are a normal update; reject only
+        # the same-batch case, before anything is embedded.
+        if ids:
+            counts: Dict[str, int] = {}
+            for doc_id in ids:
+                counts[doc_id] = counts.get(doc_id, 0) + 1
+            duplicates = {doc_id: n for doc_id, n in counts.items() if n > 1}
+            if duplicates:
+                detail = ", ".join(f"id '{doc_id}' appears {n} times" for doc_id, n in duplicates.items())
+                return {
+                    "error": (
+                        f"Duplicate ids within a single batch: {detail}. "
+                        "Each id may appear at most once per upsert_documents call; "
+                        "send the final version of the document, or split the writes "
+                        "into separate calls."
+                    ),
+                    "error_code": "INVALID_ARGUMENT",
+                }
 
         # Get database
         db = await manager.get_database(database_name)

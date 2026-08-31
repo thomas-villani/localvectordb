@@ -1724,3 +1724,68 @@ class TestDeleteDatabaseReleasesHandles:
         _run(manager.delete_database("old"))
 
         assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+class TestUpsertDuplicateBatchIds:
+    """Same-batch duplicate ids must be rejected before embedding (issue #75)."""
+
+    def test_duplicate_ids_rejected_before_database_work(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mcp_manager_fixture.get_database = AsyncMock()
+        result = _run(upsert_documents("testdb", documents=["content A", "content B"], ids=["dup", "dup"]))
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert "id 'dup' appears 2 times" in result["error"]
+        mcp_manager_fixture.get_database.assert_not_awaited()
+
+    def test_distinct_ids_still_accepted(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mock_db = MagicMock()
+        mock_db.upsert_async = AsyncMock(return_value=["a", "b"])
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(upsert_documents("testdb", documents=["one", "two"], ids=["a", "b"]))
+        assert result["status"] == "success"
+
+    def test_single_string_id_accepted(self, mcp_manager_fixture):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        mock_db = MagicMock()
+        mock_db.upsert_async = AsyncMock(return_value=["solo"])
+        mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
+
+        result = _run(upsert_documents("testdb", documents="only one", ids="solo"))
+        assert result["status"] == "success"
+
+
+@pytest.mark.integration
+class TestUpsertDuplicateBatchIdsEndToEnd:
+    def test_rejected_batch_creates_no_orphan_vector(self, tmp_path):
+        import localvectordb_server.mcp.server as srv
+        from localvectordb_server.mcp.server import MCPManager, upsert_documents
+
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+        original = srv.mcp_manager
+        srv.mcp_manager = manager
+        try:
+
+            async def scenario():
+                await manager.create_database("dedup", embedding_provider="mock", embedding_model="test-model")
+                db = await manager.get_database("dedup")
+                await db.upsert_async(["baseline doc"], ids=["base"])
+                before = await db.get_stats_async()
+
+                result = await upsert_documents("dedup", documents=["content A", "content B"], ids=["dup", "dup"])
+                after = await db.get_stats_async()
+                return before, result, after
+
+            before, result, after = _run(scenario())
+            assert result["error_code"] == "INVALID_ARGUMENT"
+            # Nothing was written and FAISS stays in lockstep with SQLite.
+            assert after["documents"] == before["documents"] == 1
+            assert after["index_vectors"] == after["chunks"]
+        finally:
+            srv.mcp_manager = original
+            _run(manager.cleanup())
