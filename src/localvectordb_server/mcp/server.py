@@ -419,12 +419,9 @@ async def query_database(
             if hasattr(result, "document_id") and result.document_id:
                 data["document_id"] = result.document_id
             if hasattr(result, "position") and result.position:
-                data["position"] = {
-                    "index": result.position.index,
-                    "total": result.position.total,
-                    "start_char": result.position.start_char,
-                    "end_char": result.position.end_char,
-                }
+                # ChunkPosition's own serialization: start/end character offsets
+                # plus 1-based line/column spans.
+                data["position"] = result.position.to_dict()
             serialized_results.append(data)
 
         return {

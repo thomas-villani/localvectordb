@@ -565,9 +565,12 @@ class TestQueryDatabaseTool:
         assert result["search_type"] == "hybrid"
 
     def test_query_with_position(self, mcp_manager_fixture):
+        from localvectordb.core import ChunkPosition
         from localvectordb_server.mcp.server import query_database
 
-        position = SimpleNamespace(index=0, total=3, start_char=0, end_char=100)
+        # A real ChunkPosition, not a mock: a SimpleNamespace with invented
+        # attributes is how the dead return_type="chunks" shipped (issue #72).
+        position = ChunkPosition(start=0, end=100, line=1, column=1, end_line=4, end_column=12)
         mock_result = _make_query_result(document_id="doc1", position=position)
         mock_db = MagicMock()
         mock_db.query.return_value = [mock_result]
@@ -576,8 +579,9 @@ class TestQueryDatabaseTool:
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(query_database("testdb", "query"))
         assert result["results"][0]["document_id"] == "doc1"
-        assert result["results"][0]["position"]["index"] == 0
-        assert result["results"][0]["position"]["total"] == 3
+        assert result["results"][0]["position"] == position.to_dict()
+        assert result["results"][0]["position"]["start"] == 0
+        assert result["results"][0]["position"]["end"] == 100
 
     def test_query_async_path(self, mcp_manager_fixture):
         from localvectordb_server.mcp.server import query_database
@@ -1499,3 +1503,53 @@ class TestUpdateMetadataSchemaTool:
         mcp_manager_fixture.config.mode = "read-only"
         result = _run(update_metadata_schema("testdb", {"x": "text"}))
         assert result["error_code"] == "PERMISSION_DENIED"
+
+
+@pytest.mark.integration
+class TestQueryReturnTypesEndToEnd:
+    """Every documented return_type must survive serialization end-to-end (issue #72).
+
+    return_type="chunks" was dead on arrival: the serializer read invented
+    ChunkPosition attributes (.index/.total/.start_char/.end_char) that only
+    existed on test mocks. Real database, real results, no mocks.
+    """
+
+    @pytest.fixture()
+    def real_manager(self, tmp_path):
+        import localvectordb_server.mcp.server as srv
+        from localvectordb_server.mcp.server import MCPManager
+
+        config = _make_config(mode="read-write", databases_root=str(tmp_path))
+        manager = MCPManager(config)
+        original = srv.mcp_manager
+        srv.mcp_manager = manager
+        yield manager
+        srv.mcp_manager = original
+        _run(manager.cleanup())
+
+    def test_each_documented_return_type(self, real_manager):
+        from localvectordb_server.mcp.server import query_database
+
+        _run(real_manager.create_database("smoke", embedding_provider="mock", embedding_model="test-model"))
+        db = _run(real_manager.get_database("smoke"))
+        db.upsert(
+            [
+                "The user prefers dark roast coffee. It tastes bold and rich. "
+                "A pour-over brings out the flavor best. Grind size matters a lot."
+            ],
+            ids=["d1"],
+        )
+
+        for return_type in ("documents", "chunks", "context", "enriched"):
+            result = _run(query_database("smoke", "prefers", search_type="keyword", k=2, return_type=return_type))
+            assert "error" not in result, f"return_type={return_type!r} failed: {result}"
+            assert result["results"], f"return_type={return_type!r} returned nothing"
+
+        # Chunk results carry the real ChunkPosition shape.
+        chunks = _run(query_database("smoke", "prefers", search_type="keyword", k=2, return_type="chunks"))
+        pos = chunks["results"][0]["position"]
+        assert set(pos) == {"start", "end", "line", "column", "end_line", "end_column"}
+
+        # "sections" on a non-hierarchical database must error helpfully, not crash.
+        sections = _run(query_database("smoke", "prefers", search_type="keyword", k=2, return_type="sections"))
+        assert "error" in sections
