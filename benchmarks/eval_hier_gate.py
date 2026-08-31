@@ -105,6 +105,23 @@ TOLERANCE = 0.005
 SECTION_TOLERANCE = 0.015
 METRIC_TOLERANCE = {"ndcg@10_sections": SECTION_TOLERANCE}
 
+# The same tie mechanism also moves the qasper CENTROID arms' top-level
+# ndcg@10, and by more than the [sec] metric: a duplicate section vector that
+# displaces a distinct one at the FAISS top-k boundary changes which documents
+# roll up at all, not just the ordering inside the section list. Measured
+# draws: 0.011 between same-machine rebuilds (2026-08-04), and
+# -0.0193/-0.0223 between the committed baseline and the first Linux CI build
+# (2026-08-31) -- on a run where every rawspan/chunks/documents arm reproduced
+# to within 0.0007 and bit-stable superdocs was exact, so this is index-order
+# noise, not platform drift. Centroid is the legacy strategy (the default is
+# rawspan); its qasper arms stay gated, at a tolerance above the observed
+# noise. Keyed per (leg, arm label, metric) so nothing else inherits the
+# headroom.
+ARM_TOLERANCE = {
+    ("qasper", "sections · centroid", "ndcg@10"): 0.030,
+    ("qasper", "fused · centroid", "ndcg@10"): 0.030,
+}
+
 # Long-leg grid. S x P FiQA passages (~767 chars each) per super-document, so
 # P=32 puts a section at ~24.5k chars -- just past the 24,000-char window
 # ``_span_embed`` falls back to, which is what makes the leg exercise multi-window
@@ -528,7 +545,7 @@ def compare_to_baseline(legs: Dict[str, Any], path: Path, tolerance: float, sear
                 if metric not in metrics or metric not in base_results[label]:
                     continue
                 delta = metrics[metric] - base_results[label][metric]
-                limit = METRIC_TOLERANCE.get(metric, tolerance)
+                limit = ARM_TOLERANCE.get((leg_name, label, metric), METRIC_TOLERANCE.get(metric, tolerance))
                 worst = min(worst, delta)
                 flag = "FAIL" if delta < -limit else "ok"
                 if delta < -limit:
