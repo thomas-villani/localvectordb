@@ -322,27 +322,28 @@ corpora (qasper, NQ, MLDR, MAUD) through the real `query()` path where possible;
 both gates before any src/ change; capture-once-sweep-offline for anything with
 an LLM in the loop; nothing ships without moving a gated number.
 
-- **Per-query `vector_weight` router — first, and ready to run.** The oracle
-  bound is measured on all four corpora: a perfect router beats the best fixed
-  weight by **+0.020 to +0.062** everywhere (qasper +0.051 sect / +0.060 doc, NQ
-  +0.062 sect, MAUD +0.044 sect, MLDR +0.021 doc), the second-largest lever in
-  the study after reranking and the only per-query one. The gain is concentrated
-  in 5–21% of queries, so the router is an anomaly detector with an abstain
-  class, not a regressor. Training data already exists
-  (`experiments/oracle_vw_*_perquery.json`: per-query nDCG × 21 weights plus
-  pre-fusion leg features — no re-embedding), the design is pre-registered in
-  `experiments/ORACLE-VW-ROUTER.md`, and the success bar is written:
-  leave-one-corpus-out capture ≥ 30% on ≥ 3 corpora, never worse than the shipped
-  0.5 anywhere. Expect 20–45% realised capture, ~+0.01–0.03 nDCG. Both gates run
-  at fixed `vector_weight` and are therefore **blind to a router**; shipping it
-  means extending a gate first.
+- ~~Per-query `vector_weight` router.~~ **Run 2026-08-31 and REFUTED — fails the
+  pre-registered bar 0/4** (`experiments/ORACLE-VW-ROUTER.md` §7,
+  `experiments/vw_router.py`). The oracle bound stands (+0.020 to +0.062
+  everywhere, second-largest lever after reranking), and the three-bucket
+  design reaches 56–91% of it with perfect labels — but which queries benefit
+  is *memorisable, not predictable*: held-out capture is ~0 even in-corpus,
+  before transfer is attempted. The pre-fusion features (keyword hit count,
+  BM25 best, vector top-1/margin/top-10) simply do not mark the 5–21% of
+  queries where the weight matters. Shipped 0.5 plus `lvdb doctor`'s
+  per-corpus advice remains the defensible default; any future routing idea
+  needs a *different signal class* (LLM-side, or result-set feedback), not a
+  better classifier on these features.
 - **Routed query augmentation.** Cross-modal PRF helps NQ only (+0.1010) and
   hurts everywhere else — the refuted version is *unconditional* PRF. LLM-side
   expansion (HyDE, keyword synonym injection) is unmeasured and has a different
   cost model (an LLM call per query). Capture expansions once per query set,
-  sweep offline; the interesting arm is expansion gated on a cheap signal (short
-  query, low IDF mass, zero keyword hits), since the per-corpus sign flip is the
-  whole game. Shares the feature set with the router.
+  sweep offline. **The router refutation lands here too:** the planned "gate
+  expansion on a cheap signal (short query, low IDF mass, zero keyword hits)"
+  arm shared the router's feature set, and those features just failed to
+  identify help-needing queries. Assume the trigger must come from the LLM
+  itself or from result-set feedback, which changes the cost model — measure
+  the trigger before the expansion.
 - **Automatic metadata generation** (pull-forward of v0.7.0). At ingest an LLM
   writes typed fields (doc_type, entities, dates, topics) into the existing
   schema. Machinery exists end-to-end; what does not exist is an eval that can
