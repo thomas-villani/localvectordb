@@ -6,6 +6,7 @@ directly to LocalVectorDB constructor parameters.
 """
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,37 @@ from typing import Any, Dict, List, Literal, Optional, cast
 # ``mode`` other than "read-only" makes check_write_permission() fail OPEN and
 # silently permit writes, so from_file() validates against this set.
 _VALID_MODES = ("read-only", "read-write")
+
+# Database names become filesystem paths under databases_root, and they can
+# arrive from untrusted tool arguments. The first character must be
+# alphanumeric (no dot-leading names, so ".." can never match) and the charset
+# excludes every path separator, drive-letter colon, and NUL — traversal is
+# unrepresentable rather than filtered out.
+_DATABASE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def validate_database_name(name: str) -> None:
+    """
+    Reject database names that could escape databases_root when joined
+    into a filesystem path.
+
+    Names explicitly listed in ``databases_map`` are trusted operator
+    configuration and are not subject to this check; callers should consult
+    the map first (``MCPConfig.get_database_path`` does).
+
+    Raises
+    ------
+    ValueError
+        If the name is not a 1-128 character string starting with a letter or
+        digit and containing only letters, digits, dots, underscores, and
+        hyphens.
+    """
+    if not isinstance(name, str) or not _DATABASE_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid database name {name!r}: names must be 1-128 characters, "
+            "start with a letter or digit, and contain only letters, digits, "
+            "dots, underscores, and hyphens"
+        )
 
 
 @dataclass
@@ -94,7 +126,9 @@ class MCPConfig:
         if name in self.databases_map:
             return self.databases_map[name]
 
-        # Otherwise use the default root directory
+        # Otherwise the name becomes a path under the root directory: it must
+        # not be able to escape it (tool arguments are untrusted input).
+        validate_database_name(name)
         return str(Path(self.databases_root).resolve())
 
     def get_enabled_tools(self) -> List[str]:
