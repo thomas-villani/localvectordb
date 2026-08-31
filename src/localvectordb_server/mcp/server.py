@@ -129,6 +129,14 @@ class MCPManager:
         db_file = Path(db_path) / f"{name}.sqlite"
         faiss_file = Path(db_path) / f"{name}.faiss"
 
+        # get_database_path() already validated the name, but this method
+        # unlinks files: independently refuse any target that resolves outside
+        # the directory the name was joined to.
+        root = Path(db_path).resolve()
+        for target in (db_file, faiss_file):
+            if target.resolve().parent != root:
+                raise ValueError(f"Database name '{name}' resolves outside the databases root")
+
         async with self._lock:
             if name not in self.databases and not db_file.exists() and not faiss_file.exists():
                 raise DatabaseNotFoundError(f"Database '{name}' not found")

@@ -426,6 +426,87 @@ class TestMCPManager:
 
 
 @pytest.mark.unit
+class TestDatabaseNameValidation:
+    """Database names from tool arguments must not escape databases_root (issue #70)."""
+
+    @pytest.mark.parametrize(
+        "bad_name",
+        [
+            "../evil",
+            "..",
+            "a/b",
+            "a\\b",
+            "/abs/evil",
+            "C:\\evil",
+            "C:evil",
+            ".hidden",
+            "..evil",
+            "",
+            "a" * 129,
+            "name with spaces",
+            "name\x00null",
+        ],
+    )
+    def test_rejects_unsafe_names(self, bad_name):
+        from localvectordb_server.mcp.config import validate_database_name
+
+        with pytest.raises(ValueError, match="Invalid database name"):
+            validate_database_name(bad_name)
+
+    @pytest.mark.parametrize("good_name", ["docs", "my-db.v2", "A_1", "0start", "a" * 128])
+    def test_accepts_safe_names(self, good_name):
+        from localvectordb_server.mcp.config import validate_database_name
+
+        validate_database_name(good_name)  # must not raise
+
+    def test_get_database_path_validates_unmapped_names(self, tmp_path):
+        config = _make_config(databases_root=str(tmp_path))
+        with pytest.raises(ValueError, match="Invalid database name"):
+            config.get_database_path("../evil")
+
+    def test_mapped_names_are_trusted_config(self, tmp_path):
+        # Names in databases_map are operator configuration, not tool input:
+        # they bypass the charset check and resolve to their mapped path.
+        config = _make_config(databases_map={"weird name!": str(tmp_path)})
+        assert config.get_database_path("weird name!") == str(tmp_path)
+
+    def test_create_database_rejects_traversal(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        root = tmp_path / "dbs"
+        root.mkdir()
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(root)))
+
+        with patch("localvectordb_server.mcp.server.VectorDB") as mock_vectordb:
+            with pytest.raises(ValueError, match="Invalid database name"):
+                _run(manager.create_database("../evil"))
+            mock_vectordb.assert_not_called()
+        assert not (tmp_path / "evil.sqlite").exists()
+
+    def test_delete_database_rejects_traversal(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        root = tmp_path / "dbs"
+        root.mkdir()
+        outside = tmp_path / "outside.sqlite"
+        outside.touch()
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(root)))
+
+        with pytest.raises(ValueError, match="Invalid database name"):
+            _run(manager.delete_database("../outside"))
+        assert outside.exists()
+
+    def test_get_database_rejects_traversal(self):
+        from localvectordb_server.mcp.server import MCPManager
+
+        manager = MCPManager(_make_config())
+        with patch("localvectordb_server.mcp.server.VectorDB") as mock_vectordb:
+            with pytest.raises(ValueError, match="Invalid database name"):
+                _run(manager.get_database("../evil"))
+            mock_vectordb.assert_not_called()
+
+
+@pytest.mark.unit
 class TestConfigExampleSync:
     """``lvdb mcp config-example`` output must stay in sync with ``MCPConfig`` defaults."""
 
