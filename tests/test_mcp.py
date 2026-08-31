@@ -1682,3 +1682,45 @@ class TestQueryDatabaseInputValidation:
         hints = typing.get_type_hints(query_database, include_extras=True)
         k_meta = typing.get_args(hints["k"])[1]
         assert k_meta.metadata and getattr(k_meta.metadata[0], "ge", None) == 1
+
+
+class TestDeleteDatabaseReleasesHandles:
+    """delete_database must release every handle and remove every sidecar (issue #78).
+
+    Runs the whole scenario in one event loop, like the real stdio server:
+    the WinError 32 came from close() only *scheduling* the async pool close
+    (create_task, never awaited) while the unlink ran immediately.
+    """
+
+    def test_delete_after_use_in_same_session(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+
+        async def scenario():
+            await manager.create_database("locktest", embedding_provider="mock", embedding_model="test-model")
+            db = await manager.get_database("locktest")
+            # Exercise both pools so sync and async handles exist.
+            await db.upsert_async(["Alice prefers Signal for messaging."], ids=["d1"])
+            await db.query_async("Signal", search_type="keyword", k=1)
+            await manager.delete_database("locktest")
+
+        _run(scenario())
+
+        # No WinError 32, and nothing left on disk — including -wal/-shm,
+        # which held deleted document text in plaintext.
+        assert list(tmp_path.iterdir()) == []
+        assert "locktest" not in manager.databases
+
+    def test_delete_removes_stale_sidecars_of_unopened_db(self, tmp_path):
+        from localvectordb_server.mcp.server import MCPManager
+
+        (tmp_path / "old.sqlite").write_bytes(b"not a real db")
+        (tmp_path / "old.sqlite-wal").write_bytes(b"Signal residue")
+        (tmp_path / "old.sqlite-shm").write_bytes(b"shm")
+        (tmp_path / "old.faiss").write_bytes(b"vectors")
+
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+        _run(manager.delete_database("old"))
+
+        assert list(tmp_path.iterdir()) == []
