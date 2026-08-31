@@ -274,6 +274,37 @@ def register_mcp_tool(func):
     return mcp.tool()(func)
 
 
+def _undeclared_metadata_error(db, metadata_items) -> Optional[Dict[str, Any]]:
+    """Error envelope if metadata names fields the schema does not declare, else None.
+
+    The core write path is lenient about unknown metadata fields (they are
+    dropped with only a server-side log line) while the read path is strict —
+    so an agent is told "success" and can never filter by the field it thinks
+    it wrote (issue #73). Make writes as strict as reads, at the tool boundary,
+    with the guidance the read path's error lacks.
+    """
+    try:
+        schema = db.metadata_schema or {}
+        declared_fields = set(schema)
+    except Exception:
+        # Schema unavailable (e.g. remote hiccup): fall through to core semantics
+        # rather than block the write on a read failure.
+        return None
+    unknown = sorted({key for item in metadata_items if item for key in item} - declared_fields)
+    if not unknown:
+        return None
+    declared = ", ".join(sorted(declared_fields)) if declared_fields else "(none declared)"
+    return {
+        "error": (
+            f"Metadata field(s) {', '.join(repr(key) for key in unknown)} not found in metadata schema. "
+            f"Declared fields: {declared}. Declare new fields first via update_metadata_schema "
+            "(or metadata_schema at create_database time). "
+            "Valid field types: text, integer, real, boolean, date, json."
+        ),
+        "error_code": "INVALID_ARGUMENT",
+    }
+
+
 # ============= READ-ONLY TOOLS =============
 
 
@@ -930,7 +961,9 @@ async def create_database(
 
     Args:
         name: Database name
-        metadata_schema: Schema for document metadata (field_name -> type or config dict)
+        metadata_schema: Schema for document metadata (field_name -> type or
+            config dict). Valid field types: text, integer, real, boolean,
+            date, json. Only declared fields can be written or filtered on
         embedding_provider: Provider for embeddings (e.g., "ollama", "openai")
         embedding_model: Model name for embeddings
         chunking_method: Method for chunking documents
@@ -1024,10 +1057,17 @@ async def upsert_documents(
     """
     Insert or update documents in the database
 
+    Upserting over an EXISTING id replaces the whole document: content and
+    metadata alike, so metadata not re-sent is cleared. To change content while
+    preserving existing metadata, use update_document (which merges) or
+    patch_document (which does not touch metadata).
+
     Args:
         database_name: Name of the database
         documents: Document(s) to upsert
-        metadata: Metadata for documents
+        metadata: Metadata for documents. Every field must be declared in the
+            database's metadata schema (metadata_schema at create_database time,
+            or update_metadata_schema later); undeclared fields are rejected
         ids: Optional document IDs. Each id may appear at most once per call;
             reusing an id in a later call updates that document.
         batch_size: Batch size for processing
@@ -1073,6 +1113,12 @@ async def upsert_documents(
         # Get database
         db = await manager.get_database(database_name)
 
+        # Writes must be as strict as reads about undeclared metadata fields.
+        if metadata:
+            schema_error = _undeclared_metadata_error(db, metadata)
+            if schema_error:
+                return schema_error
+
         # Upsert documents
         if hasattr(db, "upsert_async"):
             result_ids = await db.upsert_async(
@@ -1107,11 +1153,17 @@ async def update_document(
     """
     Update a document's content and/or metadata
 
+    Metadata is MERGED: fields you send are updated, fields you omit keep their
+    stored values, and a content-only update preserves all metadata. This is
+    the opposite of upsert_documents, which replaces the whole document.
+
     Args:
         database_name: Name of the database
         document_id: ID of the document to update
         content: New content (optional)
-        metadata: New or updated metadata (optional)
+        metadata: New or updated metadata (optional). Every field must be
+            declared in the database's metadata schema; undeclared fields are
+            rejected
 
     Returns:
         Update status
@@ -1121,6 +1173,12 @@ async def update_document(
         manager.config.check_write_permission("update_document")
 
         db = await manager.get_database(database_name)
+
+        # Writes must be as strict as reads about undeclared metadata fields.
+        if metadata:
+            schema_error = _undeclared_metadata_error(db, [metadata])
+            if schema_error:
+                return schema_error
 
         # Update document. A False return means the document already matched the
         # requested content/metadata — report that rather than claiming an edit
@@ -1266,7 +1324,9 @@ async def update_metadata_schema(database_name: str, metadata_schema: Dict[str, 
 
     Args:
         database_name: Name of the database
-        metadata_schema: New metadata schema definition
+        metadata_schema: New metadata schema definition (field_name -> type or
+            config dict). Valid field types: text, integer, real, boolean,
+            date, json
 
     Returns:
         Update status

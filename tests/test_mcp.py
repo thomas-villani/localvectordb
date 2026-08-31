@@ -1278,6 +1278,9 @@ class TestUpsertDocumentsTool:
 
         mock_db = MagicMock()
         mock_db.upsert.return_value = ["id1", "id2"]
+        # Writes are strict about undeclared metadata fields (issue #73), so the
+        # mock database must declare its schema like a real one.
+        mock_db.metadata_schema = {"a": MagicMock()}
         del mock_db.upsert_async
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
@@ -1314,6 +1317,7 @@ class TestUpsertDocumentsTool:
 
         mock_db = MagicMock()
         mock_db.upsert.return_value = ["id1"]
+        mock_db.metadata_schema = {"key": MagicMock()}
         del mock_db.upsert_async
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
@@ -1342,6 +1346,7 @@ class TestUpdateDocumentTool:
 
         mock_db = MagicMock()
         mock_db.update_async = AsyncMock()
+        mock_db.metadata_schema = {"x": MagicMock()}
 
         mcp_manager_fixture.get_database = AsyncMock(return_value=mock_db)
         result = _run(update_document("testdb", "doc1", metadata={"x": 1}))
@@ -1684,6 +1689,7 @@ class TestQueryDatabaseInputValidation:
         assert k_meta.metadata and getattr(k_meta.metadata[0], "ge", None) == 1
 
 
+@pytest.mark.integration
 class TestDeleteDatabaseReleasesHandles:
     """delete_database must release every handle and remove every sidecar (issue #78).
 
@@ -1789,3 +1795,83 @@ class TestUpsertDuplicateBatchIdsEndToEnd:
         finally:
             srv.mcp_manager = original
             _run(manager.cleanup())
+
+
+@pytest.mark.integration
+class TestStrictMetadataWrites:
+    """Writes must be as strict as reads about undeclared metadata fields (issue #73)."""
+
+    @pytest.fixture()
+    def strict_db(self, tmp_path):
+        import localvectordb_server.mcp.server as srv
+        from localvectordb_server.mcp.server import MCPManager
+
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+        original = srv.mcp_manager
+        srv.mcp_manager = manager
+        _run(
+            manager.create_database(
+                "notes",
+                metadata_schema={"topic": "text"},
+                embedding_provider="mock",
+                embedding_model="test-model",
+            )
+        )
+        yield manager
+        srv.mcp_manager = original
+        _run(manager.cleanup())
+
+    def test_upsert_with_undeclared_field_is_rejected(self, strict_db):
+        from localvectordb_server.mcp.server import get_document, upsert_documents
+
+        result = _run(
+            upsert_documents(
+                "notes",
+                documents=["Cold brew steeps overnight."],
+                ids=["n1"],
+                metadata=[{"topic": "coffee", "mood": "ok"}],
+            )
+        )
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert "'mood'" in result["error"]
+        assert "topic" in result["error"]  # declared fields are listed
+        assert "update_metadata_schema" in result["error"]  # and the fix is named
+        assert "text, integer, real, boolean, date, json" in result["error"]
+
+        # Nothing was written.
+        fetched = _run(get_document("notes", "n1"))
+        assert "error" in fetched
+
+    def test_upsert_with_declared_fields_succeeds(self, strict_db):
+        from localvectordb_server.mcp.server import get_document, upsert_documents
+
+        result = _run(upsert_documents("notes", documents=["Cold brew."], ids=["n1"], metadata=[{"topic": "coffee"}]))
+        assert result["status"] == "success"
+        fetched = _run(get_document("notes", "n1"))
+        assert fetched["metadata"]["topic"] == "coffee"
+
+    def test_upsert_with_no_schema_names_the_gap(self, strict_db):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        manager = strict_db
+        _run(manager.create_database("bare", embedding_provider="mock", embedding_model="test-model"))
+        result = _run(upsert_documents("bare", documents=["hello"], ids=["h1"], metadata=[{"topic": "x"}]))
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert "(none declared)" in result["error"]
+
+    def test_update_document_with_undeclared_field_is_rejected(self, strict_db):
+        from localvectordb_server.mcp.server import update_document, upsert_documents
+
+        _run(upsert_documents("notes", documents=["Doc."], ids=["n1"], metadata=[{"topic": "a"}]))
+        result = _run(update_document("notes", "n1", metadata={"mood": "ok"}))
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert "'mood'" in result["error"]
+
+    def test_update_document_with_declared_field_succeeds(self, strict_db):
+        from localvectordb_server.mcp.server import get_document, update_document, upsert_documents
+
+        _run(upsert_documents("notes", documents=["Doc."], ids=["n1"], metadata=[{"topic": "a"}]))
+        result = _run(update_document("notes", "n1", metadata={"topic": "b"}))
+        assert result["status"] == "success"
+        fetched = _run(get_document("notes", "n1"))
+        assert fetched["metadata"]["topic"] == "b"
