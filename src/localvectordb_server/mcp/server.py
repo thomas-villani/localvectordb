@@ -119,6 +119,24 @@ class MCPManager:
 
         return db
 
+    @staticmethod
+    async def _close_database(db) -> None:
+        """Release every handle a database instance holds.
+
+        ``LocalVectorDB.close()`` called from inside a running event loop only
+        *schedules* ``close_async()`` (create_task, never awaited), so the async
+        connection pool can still hold the SQLite file open when the caller
+        proceeds — on Windows that is WinError 32 for any unlink that follows.
+        Await the async close explicitly first, then run the sync close.
+        """
+        if hasattr(db, "close_async"):
+            try:
+                await db.close_async()
+            except Exception as e:
+                logger.warning(f"Error closing async resources: {e}")
+        if hasattr(db, "close"):
+            db.close()
+
     async def delete_database(self, name: str):
         """Delete a database (write mode only)"""
         self.config.check_write_permission("delete_database")
@@ -142,24 +160,31 @@ class MCPManager:
             if name not in self.databases and not db_file.exists() and not faiss_file.exists():
                 raise DatabaseNotFoundError(f"Database '{name}' not found")
             if name in self.databases:
-                # Close if it's a local database
-                db = self.databases[name]
-                if hasattr(db, "close"):
-                    db.close()
+                # Fully release the database before any unlink: on Windows the
+                # file stays locked until the last handle is closed.
+                await self._close_database(self.databases[name])
                 del self.databases[name]
 
-            if db_file.exists():
-                db_file.unlink()
-
-            if faiss_file.exists():
-                faiss_file.unlink()
+            # Delete the full file set. The -wal/-shm sidecars matter: SQLite
+            # normally folds the WAL back on the last close, but if that is
+            # ever skipped the orphaned WAL still contains deleted document
+            # text in plaintext.
+            sidecars = [
+                db_file,
+                Path(f"{db_file}-wal"),
+                Path(f"{db_file}-shm"),
+                Path(f"{db_file}-journal"),
+                faiss_file,
+            ]
+            for target in sidecars:
+                if target.exists():
+                    target.unlink()
 
     async def cleanup(self):
         """Cleanup resources on shutdown"""
         async with self._lock:
             for db in self.databases.values():
-                if hasattr(db, "close"):
-                    db.close()
+                await self._close_database(db)
             self.databases.clear()
 
 
