@@ -135,6 +135,11 @@ class MetadataFieldType(str, Enum):
     DATE = "date"
     JSON = "json"
 
+    @classmethod
+    def _missing_(cls, value: object) -> "MetadataFieldType":
+        valid = ", ".join(member.value for member in cls)
+        raise ValueError(f"{value!r} is not a valid metadata field type. Valid types: {valid}")
+
     def valid_types(self) -> Tuple[Type[Any], ...]:
         if self.value == "text":
             return (str,)

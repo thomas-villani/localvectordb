@@ -47,8 +47,7 @@ class TestDatabaseNotFoundError:
     def test_create_database_not_found_error(self):
         """Test creating database not found error."""
         exc = DatabaseNotFoundError("Database 'test' not found")
-        # Note: for some reason the string chars are escaped?
-        assert str(exc) == "\"Database 'test' not found\""
+        assert str(exc) == "Database 'test' not found"
         assert isinstance(exc, BaseLocalVectorDBException)
         assert isinstance(exc, KeyError)
 

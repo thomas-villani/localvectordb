@@ -9,7 +9,14 @@ class DatabaseError(BaseLocalVectorDBException):
     """Raised for general database operation failures."""
 
 
-class DatabaseNotFoundError(DatabaseError, KeyError):
+class _MessageKeyError(KeyError):
+    """A KeyError whose ``str()`` is its message, not the ``repr`` of a missing key."""
+
+    def __str__(self) -> str:
+        return Exception.__str__(self)
+
+
+class DatabaseNotFoundError(DatabaseError, _MessageKeyError):
     """Raised if the Database cannot be found"""
 
     pass
@@ -73,7 +80,7 @@ class UnsupportedIndexOperationError(DatabaseError):
     pass
 
 
-class DocumentNotFoundError(DatabaseError, KeyError):
+class DocumentNotFoundError(DatabaseError, _MessageKeyError):
     """Raised when one or more requested documents cannot be found"""
 
     def __init__(self, message: str, missing_ids: Union[str, List[str], None] = None):
