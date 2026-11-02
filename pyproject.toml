@@ -179,7 +179,9 @@ server = [
 ]
 
 mcp = [
-    "fastmcp>=3.4.1",
+    # 3.4.10 fixes GHSA-7xgj-8392-5q4r. Capped below 4 because nothing here has
+    # been tested against fastmcp 4 / mcp 2; lift the cap with that migration.
+    "fastmcp>=3.4.10,<4",
 ]
 
 # File extraction is provided by all2md, which is a core dependency. The common
