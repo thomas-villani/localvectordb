@@ -66,8 +66,9 @@ class MCPManager:
                         **kwargs,
                     )
                 except Exception as e:
-                    logger.error(f"Failed to connect to database '{name}': {e}")
-                    raise DatabaseNotFoundError(f"Database '{name}' not found at {db_path}") from e
+                    # The path goes to the log only: this message reaches the model.
+                    logger.error(f"Failed to connect to database '{name}' at {db_path}: {e}")
+                    raise DatabaseNotFoundError(f"Database '{name}' not found") from e
 
             return self.databases[name]
 
@@ -895,6 +896,11 @@ async def list_prefixes(database_name: str, prefix: str = "", delimiter: str = "
             }
 
         listing = db.list_prefixes(prefix=prefix, delimiter=delimiter)
+        # A prefix naming a folder without its trailing delimiter rolls up to a single
+        # child named just the delimiter. Nothing else matched, so descending into the
+        # folder loses nothing.
+        if not listing.documents and len(listing.prefixes) == 1 and listing.prefixes[0].name == delimiter:
+            listing = db.list_prefixes(prefix=prefix + delimiter, delimiter=delimiter)
         result: Dict[str, Any] = listing.to_dict()
         result["prefix_count"] = len(listing.prefixes)
         result["document_count"] = len(listing.documents)
