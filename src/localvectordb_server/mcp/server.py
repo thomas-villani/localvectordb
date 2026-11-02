@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -1051,6 +1051,20 @@ async def delete_database(name: str) -> Dict[str, Any]:
         return {"error": str(e), "error_type": type(e).__name__}
 
 
+async def _carry_metadata_forward(db: Any, ids: List[str], metadata: Optional[List[Dict]]) -> List[Dict]:
+    """Layer each id's sent metadata over its stored metadata; a new id has none stored."""
+    combined: List[Dict] = []
+    for index, doc_id in enumerate(ids):
+        sent = metadata[index] if metadata else {}
+        try:
+            doc = await db.get_async(doc_id) if hasattr(db, "get_async") else db.get(doc_id)
+        except DocumentNotFoundError:
+            combined.append(sent)
+        else:
+            combined.append({**doc.metadata, **sent})
+    return combined
+
+
 @register_tool("upsert_documents", read_only=False)
 async def upsert_documents(
     database_name: str,
@@ -1059,14 +1073,14 @@ async def upsert_documents(
     ids: Optional[Union[str, List[str]]] = None,
     batch_size: int = 100,
     similarity_threshold: Optional[float] = None,
+    metadata_mode: Literal["replace", "merge", "keep"] = "replace",
 ) -> Dict[str, Any]:
     """
     Insert or update documents in the database
 
-    Upserting over an EXISTING id replaces the whole document: content and
-    metadata alike, so metadata not re-sent is cleared. To change content while
-    preserving existing metadata, use update_document (which merges) or
-    patch_document (which does not touch metadata).
+    Upserting over an EXISTING id always replaces the content. What happens to
+    its stored metadata depends on metadata_mode, and the default clears any
+    field not re-sent. update_document and patch_document also preserve metadata.
 
     Args:
         database_name: Name of the database
@@ -1078,6 +1092,11 @@ async def upsert_documents(
             reusing an id in a later call updates that document.
         batch_size: Batch size for processing
         similarity_threshold: Threshold for similarity detection
+        metadata_mode: What to do with an existing document's stored metadata.
+            "replace" (default) stores only the metadata sent; "merge" updates
+            the fields sent and keeps the rest; "keep" leaves it unchanged and
+            rejects any metadata sent. "merge" and "keep" require ids. A new id
+            gets only the metadata sent in every mode.
 
     Returns:
         Document IDs and operation status
@@ -1116,6 +1135,23 @@ async def upsert_documents(
                     "error_code": "INVALID_ARGUMENT",
                 }
 
+        if metadata_mode != "replace" and not ids:
+            return {
+                "error": f"metadata_mode '{metadata_mode}' requires ids: only an existing id has metadata to preserve.",
+                "error_code": "INVALID_ARGUMENT",
+            }
+        if metadata_mode == "keep" and metadata:
+            return {
+                "error": "metadata_mode 'keep' leaves stored metadata unchanged, so metadata must not be sent. "
+                "Use 'merge' to update some fields.",
+                "error_code": "INVALID_ARGUMENT",
+            }
+        if metadata_mode == "merge" and metadata and ids and len(metadata) != len(ids):
+            return {
+                "error": f"Got {len(metadata)} metadata entries for {len(ids)} ids; send one entry per id.",
+                "error_code": "INVALID_ARGUMENT",
+            }
+
         # Get database
         db = await manager.get_database(database_name)
 
@@ -1124,6 +1160,9 @@ async def upsert_documents(
             schema_error = _undeclared_metadata_error(db, metadata)
             if schema_error:
                 return schema_error
+
+        if metadata_mode != "replace" and ids:
+            metadata = await _carry_metadata_forward(db, ids, cast(Optional[List[Dict]], metadata))
 
         # Upsert documents
         if hasattr(db, "upsert_async"):

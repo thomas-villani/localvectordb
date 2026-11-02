@@ -1875,3 +1875,129 @@ class TestStrictMetadataWrites:
         assert result["status"] == "success"
         fetched = _run(get_document("notes", "n1"))
         assert fetched["metadata"]["topic"] == "b"
+
+
+@pytest.mark.integration
+class TestUpsertMetadataMode:
+    """upsert_documents names what happens to stored metadata (issue #74)."""
+
+    STORED = {"kind": "preference", "rank": 3, "starred": True, "extra": {"a": [1]}}
+
+    @pytest.fixture()
+    def notes(self, tmp_path):
+        import localvectordb_server.mcp.server as srv
+        from localvectordb_server.mcp.server import MCPManager, upsert_documents
+
+        manager = MCPManager(_make_config(mode="read-write", databases_root=str(tmp_path)))
+        original = srv.mcp_manager
+        srv.mcp_manager = manager
+        _run(
+            manager.create_database(
+                "notes",
+                metadata_schema={"kind": "text", "rank": "integer", "starred": "boolean", "extra": "json"},
+                embedding_provider="mock",
+                embedding_model="test-model",
+            )
+        )
+        _run(upsert_documents("notes", documents=["Original."], ids=["m/1"], metadata=[self.STORED]))
+        yield manager
+        srv.mcp_manager = original
+        _run(manager.cleanup())
+
+    @staticmethod
+    def _get(doc_id="m/1"):
+        from localvectordb_server.mcp.server import get_document
+
+        return _run(get_document("notes", doc_id))
+
+    def test_default_still_replaces(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(upsert_documents("notes", documents=["New."], ids=["m/1"]))
+        assert result["status"] == "success"
+        assert self._get()["metadata"]["kind"] is None
+
+    def test_keep_changes_content_and_preserves_every_field_type(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(upsert_documents("notes", documents=["New."], ids=["m/1"], metadata_mode="keep"))
+        assert result["status"] == "success"
+        fetched = self._get()
+        assert fetched["content"] == "New."
+        assert fetched["metadata"] == {"kind": "preference", "rank": 3, "starred": 1, "extra": {"a": [1]}}
+
+    def test_merge_updates_sent_fields_and_keeps_the_rest(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(
+            upsert_documents("notes", documents=["New."], ids=["m/1"], metadata={"rank": 9}, metadata_mode="merge")
+        )
+        assert result["status"] == "success"
+        fetched = self._get()
+        assert fetched["metadata"]["rank"] == 9
+        assert fetched["metadata"]["kind"] == "preference"
+
+    def test_merge_can_clear_a_field_with_null(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        _run(upsert_documents("notes", documents=["New."], ids=["m/1"], metadata={"kind": None}, metadata_mode="merge"))
+        assert self._get()["metadata"]["kind"] is None
+        assert self._get()["metadata"]["rank"] == 3
+
+    def test_merge_handles_new_and_existing_ids_in_one_batch(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(
+            upsert_documents(
+                "notes",
+                documents=["New.", "Brand new."],
+                ids=["m/1", "m/2"],
+                metadata=[{"rank": 9}, {"rank": 1}],
+                metadata_mode="merge",
+            )
+        )
+        assert result["status"] == "success"
+        assert self._get("m/1")["metadata"]["kind"] == "preference"
+        assert self._get("m/2")["metadata"]["rank"] == 1
+        assert self._get("m/2")["metadata"]["kind"] is None
+
+    def test_keep_on_a_new_id_stores_no_metadata(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(upsert_documents("notes", documents=["Brand new."], ids=["m/2"], metadata_mode="keep"))
+        assert result["status"] == "success"
+        assert self._get("m/2")["metadata"]["kind"] is None
+
+    def test_merge_still_rejects_undeclared_fields(self, notes):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(
+            upsert_documents("notes", documents=["New."], ids=["m/1"], metadata={"mood": "x"}, metadata_mode="merge")
+        )
+        assert "'mood'" in result["error"]
+        assert self._get()["content"] == "Original."
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"metadata_mode": "merge"}, "requires ids"),
+            ({"metadata_mode": "keep"}, "requires ids"),
+            ({"ids": ["m/1"], "metadata": {"rank": 9}, "metadata_mode": "keep"}, "must not be sent"),
+            ({"ids": ["m/1"], "metadata": [{"rank": 1}, {"rank": 2}], "metadata_mode": "merge"}, "one entry per id"),
+        ],
+    )
+    def test_invalid_combinations_are_rejected_without_writing(self, notes, kwargs, message):
+        from localvectordb_server.mcp.server import upsert_documents
+
+        result = _run(upsert_documents("notes", documents=["New."], **kwargs))
+        assert result["error_code"] == "INVALID_ARGUMENT"
+        assert message in result["error"]
+        assert self._get()["content"] == "Original."
+
+    def test_mode_is_an_enum_in_the_tool_schema(self):
+        from fastmcp.tools.tool import Tool
+
+        from localvectordb_server.mcp.server import TOOL_REGISTRY
+
+        schema = Tool.from_function(TOOL_REGISTRY["upsert_documents"]["function"]).parameters
+        assert schema["properties"]["metadata_mode"]["enum"] == ["replace", "merge", "keep"]
