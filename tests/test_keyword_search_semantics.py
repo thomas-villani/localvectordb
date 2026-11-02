@@ -335,3 +335,66 @@ class TestPhraseMixedQueries:
     def test_hostile_phrase_input_neither_errors_nor_matches_everything(self, fts, hostile):
         rows = _match(fts, sanitize(hostile))  # must not raise sqlite3.OperationalError
         assert len(rows) <= len(_DOCS)
+
+
+class TestInnerPunctuation:
+    """Issue #98: identifiers must match the tokens FTS5 split them into at index time."""
+
+    DOCS = [
+        "the weekly/plan is in file.txt",
+        "email foo@bar.com about it",
+        "see section 5.02 of the agreement",
+        "version 1.2.3 and rate 3.5",
+        "the AT&T merger",
+        "the datasets were large",
+    ]
+
+    @pytest.fixture
+    def index(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE VIRTUAL TABLE d USING fts5(content)")
+        conn.executemany("INSERT INTO d(rowid, content) VALUES (?, ?)", list(enumerate(self.DOCS)))
+        yield conn
+        conn.close()
+
+    @staticmethod
+    def _rows(conn, query):
+        rows = conn.execute("SELECT rowid FROM d WHERE d MATCH ? ORDER BY rowid", (sanitize(query),))
+        return [row[0] for row in rows]
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("weekly/plan", [0]),
+            ("file.txt", [0]),
+            ("foo@bar.com", [1]),
+            ("5.02", [2]),
+            ("1.2.3", [3]),
+            ("AT&T", [4]),
+        ],
+    )
+    def test_identifier_finds_its_document(self, index, query, expected):
+        assert self._rows(index, query) == expected
+
+    def test_identifier_parts_must_stay_adjacent(self, index):
+        """ "3.5" must not match a document that merely has a 3 and a 5 somewhere."""
+        index.execute("INSERT INTO d(rowid, content) VALUES (99, 'chapter 5 of volume 3')")
+        assert self._rows(index, "3.5") == [3]
+
+    def test_identifier_is_found_inside_a_sentence(self, index):
+        assert 0 in self._rows(index, "where is file.txt kept")
+
+    def test_identifier_is_found_inside_a_partly_quoted_query(self, index):
+        assert 2 in self._rows(index, '"see section" 5.02')
+
+    def test_deleted_parentheses_still_recover_the_plural(self, index):
+        assert self._rows(index, "dataset(s)") == [5]
+
+    def test_terms_with_no_alphanumerics_are_still_dropped(self):
+        assert sanitize("alpha ./@ beta") == '"alpha" OR "beta"'
+
+    @pytest.mark.parametrize("hostile", ["a:b", "a*b", "a^b", "col:val*", "x{y}z", "NEAR/2", "a+b"])
+    def test_inner_syntax_characters_never_reach_fts5(self, index, hostile):
+        out = sanitize(hostile)
+        assert not set(out) & set("*:^{}+/")
+        self._rows(index, hostile)  # must not raise sqlite3.OperationalError

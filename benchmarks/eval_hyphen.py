@@ -268,6 +268,32 @@ def vocab_sanitizer(qtexts: Sequence[str], vocab: set) -> Tuple[Callable[[str], 
     return _san, fires
 
 
+def separator_sanitizer(qtexts: Sequence[str], delete: str = "") -> Tuple[Callable[[str], str], np.ndarray]:
+    """Shipped, except inner punctuation becomes a space instead of being deleted.
+
+    The term stays one quoted phrase, so `file.txt` becomes `"file txt"`: the
+    tokens FTS5 indexed, still required to be adjacent. Characters in ``delete``
+    keep shipped's behavior, which isolates a mechanism like `dataset(s)` where
+    deleting recovers the real term. Returns the sanitizer and the mask of
+    queries it can change, which the placebo in `report` checks.
+    """
+    shipped = FTSQuerySanitization.clean_term
+
+    def clean(term: str) -> str:
+        kept = term.translate({ord(c): None for c in delete})
+        return " ".join(re.sub(r"[^\w\s'-]+", " ", kept, flags=re.UNICODE).split())
+
+    def _san(query: str) -> str:
+        FTSQuerySanitization.clean_term = staticmethod(clean)  # type: ignore[method-assign]
+        try:
+            return FTSQuerySanitization.sanitize_fts_query(query)
+        finally:
+            FTSQuerySanitization.clean_term = staticmethod(shipped)  # type: ignore[method-assign]
+
+    mask = np.array([_san(t) != FTSQuerySanitization.sanitize_fts_query(t) for t in qtexts])
+    return _san, mask
+
+
 def audit_tokens(qtexts: Sequence[str]) -> Tuple[List[bool], Dict[str, int]]:
     """Which queries contain a whitespace token FTS5 splits, and on what.
 
@@ -435,6 +461,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         qtok = dict(zip(qtexts, tokenize_queries(qtexts), strict=True))
         vocab_san, fires = vocab_sanitizer(qtexts, corpus_vocab(texts))
+        sep_san, sep_mask = separator_sanitizer(qtexts)
+        sep_np_san, sep_np_mask = separator_sanitizer(qtexts, delete="()")
         for label, san in (
             ("shipped", None),
             ("split", split_sanitizer(qtexts)),
@@ -442,10 +470,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ("split-ap", split_sanitizer(qtexts, chars="'")),
             ("vocab", vocab_san),
             ("bow", bow_sanitizer(qtok)),
+            ("sep", sep_san),
+            ("sep-np", sep_np_san),
         ):
             idx = FTS(uids, texts, udocs, sanitize=san)
             caps[label] = [idx.search(t, SEARCH_K, scopes[i]) for i, t in enumerate(qtexts)]
-        order = ["shipped", "split", "split-hy", "split-ap", "vocab", "bow"]
+        order = ["shipped", "split", "split-hy", "split-ap", "vocab", "bow", "sep", "sep-np"]
         base_key = "shipped"
 
         def eligible(chars: str) -> np.ndarray:
@@ -465,6 +495,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "split-hy": eligible("-"),
             "split-ap": eligible("'"),
             "vocab": np.array([any(w in fires for w in t.split()) for t in qtexts]),
+            "sep": sep_mask,
+            "sep-np": sep_np_mask,
         }
 
     bench = cell.bench
