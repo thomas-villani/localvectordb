@@ -913,6 +913,10 @@ _FTS_BOOLEAN_SPLIT = re.compile(r"\s+(AND|OR|NOT)\s+")
 # which tokenizes to nothing and only adds noise to the MATCH expression.
 _HAS_ALPHANUMERIC = re.compile(r"[^\W_]", re.UNICODE)
 
+# Everything `clean_term` turns into a token boundary: all but word characters,
+# whitespace, hyphens and apostrophes.
+_FTS_TERM_SEPARATOR = re.compile(r"[^\w\s'-]+", re.UNICODE)
+
 
 class FTSQuerySanitization:
 
@@ -979,8 +983,8 @@ class FTSQuerySanitization:
     def quote_terms(text: str) -> List[str]:
         """Clean, filter and quote the whitespace-separated terms of ``text``.
 
-        Quoting each term as a single-token phrase is what makes injection impossible:
-        a cleaned term can never re-enter the expression as FTS5 syntax.
+        Quoting each term as a phrase is what makes injection impossible: a cleaned
+        term can never re-enter the expression as FTS5 syntax.
         """
         quoted = []
         for word in text.split():
@@ -998,11 +1002,19 @@ class FTSQuerySanitization:
 
     @staticmethod
     def clean_term(term: str) -> str:
-        """Clean a single term for safe FTS5 usage"""
-        # Remove FTS5 special characters but preserve basic word characters
-        # Keep unicode word characters, numbers, hyphens, apostrophes
-        clean_term = re.sub(r"[^\w\s\'-]", "", term, flags=re.UNICODE).strip()
-        return clean_term
+        """Clean a single term for safe FTS5 usage.
+
+        Inner punctuation becomes a space rather than being deleted, because FTS5's
+        tokenizer split on it at index time: ``file.txt`` was indexed as ``file`` and
+        ``txt``, so the quoted result ``"file txt"`` matches where ``"filetxt"`` could
+        not. Parentheses are the exception and are still deleted, which recovers the
+        real word from ``dataset(s)``. Measured with ``benchmarks/eval_hyphen.py``.
+
+        Hyphens and apostrophes are kept. FTS5 splits them the same way, and splitting
+        them into separately OR-ed terms measurably hurts.
+        """
+        without_parens = term.replace("(", "").replace(")", "")
+        return " ".join(_FTS_TERM_SEPARATOR.sub(" ", without_parens).split())
 
     @staticmethod
     def handle_phrase_query(query: str) -> str:
