@@ -193,7 +193,7 @@ If not specified, all appropriate tools for the mode are enabled.
 
 - `create_database` - Create a new database
 - `delete_database` - Delete a database
-- `upsert_documents` - Insert or update documents
+- `upsert_documents` - Insert or update documents; `metadata_mode` (`replace`, `merge` or `keep`) sets what happens to an existing document's metadata
 - `update_document` - Update document content/metadata
 - `delete_document` - Delete a document
 - `update_metadata_schema` - Update database schema
